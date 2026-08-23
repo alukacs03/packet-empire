@@ -36,6 +36,7 @@ var if_mode: OptionButton
 var if_vlan: OptionButton
 var if_vlan_row: HBoxContainer
 var if_trunk_note: Label
+var if_trunk_edit: LineEdit
 var if_ip_section: VBoxContainer
 var if_ip_box: VBoxContainer
 var if_ip_in: LineEdit
@@ -43,6 +44,7 @@ var if_ip_hint: Label
 var if_cable_lbl: Label
 var if_cable_btn: Button
 
+var welcome_overlay: Control
 var contracts_overlay: Control
 var contracts_box: VBoxContainer
 var vlan_section: VBoxContainer
@@ -67,6 +69,7 @@ func _ready() -> void:
 	_build_dev_overlay()
 	_build_if_overlay()
 	_build_contracts_overlay()
+	_build_welcome()
 	Game.topology_changed.connect(_refresh_open)
 	Game.money_changed.connect(_refresh_money)
 	_refresh_money()
@@ -84,7 +87,7 @@ func _process(_dt: float) -> void:
 
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
-		or contracts_overlay.visible
+		or contracts_overlay.visible or welcome_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -506,8 +509,19 @@ func _build_if_overlay() -> void:
 	if_vlan.item_selected.connect(func(idx: int) -> void:
 		Game.set_access_vlan(cur_if, if_vlan.get_item_id(idx)))
 	if_vlan_row.add_child(if_vlan)
-	if_trunk_note = _label("   carries all VLANs (tagged)", 13, MUTED)
+	if_trunk_note = _label("   allowed VLANs: ", 13, MUTED)
 	row2.add_child(if_trunk_note)
+	if_trunk_edit = _mono_edit(110)
+	if_trunk_edit.placeholder_text = "all"
+	if_trunk_edit.tooltip_text = "Comma-separated VIDs allowed on this trunk; empty = all"
+	if_trunk_edit.text_submitted.connect(func(t: String) -> void:
+		var vids: Array = []
+		for part in t.split(",", false):
+			if part.strip_edges().is_valid_int():
+				vids.append(int(part.strip_edges()))
+		cur_if.tagged_vlans = vids
+		Game.topology_changed.emit())
+	row2.add_child(if_trunk_edit)
 
 	if_ip_section = VBoxContainer.new()
 	v.add_child(if_ip_section)
@@ -560,6 +574,8 @@ func _refresh_iface() -> void:
 	if_mode.select(0 if cur_if.mode == "access" else 1)
 	if_vlan_row.visible = is_switch and cur_if.mode == "access"
 	if_trunk_note.visible = is_switch and cur_if.mode == "trunk"
+	if_trunk_edit.visible = if_trunk_note.visible
+	if_trunk_edit.text = ",".join(cur_if.tagged_vlans.map(func(v): return str(v)))
 	if_vlan.clear()
 	for vid in cur_if.dev.vlans:
 		if_vlan.add_item("%d (%s)" % [vid, cur_if.dev.vlans[vid]], vid)
@@ -613,6 +629,27 @@ func _cable_action() -> void:
 	_menu(if_cable_btn, labels, func(id: int) -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
+
+# ---------- welcome ----------
+
+func _build_welcome() -> void:
+	welcome_overlay = _overlay()
+	var v := _card(welcome_overlay, 620)
+	var t := _header(v, func() -> void: welcome_overlay.visible = false)
+	t.text = "Welcome to Packet Empire"
+	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire — by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n\nEverything costs money — contracts pay. Open Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(560, 0)
+	v.add_child(body)
+	var go := Button.new()
+	go.text = "Open Contracts"
+	go.pressed.connect(func() -> void:
+		welcome_overlay.visible = false
+		open_contracts())
+	v.add_child(go)
+
+func show_welcome() -> void:
+	welcome_overlay.visible = true
 
 # ---------- contracts ----------
 
@@ -722,8 +759,11 @@ func _cli_submit(cmd: String) -> void:
 	cli_in.clear()
 	cli_in.call_deferred("grab_focus")
 	cli_out.append_text("%s %s\n" % [cli_session.prompt(), cmd])
+	Sim.last_trace = []
 	cli_out.append_text(cli_session.exec(cmd))
 	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
+	if not Sim.last_trace.is_empty():
+		get_parent().play_trace(Sim.last_trace)
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
@@ -736,6 +776,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					rack_overlay.visible = true
+		elif welcome_overlay.visible:
+			welcome_overlay.visible = false
 		elif contracts_overlay.visible:
 			close_contracts()
 		elif rack_overlay.visible:

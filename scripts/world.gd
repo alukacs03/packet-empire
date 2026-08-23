@@ -22,14 +22,21 @@ func _ready() -> void:
 	if Game.load_game():
 		for r in Game.racks:
 			add_child(RackVisual.new().setup(r))
+	else:
+		ui.show_welcome()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui:
 		Game.save_game()
 
-func _process(_dt: float) -> void:
+func _process(dt: float) -> void:
 	if ui == null:
 		return
+	if not _anims.is_empty():
+		_anim_clock += dt
+		queue_redraw()
+		if _anim_clock > _anims[-1]["t0"] + 0.5:
+			_anims.clear()
 	if ui.is_open():
 		if hover:
 			hover.highlighted = false
@@ -74,6 +81,30 @@ func _place_rack(tile: Vector2i) -> void:
 	add_child(RackVisual.new().setup(Game.add_rack(tile)))
 	queue_redraw()
 
+var _anims: Array = []
+var _anim_clock := 0.0
+
+func play_trace(trace: Array) -> void:
+	## Animate the last sim operation's inter-rack hops as moving packets.
+	_anims.clear()
+	_anim_clock = 0.0
+	var idx := 0
+	for hop in trace:
+		var ra := Game.rack_of(hop["a"].dev)
+		var rb := Game.rack_of(hop["b"].dev)
+		if ra == null or rb == null or ra == rb or ra.visual == null:
+			continue
+		_anims.append({"p0": ra.visual.top_anchor(), "p1": rb.visual.top_anchor(),
+			"t0": idx * 0.12,
+			"col": Color(0.5, 0.9, 1.0) if hop["kind"] == "arp" else Color(1.0, 0.85, 0.3)})
+		idx += 1
+	if not _anims.is_empty():
+		queue_redraw()
+
+static func _tray(p0: Vector2, p1: Vector2, t: float) -> Vector2:
+	var mid := (p0 + p1) / 2.0 + Vector2(0, -36)
+	return p0.lerp(mid, t).lerp(mid.lerp(p1, t), t)
+
 func _draw() -> void:
 	# overhead cable trays between racks that have at least one link
 	for l in Game.links:
@@ -83,9 +114,16 @@ func _draw() -> void:
 			continue
 		var p0: Vector2 = ra.visual.top_anchor()
 		var p1: Vector2 = rb.visual.top_anchor()
-		var mid := (p0 + p1) / 2.0 + Vector2(0, -36)
 		var pts := PackedVector2Array()
 		for i in 17:
-			var t := i / 16.0
-			pts.append(p0.lerp(mid, t).lerp(mid.lerp(p1, t), t))
+			pts.append(_tray(p0, p1, i / 16.0))
 		draw_polyline(pts, Color(1.0, 0.62, 0.2, 0.9), 2.0)
+	# packets in flight
+	const DUR := 0.3
+	for a in _anims:
+		var t: float = (_anim_clock - a["t0"]) / DUR
+		if t < 0.0 or t > 1.0:
+			continue
+		var pos := _tray(a["p0"], a["p1"], t)
+		draw_circle(pos, 9.0, Color(a["col"], 0.25))
+		draw_circle(pos, 4.5, a["col"])

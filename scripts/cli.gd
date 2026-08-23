@@ -86,6 +86,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "vlan"], "h": _show_vlan},
 			{"m": EP, "p": ["show", "mac", "address-table"], "h": _show_mac},
 			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
+			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
@@ -98,6 +99,7 @@ class EOS extends Session:
 			{"m": ["vlan"], "p": ["name"], "h": func(r): return _vlan_name(r)},
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
+			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
@@ -286,6 +288,24 @@ class EOS extends Session:
 		Game.set_access_vlan(ctx_if, vid)
 		return ""
 
+	func _sw_trunk_vlans(r: Array) -> String:
+		if dev.type != "switch":
+			return "% switchport commands need a switch\n"
+		if r.size() != 1:
+			return "usage: switchport trunk allowed vlan <v1,v2,...>|all\n"
+		if r[0] == "all":
+			ctx_if.tagged_vlans = []
+			Game.topology_changed.emit()
+			return ""
+		var vids: Array = []
+		for part in String(r[0]).split(",", false):
+			if not part.is_valid_int() or int(part) < 1 or int(part) > 4094:
+				return "% bad VLAN list — e.g. 10,20,30 or 'all'\n"
+			vids.append(int(part))
+		ctx_if.tagged_vlans = vids
+		Game.topology_changed.emit()
+		return ""
+
 	func _if_ip(r: Array) -> String:
 		if dev.type == "switch":
 			return "% SVIs are not supported yet — use a router for L3\n"
@@ -364,6 +384,11 @@ class EOS extends Session:
 				out += "%-6d %-18s %s\n" % [vlan, mac, EOS._short(dev.mac_table[vlan][mac].name)]
 		return out if vlans else "  (empty — send some traffic first)\n"
 
+	func _show_capture(_r: Array) -> String:
+		if dev.capture.is_empty():
+			return "  (no frames captured — generate some traffic)\n"
+		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
+
 	func _show_arp(_r: Array) -> String:
 		if dev.arp.is_empty():
 			return "  (empty)\n"
@@ -403,6 +428,8 @@ class EOS extends Session:
 			out += "interface %s\n" % i.name
 			if i.mode == "trunk":
 				out += "   switchport mode trunk\n"
+				if not i.tagged_vlans.is_empty():
+					out += "   switchport trunk allowed vlan %s\n" % ",".join(i.tagged_vlans.map(func(v): return str(v)))
 			elif i.mode == "access" and i.untagged_vlan != 1:
 				out += "   switchport access vlan %d\n" % i.untagged_vlan
 			for cidr in i.ips:
@@ -429,7 +456,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip>   traceroute <ip>   hostname <name>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip>   traceroute <ip>   hostname <name>   tcpdump\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -440,6 +467,10 @@ class Linux extends Session:
 				return CLI.fmt_traceroute(dev, t[1]) if t.size() == 2 else "usage: traceroute <ip>\n"
 			"ip":
 				return _ip(t.slice(1))
+			"tcpdump":
+				if dev.capture.is_empty():
+					return "tcpdump: 0 packets captured (generate some traffic)\n"
+				return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
 		return "%s: command not found\n" % t[0]
 
 	func _iface(name: String) -> Net.Iface:
@@ -519,7 +550,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "traceroute", "hostname", "help"]
+				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route"]

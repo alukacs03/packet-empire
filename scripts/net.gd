@@ -11,6 +11,7 @@ class Iface:
 	var mtu := 1500
 	var mode := "access"  # access | trunk | routed
 	var untagged_vlan := 1
+	var tagged_vlans: Array = []  # trunk allowed VIDs; empty = all
 	var ips: Array = []  # CIDR strings, e.g. "10.0.0.5/24"
 	func _init(d: NDevice, n: String, m: String) -> void:
 		dev = d
@@ -28,6 +29,7 @@ class NDevice:
 	# runtime state (not saved): learned tables
 	var mac_table := {}  # vlan -> {mac -> Iface}
 	var arp := {}  # ip -> mac
+	var capture: Array = []  # last frames seen (tcpdump-lite)
 	func _init(t: String, n: String) -> void:
 		type = t
 		name = n

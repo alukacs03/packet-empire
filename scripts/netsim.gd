@@ -14,6 +14,7 @@ const MAX_DEPTH := 400  # loop guard until STP exists (issue #18)
 static var _depth := 0
 static var _echo_id := 0
 static var _echo_results: Array = []
+static var last_trace: Array = []  # [{a: Iface, b: Iface, kind}] of the last operation
 
 # ---------- public operations ----------
 
@@ -21,6 +22,8 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64) -> Dictionary:
 	## -> {ok: bool, from: String (replier), detail: String}
 	_echo_id += 1
 	_echo_results = []
+	if _depth == 0:
+		last_trace = []
 	var err := _send_ip(dev, dst_ip, ttl, {"type": "echo", "id": _echo_id})
 	if err != "":
 		return {"ok": false, "from": "", "detail": err}
@@ -128,6 +131,9 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	var peer: Net.Iface = l.other(iface)
 	if not peer.enabled or peer.dev.status != "active":
 		return
+	if last_trace.size() < 300:
+		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
+	_cap(peer.dev, peer, frame)
 	_depth += 1
 	if peer.dev.type == "switch":
 		_switch_rx(peer.dev, peer, frame)
@@ -141,8 +147,10 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		if frame["vlan"] != 0:
 			return  # tagged frame on access port: drop
 		vlan = in_if.untagged_vlan
-	else:  # trunk: native VLAN 1 for untagged (tagged-list pruning is issue #9)
+	else:  # trunk: native VLAN 1 for untagged
 		vlan = frame["vlan"] if frame["vlan"] != 0 else 1
+		if not in_if.tagged_vlans.is_empty() and vlan not in in_if.tagged_vlans:
+			return  # VLAN not allowed on this trunk
 	if not dev.vlans.has(vlan):
 		return
 	if not dev.mac_table.has(vlan):
@@ -159,6 +167,8 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 				continue
 			f["vlan"] = 0
 		elif o.mode == "trunk":
+			if not o.tagged_vlans.is_empty() and vlan not in o.tagged_vlans:
+				continue
 			f["vlan"] = vlan
 		else:
 			continue
@@ -198,6 +208,21 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		var fwd := p.duplicate(true)
 		fwd["ttl"] -= 1
 		_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4", "pl": fwd})
+
+static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
+	var p: Dictionary = frame["pl"]
+	var desc: String
+	if frame["type"] == "arp":
+		if p["op"] == "req":
+			desc = "ARP who-has %s tell %s" % [p["tpa"], p["spa"]]
+		else:
+			desc = "ARP reply %s is-at %s" % [p["spa"], p["sha"]]
+	else:
+		desc = "IP %s > %s ICMP %s ttl %d" % [p["src_ip"], p["dst_ip"], p["icmp"]["type"], p["ttl"]]
+	var vl := (" [vlan %d]" % frame["vlan"]) if frame["vlan"] != 0 else ""
+	dev.capture.append("%-10s %s%s" % [iface.name, desc, vl])
+	if dev.capture.size() > 50:
+		dev.capture.pop_front()
 
 static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 	for cidr: String in iface.ips:

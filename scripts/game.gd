@@ -232,7 +232,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	var ifs: Array = []
 	for i: Net.Iface in d.ifaces:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
-			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "ips": i.ips})
+			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
+			"ips": i.ips})
 	return {"type": d.type, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes, "ifaces": ifs}
 
@@ -263,6 +264,8 @@ func load_game() -> bool:
 			i.mtu = int(si["mtu"])
 			i.mode = si["mode"]
 			i.untagged_vlan = int(si["untagged_vlan"])
+			for tv in si.get("tagged_vlans", []):
+				i.tagged_vlans.append(int(tv))
 			i.ips = si["ips"]
 			d.ifaces.append(i)
 		by_name[d.name] = d

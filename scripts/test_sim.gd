@@ -5,6 +5,12 @@ class_name SimTests
 
 static var fails := 0
 
+static func _dev_named(n: String) -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.name == n:
+			return d
+	return null
+
 static func check(cond: bool, msg: String) -> void:
 	print(("PASS  " if cond else "FAIL  ") + msg)
 	if not cond:
@@ -114,6 +120,31 @@ static func run() -> int:
 		if d.name == a.name:
 			a_l = d
 	check(a_l != null and Sim.ping(a_l, "10.1.0.2")["ok"], "save: reloaded topology still routes end-to-end")
+
+	# --- trunk allowed-vlan pruning (uses reloaded devices) ---
+	var a2 := _dev_named(a.name)
+	var sw_a := _dev_named(sw.name)
+	var sw_b := _dev_named(sw2.name)
+	var b2 := _dev_named(b.name)
+	# move b onto sw2 through an inter-switch trunk, same vlan 1
+	Game.disconnect_iface(b2.ifaces[0])
+	Game.connect_ifaces(b2.ifaces[0], sw_b.ifaces[2])
+	Game.connect_ifaces(sw_a.ifaces[3], sw_b.ifaces[3])
+	sw_a.ifaces[3].mode = "trunk"
+	sw_a.ifaces[3].untagged_vlan = 1
+	sw_b.ifaces[3].mode = "trunk"
+	Game.topology_changed.emit()
+	check(Sim.ping(a2, "10.0.0.2")["ok"], "trunk: vlan 1 crosses inter-switch trunk")
+	sw_a.ifaces[3].tagged_vlans = [30]
+	Game.topology_changed.emit()
+	check(not Sim.ping(a2, "10.0.0.2")["ok"], "trunk: pruning vlan 1 off the trunk blocks it")
+	sw_a.ifaces[3].tagged_vlans = []
+	Game.topology_changed.emit()
+
+	# --- capture ---
+	Sim.ping(a2, "10.0.0.2")
+	check(not a2.capture.is_empty() and "ICMP" in "\n".join(PackedStringArray(a2.capture)),
+		"capture: tcpdump buffer records ICMP frames")
 
 	# --- contracts ---
 	var money0 := Game.money
