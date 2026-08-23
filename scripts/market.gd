@@ -12,7 +12,7 @@ const KINDS := {
 		"brief": "We need you to host our application server at %s/24. It must be up and reachable over the network.",
 		"costs": "You'll likely need: a server (from $400) + a switchport. Power draw ~150W once you pay for power."},
 	"own_vlan": {"base": 45, "spread": 50,
-		"brief": "We want our own isolated network segment: VLAN %d, with our server on an access port in it.",
+		"brief": "We want our own isolated network segment: VLAN %s, with our server on an access port in it.",
 		"costs": "Uses a switchport + a server. Cheap to deliver if you have free capacity."},
 	"dhcp_pool": {"base": 80, "spread": 70,
 		"brief": "We keep plugging in machines. Run DHCP for our subnet %s.0/24 — at least one client must hold a lease.",

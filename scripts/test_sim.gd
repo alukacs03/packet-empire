@@ -228,6 +228,11 @@ static func run() -> int:
 	var m3 := Game.money
 	check(Game.expand(), "stage: expansion purchasable")
 	check(Game.money == m3 - 5000 and Game.grid_size() == Vector2i(7, 7), "stage: server room paid and unlocked")
+	var crac1 := Game.new_device("crac-1")
+	var crac2 := Game.new_device("crac-1")
+	r3.slots[6] = crac1
+	r3.slots[7] = crac2
+	check(Game.cooling_capacity() >= 3000 and not Game.overheating(), "heat: CRACs cover the room")
 	var m4 := Game.money
 	Game.sla_tick()
 	check(Game.money - m4 < 90 + 40 + 50, "stage: power bill now reduces cycle income")
@@ -259,6 +264,74 @@ static func run() -> int:
 	Game.offers.append(off3)
 	check(Game.respond_offer(off3, 90) == "accepted" and Game.deals.size() == 2,
 		"market: fair quote accepted directly")
+
+	# --- RouterOS CLI (PacketTik gear) ---
+	var mkt_sw := Game.new_device("sw-lite")
+	var mkt_rtr := Game.new_device("rtr-lite")
+	r3.slots[3] = mkt_sw
+	r3.slots[4] = mkt_rtr
+	var rs := CLI.new_session(mkt_sw)
+	check(rs is ROS and rs.prompt().begins_with("[admin@"), "ros: PacketTik gear speaks RouterOS")
+	check(mkt_sw.ifaces[0].name == "ether1", "ros: PacketTik ports are etherN")
+	rs.exec("/interface bridge vlan add vlan-ids=50 comment=lab")
+	check(mkt_sw.vlans.has(50), "ros: bridge vlan add creates vlan")
+	rs.exec("/interface set ether2 pvid=50")
+	check(mkt_sw.ifaces[1].untagged_vlan == 50 and mkt_sw.ifaces[1].mode == "access", "ros: pvid assigns access vlan")
+	check(rs.exec("export").contains("vlan-ids=50"), "ros: export renders config")
+	var rr := CLI.new_session(mkt_rtr)
+	rr.exec("/ip address add address=10.7.0.1/24 interface=ether1")
+	check("10.7.0.1/24" in mkt_rtr.ifaces[0].ips, "ros: ip address add")
+	rr.exec("/routing bgp set as=65010")
+	rr.exec("/routing bgp peer add address=100.64.0.9 as=64500")
+	check(mkt_rtr.bgp["neighbors"].size() == 1, "ros: bgp peer configured")
+
+	# --- BGP to the internet (EOS router) ---
+	var r4 := Game.add_rack(Vector2i(2, 0))
+	var upl := Game.new_device("isp-uplink")
+	var edge := Game.new_device("rtr-edge")
+	var web := Game.new_device("server")
+	r4.slots[0] = upl
+	r4.slots[1] = edge
+	r4.slots[2] = web
+	Game.connect_ifaces(upl.ifaces[0], edge.ifaces[0])
+	Game.connect_ifaces(web.ifaces[0], edge.ifaces[1])
+	Game.add_ip(edge.ifaces[0], "100.64.0.2/30")
+	Game.add_ip(edge.ifaces[1], "10.3.0.1/24")
+	Game.add_ip(web.ifaces[0], "10.3.0.10/24")
+	Game.add_static_route(web, "0.0.0.0", 0, "10.3.0.1")
+	var es := CLI.new_session(edge)
+	es.exec("en")
+	es.exec("conf t")
+	es.exec("router bgp 65001")
+	es.exec("neighbor 100.64.0.1 remote-as 64500")
+	es.exec("end")
+	check(es.exec("show ip bgp summary").contains("Established"), "bgp: session establishes with the handoff")
+	check(Sim.ping(edge, "8.8.8.8")["ok"], "bgp: router reaches the internet via learned default")
+	check(not Sim.ping(web, "8.8.8.8")["ok"], "bgp: server fails until prefix announced (no return path)")
+	es.exec("conf t")
+	es.exec("router bgp 65001")
+	es.exec("network 10.3.0.0/24")
+	es.exec("end")
+	check(Sim.ping(web, "8.8.8.8")["ok"], "bgp: announcing the prefix opens the return path")
+	check(Game.try_complete_contract(Contracts.all()[8]), "bgp: join-the-internet contract verifies")
+
+	# --- overheating trips gear ---
+	crac1.status = "offline"
+	crac2.status = "offline"
+	Game.topology_changed.emit()
+	check(Game.overheating(), "heat: losing cooling overheats the room")
+	Game.sla_tick()
+	var tripped: Net.NDevice = null
+	for d in Game.all_devices():
+		if d.status == "offline" and d.type != "cooling":
+			tripped = d
+	check(tripped != null, "heat: overheating trips a device offline")
+	tripped.status = "active"
+	crac1.status = "active"
+	crac2.status = "active"
+	Game.topology_changed.emit()
+	check(not Game.overheating(), "heat: cooling restored")
+	check(Game.try_complete_contract(Contracts.all()[9]), "heat: feeling-the-heat contract verifies")
 
 	print("---- %d failures" % fails)
 	return fails

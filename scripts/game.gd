@@ -7,17 +7,21 @@ signal money_changed
 
 # Hardware catalog: fictional vendors, real tiers. New model = new entry.
 const MODELS := {
-	"sw-lite": {"type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90},
+	"sw-lite": {"type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
 	"sw-8": {"type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
 	"sw-24": {"type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
 	"srv-1": {"type": "server", "ports": 1, "label": "Dill R110", "price": 400},
 	"srv-2": {"type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
-	"rtr-lite": {"type": "router", "ports": 4, "label": "PacketTik R4", "price": 350},
+	"rtr-lite": {"type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
 	"rtr-edge": {"type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
 	"fw-1": {"type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
+	"isp-uplink": {"type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
+	"crac-1": {"type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
-	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40}
+	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100}
+const TRANSIT_FEE := 30  # per cycle per established upstream BGP session
+const BASE_COOLING := 400  # watts the bare room can dissipate
 const STAGES := [
 	{"name": "Colo corner", "grid": Vector2i(3, 3), "price": 0,
 		"blurb": "A few tiles in someone else's colo. Power included."},
@@ -26,12 +30,15 @@ const STAGES := [
 	{"name": "Datacenter floor", "grid": Vector2i(12, 12), "price": 25000,
 		"blurb": "A real floor. Grow the empire."},
 ]
-const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1"}
+const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1",
+	"uplink": "isp-uplink", "cooling": "crac-1"}
 const TYPE_SPECS := {
 	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
 	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
 	"router": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "rtr"},
 	"firewall": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "fw"},
+	"uplink": {"if_prefix": "port", "if_start": 1, "name_prefix": "isp"},
+	"cooling": {"if_prefix": "port", "if_start": 1, "name_prefix": "crac"},
 }
 const RACK_PRICE := 500
 var save_path := "user://save.json"
@@ -43,7 +50,8 @@ var stage := 0
 var contracts_done: Array = []
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
-var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "rack": 0, "mac": 0}
+var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
+	"cooling": 0, "rack": 0, "mac": 0}
 
 func grid_size() -> Vector2i:
 	return STAGES[stage]["grid"]
@@ -56,6 +64,16 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+func cooling_capacity() -> int:
+	var c := BASE_COOLING
+	for d in all_devices():
+		if d.type == "cooling" and d.status == "active":
+			c += int(MODELS[d.model].get("cools", 0))
+	return c
+
+func overheating() -> bool:
+	return stage >= 1 and power_draw() > cooling_capacity()
 
 func power_draw() -> int:
 	var w := 0
@@ -129,11 +147,25 @@ func sla_tick() -> void:
 		sla_status[c["id"]] = ok
 		if ok:
 			earned += int(c["reward"]) / 10
+	for d in all_devices():  # transit invoices
+		for nb in d.bgp.get("neighbors", []):
+			if Sim.bgp_established(d, nb):
+				earned -= TRANSIT_FEE
+	if overheating():
+		# heat kills: one active device trips per cycle until capacity recovers
+		for d in all_devices():
+			if d.status == "active" and d.type != "cooling":
+				d.status = "offline"
+				topology_changed.emit()
+				break
 	for deal in deals:
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
 		if deal["healthy"]:
 			earned += int(deal["fee"])
 	for offer in offers.duplicate():
+		if not (offer is Dictionary) or not offer.has("ttl"):
+			offers.erase(offer)  # defensive: drop malformed offers
+			continue
 		offer["ttl"] = int(offer["ttl"]) - 1
 		if offer["ttl"] <= 0:
 			offers.erase(offer)
@@ -189,13 +221,23 @@ func new_device(model: String) -> Net.NDevice:
 	d.model = model
 	if type == "switch":
 		d.vlans = {1: "default"}
-	if type in ["router", "firewall"]:
+	if type in ["router", "firewall", "uplink"]:
 		d.ip_forwarding = true
+	if type == "uplink":
+		# the ISP side is preconfigured: handoff /30 + anycast internet, announces default
+		d.bgp = {"asn": 64500, "neighbors": [], "networks": ["0.0.0.0/0"]}
 	for i in m["ports"]:
-		var ifc := Net.Iface.new(d, spec["if_prefix"] + str(spec["if_start"] + i), _new_mac())
+		var pfx: String = m.get("if_prefix", spec["if_prefix"])
+		var ifc := Net.Iface.new(d, pfx + str(spec["if_start"] + i), _new_mac())
 		if type != "switch":
 			ifc.mode = "routed"
 		d.ifaces.append(ifc)
+	if type == "uplink":
+		d.ifaces[0].ips.append("100.64.0.1/30")
+		var lo := Net.Iface.new(d, "lo", _new_mac())
+		lo.mode = "routed"
+		lo.ips = ["8.8.8.8/32", "1.1.1.1/32"]  # "the internet"
+		d.ifaces.append(lo)
 	return d
 
 func uninstall_device(dev: Net.NDevice) -> void:
@@ -263,7 +305,7 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 		if d == exclude:
 			continue
 		for i in d.ifaces:
-			if link_at(i) == null:
+			if link_at(i) == null and i.name != "lo":
 				out.append(i)
 	return out
 
@@ -350,7 +392,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
-		"services": d.services, "resolver": d.resolver, "acls": d.acls, "ifaces": ifs}
+		"services": d.services, "resolver": d.resolver, "acls": d.acls, "bgp": d.bgp, "ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(save_path):
@@ -377,6 +419,7 @@ func load_game() -> bool:
 		d.static_routes = sd["static_routes"]
 		d.services = sd.get("services", {})
 		d.acls = sd.get("acls", [])
+		d.bgp = sd.get("bgp", {})
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]

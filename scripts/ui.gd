@@ -79,8 +79,12 @@ func _ready() -> void:
 func _refresh_money() -> void:
 	var power := ""
 	if Game.stage >= 1:
-		power = "   ⚡%dW (-$%d/cycle)" % [Game.power_draw(), Game.power_draw() / 10]
+		power = "   ⚡%dW / ❄%dW" % [Game.power_draw(), Game.cooling_capacity()]
+		if Game.overheating():
+			power += "  🔥 OVERHEATING"
 	money_lbl.text = "  $%d%s" % [Game.money, power]
+	money_lbl.add_theme_color_override("font_color",
+		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
 	if Game.stage < Game.STAGES.size() - 1:
 		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
 		expand_btn.text = "Expand: %s ($%d)" % [nxt["name"], nxt["price"]]
@@ -273,6 +277,10 @@ func _refresh_slots() -> void:
 				slot_col = Color(1.0, 0.75, 0.45)
 			elif dev.type == "firewall":
 				slot_col = Color(1.0, 0.5, 0.5)
+			elif dev.type == "uplink":
+				slot_col = Color(0.85, 0.7, 1.0)
+			elif dev.type == "cooling":
+				slot_col = Color(0.65, 0.9, 1.0)
 			b.add_theme_color_override("font_color", slot_col)
 			b.pressed.connect(func() -> void: open_dev(dev))
 		else:

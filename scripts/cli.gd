@@ -4,7 +4,9 @@ class_name CLI
 ## Everything mutates the same Game state the web UI renders.
 
 static func new_session(dev: Net.NDevice) -> Session:
-	return EOS.new(dev) if dev.type in ["switch", "router", "firewall"] else Linux.new(dev)
+	if Game.MODELS.get(dev.model, {}).get("os", "") == "ros":
+		return ROS.new(dev)
+	return EOS.new(dev) if dev.type in ["switch", "router", "firewall", "uplink"] else Linux.new(dev)
 
 static func fmt_ping(dev: Net.NDevice, target: String) -> String:
 	var ip := Sim.resolve(dev, target)
@@ -73,6 +75,8 @@ class EOS extends Session:
 				return "%s(config-if-%s)#" % [dev.name, _short(ctx_if.name)]
 			"vlan":
 				return "%s(config-vlan-%d)#" % [dev.name, ctx_vlan]
+			"router":
+				return dev.name + "(config-router)#"
 		return dev.name + ">"
 
 	static func _short(ifname: String) -> String:
@@ -80,7 +84,7 @@ class EOS extends Session:
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
-		var EP := ["exec", "priv", "config", "if", "vlan"]  # show/ping work everywhere via 'do'-free shortcut
+		var EP := ["exec", "priv", "config", "if", "vlan", "router"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
@@ -94,6 +98,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
+			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
@@ -106,6 +111,11 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["acl", "deny"], "h": _cfg_acl.bind("deny")},
 			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl},
 			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
+			{"m": ["config"], "p": ["router", "bgp"], "h": _cfg_router_bgp},
+			{"m": ["router"], "p": ["neighbor"], "h": _bgp_neighbor},
+			{"m": ["router"], "p": ["no", "neighbor"], "h": _bgp_no_neighbor},
+			{"m": ["router"], "p": ["network"], "h": _bgp_network},
+			{"m": ["router"], "p": ["no", "network"], "h": _bgp_no_network},
 			{"m": ["vlan"], "p": ["name"], "h": func(r): return _vlan_name(r)},
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
@@ -115,7 +125,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): ctx_if.enabled = true; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
-			{"m": ["config", "if", "vlan"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["config", "if", "vlan", "router"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
 		]
@@ -188,7 +198,7 @@ class EOS extends Session:
 
 	func _exit(_r: Array) -> String:
 		match mode:
-			"if", "vlan":
+			"if", "vlan", "router":
 				mode = "config"
 			"config":
 				mode = "priv"
@@ -371,6 +381,64 @@ class EOS extends Session:
 			n += 1
 		return out + "    (first match wins; default permit)\n"
 
+	func _cfg_router_bgp(r: Array) -> String:
+		if dev.type != "router":
+			return "% BGP runs on routers\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "usage: router bgp <asn>\n"
+		if dev.bgp.is_empty():
+			dev.bgp = {"asn": int(r[0]), "neighbors": [], "networks": []}
+		elif int(dev.bgp["asn"]) != int(r[0]):
+			return "%% BGP is already running with AS %d\n" % int(dev.bgp["asn"])
+		mode = "router"
+		return ""
+
+	func _bgp_neighbor(r: Array) -> String:
+		if r.size() == 3 and String(r[0]).is_valid_ip_address() \
+				and "remote-as".begins_with(r[1]) and String(r[2]).is_valid_int():
+			_bgp_no_neighbor([r[0]])
+			dev.bgp["neighbors"].append({"ip": r[0], "remote_as": int(r[2])})
+			Game.topology_changed.emit()
+			return ""
+		return "usage: neighbor <ip> remote-as <asn>\n"
+
+	func _bgp_no_neighbor(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: no neighbor <ip>\n"
+		for nb in dev.bgp["neighbors"].duplicate():
+			if nb["ip"] == r[0]:
+				dev.bgp["neighbors"].erase(nb)
+		Game.topology_changed.emit()
+		return ""
+
+	func _bgp_network(r: Array) -> String:
+		if r.size() == 1 and Net.valid_cidr(r[0]):
+			if r[0] not in dev.bgp["networks"]:
+				dev.bgp["networks"].append(r[0])
+			Game.topology_changed.emit()
+			return ""
+		return "usage: network <prefix/len>   (announce your prefix upstream)\n"
+
+	func _bgp_no_network(r: Array) -> String:
+		if r.size() == 1:
+			dev.bgp["networks"].erase(r[0])
+			Game.topology_changed.emit()
+			return ""
+		return "usage: no network <prefix/len>\n"
+
+	func _show_bgp(_r: Array) -> String:
+		if dev.bgp.is_empty():
+			return "% BGP not running — 'router bgp <asn>' in config mode\n"
+		var out := "BGP router AS %d\n%-16s %-10s %s\n" % [int(dev.bgp["asn"]), "Neighbor", "Remote-AS", "State"]
+		if dev.bgp["neighbors"].is_empty():
+			out += "  (no neighbors configured)\n"
+		for nb in dev.bgp["neighbors"]:
+			var st := "Established" if Sim.bgp_established(dev, nb) else "Idle"
+			out += "%-16s %-10d %s\n" % [nb["ip"], int(nb["remote_as"]), st]
+		if not dev.bgp["networks"].is_empty():
+			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
+		return out
+
 	func _cfg_ip_route(r: Array) -> String:
 		if not dev.ip_forwarding:
 			return "% static routing needs a router\n"
@@ -448,6 +516,8 @@ class EOS extends Session:
 				out += "C  %s/%s is directly connected, %s\n" % [parts[0], parts[1], EOS._short(i.name)]
 		for r in dev.static_routes:
 			out += "S  %s/%d [1/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
+		for r in Sim._bgp_learned(dev):
+			out += "B  %s/%d [20/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		return out if out else "  (no routes — configure ip addresses)\n"
 
 	func _show_ip_brief(_r: Array) -> String:
@@ -469,6 +539,13 @@ class EOS extends Session:
 			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		for rule in dev.acls:
 			out += "acl %s %s/%d %s/%d\n!\n" % [rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
+		if not dev.bgp.is_empty() and dev.type == "router":
+			out += "router bgp %d\n" % int(dev.bgp["asn"])
+			for nb in dev.bgp["neighbors"]:
+				out += "   neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
+			for net in dev.bgp["networks"]:
+				out += "   network %s\n" % net
+			out += "!\n"
 		for i: Net.Iface in dev.ifaces:
 			out += "interface %s\n" % i.name
 			if i.mode == "trunk":

@@ -110,6 +110,86 @@ static func resolve(dev: Net.NDevice, name: String) -> String:
 			return r["answer"]
 	return ""
 
+static func bgp_established(dev: Net.NDevice, nb: Dictionary) -> bool:
+	## eBGP-lite: session is up when the neighbor IP is on a directly
+	## connected subnet, ARP-reachable, speaks BGP, and either auto-accepts
+	## (the ISP handoff) or has a matching neighbor statement back to us.
+	var peer := _ip_owner(nb["ip"])
+	if peer == null or peer == dev or peer.bgp.is_empty():
+		return false
+	if int(nb["remote_as"]) != int(peer.bgp.get("asn", -1)):
+		return false
+	var out := _connected_iface(dev, nb["ip"])
+	if out == null:
+		return false
+	if _arp_resolve(dev, out, nb["ip"]) == "":
+		return false
+	if peer.type == "uplink":
+		return true
+	for pnb in peer.bgp.get("neighbors", []):
+		if _owns_ip_anywhere(dev, pnb["ip"]):
+			return true
+	return false
+
+static func _bgp_learned(dev: Net.NDevice) -> Array:
+	## Routes this device learns from established sessions:
+	## configured neighbors' networks, plus (for the passive/ISP side)
+	## networks of peers that neighbor US. -> [{prefix, plen, via}]
+	var out: Array = []
+	if dev.bgp.is_empty():
+		return out
+	for nb in dev.bgp.get("neighbors", []):
+		if bgp_established(dev, nb):
+			var peer := _ip_owner(nb["ip"])
+			for net in peer.bgp.get("networks", []):
+				var parts := String(net).split("/")
+				out.append({"prefix": parts[0], "plen": int(parts[1]), "via": nb["ip"]})
+	for other in Game.all_devices():
+		if other == dev or other.bgp.is_empty():
+			continue
+		for onb in other.bgp.get("neighbors", []):
+			if _owns_ip_anywhere(dev, onb["ip"]) and bgp_established(other, onb):
+				var via := _ip_of_on_subnet(other, onb["ip"])
+				if via == "":
+					continue
+				for net in other.bgp.get("networks", []):
+					var parts := String(net).split("/")
+					out.append({"prefix": parts[0], "plen": int(parts[1]), "via": via})
+	return out
+
+static func _ip_owner(ip: String) -> Net.NDevice:
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			for cidr: String in i.ips:
+				if cidr.split("/")[0] == ip:
+					return d
+	return null
+
+static func _owns_ip_anywhere(dev: Net.NDevice, ip: String) -> bool:
+	for i: Net.Iface in dev.ifaces:
+		for cidr: String in i.ips:
+			if cidr.split("/")[0] == ip:
+				return true
+	return false
+
+static func _connected_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
+	for i: Net.Iface in dev.ifaces:
+		if not i.enabled:
+			continue
+		for cidr: String in i.ips:
+			var parts := cidr.split("/")
+			if Net.same_subnet(ip, parts[0], int(parts[1])):
+				return i
+	return null
+
+static func _ip_of_on_subnet(dev: Net.NDevice, peer_ip: String) -> String:
+	for i: Net.Iface in dev.ifaces:
+		for cidr: String in i.ips:
+			var parts := cidr.split("/")
+			if Net.same_subnet(peer_ip, parts[0], int(parts[1])):
+				return parts[0]
+	return ""
+
 static func flush_learned_state() -> void:
 	for d in Game.all_devices():
 		d.mac_table.clear()
@@ -159,6 +239,12 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 			if not via_rt.is_empty():
 				best_len = int(r["plen"])
 				best = via_rt
+	for r in _bgp_learned(dev):
+		if int(r["plen"]) > best_len and Net.same_subnet(dst_ip, r["prefix"], int(r["plen"])):
+			var out := _connected_iface(dev, r["via"])
+			if out:
+				best_len = int(r["plen"])
+				best = {"iface": out, "next_hop": r["via"]}
 	return best
 
 static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> String:
@@ -196,7 +282,7 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	_cap(peer.dev, peer, frame)
 	_depth += 1
-	if peer.dev.type == "switch":
+	if peer.dev.type == "switch" and frame["type"] != "bgp":
 		_switch_rx(peer.dev, peer, frame)
 	else:
 		_host_rx(peer.dev, peer, frame)

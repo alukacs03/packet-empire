@@ -58,7 +58,7 @@ static func all() -> Array:
 			"title": "Connect two offices",
 			"customer": "Gamma Corp",
 			"reward": 1200,
-			"brief": "Gamma runs two offices on different networks: 192.168.1.0/24 and 192.168.2.0/24. Different subnets can only talk through a router. Set up a server in each network (192.168.1.10/24 and 192.168.2.10/24), install a router with one leg in each subnet — router console: 'enable', 'configure terminal', 'interface Ethernet1', 'ip address 192.168.1.1/24' (Ethernet2 gets 192.168.2.1/24) — and give each server its default gateway: 'ip route add default via 192.168.1.1'. Both servers must reach each other; try 'traceroute' to see the router hop.",
+			"brief": "Gamma runs two offices on different networks: 192.168.1.0/24 and 192.168.2.0/24. Different subnets can only talk through a router. Set up a server in each network (192.168.1.10/24 and 192.168.2.10/24) and install a router with one leg in each subnet. On a PacketTik R4 (RouterOS style): '/ip address add address=192.168.1.1/24 interface=ether1' and the same for ether2 with 192.168.2.1/24. (On Junivista gear it's Cisco-style: 'conf t', 'interface Ethernet1', 'ip address ...'.) Then give each server its default gateway: 'ip route add default via 192.168.1.1'. Both servers must reach each other; try 'traceroute' to see the router hop.",
 			"reqs": [
 				{"d": "Servers own 192.168.1.10 and 192.168.2.10", "t": func() -> bool: return _owner("192.168.1.10") != null and _owner("192.168.2.10") != null},
 				{"d": "A router owns 192.168.1.1 and 192.168.2.1", "t": func() -> bool: return _router_owns(["192.168.1.1", "192.168.2.1"])},
@@ -102,9 +102,61 @@ static func all() -> Array:
 				{"d": "Office 172.16.1.10 is blocked from vault 172.16.2.20", "t": func() -> bool: return _owner("172.16.2.20") != null and _ping("172.16.1.10", "172.16.2.20", false)},
 			],
 		},
+		{
+			"id": "join_internet",
+			"title": "Join the Internet",
+			"customer": "Zeta Hosting",
+			"reward": 3000,
+			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30 — put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4: '/routing bgp set as=65001', '/routing bgp peer add address=100.64.0.1 as=64500'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route — but the Internet can't answer until you ANNOUNCE your prefix: network add prefix=<your-server-subnet>/24 (or 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
+			"reqs": [
+				{"d": "ISP handoff cabled to a router", "t": func() -> bool: return _uplink_cabled()},
+				{"d": "eBGP session Established", "t": func() -> bool: return _bgp_up() != null},
+				{"d": "A server reaches 8.8.8.8 (prefix announced)", "t": func() -> bool: return _server_pings("8.8.8.8")},
+			],
+		},
+		{
+			"id": "feel_the_heat",
+			"title": "Feeling the heat",
+			"customer": "Your own ops",
+			"reward": 2000,
+			"brief": "Now that you own the room (Server room stage), the racks dump heat into it and the bare walls only dissipate 400W. Exceed that and gear starts tripping offline every cycle. Buy a CoolRow CRAC unit ($600 — it cools 1500W but draws 100W itself) and keep total cooling capacity above total power draw. The HUD shows ⚡draw / ❄capacity.",
+			"reqs": [
+				{"d": "Own at least a Server room (Expand)", "t": func() -> bool: return Game.stage >= 1},
+				{"d": "A CRAC unit is installed and active", "t": func() -> bool: return _has_active("cooling")},
+				{"d": "Cooling capacity covers power draw", "t": func() -> bool: return not Game.overheating()},
+			],
+		},
 	]
 
 # ---------- check helpers ----------
+
+static func _uplink_cabled() -> bool:
+	for d in Game.all_devices():
+		if d.type == "uplink":
+			for i: Net.Iface in d.ifaces:
+				var l := Game.link_at(i)
+				if l and l.other(i).dev.type == "router":
+					return true
+	return false
+
+static func _bgp_up() -> Net.NDevice:
+	for d in Game.all_devices():
+		for nb in d.bgp.get("neighbors", []):
+			if Sim.bgp_established(d, nb):
+				return d
+	return null
+
+static func _server_pings(ip: String) -> bool:
+	for d in Game.all_devices():
+		if d.type == "server" and Sim.ping(d, ip)["ok"]:
+			return true
+	return false
+
+static func _has_active(type: String) -> bool:
+	for d in Game.all_devices():
+		if d.type == type and d.status == "active":
+			return true
+	return false
 
 static func _count(type: String) -> int:
 	var n := 0
