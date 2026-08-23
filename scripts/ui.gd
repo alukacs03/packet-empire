@@ -844,6 +844,12 @@ func _toggle_cli() -> void:
 		cli_session = null
 
 func _cli_key(e: InputEvent) -> void:
+	# the LineEdit consumes Escape (and the watchdog would re-grab editing),
+	# so handle back-navigation here, before the LineEdit sees the key
+	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
+		cli_in.accept_event()
+		_toggle_cli()
+		return
 	if e is InputEventKey and e.pressed and e.keycode == KEY_TAB:
 		cli_in.accept_event()
 		var text := cli_in.text
