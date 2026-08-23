@@ -919,7 +919,7 @@ func _build_menu() -> void:
 		if Game.drill_active:
 			return
 		menu_overlay.visible = false
-		Drill.start()
+		Drill.start(2 + Game.stage)  # bigger room, harder drills
 		get_parent().rebuild_racks()
 		_show_drill_banner())
 	v.add_child(drill_btn)
@@ -959,7 +959,11 @@ func _show_drill_banner() -> void:
 	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
 	drill_box.add_child(_label("Something is broken. Restore connectivity between:", 13, Color(0.85, 0.8, 0.78)))
 	for pair in Drill.targets:
-		drill_box.add_child(_label("   %s  ⇄  %s" % [pair[0], pair[1]], 13, Color(0.9, 0.88, 0.8)))
+		var a := Sim._ip_owner(pair[0])
+		var ok: bool = a != null and Sim.ping(a, pair[1])["ok"] \
+			and Sim._ip_owner(pair[1]) != null and Sim.ping(Sim._ip_owner(pair[1]), pair[0])["ok"]
+		drill_box.add_child(_label("   %s  %s  ⇄  %s" % ["●" if ok else "○", pair[0], pair[1]],
+			13, Color(0.55, 0.9, 0.6) if ok else Color(0.9, 0.88, 0.8)))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	drill_box.add_child(row)
@@ -972,7 +976,7 @@ func _show_drill_banner() -> void:
 			get_parent().rebuild_racks()
 			drill_panel.visible = false
 		else:
-			_show_drill_banner()
+			_show_drill_banner()  # re-renders per-pair status marks
 			drill_box.add_child(_label("   ...still broken. ping/lldp/show run are your friends.", 12, Color(0.9, 0.6, 0.5))))
 	row.add_child(chk)
 	var give := Button.new()
