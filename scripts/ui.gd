@@ -74,7 +74,12 @@ func _ready() -> void:
 	Game.topology_changed.connect(_refresh_open)
 	Game.topology_changed.connect(_refresh_money)
 	Game.money_changed.connect(_refresh_money)
+	Game.money_changed.connect(_money_flash)
 	_refresh_money()
+
+func _money_flash() -> void:
+	money_lbl.modulate = Color(1.6, 1.6, 1.2)
+	create_tween().tween_property(money_lbl, "modulate", Color.WHITE, 0.5)
 
 func _refresh_money() -> void:
 	var power := ""
@@ -139,6 +144,20 @@ func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label
 	l.add_theme_color_override("font_color", color)
 	return l
 
+func _accent(b: Button) -> Button:
+	b.add_theme_stylebox_override("normal", _sb(Color(0.1, 0.28, 0.34), ACCENT * Color(1, 1, 1, 0.8), 6))
+	b.add_theme_stylebox_override("hover", _sb(Color(0.14, 0.36, 0.44), ACCENT, 6))
+	b.add_theme_color_override("font_color", Color(0.8, 0.97, 1.0))
+	return b
+
+func _section(text: String) -> Label:
+	return _label(text, 11, Color(0.5, 0.58, 0.72))
+
+func _show_overlay(o: Control) -> void:
+	o.modulate.a = 0.0
+	o.visible = true
+	create_tween().tween_property(o, "modulate:a", 1.0, 0.13)
+
 func _mono_edit(width := 200.0) -> LineEdit:
 	var e := LineEdit.new()
 	e.custom_minimum_size = Vector2(width, 0)
@@ -173,7 +192,13 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 
 func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 10)
 	box.add_child(h)
+	var tick := ColorRect.new()
+	tick.color = ACCENT
+	tick.custom_minimum_size = Vector2(4, 24)
+	tick.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	h.add_child(tick)
 	var title := _label("", 20, Color.WHITE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(title)
@@ -199,11 +224,21 @@ func _menu(at: Control, items: Array, on_pick: Callable) -> void:
 func _build_toolbar() -> void:
 	var bar := PanelContainer.new()
 	bar.theme = theme_res
-	bar.position = Vector2(20, 16)
+	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	var sb := _sb(Color(0.05, 0.06, 0.1, 0.92), Color.TRANSPARENT, 0, 10)
+	sb.border_color = Color(0.25, 0.5, 0.6, 0.5)
+	sb.border_width_bottom = 1
+	sb.content_margin_left = 20
+	sb.content_margin_right = 20
+	bar.add_theme_stylebox_override("panel", sb)
 	add_child(bar)
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 8)
+	h.add_theme_constant_override("separation", 10)
 	bar.add_child(h)
+	var logo := _label("▦  PACKET EMPIRE", 17, ACCENT)
+	logo.add_theme_font_override("font", mono)
+	h.add_child(logo)
+	h.add_child(VSeparator.new())
 	for m in [["Select (Q)", 0], ["Place rack (R)", 1]]:
 		var b := Button.new()
 		b.text = m[0]
@@ -213,6 +248,7 @@ func _build_toolbar() -> void:
 		mode_btns[m[1]] = b
 	var cb := Button.new()
 	cb.text = "Contracts"
+	_accent(cb)
 	cb.pressed.connect(open_contracts)
 	h.add_child(cb)
 	expand_btn = Button.new()
@@ -220,14 +256,22 @@ func _build_toolbar() -> void:
 		if Game.expand():
 			_refresh_money())
 	h.add_child(expand_btn)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(spacer)
+	money_lbl = _label("", 17, Color(0.55, 0.95, 0.6))
+	money_lbl.add_theme_font_override("font", mono)
+	h.add_child(money_lbl)
 	var save_btn := Button.new()
 	save_btn.text = "Save"
 	save_btn.pressed.connect(func() -> void: Game.save_game())
 	h.add_child(save_btn)
-	money_lbl = _label("", 16, Color(0.55, 0.95, 0.6))
-	money_lbl.add_theme_font_override("font", mono)
-	h.add_child(money_lbl)
 	update_mode(0)
+	var hint := _label("Q select   ·   R place rack   ·   right-drag pan   ·   scroll zoom   ·   Esc back", 12, Color(0.45, 0.5, 0.62))
+	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	hint.position = Vector2(20, -30)
+	hint.theme = theme_res
+	add_child(hint)
 
 func update_mode(m: int) -> void:
 	for k in mode_btns:
@@ -249,7 +293,7 @@ func open_rack(r: Net.Rack) -> void:
 	dev_overlay.visible = false
 	rack_title.text = "Rack %s" % r.name
 	_refresh_slots()
-	rack_overlay.visible = true
+	_show_overlay(rack_overlay)
 
 func close_rack() -> void:
 	rack_overlay.visible = false
@@ -325,9 +369,11 @@ func _build_dev_overlay() -> void:
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)
 
-	v.add_child(_label("FRONT PANEL — click a port to configure it", 12, MUTED))
+	v.add_child(_section("FRONT PANEL — CLICK A PORT TO CONFIGURE"))
 	var plate := PanelContainer.new()
-	plate.add_theme_stylebox_override("panel", _sb(Color(0.14, 0.15, 0.18), Color(0.35, 0.38, 0.45), 8, 14))
+	var plate_sb := _sb(Color(0.1, 0.11, 0.14), Color(0.4, 0.44, 0.52), 10, 16)
+	plate_sb.border_width_top = 3
+	plate.add_theme_stylebox_override("panel", plate_sb)
 	v.add_child(plate)
 	port_row = GridContainer.new()
 	port_row.columns = 12
@@ -341,7 +387,7 @@ func _build_dev_overlay() -> void:
 	vlan_section = VBoxContainer.new()
 	v.add_child(vlan_section)
 	vlan_section.add_child(HSeparator.new())
-	vlan_section.add_child(_label("VLAN DATABASE (this switch)", 12, MUTED))
+	vlan_section.add_child(_section("VLAN DATABASE (THIS SWITCH)"))
 	vlan_box = VBoxContainer.new()
 	vlan_section.add_child(vlan_box)
 	var vrow := HBoxContainer.new()
@@ -376,7 +422,7 @@ func _build_dev_overlay() -> void:
 		close_dev()
 		Game.uninstall_device(dev)
 		if cur_rack:
-			rack_overlay.visible = true)
+			_show_overlay(rack_overlay))
 	btn_row.add_child(uninstall)
 
 	cli_box = VBoxContainer.new()
@@ -411,7 +457,7 @@ func open_dev(d: Net.NDevice) -> void:
 	cli_box.visible = false
 	cli_toggle.text = "Open console  ▤"
 	_refresh_ports()
-	dev_overlay.visible = true
+	_show_overlay(dev_overlay)
 
 func close_dev() -> void:
 	dev_overlay.visible = false
@@ -554,7 +600,7 @@ func _build_if_overlay() -> void:
 	if_ip_section = VBoxContainer.new()
 	v.add_child(if_ip_section)
 	if_ip_section.add_child(HSeparator.new())
-	if_ip_section.add_child(_label("IP ADDRESSES", 12, MUTED))
+	if_ip_section.add_child(_section("IP ADDRESSES"))
 	if_ip_box = VBoxContainer.new()
 	if_ip_section.add_child(if_ip_box)
 	var ip_row := HBoxContainer.new()
@@ -583,7 +629,7 @@ func _build_if_overlay() -> void:
 func open_iface(i: Net.Iface) -> void:
 	cur_if = i
 	_refresh_iface()
-	if_overlay.visible = true
+	_show_overlay(if_overlay)
 
 func close_iface() -> void:
 	if_overlay.visible = false
@@ -671,13 +717,14 @@ func _build_welcome() -> void:
 	v.add_child(body)
 	var go := Button.new()
 	go.text = "Open Contracts"
+	_accent(go)
 	go.pressed.connect(func() -> void:
 		welcome_overlay.visible = false
 		open_contracts())
 	v.add_child(go)
 
 func show_welcome() -> void:
-	welcome_overlay.visible = true
+	_show_overlay(welcome_overlay)
 
 # ---------- contracts ----------
 
@@ -696,14 +743,14 @@ func _build_contracts_overlay() -> void:
 
 func open_contracts() -> void:
 	_refresh_contracts()
-	contracts_overlay.visible = true
+	_show_overlay(contracts_overlay)
 
 func close_contracts() -> void:
 	contracts_overlay.visible = false
 
 func _build_market_section() -> void:
 	if not Game.offers.is_empty():
-		contracts_box.add_child(_label("INCOMING OFFERS — quote a price per revenue cycle", 12, MUTED))
+		contracts_box.add_child(_section("INCOMING OFFERS — QUOTE A PRICE PER REVENUE CYCLE"))
 	for offer: Dictionary in Game.offers:
 		var card := PanelContainer.new()
 		card.add_theme_stylebox_override("panel", _sb(Color(0.12, 0.1, 0.15), Color(0.6, 0.5, 0.8, 0.5), 8, 14))
@@ -726,6 +773,7 @@ func _build_market_section() -> void:
 			cv.add_child(row)
 			var acc := Button.new()
 			acc.text = "Accept $%d/cycle" % int(offer["budget"])
+			_accent(acc)
 			acc.pressed.connect(func() -> void:
 				Game.accept_counter(offer)
 				_refresh_contracts())
@@ -747,6 +795,7 @@ func _build_market_section() -> void:
 			row.add_child(_label("/cycle  ", 14, MUTED))
 			var send := Button.new()
 			send.text = "Send quote"
+			_accent(send)
 			send.pressed.connect(func() -> void:
 				if not quote.text.strip_edges().is_valid_int():
 					return
@@ -764,7 +813,7 @@ func _build_market_section() -> void:
 				_refresh_contracts())
 			row.add_child(dis)
 	if not Game.deals.is_empty():
-		contracts_box.add_child(_label("ACTIVE DEALS", 12, MUTED))
+		contracts_box.add_child(_section("ACTIVE DEALS"))
 		for deal: Dictionary in Game.deals:
 			var ok: bool = deal["healthy"]
 			contracts_box.add_child(_label(
@@ -785,7 +834,7 @@ func _refresh_contracts() -> void:
 	for c in contracts_box.get_children():
 		c.queue_free()
 	_build_market_section()
-	contracts_box.add_child(_label("CAMPAIGN", 12, MUTED))
+	contracts_box.add_child(_section("CAMPAIGN"))
 	var found_active := false
 	for c in Contracts.all():
 		var done: bool = c["id"] in Game.contracts_done
@@ -820,6 +869,7 @@ func _refresh_contracts() -> void:
 				Color(0.5, 0.95, 0.6) if ok else Color(0.65, 0.6, 0.55)))
 		var btn := Button.new()
 		btn.text = "Check requirements & collect"
+		_accent(btn)
 		btn.pressed.connect(func() -> void:
 			Game.try_complete_contract(c)
 			_refresh_contracts())
@@ -901,7 +951,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			else:
 				close_dev()
 				if cur_rack:
-					rack_overlay.visible = true
+					_show_overlay(rack_overlay)
 		elif welcome_overlay.visible:
 			welcome_overlay.visible = false
 		elif contracts_overlay.visible:

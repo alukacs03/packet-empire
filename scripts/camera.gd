@@ -6,7 +6,7 @@ const ZOOM_MIN := 0.4
 const ZOOM_MAX := 2.5
 
 func _ready() -> void:
-	position = Iso.tile_to_world(Vector2i(6, 6))
+	position = Iso.tile_to_world(Game.grid_size() / 2)  # center on the owned floor
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventMouseMotion and (e.button_mask & (MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)):
