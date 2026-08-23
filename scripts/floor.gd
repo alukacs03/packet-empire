@@ -32,6 +32,15 @@ func _draw() -> void:
 		var pulse := 0.35 + 0.2 * sin(Time.get_ticks_msec() / 280.0)
 		_draw_tile(hover_tile, Color(0.3, 0.62, 0.75, pulse))
 		_outline(hover_tile, Color(0.55, 0.9, 1.0, 0.9), 2.0)
+	# faint tease of the floor space the next stage unlocks
+	if Game.stage < Game.STAGES.size() - 1:
+		var nxt: Vector2i = Game.STAGES[Game.stage + 1]["grid"]
+		for y in nxt.y:
+			for x in nxt.x:
+				if x < grid.x and y < grid.y:
+					continue
+				var pts_n := _tile_points(Vector2i(x, y))
+				draw_polyline(pts_n + PackedVector2Array([pts_n[0]]), Color(0.3, 0.4, 0.5, 0.10), 1.0)
 	# glowing boundary of the owned floor
 	var corners := [Vector2i(0, 0), Vector2i(grid.x, 0), Vector2i(grid.x, grid.y), Vector2i(0, grid.y)]
 	var pts := PackedVector2Array()
