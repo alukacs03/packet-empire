@@ -1680,6 +1680,27 @@ func _build_business_tab() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("DEFENCE"))
+	var scrub_row := HBoxContainer.new()
+	contracts_box.add_child(scrub_row)
+	scrub_row.add_child(_label("  Upstream scrubbing: %s   ($%d/cycle while enabled)" % [
+		"ON" if Game.scrubbing else "off", Game.SCRUB_FEE], 13,
+		Color(0.6, 0.9, 0.7) if Game.scrubbing else Color(0.75, 0.75, 0.8)))
+	var scrub_btn := Button.new()
+	scrub_btn.text = "Disable" if Game.scrubbing else "Enable"
+	scrub_btn.pressed.connect(func() -> void:
+		Game.scrubbing = not Game.scrubbing
+		Game.log_event("SCRUBBING: %s." % ("enabled" if Game.scrubbing else "cancelled"))
+		_refresh_contracts())
+	scrub_row.add_child(scrub_btn)
+	for a: Dictionary in Game.attacks:
+		var blackholed := Game.attack_blackholed(a)
+		var state := "absorbed by scrubbing" if Game.scrubbing else (
+			"blackholed: the flood stops and so does their service" if blackholed
+			else "hitting your network at %d Mbps" % int(a["mbps"]))
+		contracts_box.add_child(_label("  ⚡ %s under attack (%s), %d cycle(s) to go: %s"
+			% [a["target"], a["customer"], int(a["cycles_left"]), state], 13,
+			Color(0.95, 0.6, 0.45) if not (Game.scrubbing or blackholed) else Color(0.85, 0.85, 0.6)))
 	contracts_box.add_child(_section("HISTORY"))
 	if Game.history.size() < 2:
 		contracts_box.add_child(_label("  Charts appear once a few revenue cycles have run.",

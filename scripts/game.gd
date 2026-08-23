@@ -81,6 +81,9 @@ var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
 var templates: Array = []  # golden configs: {name, type, cfg}
+var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
+var scrubbing := false  # upstream scrubbing service, billed per cycle
+const SCRUB_FEE := 220
 var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
 var history: Array = []  # per-cycle snapshot for the graphs
 var staff: Array = []  # people on the payroll
@@ -700,6 +703,40 @@ func _security_sweep() -> int:
 				break
 	return cost
 
+func _attack_tick() -> void:
+	## volumetric attacks: they eat bandwidth on the path to the victim until
+	## they are absorbed, blackholed, or simply burn out
+	for a in attacks.duplicate():
+		a["cycles_left"] = int(a["cycles_left"]) - 1
+		if int(a["cycles_left"]) <= 0:
+			attacks.erase(a)
+			log_event("ATTACK over: the flood against %s has stopped." % a["target"])
+	if stage < 1 or deals.is_empty() or attacks.size() >= 2 or randf() > 0.08:
+		return
+	var victim: Dictionary = deals[randi() % deals.size()]
+	var ip: String = victim["params"].get("ip", "")
+	if ip == "" or not bool(victim.get("healthy", false)):
+		return
+	attacks.append({"target": ip, "customer": victim["customer"],
+		"mbps": 800 + randi() % 4000, "cycles_left": 3 + randi() % 4})
+	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
+		% [ip, victim["customer"]])
+
+func attack_on(ip: String) -> Dictionary:
+	for a in attacks:
+		if a["target"] == ip:
+			return a
+	return {}
+
+func attack_blackholed(a: Dictionary) -> bool:
+	## someone has routed the victim to null0: the flood stops, and so does
+	## the customer's service
+	for d in all_devices():
+		for r in d.static_routes:
+			if String(r["via"]) == "null0" and Net.same_net(a["target"], r["prefix"], int(r["plen"])):
+				return true
+	return false
+
 func _maybe_poach() -> void:
 	## an overpriced contract with a mediocre reputation is a target
 	if deals.is_empty() or randf() > 0.2:
@@ -833,6 +870,10 @@ func sla_tick() -> void:
 				break
 	Rivals.tick()
 	_maybe_poach()
+	_attack_tick()
+	if scrubbing:
+		last_pl["scrubbing"] = -SCRUB_FEE
+		earned -= SCRUB_FEE
 	_run_monitors()
 	if not staff.is_empty():
 		var wages := Staff.payroll()
@@ -850,8 +891,12 @@ func sla_tick() -> void:
 		if deal["healthy"]:
 			var used := _deal_path_links(deal)
 			deal_links[deal["id"]] = used
+			var load: int = int(deal.get("load", 200))
+			var atk := attack_on(deal["params"].get("ip", ""))
+			if not atk.is_empty() and not scrubbing and not attack_blackholed(atk):
+				load += int(atk["mbps"])  # the flood rides the same path
 			for l in used:
-				link_load[l] = link_load.get(l, 0) + int(deal.get("load", 200))
+				link_load[l] = link_load.get(l, 0) + load
 	last_link_load = link_load
 	for deal in deals.duplicate():
 		deal["cycles"] = int(deal.get("cycles", 0)) + 1
@@ -1121,8 +1166,23 @@ func remove_ip(i: Net.Iface, cidr: String) -> void:
 	topology_changed.emit()
 
 func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String) -> bool:
-	if not via.is_valid_ip_address() or plen < 0 or plen > 32 or not prefix.is_valid_ip_address():
+	var v6 := Net.is_v6(prefix)
+	var max_len := 128 if v6 else 32
+	var blackhole := via.to_lower() in ["null0", "blackhole", "discard"]
+	if not blackhole and Net.is_v6(via) != v6:
 		return false
+	if not blackhole and not v6 and not via.is_valid_ip_address():
+		return false
+	if not blackhole and v6 and Net.v6_hextets(via).is_empty():
+		return false
+	if plen < 0 or plen > max_len:
+		return false
+	if not v6 and not prefix.is_valid_ip_address():
+		return false
+	if v6 and Net.v6_hextets(prefix).is_empty():
+		return false
+	if blackhole:
+		via = "null0"
 	remove_static_route(dev, prefix, plen)
 	dev.static_routes.append({"prefix": prefix, "plen": plen, "via": via})
 	topology_changed.emit()
@@ -1167,6 +1227,7 @@ func _serialize() -> Dictionary:
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates,
+		"attacks": attacks, "scrubbing": scrubbing,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -1380,6 +1441,8 @@ func _apply(data: Dictionary) -> void:
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	market_intel = int(data.get("market_intel", 0))
+	attacks = data.get("attacks", [])
+	scrubbing = bool(data.get("scrubbing", false))
 	templates = data.get("templates", [])
 	monitors = data.get("monitors", [])
 	history = data.get("history", [])

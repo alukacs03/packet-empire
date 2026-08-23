@@ -1426,6 +1426,40 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- blackhole routes and attacks ---
+	Game.attacks = []
+	Game.scrubbing = false
+	var bh_rtr := Game.new_device("rtr-edge")
+	var bh_srv := Game.new_device("srv-1")
+	var bh_rack := Game.add_rack(Vector2i(14, 1))
+	bh_rack.slots[0] = bh_rtr
+	bh_rack.slots[1] = bh_srv
+	Game.connect_ifaces(bh_srv.ifaces[0], bh_rtr.ifaces[0])
+	Game.add_ip(bh_rtr.ifaces[0], "10.240.0.1/24")
+	Game.add_ip(bh_srv.ifaces[0], "10.240.0.10/24")
+	Game.add_ip(bh_rtr.ifaces[1], "10.241.0.1/24")
+	var far_srv := Game.new_device("srv-1")
+	bh_rack.slots[2] = far_srv
+	Game.connect_ifaces(far_srv.ifaces[0], bh_rtr.ifaces[2])
+	Game.add_ip(bh_rtr.ifaces[2], "10.242.0.1/24")
+	Game.add_ip(far_srv.ifaces[0], "10.242.0.10/24")
+	Game.add_static_route(far_srv, "0.0.0.0", 0, "10.242.0.1")
+	Game.add_static_route(bh_srv, "0.0.0.0", 0, "10.240.0.1")  # the victim needs a way back
+	check(Sim.ping(far_srv, "10.240.0.10")["ok"], "blackhole: the victim is reachable to begin with")
+	var bh_s := CLI.new_session(bh_rtr)
+	bh_s.exec("en")
+	bh_s.exec("conf t")
+	check(bh_s.exec("ip route 10.240.0.10/32 null0").is_empty(), "blackhole: a discard route is accepted")
+	bh_s.exec("end")
+	check(not Sim.ping(far_srv, "10.240.0.10")["ok"], "blackhole: traffic to the victim is discarded")
+	var atk := {"target": "10.240.0.10", "customer": "Test", "mbps": 5000, "cycles_left": 3}
+	Game.attacks = [atk]
+	check(Game.attack_blackholed(atk), "blackhole: the mitigation is recognised")
+	Game.remove_static_route(bh_rtr, "10.240.0.10", 32)
+	check(not Game.attack_blackholed(atk), "blackhole: removing the route ends the mitigation")
+	check(Sim.ping(far_srv, "10.240.0.10")["ok"], "blackhole: service returns once the route is gone")
+	Game.attacks = []
+
 	# --- golden config templates ---
 	Game.templates = []
 	var tpl_a := Game.new_device("sw-8")

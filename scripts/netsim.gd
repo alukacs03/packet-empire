@@ -364,6 +364,8 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary)
 	var rt := _route_lookup(dev, dst_ip)
 	if rt.is_empty():
 		return "no route to host"
+	if rt.get("next_hop", "") == "null0":
+		return "blackholed by a discard route"
 	var out: Net.Iface = rt["iface"]
 	var src_ip := _first_ip(out, Net.is_v6(dst_ip))
 	var mac := _arp_resolve(dev, out, rt["next_hop"])
@@ -404,7 +406,10 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 					if int(parts[1]) > via_len and Net.same_net(r["via"], parts[0], int(parts[1])):
 						via_len = int(parts[1])
 						via_rt = {"iface": i, "next_hop": r["via"]}
-			if not via_rt.is_empty():
+			if String(r["via"]) == "null0":
+				best_len = int(r["plen"])
+				best = {"iface": null, "next_hop": "null0"}  # discard route
+			elif not via_rt.is_empty():
 				best_len = int(r["plen"])
 				best = via_rt
 	for r in _bgp_learned(dev) + _ospf_learned(dev):
@@ -674,8 +679,8 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)})
 			return
 		var rt := _route_lookup(dev, p["dst_ip"])
-		if rt.is_empty():
-			return  # ponytail: silently drop; ICMP net-unreachable later
+		if rt.is_empty() or rt.get("next_hop", "") == "null0":
+			return  # no route, or deliberately discarded
 		var out: Net.Iface = rt["iface"]
 		var mac := _arp_resolve(dev, out, rt["next_hop"])
 		if mac == "":
