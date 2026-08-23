@@ -1417,6 +1417,33 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- config versions, diff and rollback ---
+	var ver_sw := Game.new_device("sw-8")
+	var ver_rack := Game.add_rack(Vector2i(10, 1))
+	ver_rack.slots[0] = ver_sw
+	var vs := CLI.new_session(ver_sw)
+	vs.exec("en")
+	vs.exec("conf t")
+	vs.exec("vlan 61")
+	vs.exec("end")
+	check(vs.exec("write memory").contains("version 1"), "cfgver: write memory keeps a version")
+	check(vs.exec("show config diff").contains("matches"), "cfgver: no drift right after saving")
+	vs.exec("conf t")
+	vs.exec("vlan 62")
+	vs.exec("interface Ethernet1")
+	vs.exec("switchport access vlan 62")
+	vs.exec("shutdown")
+	vs.exec("end")
+	var diff_out: String = vs.exec("show config diff")
+	check(diff_out.contains("+ vlan 62"), "cfgver: the diff names the new VLAN")
+	check(diff_out.contains("untagged_vlan"), "cfgver: the diff names the changed port")
+	check(diff_out.contains("enabled"), "cfgver: the diff notices the shutdown")
+	check(vs.exec("show config versions").contains("VER"), "cfgver: versions are listed")
+	check(vs.exec("rollback 1").contains("Rolled back"), "cfgver: rollback runs")
+	check(not ver_sw.vlans.has(62) and ver_sw.ifaces[0].enabled,
+		"cfgver: rollback restored the earlier configuration")
+	check(vs.exec("rollback 9").contains("no such version"), "cfgver: a bad version is refused")
+
 	# --- interface ranges ---
 	var rng_sw := Game.new_device("sw-24")
 	var rng_rack := Game.add_rack(Vector2i(9, 1))

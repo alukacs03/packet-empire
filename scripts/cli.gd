@@ -109,6 +109,9 @@ class EOS extends Session:
 			{"m": ["priv"], "p": ["copy", "running-config", "startup-config"], "h": _write_mem},
 			{"m": ["priv"], "p": ["reload"], "h": _reload},
 			{"m": EP, "p": ["show", "startup-config"], "h": _show_startup},
+			{"m": EP, "p": ["show", "config", "versions"], "h": _show_versions},
+			{"m": EP, "p": ["show", "config", "diff"], "h": _show_diff},
+			{"m": ["priv"], "p": ["rollback"], "h": _rollback},
 			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
 			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping},
 			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
@@ -929,7 +932,47 @@ class EOS extends Session:
 
 	func _write_mem(_r: Array) -> String:
 		dev.startup = Game.device_config(dev)
-		return "Copy completed successfully.\n"
+		var n := Game.save_config_version(dev)
+		return "Copy completed successfully. (saved as version %d)\n" % n
+
+	func _show_versions(_r: Array) -> String:
+		if dev.versions.is_empty():
+			return "  (no saved versions: 'write memory' keeps one)\n"
+		var out := "%-4s %s\n" % ["VER", "SAVED AT"]
+		var n := 1
+		for v in dev.versions:
+			out += "%-4d cycle %d\n" % [n, int(v["cycle"])]
+			n += 1
+		return out
+
+	func _show_diff(r: Array) -> String:
+		## show config diff [version]: running against startup, or a version
+		var base: Dictionary = dev.startup
+		var label := "startup-config"
+		if r.size() == 1 and String(r[0]).is_valid_int():
+			var idx := int(r[0]) - 1
+			if idx < 0 or idx >= dev.versions.size():
+				return "% no such version\n"
+			base = dev.versions[idx]["cfg"]
+			label = "version %d" % (idx + 1)
+		if base.is_empty():
+			return "% nothing saved to compare against\n"
+		var diff := Game.config_diff(base, Game.device_config(dev))
+		if diff.is_empty():
+			return "running-config matches %s\n" % label
+		return "running-config vs %s:\n  %s\n" % [label, "\n  ".join(PackedStringArray(diff))]
+
+	func _rollback(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "usage: rollback <version>   (see 'show config versions')\n"
+		var idx := int(r[0]) - 1
+		if idx < 0 or idx >= dev.versions.size():
+			return "% no such version\n"
+		Game.apply_device_config(dev, dev.versions[idx]["cfg"])
+		mode = "priv"
+		ctx_if = null
+		ctx_ifs = []
+		return "Rolled back to version %d.\n" % (idx + 1)
 
 	func _reload(_r: Array) -> String:
 		var had := not dev.startup.is_empty()

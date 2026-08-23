@@ -1066,6 +1066,64 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	cfg.erase("startup")
 	return cfg
 
+func save_config_version(d: Net.NDevice) -> int:
+	## keep a rollback point; returns the version number
+	d.versions.append({"cycle": cycle, "cfg": device_config(d)})
+	if d.versions.size() > 10:
+		d.versions.pop_front()
+	return d.versions.size()
+
+func config_diff(old_cfg: Dictionary, new_cfg: Dictionary) -> Array:
+	## human-readable differences between two device configurations
+	var out: Array = []
+	var old_v: Dictionary = old_cfg.get("vlans", {})
+	var new_v: Dictionary = new_cfg.get("vlans", {})
+	for vid in new_v:
+		if not old_v.has(vid):
+			out.append("+ vlan %s (%s)" % [vid, new_v[vid]])
+	for vid in old_v:
+		if not new_v.has(vid):
+			out.append("- vlan %s (%s)" % [vid, old_v[vid]])
+	var old_r := JSON.stringify(old_cfg.get("static_routes", []))
+	var new_r := JSON.stringify(new_cfg.get("static_routes", []))
+	if old_r != new_r:
+		out.append("~ static routes changed (%d -> %d)" % [
+			old_cfg.get("static_routes", []).size(), new_cfg.get("static_routes", []).size()])
+	if JSON.stringify(old_cfg.get("acls", [])) != JSON.stringify(new_cfg.get("acls", [])):
+		out.append("~ firewall rules changed (%d -> %d)" % [
+			old_cfg.get("acls", []).size(), new_cfg.get("acls", []).size()])
+	if bool(old_cfg.get("stateful", false)) != bool(new_cfg.get("stateful", false)):
+		out.append("~ firewall inspection: %s -> %s" % [
+			"stateful" if old_cfg.get("stateful", false) else "stateless",
+			"stateful" if new_cfg.get("stateful", false) else "stateless"])
+	if JSON.stringify(old_cfg.get("bgp", {})) != JSON.stringify(new_cfg.get("bgp", {})):
+		out.append("~ BGP configuration changed")
+	if JSON.stringify(old_cfg.get("ospf", {})) != JSON.stringify(new_cfg.get("ospf", {})):
+		out.append("~ OSPF configuration changed")
+	var old_if := {}
+	for i in old_cfg.get("ifaces", []):
+		old_if[i["name"]] = i
+	for ni in new_cfg.get("ifaces", []):
+		var name: String = ni["name"]
+		if not old_if.has(name):
+			out.append("+ interface %s" % name)
+			continue
+		var oi: Dictionary = old_if[name]
+		for field in ["mode", "untagged_vlan", "mtu", "enabled", "nat", "lag", "helper",
+				"port_security", "tagged_vlans", "ips"]:
+			var a := JSON.stringify(oi.get(field, null))
+			var b := JSON.stringify(ni.get(field, null))
+			if a != b:
+				out.append("~ interface %s: %s %s -> %s" % [name, field, a, b])
+	for name in old_if:
+		var still := false
+		for ni in new_cfg.get("ifaces", []):
+			if ni["name"] == name:
+				still = true
+		if not still:
+			out.append("- interface %s" % name)
+	return out
+
 func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	## restore a saved configuration onto a live device (reload)
 	if cfg.is_empty():
@@ -1140,7 +1198,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
-		"ospf": d.ospf, "startup": d.startup, "acquired_from": d.acquired_from, "ifaces": ifs}
+		"ospf": d.ospf, "startup": d.startup, "versions": d.versions,
+		"acquired_from": d.acquired_from, "ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(save_path):
@@ -1191,6 +1250,7 @@ func _apply(data: Dictionary) -> void:
 		d.bgp = sd.get("bgp", {})
 		d.ospf = sd.get("ospf", {})
 		d.startup = sd.get("startup", {})
+		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
