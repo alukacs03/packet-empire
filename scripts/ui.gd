@@ -21,6 +21,9 @@ var name_hint: Label
 var status_opt: OptionButton
 var port_row: VBoxContainer
 var conn_list: VBoxContainer
+var cap_box: VBoxContainer
+var cap_out: RichTextLabel
+var cap_toggle: Button
 var cli_box: VBoxContainer
 var cli_out: RichTextLabel
 var cli_in: LineEdit
@@ -47,6 +50,8 @@ var if_cable_lbl: Label
 var if_cable_btn: Button
 var if_peer_btn: Button
 
+var pedia_overlay: Control
+var pedia_body: RichTextLabel
 var menu_overlay: Control
 var map_overlay: Control
 var welcome_overlay: Control
@@ -84,6 +89,7 @@ func _ready() -> void:
 	_build_welcome()
 	_build_map()
 	_build_menu()
+	_build_pedia()
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
 	Game.money_changed.connect(_refresh_tutorial)
@@ -135,7 +141,7 @@ func _process(_dt: float) -> void:
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
-		or menu_overlay.visible
+		or menu_overlay.visible or pedia_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -273,6 +279,10 @@ func _build_toolbar() -> void:
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
+	var learnb := Button.new()
+	learnb.text = "Learn"
+	learnb.pressed.connect(open_pedia)
+	h.add_child(learnb)
 	var mapb := Button.new()
 	mapb.text = "Map (M)"
 	mapb.pressed.connect(toggle_map)
@@ -443,6 +453,13 @@ func _build_dev_overlay() -> void:
 	cli_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cli_toggle.pressed.connect(_toggle_cli)
 	btn_row.add_child(cli_toggle)
+	cap_toggle = Button.new()
+	cap_toggle.text = "Packets ⇅"
+	cap_toggle.tooltip_text = "Live capture (tcpdump) of this device"
+	cap_toggle.pressed.connect(func() -> void:
+		cap_box.visible = not cap_box.visible
+		_refresh_capture())
+	btn_row.add_child(cap_toggle)
 	var uninstall := Button.new()
 	uninstall.text = "Uninstall (50% refund)"
 	uninstall.pressed.connect(func() -> void:
@@ -453,6 +470,18 @@ func _build_dev_overlay() -> void:
 			_show_overlay(rack_overlay))
 	btn_row.add_child(uninstall)
 
+	cap_box = VBoxContainer.new()
+	cap_box.visible = false
+	v.add_child(cap_box)
+	cap_out = RichTextLabel.new()
+	cap_out.custom_minimum_size = Vector2(0, 170)
+	cap_out.add_theme_font_override("normal_font", mono)
+	cap_out.add_theme_font_size_override("normal_font_size", 12)
+	cap_out.add_theme_color_override("default_color", Color(0.75, 0.85, 0.95))
+	var cap_bg := PanelContainer.new()
+	cap_bg.add_theme_stylebox_override("panel", _sb(Color(0.04, 0.05, 0.07), Color(0.3, 0.35, 0.45), 6, 10))
+	cap_bg.add_child(cap_out)
+	cap_box.add_child(cap_bg)
 	cli_box = VBoxContainer.new()
 	cli_box.visible = false
 	v.add_child(cli_box)
@@ -483,6 +512,7 @@ func open_dev(d: Net.NDevice) -> void:
 	cur_dev = d
 	_refresh_dev_header()
 	cli_box.visible = false
+	cap_box.visible = false
 	cli_toggle.text = "Open console  ▤"
 	_refresh_ports()
 	_show_overlay(dev_overlay)
@@ -745,6 +775,39 @@ func _cable_action() -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
 
+# ---------- encyclopedia ----------
+
+func _build_pedia() -> void:
+	pedia_overlay = _overlay()
+	var v := _card(pedia_overlay, 860)
+	var t := _header(v, func() -> void: pedia_overlay.visible = false)
+	t.text = "Networkopedia"
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 14)
+	v.add_child(h)
+	var topics := VBoxContainer.new()
+	topics.add_theme_constant_override("separation", 2)
+	topics.custom_minimum_size = Vector2(230, 480)
+	h.add_child(topics)
+	pedia_body = RichTextLabel.new()
+	pedia_body.custom_minimum_size = Vector2(560, 480)
+	pedia_body.add_theme_font_size_override("normal_font_size", 15)
+	pedia_body.add_theme_color_override("default_color", Color(0.82, 0.86, 0.93))
+	h.add_child(pedia_body)
+	for entry in Pedia.TOPICS:
+		var b := Button.new()
+		b.text = entry[0]
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.pressed.connect(func() -> void:
+			pedia_body.clear()
+			pedia_body.append_text("[b]%s[/b]\n\n%s" % [entry[0], entry[1]]))
+		topics.add_child(b)
+	pedia_body.bbcode_enabled = true
+	pedia_body.append_text("[b]Networkopedia[/b]\n\nPick a topic on the left. Every article ends with the exact in-game commands to try it yourself.")
+
+func open_pedia() -> void:
+	_show_overlay(pedia_overlay)
+
 # ---------- system menu ----------
 
 func _build_menu() -> void:
@@ -938,6 +1001,7 @@ func _build_market_section() -> void:
 			Game.repay()
 			_refresh_contracts())
 		bank.add_child(repay)
+	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	if not Game.events.is_empty():
 		contracts_box.add_child(_section("EVENT LOG"))
 		for ev in Game.events.slice(0, 4):
@@ -1084,7 +1148,17 @@ func _refresh_contracts() -> void:
 
 # ---------- refresh / CLI ----------
 
+func _refresh_capture() -> void:
+	if cap_box == null or not cap_box.visible or cur_dev == null:
+		return
+	cap_out.clear()
+	if cur_dev.capture.is_empty():
+		cap_out.append_text("(no frames captured — generate some traffic, e.g. ping something)")
+	else:
+		cap_out.append_text("\n".join(PackedStringArray(cur_dev.capture.slice(-14))))
+
 func _refresh_open() -> void:
+	_refresh_capture()
 	if if_overlay.visible and cur_if:
 		_refresh_iface()
 	if dev_overlay.visible and cur_dev:
@@ -1177,6 +1251,7 @@ func _cli_submit(cmd: String) -> void:
 			cli_session = cli_stack.pop_back()
 			cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)
 	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
+	_refresh_capture()
 	if not Sim.last_trace.is_empty():
 		get_parent().play_trace(Sim.last_trace)
 
@@ -1191,6 +1266,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					_show_overlay(rack_overlay)
+		elif pedia_overlay.visible:
+			pedia_overlay.visible = false
 		elif menu_overlay.visible:
 			menu_overlay.visible = false
 		elif map_overlay.visible:

@@ -51,6 +51,7 @@ var contracts_done: Array = []
 var cycle := 0
 var reputation := 50  # 0-100; feeds customer budgets
 var debt := 0  # bank loan principal
+var stats := {"earned": 0, "incidents": 0, "faults": 0, "contracts": 0, "deals": 0}
 
 const LOAN_TRANCHE := 1000
 const LOAN_MAX := 10000
@@ -116,6 +117,8 @@ func try_complete_contract(c: Dictionary) -> bool:
 		if not r["t"].call():
 			return false
 	contracts_done.append(c["id"])
+	stats["contracts"] += 1
+	stats["earned"] += int(c["reward"])
 	money += c["reward"]
 	money_changed.emit()
 	return true
@@ -154,6 +157,7 @@ func dismiss_offer(offer: Dictionary) -> void:
 
 func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	offers.erase(offer)
+	stats["deals"] += 1
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
 		"params": offer["params"], "fee": fee, "brief": offer["brief"], "healthy": false})
 	money_changed.emit()
@@ -187,6 +191,7 @@ func _security_sweep() -> int:
 				if Sim.ping(srv, mgmt_ip)["ok"]:
 					incidents_seen[key] = true
 					cost += 100
+					stats["incidents"] += 1
 					reputation = maxi(0, reputation - 5)
 					log_event("SECURITY: %s's machine %s reached %s management at %s — incident response -$100. Isolate your management plane (firewall it off from customer networks)!"
 						% [deal["customer"], srv.name, d.name, mgmt_ip])
@@ -206,6 +211,7 @@ func _field_fault() -> void:
 		return
 	var victim: Net.Iface = candidates[randi() % candidates.size()]
 	victim.enabled = false
+	stats["faults"] += 1
 	log_event("FIELD: link fault on %s %s — port went down. Find it (Map, lldp, counters) and re-enable it!"
 		% [victim.dev.name, victim.name])
 	topology_changed.emit()
@@ -265,6 +271,8 @@ func sla_tick() -> void:
 			offers.erase(offer)
 	if offers.size() < 2 and contracts_done.size() >= 2 and randf() < 0.7:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
+	if earned > 0:
+		stats["earned"] += earned
 	if earned != 0:
 		money += earned
 		money_changed.emit()
@@ -479,7 +487,7 @@ func save_game() -> void:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"money": money, "stage": stage, "cycle": cycle,
-		"reputation": reputation, "debt": debt,
+		"reputation": reputation, "debt": debt, "stats": stats,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
@@ -510,6 +518,8 @@ func load_game() -> bool:
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
 	debt = int(data.get("debt", 0))
+	for k in data.get("stats", {}):
+		stats[k] = int(data["stats"][k])
 	events = data.get("events", [])
 	incidents_seen = data.get("incidents_seen", {})
 	deals = data.get("deals", [])
