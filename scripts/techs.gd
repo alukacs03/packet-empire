@@ -83,8 +83,9 @@ func _resize_crew() -> void:
 		var p := Person.new()
 		p.crew = self
 		p.idx = people.size()
-		p.position = _random_spot()
-		p.target = _random_spot()
+		# start people apart: two figures spawning on the same tile look like one
+		p.position = _random_spot() + Vector2(-30.0 + p.idx % 3 * 30.0, 0.0)
+		p.target = _work_spot(p.idx)
 		p.phase = _rng.randf() * TAU
 		var spawn_tile := Iso.world_to_tile(p.position)
 		p.z_index = spawn_tile.x + spawn_tile.y + 2
