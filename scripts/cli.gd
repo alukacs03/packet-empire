@@ -1754,7 +1754,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  aaad <secret> | aaad log             authenticate admins, keep the audit trail\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  aaad <secret> | aaad log             authenticate admins, keep the audit trail\n  cert issue|renew|auto|list           TLS certificates and their expiry\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1848,6 +1848,36 @@ class Linux extends Session:
 						leg.mac = legs[0].mac  # a bond presents one address
 				Game.topology_changed.emit()
 				return "bond%d: %s\n" % [gid, " ".join(PackedStringArray(t.slice(1)))]
+			"cert":
+				var certs: Dictionary = Game.certs_on(dev)
+				if t.size() >= 3 and t[1] == "issue":
+					var life := int(t[3]) if t.size() > 3 and String(t[3]).is_valid_int() \
+						else Game.CERT_LIFE
+					var cerr := Game.issue_cert(dev, String(t[2]), life)
+					return "cert: %s\n" % cerr if cerr != "" \
+						else "issued %s, good for %d cycles\n" % [t[2], life]
+				if t.size() == 3 and t[1] == "renew":
+					if not certs.has(t[2]):
+						return "cert: no certificate named %s\n" % t[2]
+					Game.issue_cert(dev, String(t[2]))
+					return "renewed %s\n" % t[2]
+				if t.size() == 4 and t[1] == "auto" and String(t[3]) in ["on", "off"]:
+					if not certs.has(t[2]):
+						return "cert: no certificate named %s\n" % t[2]
+					certs[t[2]]["auto"] = String(t[3]) == "on"
+					Game.topology_changed.emit()
+					return "%s renewal for %s\n" % ["automatic" if t[3] == "on" else "manual", t[2]]
+				if t.size() >= 2 and t[1] == "list" or t.size() == 1:
+					if certs.is_empty():
+						return "(no certificates on this host)\n"
+					var cout := "%-24s %-10s %s\n" % ["NAME", "EXPIRES", "RENEWAL"]
+					for cname in certs:
+						var left: int = int(certs[cname]["expires"]) - Game.cycle
+						cout += "%-24s %-10s %s\n" % [cname,
+							"EXPIRED" if left <= 0 else "%d cycles" % left,
+							"automatic" if bool(certs[cname].get("auto", false)) else "by hand"]
+					return cout
+				return "usage: cert issue <name> [cycles] | cert renew <name> | cert auto <name> on|off | cert list\n"
 			"aaad":
 				if t.size() >= 2 and t[1] == "off":
 					dev.services.erase("aaa")
@@ -2196,7 +2226,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "cert", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

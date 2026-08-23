@@ -1449,6 +1449,28 @@ func _refresh_ops() -> void:
 			if err != "":
 				_toast(err))
 		frow.add_child(swap)
+	var certs_due := Game.expiring_certs()
+	if not certs_due.is_empty():
+		ops_box.add_child(_section("CERTIFICATES"))
+		for c_row: Dictionary in certs_due:
+			var left: int = int(c_row["left"])
+			var crow := HBoxContainer.new()
+			crow.add_theme_constant_override("separation", 8)
+			ops_box.add_child(crow)
+			var cl2 := _label("  %-24s on %-10s %s%s" % [c_row["name"], c_row["dev"].name,
+				"EXPIRED" if left <= 0 else "expires in %d cycle(s)" % left,
+				"   (renews itself)" if bool(c_row["auto"]) else ""], 12,
+				Prefs.bad_colour() if left <= 0 else Color(1.0, 0.8, 0.5))
+			cl2.add_theme_font_override("font", mono)
+			cl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			crow.add_child(cl2)
+			if not bool(c_row["auto"]):
+				var renew := Button.new()
+				renew.text = "Renew"
+				renew.pressed.connect(func() -> void:
+					Game.issue_cert(c_row["dev"], String(c_row["name"]))
+					_refresh_ops())
+				crow.add_child(renew)
 	ops_box.add_child(_section("MONITORS"))
 	if Game.monitors.is_empty():
 		ops_box.add_child(_label("  No checks defined: add one so you hear about failures.",

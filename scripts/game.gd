@@ -1690,6 +1690,64 @@ func _attack_tick() -> void:
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
 
+# ---------- certificates ----------
+
+const CERT_LIFE := 24  # cycles a freshly issued certificate is good for
+const CERT_WARN := 4  # how far ahead the warnings start
+const CERT_AUTO_FEE := 8  # per cycle, per automatically renewed certificate
+
+func certs_on(d: Net.NDevice) -> Dictionary:
+	return d.services.get("tls", {})
+
+func issue_cert(d: Net.NDevice, name: String, life := CERT_LIFE) -> String:
+	if name.strip_edges() == "":
+		return "a certificate needs a name"
+	if not d.services.has("tls"):
+		d.services["tls"] = {}
+	d.services["tls"][name] = {"expires": cycle + life,
+		"auto": bool(d.services["tls"].get(name, {}).get("auto", false))}
+	topology_changed.emit()
+	return ""
+
+func cert_expired(d: Net.NDevice) -> bool:
+	for name in certs_on(d):
+		if cycle >= int(certs_on(d)[name]["expires"]):
+			return true
+	return false
+
+func expiring_certs() -> Array:
+	## everything due to expire soon or already dead, worst first
+	var out: Array = []
+	for d in all_devices():
+		for name in certs_on(d):
+			var left: int = int(certs_on(d)[name]["expires"]) - cycle
+			if left <= CERT_WARN:
+				out.append({"dev": d, "name": String(name), "left": left,
+					"auto": bool(certs_on(d)[name].get("auto", false))})
+	out.sort_custom(func(x, y): return int(x["left"]) < int(y["left"]))
+	return out
+
+func cert_tick() -> void:
+	var auto_cost := 0
+	for d in all_devices():
+		for name in certs_on(d):
+			var rec: Dictionary = certs_on(d)[name]
+			var left: int = int(rec["expires"]) - cycle
+			if bool(rec.get("auto", false)):
+				auto_cost += CERT_AUTO_FEE
+				if left <= 2:
+					rec["expires"] = cycle + CERT_LIFE  # renewed without anyone noticing
+				continue
+			if left == CERT_WARN:
+				log_event("CERTIFICATE: %s on %s expires in %d cycles."
+					% [name, d.name, CERT_WARN])
+			elif left == 0:
+				log_event("CERTIFICATE: %s on %s has EXPIRED. The service is up and every client refuses to talk to it."
+					% [name, d.name])
+	if auto_cost > 0:
+		last_pl["certificates"] = int(last_pl.get("certificates", 0)) - auto_cost
+		money -= auto_cost
+
 # ---------- route hijacks and RPKI ----------
 
 var hijacks: Array = []  # [{prefix, plen, by, cycles_left}]
@@ -1935,6 +1993,7 @@ func sla_tick() -> void:
 		power_tick()
 		carrier_tick()
 		hijack_tick()
+		cert_tick()
 	if drill_active:
 		return  # the economy pauses while you run a drill
 	if sandbox:
@@ -2039,6 +2098,13 @@ func sla_tick() -> void:
 	var deal_links := {}
 	for deal in deals:
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
+		var deal_host := Contracts._owner(String(deal["params"].get("ip", "")))
+		if deal["healthy"] and deal_host != null and cert_expired(deal_host):
+			# nothing is broken and nothing will connect, which is the point
+			deal["healthy"] = false
+			deal["cert_expired"] = true
+		else:
+			deal["cert_expired"] = false
 		if deal["healthy"] and not hijack_on(String(deal["params"].get("ip", ""))).is_empty():
 			# the service is fine; the internet is simply sending its traffic
 			# somewhere else, which the customer experiences as an outage

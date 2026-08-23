@@ -3129,6 +3129,36 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- certificates: up, correct, and refusing every client ---
+	var ce_rack := Game.add_rack(Vector2i(44, 1))
+	var ce_srv := Game.new_device("srv-1")
+	ce_rack.slots[0] = ce_srv
+	var ce_cli := CLI.new_session(ce_srv)
+	check(ce_cli.exec("cert list").contains("no certificates"), "cert: a host starts with none")
+	check(ce_cli.exec("cert issue shop.example.hu 6").contains("issued"),
+		"cert: one can be issued with a life")
+	check(not Game.cert_expired(ce_srv), "cert: a fresh certificate is not expired")
+	check(ce_cli.exec("cert list").contains("6 cycles"), "cert: the listing shows what is left")
+	var ce_saved := Game.cycle
+	Game.cycle += 4
+	var ce_due := Game.expiring_certs()
+	check(ce_due.size() >= 1, "cert: it appears in the expiry list before it dies")
+	Game.cycle += 3
+	check(Game.cert_expired(ce_srv), "cert: and then it expires")
+	check(ce_cli.exec("cert list").contains("EXPIRED"), "cert: which the listing says plainly")
+	check(ce_cli.exec("cert renew shop.example.hu").contains("renewed"), "cert: renewal works")
+	check(not Game.cert_expired(ce_srv), "cert: and clears the expiry")
+	check(ce_cli.exec("cert renew nothing.example.hu").contains("no certificate"),
+		"cert: renewing something that does not exist is refused")
+	# automatic renewal removes the failure mode entirely, for a fee
+	check(ce_cli.exec("cert auto shop.example.hu on").contains("automatic"),
+		"cert: renewal can be automated")
+	Game.cycle += Game.CERT_LIFE
+	Game.cert_tick()
+	check(not Game.cert_expired(ce_srv),
+		"cert: an automatic certificate renews itself before anyone notices")
+	Game.cycle = ce_saved
+
 	# --- AAA for administrators, and the lockout it can cause ---
 	var aa_rack := Game.add_rack(Vector2i(43, 1))
 	var aa_sw := Game.new_device("sw-24")
