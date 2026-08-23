@@ -19,6 +19,55 @@ static func mono_font() -> SystemFont:
 		_mono_shared.font_names = PackedStringArray(["Menlo", "Consolas", "monospace"])
 	return _mono_shared
 
+# ================================================================== Graph ==
+
+class Graph extends Control:
+	## a small line chart over Game.history
+	var key := "money"
+	var colour := Color(0.5, 0.9, 0.6)
+	var title := ""
+	var _mono: SystemFont
+
+	func setup(k: String, t: String, c: Color) -> Graph:
+		key = k
+		title = t
+		colour = c
+		_mono = UIW.mono_font()
+		custom_minimum_size = Vector2(560, 90)
+		return self
+
+	func _draw() -> void:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.08, 0.11))
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.25, 0.3, 0.38), false, 1.0)
+		var pts: Array = []
+		for h in Game.history:
+			pts.append(float(h.get(key, 0)))
+		if pts.size() < 2:
+			draw_string(_mono, Vector2(10, size.y / 2.0),
+				"%s: not enough history yet" % title, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+				Color(0.5, 0.55, 0.65))
+			return
+		var lo: float = pts[0]
+		var hi: float = pts[0]
+		for v in pts:
+			lo = minf(lo, float(v))
+			hi = maxf(hi, float(v))
+		if is_equal_approx(lo, hi):
+			hi = lo + 1.0
+		var line := PackedVector2Array()
+		for i in pts.size():
+			var x := 8.0 + (size.x - 16.0) * float(i) / float(maxi(pts.size() - 1, 1))
+			var y: float = size.y - 20.0 - (size.y - 34.0) * (float(pts[i]) - lo) / (hi - lo)
+			line.append(Vector2(x, y))
+		if lo < 0.0 and hi > 0.0:  # zero line, when the series crosses it
+			var zy := size.y - 20.0 - (size.y - 34.0) * (0.0 - lo) / (hi - lo)
+			draw_line(Vector2(8, zy), Vector2(size.x - 8, zy), Color(0.4, 0.44, 0.55, 0.6), 1.0)
+		draw_polyline(line, colour, 2.0)
+		draw_circle(line[line.size() - 1], 3.0, colour)
+		draw_string(_mono, Vector2(10, 14), "%s   now %d   (min %d, max %d)" % [title,
+			int(float(pts[pts.size() - 1])), int(lo), int(hi)],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, colour.lightened(0.2))
+
 # ================================================================ TopoMap ==
 
 class TopoMap extends Control:

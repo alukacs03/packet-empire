@@ -1417,6 +1417,45 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- monitors and history ---
+	Game.monitors = []
+	Game.history = []
+	var mon_sw := Game.new_device("sw-8")
+	var mon_a := Game.new_device("srv-1")
+	var mon_b := Game.new_device("srv-1")
+	var mon_rack := Game.add_rack(Vector2i(12, 1))
+	mon_rack.slots[0] = mon_sw
+	mon_rack.slots[1] = mon_a
+	mon_rack.slots[2] = mon_b
+	Game.connect_ifaces(mon_a.ifaces[0], mon_sw.ifaces[0])
+	Game.connect_ifaces(mon_b.ifaces[0], mon_sw.ifaces[1])
+	Game.add_ip(mon_a.ifaces[0], "10.210.0.10/24")
+	Game.add_ip(mon_b.ifaces[0], "10.210.0.11/24")
+	check(Game.add_monitor("ping", mon_a.name, "10.210.0.11").is_empty(), "monitor: a check can be added")
+	check(not Game.add_monitor("ping", mon_a.name, "10.210.0.11").is_empty(), "monitor: duplicates are refused")
+	check(Game.monitor_ok(Game.monitors[0]), "monitor: it passes while the network works")
+	Game.staff = []  # nobody to repair it behind our backs
+	mon_sw.ifaces[1].enabled = false
+	Game.topology_changed.emit()
+	check(not Game.monitor_ok(Game.monitors[0]), "monitor: it fails when the path breaks")
+	Game.sla_tick()
+	var alerted := false
+	for ev in Game.events:
+		if "MONITOR ALERT" in ev:
+			alerted = true
+	check(alerted and bool(Game.monitors[0]["failing"]), "monitor: a failure raises an alert")
+	mon_sw.ifaces[1].enabled = true
+	Game.topology_changed.emit()
+	Game.sla_tick()
+	var recovered := false
+	for ev in Game.events:
+		if "MONITOR OK" in ev:
+			recovered = true
+	check(recovered and not bool(Game.monitors[0]["failing"]), "monitor: recovery is reported too")
+	check(Game.history.size() >= 2 and Game.history[0].has("money"),
+		"history: each cycle is recorded for the graphs")
+	Game.monitors = []
+
 	# --- SLA tiers ---
 	Game.deals = []
 	Game.staff = []

@@ -80,6 +80,8 @@ var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
+var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
+var history: Array = []  # per-cycle snapshot for the graphs
 var staff: Array = []  # people on the payroll
 var candidates: Array = []  # the current hiring market
 var acquisitions: Array = []  # integration jobs from companies you bought
@@ -404,6 +406,53 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 		"rejected":
 			offers.erase(offer)
 	return result
+
+func add_monitor(kind: String, from_dev: String, target: String) -> String:
+	for m in monitors:
+		if m["kind"] == kind and m["from"] == from_dev and m["target"] == target:
+			return "that check already exists"
+	monitors.append({"kind": kind, "from": from_dev, "target": target, "failing": false})
+	topology_changed.emit()
+	return ""
+
+func remove_monitor(m: Dictionary) -> void:
+	monitors.erase(m)
+	topology_changed.emit()
+
+func monitor_ok(m: Dictionary) -> bool:
+	match m["kind"]:
+		"ping":
+			var src: Net.NDevice = null
+			for d in all_devices():
+				if d.name == m["from"]:
+					src = d
+			if src == null:
+				return false
+			return Sim.ping(src, m["target"])["ok"]
+		"link":
+			for l in links:
+				var a_name := "%s %s" % [l.a.dev.name, l.a.name]
+				var b_name := "%s %s" % [l.b.dev.name, l.b.name]
+				if m["target"] in [a_name, b_name]:
+					return l.a.enabled and l.b.enabled \
+						and l.a.dev.status == "active" and l.b.dev.status == "active"
+			return false
+	return false
+
+func _run_monitors() -> void:
+	for m in monitors:
+		var ok := monitor_ok(m)
+		if ok == bool(m["failing"]):  # state changed
+			m["failing"] = not ok
+			if ok:
+				log_event("MONITOR OK: %s" % monitor_label(m))
+			else:
+				log_event("MONITOR ALERT: %s is failing." % monitor_label(m))
+
+func monitor_label(m: Dictionary) -> String:
+	if m["kind"] == "ping":
+		return "%s can reach %s" % [m["from"], m["target"]]
+	return "link %s is up" % m["target"]
 
 func refresh_candidates(force := false) -> void:
 	if not candidates.is_empty() and not force:
@@ -783,6 +832,7 @@ func sla_tick() -> void:
 				break
 	Rivals.tick()
 	_maybe_poach()
+	_run_monitors()
 	if not staff.is_empty():
 		var wages := Staff.payroll()
 		last_pl["salaries"] = -wages
@@ -861,6 +911,15 @@ func sla_tick() -> void:
 	if earned != 0:
 		money += earned
 		money_changed.emit()
+	var up_deals := 0
+	for deal in deals:
+		if deal["healthy"]:
+			up_deals += 1
+	history.append({"cycle": cycle, "money": money, "net": last_cycle_delta,
+		"reputation": reputation, "deals": deals.size(), "up": up_deals,
+		"devices": all_devices().size()})
+	if history.size() > 120:
+		history.pop_front()
 	if cycle % 5 == 0:
 		save_game()
 
@@ -1106,6 +1165,7 @@ func _serialize() -> Dictionary:
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
+		"monitors": monitors, "history": history,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -1278,6 +1338,8 @@ func _apply(data: Dictionary) -> void:
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	market_intel = int(data.get("market_intel", 0))
+	monitors = data.get("monitors", [])
+	history = data.get("history", [])
 	staff = data.get("staff", [])
 	candidates = data.get("candidates", [])
 	rivals = data.get("rivals", [])

@@ -1109,6 +1109,48 @@ func _refresh_ops() -> void:
 			alerting += 1
 	ops_title.text = "Operations   ·   %d devices   ·   %d cables (%d down)   ·   %d needing attention" % [
 		devs.size(), Game.links.size(), links_down, alerting]
+	ops_box.add_child(_section("MONITORS"))
+	if Game.monitors.is_empty():
+		ops_box.add_child(_label("  No checks defined: add one so you hear about failures.",
+			13, Color(0.6, 0.62, 0.7)))
+	for m: Dictionary in Game.monitors.duplicate():
+		var mrow := HBoxContainer.new()
+		ops_box.add_child(mrow)
+		var failing: bool = m["failing"]
+		var ml := _label("  %s %s" % ["○" if failing else "●", Game.monitor_label(m)], 13,
+			Color(0.95, 0.55, 0.45) if failing else Color(0.55, 0.9, 0.6))
+		ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mrow.add_child(ml)
+		var del := Button.new()
+		del.text = "Remove"
+		del.pressed.connect(func() -> void:
+			Game.remove_monitor(m)
+			_refresh_ops())
+		mrow.add_child(del)
+	var add_mon := Button.new()
+	add_mon.text = "Add a check…"
+	add_mon.pressed.connect(func() -> void:
+		var opts: Array = []
+		var specs: Array = []
+		for d in Game.all_devices():
+			for i: Net.Iface in d.ifaces:
+				for cidr: String in i.ips:
+					var addr: String = cidr.split("/")[0]
+					for src in Game.all_devices():
+						if src == d or src.type != "server":
+							continue
+						opts.append("ping %s from %s" % [addr, src.name])
+						specs.append(["ping", src.name, addr])
+						break
+		if opts.is_empty():
+			_toast("configure some addresses first")
+			return
+		_menu(add_mon, opts.slice(0, 20), func(id: int) -> void:
+			var sp: Array = specs[id]
+			Game.add_monitor(sp[0], sp[1], sp[2])
+			_refresh_ops()))
+	ops_box.add_child(add_mon)
+	ops_box.add_child(_section("DEVICES"))
 	if devs.is_empty():
 		ops_box.add_child(_label("  Nothing installed yet.", 14, MUTED))
 		return
@@ -1501,6 +1543,15 @@ func _build_business_tab() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("HISTORY"))
+	if Game.history.size() < 2:
+		contracts_box.add_child(_label("  Charts appear once a few revenue cycles have run.",
+			13, Color(0.6, 0.62, 0.7)))
+	else:
+		for g in [["money", "Cash", Color(0.5, 0.95, 0.6)],
+				["net", "Net per cycle", Color(0.6, 0.8, 1.0)],
+				["reputation", "Reputation", Color(0.95, 0.8, 0.5)]]:
+			contracts_box.add_child(UIW.Graph.new().setup(g[0], g[1], g[2]))
 	contracts_box.add_child(_section("STAFF"))
 	if Game.staff.is_empty():
 		contracts_box.add_child(_label("  Nobody on the payroll: every fault is yours to fix.",
