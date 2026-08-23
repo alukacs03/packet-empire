@@ -2157,6 +2157,26 @@ func _build_jobs_tab() -> void:
 				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
 					"" if ok else "   (not delivered: not paying)"],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
+			if deal.has("renewal"):
+				var rn: Dictionary = deal["renewal"]
+				var rrow := HBoxContainer.new()
+				rrow.add_theme_constant_override("separation", 8)
+				contracts_box.add_child(rrow)
+				rrow.add_child(_label("      up for renewal at $%d/cycle (%d%% uptime, %s)" % [
+					int(rn["fee"]), int(rn["uptime"]), rn["mood"]], 13, Color(1.0, 0.85, 0.5)))
+				var acc_btn := Button.new()
+				acc_btn.text = "Renew"
+				_accent(acc_btn)
+				acc_btn.pressed.connect(func() -> void:
+					Game.accept_renewal(deal)
+					_refresh_contracts())
+				rrow.add_child(acc_btn)
+				var end_btn := Button.new()
+				end_btn.text = "Let it end"
+				end_btn.pressed.connect(func() -> void:
+					Game.decline_renewal(deal)
+					_refresh_contracts())
+				rrow.add_child(end_btn)
 			var detail := String(deal.get("brief", ""))
 			var spec_bits: Array = []
 			for k in deal["params"]:

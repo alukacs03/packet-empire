@@ -1132,6 +1132,9 @@ static func run() -> int:
 	var money_start := Game.money
 	for i in 60:
 		Game.sla_tick()
+		for d_ren in Game.deals:  # a working operator renews their contracts
+			if d_ren.has("renewal"):
+				Game.accept_renewal(d_ren)
 	check(Game.money > money_start, "economy: a delivering operator grows over 60 cycles (%d -> %d)" % [money_start, Game.money])
 	check(Game.money < money_start + 60 * 400, "economy: growth stays bounded, no runaway income")
 	check(Game.reputation >= 50, "economy: steady delivery keeps reputation up")
@@ -1444,6 +1447,34 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- contract terms and renewals ---
+	Game.deals = []
+	Game.attacks = []
+	var ren_deal := {"id": "ren", "customer": "Loyal Zrt", "kind": "hosting", "sla": 0,
+		"params": {}, "fee": 100, "load": 100, "brief": "", "term": 3,
+		"cycles": 5, "up_cycles": 5, "healthy": true, "budget": 120, "loyalty": 0.9}
+	Game.deals = [ren_deal]
+	Game.reputation = 80
+	Game._renewals_tick()
+	check(ren_deal.has("renewal"), "renewal: a contract that reaches its term comes up for renewal")
+	check(int(ren_deal["renewal"]["fee"]) > 100, "renewal: good service earns a rise")
+	var money_paused := Game.money
+	Game.sla_tick()
+	check(Game.money <= money_paused + 5, "renewal: nothing is billed while they decide")
+	Game.accept_renewal(ren_deal)
+	check(not ren_deal.has("renewal") and int(ren_deal["fee"]) > 100 and int(ren_deal["cycles"]) == 0,
+		"renewal: accepting restarts the term at the new price")
+	# a badly served customer asks for a discount, and can be let go
+	var bad_deal := {"id": "bad", "customer": "Unhappy Bt", "kind": "hosting", "sla": 0,
+		"params": {}, "fee": 200, "load": 100, "brief": "", "term": 3,
+		"cycles": 10, "up_cycles": 2, "healthy": true, "budget": 200, "loyalty": 0.5}
+	Game.deals = [bad_deal]
+	Game._renewals_tick()
+	check(int(bad_deal["renewal"]["fee"]) < 200, "renewal: poor service costs you on renewal")
+	Game.decline_renewal(bad_deal)
+	check(Game.deals.is_empty(), "renewal: a contract can be allowed to end")
+	Game.deals = []
 
 	# --- 802.1X port authentication ---
 	var dx_rack := Game.add_rack(Vector2i(30, 1))

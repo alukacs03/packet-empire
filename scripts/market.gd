@@ -141,17 +141,17 @@ static func negotiate(offer: Dictionary, quote: int) -> String:
 static func check(kind: String, params: Dictionary) -> bool:
 	match kind:
 		"hosting":
-			return _hosted_and_reachable(params["ip"])
+			return _hosted_and_reachable(String(params.get("ip", "")))
 		"public_hosting":
-			var owner := Contracts._owner(params["ip"])
+			var owner := Contracts._owner(String(params.get("ip", "")))
 			if owner == null or owner.type != "server":
 				return false
 			for d in Game.all_devices():
-				if d.type == "uplink" and Sim.ping(d, params["ip"])["ok"]:
+				if d.type == "uplink" and Sim.ping(d, String(params.get("ip", "")))["ok"]:
 					return true
 			return false
 		"own_vlan":
-			var vid: int = int(params["vid"])
+			var vid: int = int(params.get("vid", 0))
 			for d in Game.all_devices():
 				if d.type != "switch" or not d.vlans.has(vid):
 					continue
@@ -161,7 +161,7 @@ static func check(kind: String, params: Dictionary) -> bool:
 						return true
 			return false
 		"redundant_gw":
-			var vip: String = params["vip"]
+			var vip: String = String(params.get("vip", ""))
 			var members := 0
 			for d in Game.all_devices():
 				if d.ip_forwarding:
@@ -177,7 +177,7 @@ static func check(kind: String, params: Dictionary) -> bool:
 							return true
 			return false
 		"managed_switch":
-			var vid2: int = int(params["vid"])
+			var vid2: int = int(params.get("vid", 0))
 			for d in Game.all_devices():
 				if d.type != "switch" or not d.vlans.has(vid2):
 					continue
@@ -194,17 +194,18 @@ static func check(kind: String, params: Dictionary) -> bool:
 		"dhcp_pool":
 			for d in Game.all_devices():
 				var svc: Dictionary = d.services.get("dhcp", {})
-				if not svc.is_empty() and String(svc["start"]).begins_with(params["subnet"] + ".") \
+				if not svc.is_empty() and String(svc["start"]).begins_with(String(params.get("subnet", "?")) + ".") \
 						and svc["leases"].size() >= 1:
 					return true
 			return false
 		"secure_host":
-			if Contracts._owner(params["ip"]) == null:
+			if Contracts._owner(String(params.get("ip", ""))) == null:
 				return false
 			for d in Game.all_devices():
 				if d.type == "firewall":
 					for rule in d.acls:
-						if rule["action"] == "deny" and rule["dst"] == params["ip"] and int(rule["dplen"]) == 32:
+						if rule["action"] == "deny" and rule["dst"] == String(params.get("ip", "")) \
+								and int(rule["dplen"]) == 32:
 							return true
 			return false
 	return false

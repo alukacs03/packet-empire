@@ -1009,6 +1009,7 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	stats["deals"] += 1
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
 		"params": offer["params"], "fee": fee, "brief": offer["brief"],
+		"term": 14 + randi() % 10,  # how long before it comes up for renewal
 		"budget": int(offer.get("budget", fee)),  # the market reference for poaching
 		"ctype": offer.get("ctype", "enterprise"), "loyalty": float(offer.get("loyalty", 0.6)),
 		"load": offer.get("load", 200), "sla": int(offer.get("sla", 0)),
@@ -1081,6 +1082,44 @@ func _security_sweep() -> int:
 			if incidents_seen.has(key):
 				break
 	return cost
+
+func _renewals_tick() -> void:
+	## contracts do not run forever: when the term is up the customer decides
+	## whether to stay, and what they think you are worth now
+	for deal in deals:
+		if deal.has("renewal") or int(deal.get("cycles", 0)) < int(deal.get("term", 14)):
+			continue
+		var uptime := float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1)))
+		var factor := 1.0
+		var mood := "they are content"
+		if uptime > 0.95 and reputation >= 60:
+			factor = 1.1
+			mood = "you have earned a rise"
+		elif uptime < 0.8:
+			factor = 0.75
+			mood = "they want a discount for the trouble"
+		var proposed := int(float(deal["fee"]) * factor)
+		deal["renewal"] = {"fee": proposed, "mood": mood, "uptime": int(uptime * 100)}
+		log_event("RENEWAL: %s's contract is up. They propose $%d/cycle: %s."
+			% [deal["customer"], proposed, mood])
+
+func accept_renewal(deal: Dictionary) -> void:
+	var r: Dictionary = deal.get("renewal", {})
+	if r.is_empty():
+		return
+	deal["fee"] = int(r["fee"])
+	deal["cycles"] = 0
+	deal["up_cycles"] = 0
+	deal["term"] = 14 + randi() % 10
+	deal.erase("renewal")
+	log_event("RENEWED: %s stays at $%d/cycle." % [deal["customer"], int(deal["fee"])])
+	money_changed.emit()
+
+func decline_renewal(deal: Dictionary) -> void:
+	deals.erase(deal)
+	reputation = maxi(0, reputation - 2)
+	log_event("ENDED: %s's contract was not renewed." % deal["customer"])
+	money_changed.emit()
 
 func customer_growth(deal: Dictionary) -> void:
 	## a startup that survives outgrows its contract, in fee and in traffic
@@ -1397,6 +1436,7 @@ func sla_tick() -> void:
 				link_load[l] = link_load.get(l, 0) + load
 	last_link_load = link_load
 	var protected := _qos_protect(link_load, deal_links)
+	_renewals_tick()
 	for deal in deals.duplicate():
 		# a declared maintenance window excuses planned downtime: the cycle
 		# only counts against uptime if the service was actually delivered
@@ -1442,6 +1482,8 @@ func sla_tick() -> void:
 			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
 				% deal["customer"])
 		deal["degraded"] = congested
+		if deal.has("renewal"):
+			continue  # nothing is billed while the customer is deciding
 		var paid: int = int(deal["fee"]) / (2 if congested else 1)
 		last_pl["customer deals"] = int(last_pl.get("customer deals", 0)) + paid
 		earned += paid
