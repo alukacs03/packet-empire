@@ -134,6 +134,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				ui.toggle_map()
 			KEY_O:
 				ui.toggle_ops()
+			KEY_F:
+				ui.toggle_search()
 			KEY_F1:
 				ui.toggle_help()
 			KEY_SPACE:
@@ -159,10 +161,14 @@ func _unhandled_input(e: InputEvent) -> void:
 func _place_rack(tile: Vector2i) -> void:
 	var grid: Vector2i = Game.grid_size()
 	if tile.x < 0 or tile.y < 0 or tile.x >= grid.x or tile.y >= grid.y:
+		ui.hud_toast("That is outside %s. Expand the floor or pick another tile."
+			% Game.site_name(Game.current_site))
 		return
 	if Game.rack_at(tile):
+		ui.hud_toast("There is already a rack there.")
 		return
 	if not Game.try_spend(Game.RACK_PRICE):
+		ui.hud_toast("A rack costs $%d and you have $%d." % [Game.RACK_PRICE, Game.money])
 		return
 	add_child(RackVisual.new().setup(Game.add_rack(tile)))
 	queue_redraw()

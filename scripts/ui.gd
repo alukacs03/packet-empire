@@ -54,6 +54,9 @@ var if_cable_lbl: Label
 var if_cable_btn: Button
 var if_peer_btn: Button
 
+var search_overlay: Control
+var search_input: LineEdit
+var search_box: VBoxContainer
 var ops_overlay: Control
 var ops_title: Label
 var ops_box: VBoxContainer
@@ -88,6 +91,8 @@ var objective_lbl: Label
 var expand_btn: Button
 var site_btn: Button
 var speed_btns := {}
+var hud_msg: Label
+var hud_msg_tween: Tween
 var theme_res: Theme
 var mono: SystemFont
 
@@ -105,6 +110,7 @@ func _ready() -> void:
 	_build_menu()
 	_build_help()
 	_build_ops()
+	_build_search()
 	_build_pedia()
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
@@ -136,6 +142,26 @@ func _refresh_attention() -> void:
 	else:
 		contracts_btn.text = "Contracts"
 		contracts_btn.modulate = Color.WHITE
+
+func hud_toast(text: String, good := false) -> void:
+	## a short message on the HUD, for actions that would otherwise fail silently
+	if hud_msg == null:
+		hud_msg = _label("", 15, Color(1.0, 0.8, 0.5))
+		hud_msg.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		hud_msg.position = Vector2(-300, 78)
+		hud_msg.custom_minimum_size = Vector2(600, 0)
+		hud_msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		hud_msg.theme = theme_res
+		add_child(hud_msg)
+	hud_msg.text = text
+	hud_msg.add_theme_color_override("font_color",
+		Color(0.6, 0.95, 0.7) if good else Color(1.0, 0.8, 0.5))
+	hud_msg.modulate.a = 1.0
+	if hud_msg_tween and hud_msg_tween.is_running():
+		hud_msg_tween.kill()
+	hud_msg_tween = create_tween()
+	hud_msg_tween.tween_interval(2.6)
+	hud_msg_tween.tween_property(hud_msg, "modulate:a", 0.0, 0.8)
 
 func _refresh_speed() -> void:
 	for k in speed_btns:
@@ -201,7 +227,7 @@ func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
 		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible \
-		or ops_overlay.visible
+		or ops_overlay.visible or search_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -453,7 +479,7 @@ func _build_toolbar() -> void:
 	var hint := _label("Q select   ·   R place rack   ·   right-drag pan   ·   scroll zoom   ·   Esc back", 12, Color(0.45, 0.5, 0.62))
 	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	hint.position = Vector2(20, -30)
-	hint.text = "Space pause  ·  Q select  ·  R place rack  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
+	hint.text = "Space pause  ·  Q select  ·  R place rack  ·  F find  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
 	hint.theme = theme_res
 	add_child(hint)
 
@@ -527,7 +553,14 @@ func _pick_new_device(slot: int, at: Control) -> void:
 		m.set_item_disabled(m.item_count - 1, locked)
 	add_child(m)
 	m.id_pressed.connect(func(id: int) -> void:
-		if not Game.try_spend(Game.MODELS[keys[id]]["price"]):
+		var mod2: Dictionary = Game.MODELS[keys[id]]
+		if int(mod2.get("tier", 0)) > Game.stage:
+			hud_toast("%s needs the %s stage: expand first." % [mod2["label"],
+				Game.STAGES[int(mod2["tier"])]["name"]])
+			return
+		if not Game.try_spend(mod2["price"]):
+			hud_toast("Not enough money for a %s ($%d, you have $%d)." % [mod2["label"],
+				int(mod2["price"]), Game.money])
 			return
 		cur_rack.slots[slot] = Game.new_device(keys[id])
 		cur_rack.visual.queue_redraw()
@@ -1063,6 +1096,89 @@ func _build_pedia() -> void:
 func open_pedia() -> void:
 	_show_overlay(pedia_overlay)
 
+# ---------- search ----------
+
+func _build_search() -> void:
+	search_overlay = _overlay()
+	var v := _card(search_overlay, 620)
+	var t := _header(v, func() -> void: search_overlay.visible = false)
+	t.text = "Find"
+	search_input = _mono_edit(560)
+	search_input.placeholder_text = "device name, address, VLAN id, customer or site"
+	search_input.text_changed.connect(func(_t: String) -> void: _refresh_search())
+	v.add_child(search_input)
+	search_box = VBoxContainer.new()
+	search_box.add_theme_constant_override("separation", 3)
+	v.add_child(search_box)
+
+func toggle_search() -> void:
+	if search_overlay.visible:
+		search_overlay.visible = false
+		return
+	if is_open():
+		return
+	_show_overlay(search_overlay)
+	search_input.text = ""
+	_refresh_search()
+	search_input.call_deferred("grab_focus")
+
+func _goto_device(d: Net.NDevice) -> void:
+	search_overlay.visible = false
+	var rk := Game.rack_of(d)
+	if rk and rk.site != Game.current_site:
+		Game.switch_site(rk.site)
+		get_parent().rebuild_racks()
+	cur_rack = rk
+	open_dev(d)
+
+func _refresh_search() -> void:
+	for c in search_box.get_children():
+		c.queue_free()
+	var q := search_input.text.strip_edges().to_lower()
+	if q == "":
+		search_box.add_child(_label("  Type to search across every site.", 13, MUTED))
+		return
+	var hits := 0
+	for d in Game.all_devices():
+		var why := ""
+		if q in d.name.to_lower():
+			why = "device"
+		elif q in String(Game.MODELS[d.model]["label"]).to_lower():
+			why = "model"
+		else:
+			for i: Net.Iface in d.ifaces:
+				for cidr: String in i.ips:
+					if q in cidr.to_lower():
+						why = "address %s on %s" % [cidr, i.name]
+				if q in i.name.to_lower() and why == "":
+					why = "interface %s" % i.name
+			for vid in d.vlans:
+				if q == str(vid):
+					why = "VLAN %s (%s)" % [vid, d.vlans[vid]]
+		if why == "":
+			continue
+		hits += 1
+		if hits > 12:
+			continue
+		var rk := Game.rack_of(d)
+		var b := Button.new()
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.add_theme_font_override("font", mono)
+		b.add_theme_font_size_override("font_size", 12)
+		b.text = "  %-10s %-16s %-10s %s" % [d.name, Game.MODELS[d.model]["label"],
+			(Game.site_name(rk.site) if rk else "-"), why]
+		b.pressed.connect(func() -> void: _goto_device(d))
+		search_box.add_child(b)
+	for deal: Dictionary in Game.deals:
+		if q in String(deal["customer"]).to_lower():
+			hits += 1
+			search_box.add_child(_label("  customer: %s (%s, $%d/cycle)" % [deal["customer"],
+				Market.label_for(deal["kind"]), int(deal["fee"])], 13, Color(0.7, 0.85, 0.75)))
+	if hits == 0:
+		search_box.add_child(_label("  Nothing matches that.", 13, Color(0.8, 0.6, 0.5)))
+	elif hits > 12:
+		search_box.add_child(_label("  ...and %d more matches." % (hits - 12), 12, MUTED))
+
 # ---------- ops dashboard ----------
 
 func _device_alerts(d: Net.NDevice) -> Array:
@@ -1217,6 +1333,7 @@ func _build_help() -> void:
 		["Space", "pause and resume"],
 		["1 / 2 / 3", "normal, fast and faster"],
 		["O", "operations dashboard (device health)"],
+		["F", "find a device, address, VLAN or customer"],
 		["M", "logical topology map"],
 		["F1", "this help"],
 		["Esc", "system menu (save, new game, incident drill, quit)"],
@@ -2071,6 +2188,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					_show_overlay(rack_overlay)
+		elif search_overlay.visible:
+			search_overlay.visible = false
 		elif ops_overlay.visible:
 			ops_overlay.visible = false
 		elif help_overlay.visible:

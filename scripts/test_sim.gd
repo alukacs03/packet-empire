@@ -90,6 +90,15 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.toggle_map()
 	ui.toggle_ops()
 	ui.toggle_ops()
+	ui.toggle_search()
+	ui.search_input.text = "sw"
+	ui._refresh_search()
+	ui.search_input.text = "10.0.0"
+	ui._refresh_search()
+	ui.search_input.text = "zzzz-nothing"
+	ui._refresh_search()
+	ui.toggle_search()
+	ui.hud_toast("smoke test message")
 	ui.toggle_help()
 	ui.toggle_help()
 	ui.open_pedia()
