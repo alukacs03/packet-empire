@@ -246,12 +246,14 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 	var out: Array = []
 	if dev.ospf.is_empty() or not dev.ip_forwarding:
 		return out
-	var first_hop := {}  # router -> via_ip of dev's first hop
+	var first_hop := {}  # router -> [via_ip, ...] equal-cost first hops
 	var frontier: Array = []
 	for nb in ospf_neighbors(dev):
 		if not first_hop.has(nb["dev"]):
-			first_hop[nb["dev"]] = nb["via_ip"]
+			first_hop[nb["dev"]] = []
 			frontier.append(nb["dev"])
+		if nb["via_ip"] not in first_hop[nb["dev"]]:
+			first_hop[nb["dev"]].append(nb["via_ip"])
 	var visited := {dev: true}
 	while not frontier.is_empty():
 		var cur: Net.NDevice = frontier.pop_front()
@@ -261,11 +263,16 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 		for i: Net.Iface in ospf_covered_ifaces(cur):
 			for cidr: String in i.ips:
 				var netw := Net.network_of(cidr)
-				out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": first_hop[cur]})
+				for via in first_hop[cur]:
+					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via})
 		for nb in ospf_neighbors(cur):
 			if not visited.has(nb["dev"]):
 				if not first_hop.has(nb["dev"]):
-					first_hop[nb["dev"]] = first_hop[cur]
+					first_hop[nb["dev"]] = first_hop[cur].duplicate()
+				else:
+					for via in first_hop[cur]:
+						if via not in first_hop[nb["dev"]]:
+							first_hop[nb["dev"]].append(via)
 				frontier.append(nb["dev"])
 	return out
 
@@ -361,7 +368,7 @@ static func _stp_ensure() -> void:
 static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary) -> String:
 	if dev.status != "active":
 		return "device is offline"
-	var rt := _route_lookup(dev, dst_ip)
+	var rt := _route_lookup(dev, dst_ip, "%s|%s|%s" % [dst_ip, str(l4.get("id", 0)), dev.name])
 	if rt.is_empty():
 		return "no route to host"
 	if rt.get("next_hop", "") == "null0":
@@ -375,7 +382,60 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary)
 		"pl": {"src_ip": src_ip, "dst_ip": dst_ip, "ttl": ttl, "l4": l4}})
 	return ""
 
-static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
+static func _route_lookup(dev: Net.NDevice, dst_ip: String, flow_key := "") -> Dictionary:
+	## picks one path; with several of equal length the flow is hashed across
+	## them, which is what makes a spine-leaf fabric use all its uplinks
+	var paths := _route_paths(dev, dst_ip)
+	if paths.is_empty():
+		return {}
+	if paths.size() == 1 or flow_key == "":
+		return paths[0]
+	return paths[hash(flow_key) % paths.size()]
+
+static func _route_paths(dev: Net.NDevice, dst_ip: String) -> Array:
+	var best := _route_lookup_single(dev, dst_ip)
+	if best.is_empty():
+		return []
+	var best_len: int = int(best.get("plen", -1))
+	var out: Array = []
+	var seen := {}
+	for cand in _all_routes(dev, dst_ip):
+		if int(cand["plen"]) != best_len:
+			continue
+		var key := "%s|%s" % [str(cand["next_hop"]), str(cand["iface"])]
+		if seen.has(key):
+			continue
+		seen[key] = true
+		out.append(cand)
+	return out if not out.is_empty() else [best]
+
+static func _all_routes(dev: Net.NDevice, dst_ip: String) -> Array:
+	## every candidate path, with the prefix length that produced it
+	var out: Array = []
+	var want_v6 := Net.is_v6(dst_ip)
+	for i: Net.Iface in dev.ifaces:
+		if not i.enabled:
+			continue
+		for cidr: String in i.ips:
+			if Net.is_v6(cidr) != want_v6:
+				continue
+			var parts := cidr.split("/")
+			if Net.same_net(dst_ip, parts[0], int(parts[1])):
+				out.append({"iface": i, "next_hop": dst_ip, "plen": int(parts[1])})
+	for r in dev.static_routes + _bgp_learned(dev) + _ospf_learned(dev):
+		if Net.is_v6(String(r["prefix"])) != want_v6:
+			continue
+		if not Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
+			continue
+		if String(r["via"]) == "null0":
+			out.append({"iface": null, "next_hop": "null0", "plen": int(r["plen"])})
+			continue
+		var via_if := _connected_iface(dev, String(r["via"]))
+		if via_if:
+			out.append({"iface": via_if, "next_hop": r["via"], "plen": int(r["plen"])})
+	return out
+
+static func _route_lookup_single(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 	var best := {}
 	var best_len := -1
 	var want_v6 := Net.is_v6(dst_ip)
@@ -389,7 +449,7 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 			var plen := int(parts[1])
 			if plen > best_len and Net.same_net(dst_ip, parts[0], plen):
 				best_len = plen
-				best = {"iface": i, "next_hop": dst_ip}
+				best = {"iface": i, "next_hop": dst_ip, "plen": plen}
 	for r in dev.static_routes:
 		if Net.is_v6(String(r["prefix"])) != want_v6:
 			continue
@@ -408,9 +468,10 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 						via_rt = {"iface": i, "next_hop": r["via"]}
 			if String(r["via"]) == "null0":
 				best_len = int(r["plen"])
-				best = {"iface": null, "next_hop": "null0"}  # discard route
+				best = {"iface": null, "next_hop": "null0", "plen": best_len}  # discard route
 			elif not via_rt.is_empty():
 				best_len = int(r["plen"])
+				via_rt["plen"] = best_len
 				best = via_rt
 	for r in _bgp_learned(dev) + _ospf_learned(dev):
 		if Net.is_v6(String(r["prefix"])) != want_v6:
@@ -419,7 +480,7 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 			var out := _connected_iface(dev, r["via"])
 			if out:
 				best_len = int(r["plen"])
-				best = {"iface": out, "next_hop": r["via"]}
+				best = {"iface": out, "next_hop": r["via"], "plen": best_len}
 	return best
 
 static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> String:
@@ -678,7 +739,8 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		if p["ttl"] <= 1:
 			_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)})
 			return
-		var rt := _route_lookup(dev, p["dst_ip"])
+		var rt := _route_lookup(dev, p["dst_ip"],
+			"%s|%s|%s" % [p["src_ip"], p["dst_ip"], str(p["l4"].get("id", 0))])
 		if rt.is_empty() or rt.get("next_hop", "") == "null0":
 			return  # no route, or deliberately discarded
 		var out: Net.Iface = rt["iface"]

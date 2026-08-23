@@ -1426,6 +1426,62 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- spine and leaf fabric with ECMP ---
+	var fab_rack := Game.add_rack(Vector2i(15, 1))
+	var spine_a := Game.new_device("rtr-edge")
+	var spine_b := Game.new_device("rtr-edge")
+	var leaf_a := Game.new_device("rtr-edge")
+	var leaf_b := Game.new_device("rtr-edge")
+	var fab_h1 := Game.new_device("srv-1")
+	var fab_h2 := Game.new_device("srv-1")
+	fab_rack.slots[0] = spine_a
+	fab_rack.slots[1] = spine_b
+	fab_rack.slots[2] = leaf_a
+	fab_rack.slots[3] = leaf_b
+	fab_rack.slots[4] = fab_h1
+	fab_rack.slots[5] = fab_h2
+	# every leaf uplinks to every spine
+	Game.connect_ifaces(leaf_a.ifaces[0], spine_a.ifaces[0])
+	Game.connect_ifaces(leaf_a.ifaces[1], spine_b.ifaces[0])
+	Game.connect_ifaces(leaf_b.ifaces[0], spine_a.ifaces[1])
+	Game.connect_ifaces(leaf_b.ifaces[1], spine_b.ifaces[1])
+	Game.add_ip(leaf_a.ifaces[0], "10.250.1.1/30")
+	Game.add_ip(spine_a.ifaces[0], "10.250.1.2/30")
+	Game.add_ip(leaf_a.ifaces[1], "10.250.2.1/30")
+	Game.add_ip(spine_b.ifaces[0], "10.250.2.2/30")
+	Game.add_ip(leaf_b.ifaces[0], "10.250.3.1/30")
+	Game.add_ip(spine_a.ifaces[1], "10.250.3.2/30")
+	Game.add_ip(leaf_b.ifaces[1], "10.250.4.1/30")
+	Game.add_ip(spine_b.ifaces[1], "10.250.4.2/30")
+	# a host under each leaf
+	Game.connect_ifaces(fab_h1.ifaces[0], leaf_a.ifaces[2])
+	Game.connect_ifaces(fab_h2.ifaces[0], leaf_b.ifaces[2])
+	Game.add_ip(leaf_a.ifaces[2], "10.251.1.1/24")
+	Game.add_ip(fab_h1.ifaces[0], "10.251.1.10/24")
+	Game.add_ip(leaf_b.ifaces[2], "10.251.2.1/24")
+	Game.add_ip(fab_h2.ifaces[0], "10.251.2.10/24")
+	Game.add_static_route(fab_h1, "0.0.0.0", 0, "10.251.1.1")
+	Game.add_static_route(fab_h2, "0.0.0.0", 0, "10.251.2.1")
+	# OSPF across the fabric
+	for fab_dev in [spine_a, spine_b, leaf_a, leaf_b]:
+		fab_dev.ospf = {"networks": ["10.250.0.0/16", "10.251.0.0/16"]}
+	Game.topology_changed.emit()
+	check(Sim.ping(fab_h1, "10.251.2.10")["ok"], "fabric: hosts talk across the spine-leaf fabric")
+	var leaf_paths := Sim._route_paths(leaf_a, "10.251.2.10")
+	check(leaf_paths.size() == 2, "fabric: the leaf has two equal-cost paths (got %d)" % leaf_paths.size())
+	var used_hops := {}
+	for i in 24:
+		var picked := Sim._route_lookup(leaf_a, "10.251.2.10", "flow-%d" % i)
+		used_hops[str(picked["next_hop"])] = true
+	check(used_hops.size() == 2, "fabric: flows hash across both spines")
+	# lose a spine: the fabric keeps forwarding
+	spine_a.status = "offline"
+	Game.topology_changed.emit()
+	check(Sim.ping(fab_h1, "10.251.2.10")["ok"], "fabric: losing a spine costs capacity, not connectivity")
+	spine_a.status = "active"
+	Game.topology_changed.emit()
+	check(Game.try_complete_contract(_contract("build_a_fabric")), "fabric: the build-a-fabric contract verifies")
+
 	# --- blackhole routes and attacks ---
 	Game.attacks = []
 	Game.scrubbing = false

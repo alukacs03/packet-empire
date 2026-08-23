@@ -255,6 +255,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "build_a_fabric",
+			"title": "Build a fabric",
+			"customer": "Panonia Data (consulting)",
+			"reward": 4500,
+			"brief": "Your core switch is one failure away from taking everything with it. Build a proper fabric instead: two spine routers, two leaf routers, and every leaf uplinked to BOTH spines on its own small transit subnet. Run OSPF across all four so each leaf learns the other's networks twice, once through each spine. Put a server under each leaf (10.251.1.10/24 and 10.251.2.10/24) and prove it: they must reach each other, and they must keep reaching each other with one spine switched off.",
+			"reqs": [
+				{"d": "Two leaves, each uplinked to two spines", "t": func() -> bool: return _fabric_shape()},
+				{"d": "A leaf has two equal-cost paths to the far host", "t": func() -> bool: return _fabric_ecmp()},
+				{"d": "Hosts under different leaves reach each other", "t": func() -> bool: return _ping("10.251.1.10", "10.251.2.10", true)},
+			],
+		},
+		{
 			"id": "big_client",
 			"title": "The big client",
 			"customer": "Omega Holding",
@@ -344,6 +356,33 @@ static func _l3_switch_svis() -> int:
 				n += 1
 		best = maxi(best, n)
 	return best
+
+static func _fabric_shape() -> bool:
+	## at least two routers that each uplink to the same two other routers
+	var uplinks := {}
+	for l in Game.links:
+		if not l.a.dev.ip_forwarding or not l.b.dev.ip_forwarding:
+			continue
+		for pair in [[l.a.dev, l.b.dev], [l.b.dev, l.a.dev]]:
+			if not uplinks.has(pair[0]):
+				uplinks[pair[0]] = {}
+			uplinks[pair[0]][pair[1]] = true
+	var leaves := 0
+	for d in uplinks:
+		if uplinks[d].size() >= 2:
+			leaves += 1
+	return leaves >= 4  # two leaves and two spines all see two peers
+
+static func _fabric_ecmp() -> bool:
+	var src := _owner("10.251.1.10")
+	if src == null:
+		return false
+	for d in Game.all_devices():
+		if not d.ip_forwarding:
+			continue
+		if Sim._route_paths(d, "10.251.2.10").size() >= 2:
+			return true
+	return false
 
 static func _bundle_links() -> Array:
 	for l in Game.links:
