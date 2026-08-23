@@ -34,7 +34,7 @@ const TYPE_SPECS := {
 	"firewall": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "fw"},
 }
 const RACK_PRICE := 500
-const SAVE_PATH := "user://save.json"
+var save_path := "user://save.json"
 
 var racks: Array = []
 var links: Array = []
@@ -78,6 +78,8 @@ const SLA_PERIOD := 45.0  # seconds per billing cycle
 var sla_status := {}  # contract id -> bool (last billing check passed)
 
 func _ready() -> void:
+	if OS.get_environment("PACKET_TEST") == "1":
+		save_path = "user://save_test.json"  # never touch the real save from tests
 	topology_changed.connect(Sim.flush_learned_state)
 	var t := Timer.new()
 	t.wait_time = SLA_PERIOD
@@ -300,7 +302,7 @@ func save_game() -> void:
 	var link_data: Array = []
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"money": money, "stage": stage, "counters": _counter,
 		"contracts_done": contracts_done,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
@@ -316,9 +318,9 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "ifaces": ifs}
 
 func load_game() -> bool:
-	if not FileAccess.file_exists(SAVE_PATH):
+	if not FileAccess.file_exists(save_path):
 		return false
-	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(SAVE_PATH))
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(save_path))
 	if data == null:
 		return false
 	racks = []
