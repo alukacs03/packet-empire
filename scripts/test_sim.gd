@@ -11,6 +11,12 @@ static func _dev_named(n: String) -> Net.NDevice:
 			return d
 	return null
 
+static func _contract(id: String) -> Dictionary:
+	for c in Contracts.all():
+		if c["id"] == id:
+			return c
+	return {}
+
 static func check(cond: bool, msg: String) -> void:
 	print(("PASS  " if cond else "FAIL  ") + msg)
 	if not cond:
@@ -141,6 +147,23 @@ static func run() -> int:
 	sw_a.ifaces[3].tagged_vlans = []
 	Game.topology_changed.emit()
 
+	# --- spanning tree over a redundant loop ---
+	Game.connect_ifaces(sw_a.ifaces[1], sw_b.ifaces[4])
+	Game.topology_changed.emit()
+	check(Sim.ping(a2, "10.0.0.2")["ok"], "stp: redundant switch loop doesn't storm, ping still works")
+	var blocked_n := 0
+	for ifc in [sw_a.ifaces[1], sw_a.ifaces[3], sw_b.ifaces[3], sw_b.ifaces[4]]:
+		if Sim.stp_blocked(ifc):
+			blocked_n += 1
+	check(blocked_n == 1, "stp: exactly one port of the loop is discarding (got %d)" % blocked_n)
+	var ses := CLI.new_session(sw_a)
+	check(ses.exec("show spanning-tree").contains("Root bridge"), "stp: show spanning-tree renders")
+	sw_a.ifaces[3].enabled = false
+	Game.topology_changed.emit()
+	check(Sim.ping(a2, "10.0.0.2")["ok"], "stp: primary link dies, blocked spare takes over")
+	sw_a.ifaces[3].enabled = true
+	Game.topology_changed.emit()
+
 	# --- capture ---
 	Sim.ping(a2, "10.0.0.2")
 	check(not a2.capture.is_empty() and "ICMP" in "\n".join(PackedStringArray(a2.capture)),
@@ -148,11 +171,10 @@ static func run() -> int:
 
 	# --- contracts ---
 	var money0 := Game.money
-	var cs := Contracts.all()
-	check(Game.try_complete_contract(cs[0]), "contracts: rack-and-stack completes against live state")
-	check(Game.try_complete_contract(cs[1]), "contracts: first-ping completes (sim-verified)")
-	check(not Game.try_complete_contract(cs[2]), "contracts: vlan-isolation contract not yet satisfiable")
-	check(not Game.try_complete_contract(cs[0]), "contracts: no double collection")
+	check(Game.try_complete_contract(_contract("rackup")), "contracts: rack-and-stack completes against live state")
+	check(Game.try_complete_contract(_contract("first_ping")), "contracts: first-ping completes (sim-verified)")
+	check(not Game.try_complete_contract(_contract("two_tenants")), "contracts: vlan-isolation contract not yet satisfiable")
+	check(not Game.try_complete_contract(_contract("rackup")), "contracts: no double collection")
 	check(Game.money == money0 + 900, "contracts: rewards paid once")
 
 	# --- DHCP + DNS ---
@@ -313,7 +335,7 @@ static func run() -> int:
 	es.exec("network 10.3.0.0/24")
 	es.exec("end")
 	check(Sim.ping(web, "8.8.8.8")["ok"], "bgp: announcing the prefix opens the return path")
-	check(Game.try_complete_contract(Contracts.all()[8]), "bgp: join-the-internet contract verifies")
+	check(Game.try_complete_contract(_contract("join_internet")), "bgp: join-the-internet contract verifies")
 
 	# --- overheating trips gear ---
 	crac1.status = "offline"
@@ -331,7 +353,7 @@ static func run() -> int:
 	crac2.status = "active"
 	Game.topology_changed.emit()
 	check(not Game.overheating(), "heat: cooling restored")
-	check(Game.try_complete_contract(Contracts.all()[9]), "heat: feeling-the-heat contract verifies")
+	check(Game.try_complete_contract(_contract("feel_the_heat")), "heat: feeling-the-heat contract verifies")
 
 	# --- discovery/diagnostic commands ---
 	var es2 := CLI.new_session(edge)

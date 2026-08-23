@@ -100,6 +100,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
+			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
@@ -500,6 +501,24 @@ class EOS extends Session:
 		if dev.capture.is_empty():
 			return "  (no frames captured — generate some traffic)\n"
 		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
+
+	func _show_stp(_r: Array) -> String:
+		if dev.type != "switch":
+			return "% spanning tree runs on switches\n"
+		var root := Sim.stp_root()
+		var out := "Root bridge: %s%s\n%-11s %-11s %s\n" % [root.name if root else "-",
+			"  (this switch)" if root == dev else "", "Port", "Role", "State"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			var l := Game.link_at(i)
+			if l == null or l.other(i).dev.type != "switch":
+				continue
+			any = true
+			var blocked := Sim.stp_blocked(i)
+			out += "%-11s %-11s %s\n" % [EOS._short(i.name),
+				"alternate" if blocked else "designated",
+				"discarding" if blocked else "forwarding"]
+		return out if any else out + "  (no switch-to-switch links)\n"
 
 	func _show_lldp(_r: Array) -> String:
 		var out := "%-11s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]

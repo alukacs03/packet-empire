@@ -190,10 +190,72 @@ static func _ip_of_on_subnet(dev: Net.NDevice, peer_ip: String) -> String:
 				return parts[0]
 	return ""
 
+static var _stp_blocked := {}  # Iface -> true
+static var _stp_dirty := true
+
 static func flush_learned_state() -> void:
+	_stp_dirty = true
 	for d in Game.all_devices():
 		d.mac_table.clear()
 		d.arp.clear()
+
+static func stp_blocked(i: Net.Iface) -> bool:
+	_stp_ensure()
+	return _stp_blocked.has(i)
+
+static func stp_root() -> Net.NDevice:
+	_stp_ensure()
+	return _stp_root
+
+static var _stp_root: Net.NDevice = null
+
+static func _stp_ensure() -> void:
+	## Simplified 802.1D: lowest-MAC switch is root; BFS spanning tree over
+	## switch-switch links; every off-tree link blocks its far-from-root end.
+	if not _stp_dirty:
+		return
+	_stp_dirty = false
+	_stp_blocked = {}
+	_stp_root = null
+	var switches: Array = []
+	for d in Game.all_devices():
+		if d.type == "switch" and d.status == "active":
+			switches.append(d)
+	if switches.is_empty():
+		return
+	switches.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
+	_stp_root = switches[0]
+	var sw_links: Array = []
+	for l in Game.links:
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" 				and l.a.enabled and l.b.enabled 				and l.a.dev.status == "active" and l.b.dev.status == "active":
+			sw_links.append(l)
+	var dist := {_stp_root: 0}
+	var tree := {}
+	var frontier: Array = [_stp_root]
+	while not frontier.is_empty():
+		frontier.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
+		var cur: Net.NDevice = frontier.pop_front()
+		for l in sw_links:
+			if tree.has(l):
+				continue
+			var nb: Net.NDevice = null
+			if l.a.dev == cur:
+				nb = l.b.dev
+			elif l.b.dev == cur:
+				nb = l.a.dev
+			if nb != null and not dist.has(nb):
+				dist[nb] = dist[cur] + 1
+				tree[l] = true
+				frontier.append(nb)
+	for l in sw_links:
+		if tree.has(l):
+			continue
+		var da: int = dist.get(l.a.dev, 1 << 30)
+		var db: int = dist.get(l.b.dev, 1 << 30)
+		var victim: Net.Iface = l.a
+		if db > da or (db == da and l.b.dev.ifaces[0].mac > l.a.dev.ifaces[0].mac):
+			victim = l.b
+		_stp_blocked[victim] = true
 
 # ---------- IP stack (hosts & routers) ----------
 
@@ -289,6 +351,8 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	_depth -= 1
 
 static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> void:
+	if stp_blocked(in_if):
+		return  # spanning tree: discarding state
 	var vlan: int
 	if in_if.mode == "access":
 		if frame["vlan"] != 0:
@@ -306,7 +370,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	var known: Net.Iface = dev.mac_table[vlan].get(frame["dst"])
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
 	for o: Net.Iface in outs:
-		if o == in_if:
+		if o == in_if or stp_blocked(o):
 			continue
 		var f := frame.duplicate(true)
 		if o.mode == "access":

@@ -322,16 +322,25 @@ func _refresh_slots() -> void:
 
 func _pick_new_device(slot: int, at: Control) -> void:
 	var keys := Game.MODELS.keys()
-	var items: Array = []
+	var m := PopupMenu.new()
+	m.add_theme_font_override("font", mono)
 	for k in keys:
-		var m: Dictionary = Game.MODELS[k]
-		items.append("%-22s %-7s %2d ports  $%d" % [m["label"], m["type"], m["ports"], m["price"]])
-	_menu(at, items, func(id: int) -> void:
+		var mod: Dictionary = Game.MODELS[k]
+		var locked: bool = int(mod.get("tier", 0)) > Game.stage
+		var line := "%-24s %-8s %2d ports  $%d" % [mod["label"], mod["type"], mod["ports"], mod["price"]]
+		if locked:
+			line += "   🔒 needs %s" % Game.STAGES[int(mod["tier"])]["name"]
+		m.add_item(line)
+		m.set_item_disabled(m.item_count - 1, locked)
+	add_child(m)
+	m.id_pressed.connect(func(id: int) -> void:
 		if not Game.try_spend(Game.MODELS[keys[id]]["price"]):
 			return
 		cur_rack.slots[slot] = Game.new_device(keys[id])
 		cur_rack.visual.queue_redraw()
 		_refresh_slots())
+	m.popup_hide.connect(m.queue_free)
+	m.popup(Rect2i(Vector2i(at.get_screen_position() + Vector2(0, at.size.y + 4)), Vector2i.ZERO))
 
 # ---------- device view ----------
 

@@ -34,7 +34,7 @@ static func all() -> Array:
 			"title": "Two tenants, one switch",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 800,
-			"brief": "Your two servers now belong to different customers who must NOT see each other — but they share the switch. That's what VLANs are for. On the switch console: 'enable', 'configure terminal', 'vlan 10' (then 'exit'), 'vlan 20', then put 10.0.0.1's switchport in VLAN 10 ('interface Ethernet1' → 'switchport access vlan 10') and 10.0.0.2's port in VLAN 20. The ping that worked before must now FAIL — separate VLANs are separate networks.",
+			"brief": "Your two servers now belong to different customers who must NOT see each other — but they share the switch. That's what VLANs are for. Cisco-style gear: 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1' → 'switchport access vlan 10'. PacketTik (RouterOS): '/interface bridge vlan add vlan-ids=10' and '/interface set ether1 pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20 — the ping that worked before must now FAIL: separate VLANs are separate networks.",
 			"reqs": [
 				{"d": "A switch has VLANs 10 and 20", "t": func() -> bool: return _switch_with_vlans([10, 20]) != null},
 				{"d": "Access ports assigned to both VLAN 10 and 20", "t": func() -> bool: return _access_port_in(10) and _access_port_in(20)},
@@ -46,11 +46,23 @@ static func all() -> Array:
 			"title": "Growing pains",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 1000,
-			"brief": "Alfa and Beta grew — you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports ('interface EthernetN' → 'switchport mode trunk'): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
+			"brief": "Alfa and Beta grew — you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (Cisco-style: 'switchport mode trunk'; PacketTik: '/interface set ether5 mode=trunk'): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
 			"reqs": [
 				{"d": "Two switches joined by a trunk (both ends)", "t": func() -> bool: return _trunk_between_switches(10)},
 				{"d": "10.0.0.3 reaches 10.0.0.1 across switches", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
 				{"d": "Beta (10.0.0.2) is still isolated from Alfa", "t": func() -> bool: return _ping("10.0.0.1", "10.0.0.2", false)},
+			],
+		},
+		{
+			"id": "redundant_core",
+			"title": "One cable from disaster",
+			"customer": "Alfa Ltd (again)",
+			"reward": 1100,
+			"brief": "Last month a janitor unplugged your inter-switch cable and Alfa's network split in half. They demand redundancy: run a SECOND cable between your two switches. Two links between switches form a LOOP — broadcasts would circulate forever and melt the network, but spanning tree saves you: it automatically blocks the spare link and unblocks it when the primary dies. Check 'show spanning-tree' (or '/interface bridge port print') — one port must show discarding/blocked while pings still flow.",
+			"reqs": [
+				{"d": "Two links between the same pair of switches", "t": func() -> bool: return _parallel_sw_links() >= 2},
+				{"d": "Spanning tree is blocking the spare", "t": func() -> bool: return _stp_blocking()},
+				{"d": "Alfa's servers still reach each other", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
 			],
 		},
 		{
@@ -278,6 +290,26 @@ static func _trunk_between_switches(vid: int) -> bool:
 				and (l.a.tagged_vlans.is_empty() or vid in l.a.tagged_vlans) \
 				and (l.b.tagged_vlans.is_empty() or vid in l.b.tagged_vlans):
 			return true
+	return false
+
+static func _parallel_sw_links() -> int:
+	var pair_count := {}
+	var best := 0
+	for l in Game.links:
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled:
+			var names := [l.a.dev.name, l.b.dev.name]
+			names.sort()
+			var key := "%s|%s" % [names[0], names[1]]
+			pair_count[key] = pair_count.get(key, 0) + 1
+			best = maxi(best, pair_count[key])
+	return best
+
+static func _stp_blocking() -> bool:
+	for d in Game.all_devices():
+		if d.type == "switch":
+			for i: Net.Iface in d.ifaces:
+				if Sim.stp_blocked(i):
+					return true
 	return false
 
 static func _fw_with_deny() -> Net.NDevice:

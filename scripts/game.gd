@@ -7,16 +7,16 @@ signal money_changed
 
 # Hardware catalog: fictional vendors, real tiers. New model = new entry.
 const MODELS := {
-	"sw-lite": {"type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
-	"sw-8": {"type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
-	"sw-24": {"type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
-	"srv-1": {"type": "server", "ports": 1, "label": "Dill R110", "price": 400},
-	"srv-2": {"type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
-	"rtr-lite": {"type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
-	"rtr-edge": {"type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
-	"fw-1": {"type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
-	"isp-uplink": {"type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
-	"crac-1": {"type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
+	"sw-lite": {"tier": 0, "type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
+	"sw-8": {"tier": 1, "type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
+	"sw-24": {"tier": 2, "type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
+	"srv-1": {"tier": 0, "type": "server", "ports": 1, "label": "Dill R110", "price": 400},
+	"srv-2": {"tier": 1, "type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
+	"rtr-lite": {"tier": 0, "type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
+	"rtr-edge": {"tier": 2, "type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
+	"fw-1": {"tier": 1, "type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
+	"isp-uplink": {"tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
+	"crac-1": {"tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
 	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100}

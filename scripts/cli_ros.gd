@@ -132,6 +132,16 @@ func exec(line: String) -> String:
 			for ip in dev.arp:
 				out += " %-15s %s\n" % [ip, dev.arp[ip]]
 			return out
+		"interface bridge port print":
+			if dev.type != "switch":
+				return "no bridge on this device\n"
+			var out := " INTERFACE  PVID  MODE    STP-STATE\n"
+			for i: Net.Iface in dev.ifaces:
+				var st := "disabled"
+				if i.enabled:
+					st = "discarding" if Sim.stp_blocked(i) else "forwarding"
+				out += " %-10s %-5d %-7s %s\n" % [i.name, i.untagged_vlan, i.mode, st]
+			return out
 		"interface bridge host print":
 			if dev.type != "switch":
 				return "no bridge on this device\n"
@@ -206,7 +216,7 @@ func exec(line: String) -> String:
 	return "bad command name %s (try 'help')\n" % path.split(" ")[0]
 
 const PATHS := ["help", "export", "ping", "tool traceroute",
-	"ip arp print", "interface bridge host print",
+	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
 	"interface print", "interface set",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
