@@ -1850,8 +1850,8 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("SITES"))
 	for i in Game.site_count():
 		var rent := int(Game.sites[i].get("rent", 0))
-		contracts_box.add_child(_label("  %-26s %dx%d   %d racks%s" % [Game.site_name(i),
-			Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size(),
+		contracts_box.add_child(_label("  %-24s %-11s %dx%d   %d racks%s" % [Game.site_name(i),
+			Game.site_city(i), Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size(),
 			"   $%d/cycle rent" % rent if rent > 0 else ""], 13, Color(0.75, 0.8, 0.85)))
 	var lease := Button.new()
 	lease.text = "Lease another site…"
@@ -1894,8 +1894,9 @@ func _build_business_tab() -> void:
 						continue
 					for g in Game.CIRCUIT_GRADES.size():
 						var gr: Dictionary = Game.CIRCUIT_GRADES[g]
-						pairs.append("%s ⇄ %s   %s   $%d install, $%d/cycle" % [
-							Game.site_name(i), Game.site_name(j), gr["label"],
+						pairs.append("%s ⇄ %s (%d km)   %s   $%d install, $%d/cycle" % [
+							Game.site_name(i), Game.site_name(j),
+							int(Game.site_distance_km(i, j)), gr["label"],
 							int(gr["setup"]), int(gr["fee"])])
 						combos.append([i, j, g])
 			if pairs.is_empty():

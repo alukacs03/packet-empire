@@ -15,6 +15,7 @@ const MAX_DEPTH := 400  # flood guard for misconfigurations STP cannot see
 static var _depth := 0
 static var _echo_id := 0
 static var _echo_results: Array = []
+static var rtt_ms := 0.0  # accumulated latency of the operation in flight
 static var last_trace: Array = []  # [{a: Iface, b: Iface, kind}] of the last operation
 static var _dns_results: Array = []
 static var _dns_id := 0
@@ -28,13 +29,16 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dict
 	## underlay while carrying traffic), so the outer results are preserved.
 	var outer_results := _echo_results
 	var outer_trace := last_trace
+	var outer_rtt := rtt_ms
+	rtt_ms = 0.0
 	_echo_id += 1
 	_echo_results = []
 	if _depth == 0:
 		last_trace = []
 	if _has_ip(dev, dst_ip):
 		_echo_results = outer_results
-		return {"ok": true, "from": dst_ip, "detail": ""}  # loopback: our own address
+		rtt_ms = outer_rtt
+		return {"ok": true, "from": dst_ip, "detail": "", "rtt": 0.0}  # loopback: our own address
 	var my_id := _echo_id
 	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": my_id}, vrf)
 	var result := {"ok": false, "from": "", "detail": "timeout"}
@@ -50,9 +54,11 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dict
 			if r["type"] == "ttl-exceeded":
 				result = {"ok": false, "from": r["from"], "detail": "ttl-exceeded"}
 				break
+	result["rtt"] = rtt_ms
 	_echo_results = outer_results
 	if _depth > 0:
 		last_trace = outer_trace  # a nested probe does not rewrite the animation
+		rtt_ms = outer_rtt
 	return result
 
 static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Array:
@@ -572,6 +578,7 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		return
 	iface.tx_frames += 1
 	peer.rx_frames += 1
+	rtt_ms += Game.link_latency_ms(l)
 	if last_trace.size() < 300:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	_cap(peer.dev, peer, frame)

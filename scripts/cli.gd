@@ -28,8 +28,10 @@ static func fmt_ping(dev: Net.NDevice, target: String) -> String:
 	var r := Sim.ping(dev, ip)
 	var out := "PING %s (%s)\n" % [target, ip]
 	if r["ok"]:
+		var base: float = maxf(0.04, float(r.get("rtt", 0.1)))
 		for seq in [1, 2, 3]:
-			out += "64 bytes from %s: icmp_seq=%d ttl=64 time=0.0%d ms\n" % [r["from"], seq, seq + 3]
+			out += "64 bytes from %s: icmp_seq=%d ttl=64 time=%.2f ms\n" % [r["from"], seq,
+				base * (1.0 + 0.04 * seq)]
 		return out + "3 packets transmitted, 3 received, 0% packet loss\n"
 	if r["detail"] == "ttl-exceeded":
 		return out + "From %s: icmp_seq=1 Time to live exceeded\n" % r["from"]
@@ -44,7 +46,11 @@ static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
 	var out := "traceroute to %s (%s), 16 hops max\n" % [target, ip]
 	var n := 1
 	for hop in Sim.traceroute(dev, ip):
-		out += "%2d  %s\n" % [n, hop]
+		if hop == "*":
+			out += "%2d  *\n" % n
+		else:
+			var probe := Sim.ping(dev, String(hop))
+			out += "%2d  %-18s %.2f ms\n" % [n, hop, maxf(0.04, float(probe.get("rtt", 0.1)))]
 		n += 1
 	return out
 

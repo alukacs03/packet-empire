@@ -120,6 +120,10 @@ static func ui_smoke(world: Node2D) -> int:
 	return fails
 
 static func run() -> int:
+	# The revenue cycle contains real randomness (poaching, attacks, field
+	# faults, staff repairs, customer growth). Seed it so a run is
+	# reproducible: a failure can then be investigated instead of shrugged at.
+	seed(20260823)
 	fails = 0
 	Game.money = 1000000
 
@@ -1023,7 +1027,9 @@ static func run() -> int:
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
 	check(Game.iface_speed(mkt_sw.ifaces[0]) == 1000, "capacity: PacketTik port is 1G")
-	Game.stage = 1  # no random field faults during deterministic capacity checks
+	Game.stage = 0  # no field faults and no attacks while measuring capacity
+	Game.attacks = []
+	Game.deals = []  # this section measures its own traffic, nobody else's
 	Game.racks.append(r6)  # the walkthrough reset dropped the VRRP rack; bring it back
 	Game.connect_ifaces(vr1.ifaces[0], vsw.ifaces[0])
 	Game.connect_ifaces(vr2.ifaces[0], vsw.ifaces[1])
@@ -1435,6 +1441,31 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- geography and latency ---
+	check(Game.site_city(0) != "", "geo: every site sits in a city")
+	var far_site := Game.add_site("Remote room", Vector2i(5, 5), "leased", "Debrecen")
+	check(Game.site_distance_km(0, far_site) > 100.0, "geo: distance between cities is real")
+	var lat_rack_home := Game.add_rack(Vector2i(0, 2), 0)
+	var lat_rack_far := Game.add_rack(Vector2i(0, 0), far_site)
+	var lat_a := Game.new_device("rtr-edge")
+	var lat_b := Game.new_device("rtr-edge")
+	lat_rack_home.slots[0] = lat_a
+	lat_rack_far.slots[0] = lat_b
+	Game.money = 300000
+	check(Game.buy_circuit(0, far_site, 1).is_empty(), "geo: a circuit links the two cities")
+	check(Game.connect_ifaces(lat_a.ifaces[0], lat_b.ifaces[0]), "geo: the sites are cabled over it")
+	Game.add_ip(lat_a.ifaces[0], "10.140.0.1/30")
+	Game.add_ip(lat_b.ifaces[0], "10.140.0.2/30")
+	var far_probe := Sim.ping(lat_a, "10.140.0.2")
+	check(far_probe["ok"], "geo: the far site answers")
+	check(float(far_probe.get("rtt", 0.0)) > 1.0,
+		"geo: distance shows up as latency (%.2f ms)" % float(far_probe.get("rtt", 0.0)))
+	var local_probe := Sim.ping(lat_a, "10.140.0.1")
+	check(float(local_probe.get("rtt", 99.0)) < 1.0, "geo: local traffic stays fast")
+	var lat_cli := CLI.new_session(lat_a)
+	lat_cli.exec("en")
+	check(lat_cli.exec("ping 10.140.0.2").contains(" ms"), "geo: ping reports the time")
 
 	# --- maintenance windows and post-mortems ---
 	Game.maintenance_until = -1

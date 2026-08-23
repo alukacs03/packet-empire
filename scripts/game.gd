@@ -203,7 +203,30 @@ var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink":
 
 func _ensure_sites() -> void:
 	if sites.is_empty():
-		sites = [{"name": "Home floor", "grid": [0, 0], "kind": "own"}]
+		sites = [{"name": "Home floor", "grid": [0, 0], "kind": "own", "city": "Budapest"}]
+	for s_i in sites:
+		if not s_i.has("city"):
+			s_i["city"] = CITIES[0]
+
+func site_city(idx: int) -> String:
+	_ensure_sites()
+	if idx < 0 or idx >= sites.size():
+		return CITIES[0]
+	return String(sites[idx].get("city", CITIES[0]))
+
+func site_distance_km(a: int, b: int) -> float:
+	var pa: Array = CITY_POS.get(site_city(a), [0, 0])
+	var pb: Array = CITY_POS.get(site_city(b), [0, 0])
+	return Vector2(float(pa[0]), float(pa[1])).distance_to(Vector2(float(pb[0]), float(pb[1])))
+
+func link_latency_ms(l: Net.Link) -> float:
+	## inside a building a link is effectively instant; between buildings the
+	## speed of light in fibre is about 200 km per millisecond, and carriers
+	## never take the straight line
+	var s := sites_of(l.a, l.b)
+	if s[0] == s[1]:
+		return 0.05
+	return maxf(0.5, site_distance_km(s[0], s[1]) / 200.0 * 1.4)
 
 func site_count() -> int:
 	_ensure_sites()
@@ -247,10 +270,18 @@ func switch_site(idx: int) -> void:
 		current_site = idx
 		topology_changed.emit()
 
-func add_site(name: String, grid: Vector2i, kind := "acquired") -> int:
+func add_site(name: String, grid: Vector2i, kind := "acquired", city := "") -> int:
 	_ensure_sites()
-	sites.append({"name": name, "grid": [grid.x, grid.y], "kind": kind})
+	if city == "":
+		city = CITIES[sites.size() % CITIES.size()]
+	sites.append({"name": name, "grid": [grid.x, grid.y], "kind": kind, "city": city})
 	return sites.size() - 1
+
+const CITIES := ["Budapest", "Debrecen", "Szeged", "Gyor", "Pecs", "Miskolc", "Vienna", "Bratislava"]
+const CITY_POS := {  # rough relative positions, in kilometres from Budapest
+	"Budapest": [0, 0], "Debrecen": [190, 20], "Szeged": [140, 130], "Gyor": [-110, -20],
+	"Pecs": [30, 160], "Miskolc": [140, -110], "Vienna": [-215, -40], "Bratislava": [-160, -60],
+}
 
 const SITE_OFFERS := [
 	{"label": "Small branch room", "grid": [5, 5], "setup": 9000, "rent": 120},
