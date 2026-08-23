@@ -827,6 +827,12 @@ static func run() -> int:
 	check(not Game.drill_active and revealed.size() == 3, "drill: finish reveals the fault list")
 	check(Game.all_devices().size() == pre_devs, "drill: the real datacenter came back intact")
 	check(Game.money == pre_money + Drill.REWARD, "drill: passing pays the bonus")
+	check(Drill.finish(false).is_empty(), "drill: finishing with no drill running is a no-op")
+	Drill.start(2, 7)
+	var during := Game.all_devices().size()
+	Drill.finish(false)  # the quit path: abandon restores before saving
+	check(Game.all_devices().size() == pre_devs and during != pre_devs,
+		"drill: abandoning restores the real datacenter")
 
 	print("---- %d failures" % fails)
 	return fails

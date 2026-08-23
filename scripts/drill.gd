@@ -8,6 +8,7 @@ const REWARD := 400
 static var _snap := ""
 static var _undo: Array = []  # Callables that revert each fault
 static var faults: Array = []  # descriptions, revealed on abandon
+static var _cast := {}  # role -> device/iface built by _build
 static var targets: Array = []  # [[ip_a, ip_b], ...] pairs that must ping
 
 static func start(n_breaks := 3, rng_seed := -1) -> void:
@@ -51,12 +52,8 @@ static func _build() -> void:
 	Game.add_static_route(b, "0.0.0.0", 0, "10.70.1.1")
 	Game.add_static_route(c, "0.0.0.0", 0, "10.70.2.1")
 	targets = [["10.70.1.10", "10.70.1.20"], ["10.70.1.10", "10.70.2.10"], ["10.70.1.20", "10.70.2.10"]]
-
-static func _dev(n: String) -> Net.NDevice:
-	for d in Game.all_devices():
-		if d.name == n:
-			return d
-	return null
+	_cast = {"sw1": sw1, "sw2": sw2, "rtr": rtr, "a": a, "b": b, "c": c,
+		"trunk": sw1.ifaces[3], "access_a": sw1.ifaces[0]}
 
 static func _break(n: int, rng_seed: int) -> void:
 	_undo = []
@@ -77,25 +74,25 @@ static func _break(n: int, rng_seed: int) -> void:
 		func() -> void:
 			port.enabled = false
 			_undo.append(func() -> void: port.enabled = true)])
-	var vict_sw: Net.NDevice = Game.all_devices()[0]  # sw1
-	var acc: Net.Iface = vict_sw.ifaces[0]
+	var vict_sw: Net.NDevice = _cast["sw1"]
+	var acc: Net.Iface = _cast["access_a"]
 	pool.append(["%s %s was moved to a wrong VLAN" % [vict_sw.name, acc.name],
 		func() -> void:
 			Game.add_vlan(vict_sw, 99, "wrong")
 			acc.untagged_vlan = 99
 			_undo.append(func() -> void: acc.untagged_vlan = 1)])
-	var gw_srv := _dev("srv%d" % (Game._counter["server"] - 1))  # b
+	var gw_srv: Net.NDevice = _cast["b"]
 	pool.append(["%s lost its default route" % gw_srv.name,
 		func() -> void:
 			var old: Array = gw_srv.static_routes.duplicate(true)
 			gw_srv.static_routes = []
 			_undo.append(func() -> void: gw_srv.static_routes = old)])
-	var trunk_if: Net.Iface = Game.all_devices()[0].ifaces[3]
+	var trunk_if: Net.Iface = _cast["trunk"]
 	pool.append(["the inter-switch trunk was pruned to the wrong VLAN list",
 		func() -> void:
 			trunk_if.tagged_vlans = [42]
 			_undo.append(func() -> void: trunk_if.tagged_vlans = [])])
-	var ip_srv := _dev("srv%d" % (Game._counter["server"] - 2))  # a
+	var ip_srv: Net.NDevice = _cast["a"]
 	pool.append(["%s was readdressed into the wrong subnet" % ip_srv.name,
 		func() -> void:
 			var old_ips: Array = ip_srv.ifaces[0].ips.duplicate()
@@ -131,6 +128,8 @@ static func cheat_fix() -> void:
 
 static func finish(success: bool) -> Array:
 	## restore the real world; returns the fault list for the debrief
+	if _snap == "":
+		return []  # no drill running: nothing to restore
 	var revealed := faults.duplicate()
 	Game.drill_active = false
 	Game.restore(_snap)
@@ -143,4 +142,5 @@ static func finish(success: bool) -> Array:
 	_undo = []
 	faults = []
 	targets = []
+	_cast = {}
 	return revealed

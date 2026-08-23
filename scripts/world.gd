@@ -36,6 +36,8 @@ func rebuild_racks() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui:
+		if Game.drill_active:
+			Drill.finish(false)  # abandon: restore the real datacenter before saving
 		Game.save_game()
 
 func _process(dt: float) -> void:
