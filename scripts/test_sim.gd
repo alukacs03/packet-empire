@@ -867,6 +867,66 @@ static func run() -> int:
 		cycles += 1
 	check(cycles < 40, "walkthrough: expansion affordable within %d cycles" % cycles)
 
+	# --- the rest of the demo arc, driven through the consoles the hints name ---
+	var w_sw2 := Game.new_device("sw-8")
+	var w_s3 := Game.new_device("srv-1")
+	check(Game.try_spend(250 + 400), "walkthrough: a second switch and server are affordable")
+	w_rack.slots[3] = w_sw2
+	w_rack.slots[4] = w_s3
+	Game.connect_ifaces(w_sw.ifaces[2], w_sw2.ifaces[7])  # inter-switch link
+	Game.connect_ifaces(w_s3.ifaces[0], w_sw2.ifaces[0])
+	var w_ros := CLI.new_session(w_sw)  # PacketTik: RouterOS dialect
+	w_ros.exec("/interface set ether3 mode=trunk")
+	var w_eos := CLI.new_session(w_sw2)  # OpenRack: EOS dialect
+	w_eos.exec("enable")
+	w_eos.exec("configure terminal")
+	w_eos.exec("vlan 10")
+	w_eos.exec("interface Ethernet8")
+	w_eos.exec("switchport mode trunk")
+	w_eos.exec("interface Ethernet1")
+	w_eos.exec("switchport access vlan 10")
+	w_eos.exec("end")
+	CLI.new_session(w_s3).exec("ip addr add 10.0.0.3/24 dev eth0")
+	check(Game.try_complete_contract(_contract("stretch_vlans")),
+		"walkthrough: contract 4 pays (trunk built from both dialects)")
+	Game.connect_ifaces(w_sw.ifaces[3], w_sw2.ifaces[6])  # the spare link
+	w_ros.exec("/interface set ether4 mode=trunk")
+	w_eos.exec("configure terminal")
+	w_eos.exec("interface Ethernet7")
+	w_eos.exec("switchport mode trunk")
+	w_eos.exec("end")
+	Sim.flush_learned_state()
+	check(Game.try_complete_contract(_contract("redundant_core")),
+		"walkthrough: contract 5 pays (spanning tree blocks the spare link)")
+	var w_rtr := Game.new_device("rtr-lite")
+	var w_o1 := Game.new_device("srv-1")
+	var w_o2 := Game.new_device("srv-1")
+	var w_rack2 := Game.add_rack(Vector2i(1, 0))
+	while Game.money < 350 + 800 + Game.RACK_PRICE and cycles < 80:
+		Game.sla_tick()
+		cycles += 1
+	check(Game.try_spend(350 + 800 + Game.RACK_PRICE),
+		"walkthrough: the router and two office servers are affordable")
+	w_rack2.slots[0] = w_rtr
+	w_rack2.slots[1] = w_o1
+	w_rack2.slots[2] = w_o2
+	Game.connect_ifaces(w_rtr.ifaces[0], w_o1.ifaces[0])
+	Game.connect_ifaces(w_rtr.ifaces[1], w_o2.ifaces[0])
+	var w_rcli := CLI.new_session(w_rtr)
+	w_rcli.exec("/ip address add address=192.168.1.1/24 interface=ether1")
+	w_rcli.exec("/ip address add address=192.168.2.1/24 interface=ether2")
+	var w_o1cli := CLI.new_session(w_o1)
+	w_o1cli.exec("ip addr add 192.168.1.10/24 dev eth0")
+	w_o1cli.exec("ip route add default via 192.168.1.1")
+	var w_o2cli := CLI.new_session(w_o2)
+	w_o2cli.exec("ip addr add 192.168.2.10/24 dev eth0")
+	w_o2cli.exec("ip route add default via 192.168.2.1")
+	check(Game.try_complete_contract(_contract("two_offices")),
+		"walkthrough: contract 6 pays (two offices routed together)")
+	Game.demo = true
+	check(Demo.complete(), "walkthrough: the whole demo arc is completable from a fresh start")
+	Game.demo = false
+
 	# --- port-channels ---
 	var lsw1 := Game.new_device("sw-8")
 	var lsw2 := Game.new_device("sw-8")
