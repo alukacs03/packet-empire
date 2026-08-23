@@ -118,6 +118,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
 			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
+			{"m": EP, "p": ["show", "port-channel"], "h": _show_lag},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
 			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
@@ -126,9 +127,9 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
 			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
-			{"m": ["config"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
+			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
-			{"m": ["config"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["acl", "permit"], "h": _cfg_acl.bind("permit")},
 			{"m": ["config"], "p": ["acl", "deny"], "h": _cfg_acl.bind("deny")},
@@ -149,6 +150,8 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
 			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
 			{"m": ["if"], "p": ["vrrp"], "h": _if_vrrp},
+			{"m": ["if"], "p": ["channel-group"], "h": _if_lag},
+			{"m": ["if"], "p": ["no", "channel-group"], "h": func(_r): ctx_if.lag = 0; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "vrrp"], "h": func(_r): ctx_if.vrrp = {}; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
@@ -385,6 +388,38 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
+
+	func _if_lag(r: Array) -> String:
+		if dev.type != "switch":
+			return "% port-channels need a switch\n"
+		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 1:
+			ctx_if.lag = int(r[0])
+			Game.topology_changed.emit()
+			return ""
+		return "usage: channel-group <1-64>\n"
+
+	func _show_lag(_r: Array) -> String:
+		var groups := {}
+		for i: Net.Iface in dev.ifaces:
+			if i.lag > 0:
+				if not groups.has(i.lag):
+					groups[i.lag] = []
+				groups[i.lag].append(i)
+		if groups.is_empty():
+			return "  (no port-channels: 'channel-group <n>' on member interfaces)\n"
+		var out := "%-6s %-22s %s\n" % ["Group", "Members", "Peer"]
+		var gids := groups.keys()
+		gids.sort()
+		for g in gids:
+			var names: Array = []
+			var peer := "-"
+			for i: Net.Iface in groups[g]:
+				names.append(EOS._short(i.name))
+				var l := Game.link_at(i)
+				if l:
+					peer = l.other(i).dev.name
+			out += "%-6d %-22s %s\n" % [g, ",".join(PackedStringArray(names)), peer]
+		return out
 
 	func _if_vrrp(r: Array) -> String:
 		if not dev.ip_forwarding:
@@ -640,7 +675,7 @@ class EOS extends Session:
 	func _show_stp(_r: Array) -> String:
 		if dev.type != "switch":
 			return "% spanning tree runs on switches\n"
-		var root := Sim.stp_root()
+		var root := Sim.stp_root_of(dev)
 		var out := "Root bridge: %s%s\n%-11s %-11s %s\n" % [root.name if root else "-",
 			"  (this switch)" if root == dev else "", "Port", "Role", "State"]
 		var any := false
@@ -747,6 +782,8 @@ class EOS extends Session:
 				out += "   vrrp %d ip %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
 				if int(i.vrrp.get("priority", 100)) != 100:
 					out += "   vrrp %d priority %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
+			if i.lag > 0:
+				out += "   channel-group %d\n" % i.lag
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
 			if not i.enabled:

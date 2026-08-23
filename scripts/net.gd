@@ -14,6 +14,7 @@ class Iface:
 	var tagged_vlans: Array = []  # trunk allowed VIDs; empty = all
 	var nat := ""  # "" | "inside" | "outside" (srcnat/masquerade toward outside)
 	var vrrp := {}  # {"group": int, "vip": String, "priority": int}
+	var lag := 0  # port-channel group id; 0 = standalone
 	var tx_frames := 0  # runtime counters
 	var rx_frames := 0
 	var ips: Array = []  # CIDR strings, e.g. "10.0.0.5/24"

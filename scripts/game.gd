@@ -109,8 +109,27 @@ func iface_speed(i: Net.Iface) -> int:
 		return 100
 	return int(MODELS[i.dev.model].get("speed", 1000))
 
+func lag_members(l: Net.Link) -> Array:
+	## all links in the same bundle as l (including l); [] means standalone
+	if l.a.lag == 0 or l.b.lag == 0:
+		return []
+	var out: Array = []
+	for m in links:
+		if m.a.dev == l.a.dev and m.b.dev == l.b.dev and m.a.lag == l.a.lag and m.b.lag == l.b.lag:
+			out.append(m)
+		elif m.a.dev == l.b.dev and m.b.dev == l.a.dev and m.a.lag == l.b.lag and m.b.lag == l.a.lag:
+			out.append(m)
+	return out
+
 func link_capacity(l: Net.Link) -> int:
-	return mini(iface_speed(l.a), iface_speed(l.b))
+	var members := lag_members(l)
+	if members.size() <= 1:
+		return mini(iface_speed(l.a), iface_speed(l.b))
+	var total := 0
+	for m in members:
+		if m.a.enabled and m.b.enabled:
+			total += mini(iface_speed(m.a), iface_speed(m.b))
+	return total
 
 func power_draw() -> int:
 	var w := 0
@@ -558,7 +577,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	for i: Net.Iface in d.ifaces:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
-			"nat": i.nat, "vrrp": i.vrrp, "ips": i.ips})
+			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "bgp": d.bgp,
@@ -611,6 +630,7 @@ func load_game() -> bool:
 				i.tagged_vlans.append(int(tv))
 			i.nat = si.get("nat", "")
 			i.vrrp = si.get("vrrp", {})
+			i.lag = int(si.get("lag", 0))
 			i.ips = si["ips"]
 			d.ifaces.append(i)
 		if d.type == "switch":

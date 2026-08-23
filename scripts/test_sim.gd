@@ -685,6 +685,54 @@ static func run() -> int:
 		cycles += 1
 	check(cycles < 40, "walkthrough: expansion affordable within %d cycles" % cycles)
 
+	# --- port-channels ---
+	var lsw1 := Game.new_device("sw-8")
+	var lsw2 := Game.new_device("sw-8")
+	var lh1 := Game.new_device("server")
+	var lh2 := Game.new_device("server")
+	var r7 := Game.add_rack(Vector2i(3, 1))
+	r7.slots[0] = lsw1
+	r7.slots[1] = lsw2
+	r7.slots[2] = lh1
+	r7.slots[3] = lh2
+	Game.connect_ifaces(lh1.ifaces[0], lsw1.ifaces[0])
+	Game.connect_ifaces(lh2.ifaces[0], lsw2.ifaces[0])
+	Game.connect_ifaces(lsw1.ifaces[1], lsw2.ifaces[1])
+	Game.connect_ifaces(lsw1.ifaces[2], lsw2.ifaces[2])
+	Game.add_ip(lh1.ifaces[0], "10.50.0.1/24")
+	Game.add_ip(lh2.ifaces[0], "10.50.0.2/24")
+	Game.topology_changed.emit()
+	var pre_blocked := Sim.stp_blocked(lsw1.ifaces[1]) or Sim.stp_blocked(lsw1.ifaces[2]) \
+		or Sim.stp_blocked(lsw2.ifaces[1]) or Sim.stp_blocked(lsw2.ifaces[2])
+	check(pre_blocked, "lag: without bundling, STP blocks the parallel link")
+	var lag_s := CLI.new_session(lsw1)
+	lag_s.exec("en")
+	lag_s.exec("conf t")
+	lag_s.exec("int et2")
+	lag_s.exec("channel-group 1")
+	lag_s.exec("int et3")
+	lag_s.exec("channel-group 1")
+	lag_s.exec("end")
+	var lag_s2 := CLI.new_session(lsw2)
+	lag_s2.exec("en")
+	lag_s2.exec("conf t")
+	lag_s2.exec("int et2")
+	lag_s2.exec("channel-group 1")
+	lag_s2.exec("int et3")
+	lag_s2.exec("channel-group 1")
+	lag_s2.exec("end")
+	var post_blocked := Sim.stp_blocked(lsw1.ifaces[1]) or Sim.stp_blocked(lsw1.ifaces[2]) \
+		or Sim.stp_blocked(lsw2.ifaces[1]) or Sim.stp_blocked(lsw2.ifaces[2])
+	check(not post_blocked, "lag: bundled links form one logical edge, nothing blocked")
+	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: traffic flows over the bundle")
+	check(Game.link_capacity(Game.link_at(lsw1.ifaces[1])) == 2000, "lag: bundle capacity sums members")
+	check(lag_s.exec("show port-channel").contains("Et2,Et3"), "lag: show port-channel lists members")
+	lsw1.ifaces[1].enabled = false
+	Game.topology_changed.emit()
+	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: member death fails over inside the bundle")
+	lsw1.ifaces[1].enabled = true
+	Game.topology_changed.emit()
+
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
 	check(Game.iface_speed(mkt_sw.ifaces[0]) == 1000, "capacity: PacketTik port is 1G")

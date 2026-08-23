@@ -275,11 +275,11 @@ static func stp_blocked(i: Net.Iface) -> bool:
 	_stp_ensure()
 	return _stp_blocked.has(i)
 
-static func stp_root() -> Net.NDevice:
+static func stp_root_of(dev: Net.NDevice) -> Net.NDevice:
 	_stp_ensure()
-	return _stp_root
+	return _stp_roots.get(dev, dev)
 
-static var _stp_root: Net.NDevice = null
+static var _stp_roots := {}  # switch -> its component's root
 
 static func _stp_ensure() -> void:
 	## Simplified 802.1D: lowest-MAC switch is root; BFS spanning tree over
@@ -288,7 +288,7 @@ static func _stp_ensure() -> void:
 		return
 	_stp_dirty = false
 	_stp_blocked = {}
-	_stp_root = null
+	_stp_roots = {}
 	var switches: Array = []
 	for d in Game.all_devices():
 		if d.type == "switch" and d.status == "active":
@@ -296,38 +296,59 @@ static func _stp_ensure() -> void:
 	if switches.is_empty():
 		return
 	switches.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
-	_stp_root = switches[0]
 	var sw_links: Array = []
 	for l in Game.links:
 		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
 			sw_links.append(l)
-	var dist := {_stp_root: 0}
-	var tree := {}
-	var frontier: Array = [_stp_root]
-	while not frontier.is_empty():
-		frontier.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
-		var cur: Net.NDevice = frontier.pop_front()
-		for l in sw_links:
-			if tree.has(l):
-				continue
-			var nb: Net.NDevice = null
-			if l.a.dev == cur:
-				nb = l.b.dev
-			elif l.b.dev == cur:
-				nb = l.a.dev
-			if nb != null and not dist.has(nb):
-				dist[nb] = dist[cur] + 1
-				tree[l] = true
-				frontier.append(nb)
+	# collapse lag bundles into single logical edges
+	var edges := {}
 	for l in sw_links:
-		if tree.has(l):
+		var key: String
+		if l.a.lag > 0 and l.b.lag > 0:
+			var ids := ["%s|%d" % [l.a.dev.name, l.a.lag], "%s|%d" % [l.b.dev.name, l.b.lag]]
+			ids.sort()
+			key = "lag:" + ids[0] + ":" + ids[1]
+		else:
+			key = "link:%d" % sw_links.find(l)
+		if not edges.has(key):
+			edges[key] = {"links": [], "a": l.a.dev, "b": l.b.dev}
+		edges[key]["links"].append(l)
+	# one spanning tree per connected component, rooted at its lowest MAC
+	var dist := {}
+	var tree := {}
+	for sw in switches:  # sorted by mac, so the first unseen switch roots its component
+		if dist.has(sw):
 			continue
-		var da: int = dist.get(l.a.dev, 1 << 30)
-		var db: int = dist.get(l.b.dev, 1 << 30)
-		var victim: Net.Iface = l.a
-		if db > da or (db == da and l.b.dev.ifaces[0].mac > l.a.dev.ifaces[0].mac):
-			victim = l.b
-		_stp_blocked[victim] = true
+		dist[sw] = 0
+		var frontier: Array = [sw]
+		while not frontier.is_empty():
+			frontier.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
+			var cur: Net.NDevice = frontier.pop_front()
+			_stp_roots[cur] = sw
+			for key in edges:
+				if tree.has(key):
+					continue
+				var e: Dictionary = edges[key]
+				var nb: Net.NDevice = null
+				if e["a"] == cur:
+					nb = e["b"]
+				elif e["b"] == cur:
+					nb = e["a"]
+				if nb != null and not dist.has(nb):
+					dist[nb] = dist[cur] + 1
+					tree[key] = true
+					frontier.append(nb)
+	for key in edges:
+		if tree.has(key):
+			continue
+		var e: Dictionary = edges[key]
+		var da: int = dist.get(e["a"], 1 << 30)
+		var db: int = dist.get(e["b"], 1 << 30)
+		var victim_dev: Net.NDevice = e["a"]
+		if db > da or (db == da and e["b"].ifaces[0].mac > e["a"].ifaces[0].mac):
+			victim_dev = e["b"]
+		for l in e["links"]:
+			_stp_blocked[l.a if l.a.dev == victim_dev else l.b] = true
 
 # ---------- IP stack (hosts & routers) ----------
 
@@ -443,9 +464,16 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	dev.mac_table[vlan][frame["src"]] = in_if
 	var known: Net.Iface = dev.mac_table[vlan].get(frame["dst"])
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
+	var lags_done := {}
 	for o: Net.Iface in outs:
 		if o == in_if or stp_blocked(o):
 			continue
+		if o.lag > 0:
+			if lags_done.has(o.lag) or (in_if.lag > 0 and in_if.lag == o.lag):
+				continue
+			if not (o.enabled and Game.link_at(o) != null):
+				continue  # dead member: another member of this lag will carry it
+			lags_done[o.lag] = true
 		var f := frame.duplicate(true)
 		if o.mode == "access":
 			if o.untagged_vlan != vlan:
