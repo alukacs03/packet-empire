@@ -45,6 +45,8 @@ var if_cable_lbl: Label
 var if_cable_btn: Button
 
 var welcome_overlay: Control
+var tutorial_panel: PanelContainer
+var tutorial_box: VBoxContainer
 var contracts_overlay: Control
 var contracts_box: VBoxContainer
 var vlan_section: VBoxContainer
@@ -73,6 +75,9 @@ func _ready() -> void:
 	_build_if_overlay()
 	_build_contracts_overlay()
 	_build_welcome()
+	_build_tutorial()
+	Game.topology_changed.connect(_refresh_tutorial)
+	Game.money_changed.connect(_refresh_tutorial)
 	Game.topology_changed.connect(_refresh_open)
 	Game.topology_changed.connect(_refresh_money)
 	Game.money_changed.connect(_refresh_money)
@@ -684,6 +689,66 @@ func _cable_action() -> void:
 	_menu(if_cable_btn, labels, func(id: int) -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
+
+# ---------- tutorial checklist ----------
+
+func _build_tutorial() -> void:
+	tutorial_panel = PanelContainer.new()
+	tutorial_panel.theme = theme_res
+	tutorial_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	tutorial_panel.position = Vector2(-340, 70)
+	tutorial_panel.custom_minimum_size = Vector2(320, 0)
+	tutorial_panel.add_theme_stylebox_override("panel", _sb(Color(0.07, 0.09, 0.12, 0.94), ACCENT * Color(1, 1, 1, 0.5), 8, 12))
+	add_child(tutorial_panel)
+	tutorial_box = VBoxContainer.new()
+	tutorial_box.add_theme_constant_override("separation", 5)
+	tutorial_panel.add_child(tutorial_box)
+	_refresh_tutorial()
+
+func _refresh_tutorial() -> void:
+	if tutorial_panel == null:
+		return
+	if "rackup" in Game.contracts_done:
+		tutorial_panel.visible = false
+		return
+	tutorial_panel.visible = true
+	for c in tutorial_box.get_children():
+		c.queue_free()
+	tutorial_box.add_child(_section("GETTING STARTED"))
+	var servers := 0
+	var cabled := 0
+	for d in Game.all_devices():
+		if d.type == "server":
+			servers += 1
+			for i: Net.Iface in d.ifaces:
+				var l := Game.link_at(i)
+				if l and l.other(i).dev.type == "switch":
+					cabled += 1
+					break
+	var switches := 0
+	for d in Game.all_devices():
+		if d.type == "switch":
+			switches += 1
+	var steps := [
+		["Buy a rack: press R, click a floor tile", Game.racks.size() >= 1],
+		["Click the rack, install a switch", switches >= 1],
+		["Install two servers (Dill R110)", servers >= 2],
+		["Cable both servers: click a port, Run cable", cabled >= 2],
+		["Open Contracts, collect 'Rack and stack'", false],
+	]
+	var next_found := false
+	for st in steps:
+		var done: bool = st[1]
+		var mark := "●" if done else "○"
+		var col := Color(0.5, 0.9, 0.6) if done else Color(0.6, 0.65, 0.75)
+		if not done and not next_found:
+			next_found = true
+			col = Color(0.85, 0.95, 1.0)
+			mark = "▸"
+		var l := _label("%s  %s" % [mark, st[0]], 13, col)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(290, 0)
+		tutorial_box.add_child(l)
 
 # ---------- welcome ----------
 
