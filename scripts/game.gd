@@ -2459,6 +2459,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ssids": d.ssids, "wifi": d.wifi, "radius": d.radius,
 		"igmp_snooping": d.igmp_snooping, "mcast_groups": d.mcast_groups,
 		"mlag_peer": d.mlag_peer, "psu": d.psu, "snmp": d.snmp,
+		"stp_mode": d.stp_mode, "stp_priority": d.stp_priority,
+		"mst_instances": d.mst_instances,
 		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
 		"log_host": d.log_host, "ntp_server": d.ntp_server,
@@ -2554,6 +2556,9 @@ func _apply(data: Dictionary) -> void:
 		d.mlag_peer = sd.get("mlag_peer", "")
 		d.psu = String(sd.get("psu", default_psu(d.model)))
 		d.snmp = String(sd.get("snmp", ""))
+		d.stp_mode = String(sd.get("stp_mode", "rstp"))
+		d.stp_priority = int(sd.get("stp_priority", 32768))
+		d.mst_instances = sd.get("mst_instances", {}).duplicate(true)
 		d.igmp_snooping = bool(sd.get("igmp_snooping", false))
 		d.mcast_groups = sd.get("mcast_groups", [])
 		d.startup = sd.get("startup", {})

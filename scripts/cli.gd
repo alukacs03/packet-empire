@@ -141,6 +141,9 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
 			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
 			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
+			{"m": ["config"], "p": ["spanning-tree", "mode"], "h": _stp_mode},
+			{"m": ["config"], "p": ["spanning-tree", "priority"], "h": _stp_priority},
+			{"m": ["config"], "p": ["spanning-tree", "mst"], "h": _stp_mst},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
@@ -1272,22 +1275,72 @@ class EOS extends Session:
 			return "  (no frames captured: generate some traffic)\n"
 		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
 
+	func _stp_mode(r: Array) -> String:
+		if dev.type != "switch":
+			return "% spanning tree runs on switches\n"
+		var want: String = String(r[0]).to_lower() if r.size() > 0 else ""
+		if want not in ["stp", "rstp", "mst"]:
+			return "usage: spanning-tree mode stp|rstp|mst\n"
+		dev.stp_mode = want
+		Sim.flush_learned_state()
+		Game.topology_changed.emit()
+		return ""
+
+	func _stp_priority(r: Array) -> String:
+		if dev.type != "switch":
+			return "% spanning tree runs on switches\n"
+		if r.size() < 1 or not String(r[0]).is_valid_int():
+			return "usage: spanning-tree priority <0-61440>\n"
+		dev.stp_priority = clampi(int(r[0]), 0, 61440)
+		Sim.flush_learned_state()
+		Game.topology_changed.emit()
+		return ""
+
+	func _stp_mst(r: Array) -> String:
+		## spanning-tree mst instance <n> vlan <list>
+		if dev.type != "switch":
+			return "% spanning tree runs on switches\n"
+		if r.size() < 4 or r[0] != "instance" or r[2] != "vlan":
+			return "usage: spanning-tree mst instance <n> vlan <ids>\n"
+		var vids: Array = []
+		for part in String(r[3]).split(","):
+			if part.is_valid_int():
+				vids.append(int(part))
+		if vids.is_empty():
+			return "% no valid VLAN ids\n"
+		dev.mst_instances[int(r[1])] = vids
+		dev.stp_mode = "mst"
+		Sim.flush_learned_state()
+		Game.topology_changed.emit()
+		return ""
+
 	func _show_stp(_r: Array) -> String:
 		if dev.type != "switch":
 			return "% spanning tree runs on switches\n"
 		var root := Sim.stp_root_of(dev)
-		var out := "Root bridge: %s%s\n%-11s %-11s %s\n" % [root.name if root else "-",
-			"  (this switch)" if root == dev else "", "Port", "Role", "State"]
+		var out := "Mode: %s   priority %d\n" % [dev.stp_mode.to_upper(), dev.stp_priority]
+		out += "Root bridge: %s%s\n" % [root.name if root else "-",
+			"  (this switch)" if root == dev else ""]
+		if dev.stp_mode == "mst" and not dev.mst_instances.is_empty():
+			for inst in dev.mst_instances:
+				out += "  instance %s: vlans %s\n" % [inst,
+					",".join(PackedStringArray(dev.mst_instances[inst].map(func(v): return str(v))))]
+		out += "%-11s %-11s %-12s %s\n" % ["Port", "Role", "State", "Instances"]
 		var any := false
 		for i: Net.Iface in dev.ifaces:
 			var l := Game.link_at(i)
 			if l == null or l.other(i).dev.type != "switch":
 				continue
 			any = true
+			var per: Array = []
+			for inst2 in Sim.mst_instances():
+				per.append("%s:%s" % [inst2,
+					"disc" if Sim._stp_blocked_inst.get(inst2, {}).has(i) else "fwd"])
 			var blocked := Sim.stp_blocked(i)
-			out += "%-11s %-11s %s\n" % [EOS._short(i.name),
+			out += "%-11s %-11s %-12s %s\n" % [EOS._short(i.name),
 				"alternate" if blocked else "designated",
-				"discarding" if blocked else "forwarding"]
+				"discarding" if blocked else "forwarding",
+				" ".join(PackedStringArray(per))]
 		return out if any else out + "  (no switch-to-switch links)\n"
 
 	func _show_counters(_r: Array) -> String:

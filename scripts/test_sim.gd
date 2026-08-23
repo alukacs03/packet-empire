@@ -3071,6 +3071,55 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- RSTP, bridge priority and MST ---
+	var ms_rack := Game.add_rack(Vector2i(37, 1))
+	var ms_a := Game.new_device("sw-8")
+	var ms_b := Game.new_device("sw-8")
+	ms_rack.slots[0] = ms_a
+	ms_rack.slots[1] = ms_b
+	Game.connect_ifaces(ms_a.ifaces[6], ms_b.ifaces[6])
+	Game.connect_ifaces(ms_a.ifaces[7], ms_b.ifaces[7])  # a second link: a loop
+	for ms_v in [10, 20]:
+		Game.add_vlan(ms_a, ms_v, "v%d" % ms_v)
+		Game.add_vlan(ms_b, ms_v, "v%d" % ms_v)
+	for ms_i in [6, 7]:
+		for ms_d in [ms_a, ms_b]:
+			ms_d.ifaces[ms_i].mode = "trunk"
+	Sim.flush_learned_state()
+	var ms_blocked := 0
+	for ms_i2 in [6, 7]:
+		for ms_d2 in [ms_a, ms_b]:
+			if Sim.stp_blocked(ms_d2.ifaces[ms_i2]):
+				ms_blocked += 1
+	check(ms_blocked == 1, "stp: one end of the spare link is blocked")
+	# priority decides the root, not just the address
+	var ms_cli_a := CLI.new_session(ms_a)
+	var ms_cli_b := CLI.new_session(ms_b)
+	for ms_c in [ms_cli_a, ms_cli_b]:
+		ms_c.exec("enable")
+		ms_c.exec("configure terminal")
+	check(ms_cli_b.exec("spanning-tree priority 4096").is_empty(),
+		"stp: bridge priority can be set")
+	Sim.flush_learned_state()
+	check(Sim.stp_root_of(ms_a) == ms_b, "stp: the lower priority wins the root election")
+	check(ms_cli_a.exec("show spanning-tree").contains(ms_b.name),
+		"stp: show spanning-tree names the root")
+	# MST: two instances, and the two links carry different VLANs
+	for ms_c2 in [ms_cli_a, ms_cli_b]:
+		check(ms_c2.exec("spanning-tree mst instance 1 vlan 20").is_empty(),
+			"mst: an instance can be mapped to a VLAN")
+	Sim.flush_learned_state()
+	check(Sim.instance_of_vlan(20) == 1 and Sim.instance_of_vlan(10) == 0,
+		"mst: VLANs land in the instance they were mapped to")
+	var ms_split := false
+	for ms_i3 in [6, 7]:
+		for ms_d3 in [ms_a, ms_b]:
+			var port3: Net.Iface = ms_d3.ifaces[ms_i3]
+			if Sim.stp_blocked_for(port3, 10) != Sim.stp_blocked_for(port3, 20):
+				ms_split = true
+	check(ms_split, "mst: a port forwards one instance while discarding the other")
+	check(ms_a.stp_mode == "mst", "mst: mapping an instance puts the switch in MST mode")
+
 	# --- notifications: severity, filtering and the unread count ---
 	check(Game.event_severity("SLA BREACH: something is down") == "critical",
 		"notify: a breach is serious")

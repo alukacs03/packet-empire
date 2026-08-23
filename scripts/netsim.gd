@@ -430,25 +430,73 @@ static func stp_root_of(dev: Net.NDevice) -> Net.NDevice:
 
 static var _stp_roots := {}  # switch -> its component's root
 
+static func stp_id(d: Net.NDevice) -> String:
+	## the bridge id a real switch elects on: priority first, then address
+	return "%05d|%s" % [d.stp_priority, d.ifaces[0].mac]
+
+static func mst_instances() -> Array:
+	## every instance any switch has been told about, plus 0 for everything
+	## that was not assigned to one
+	var seen := {0: true}
+	for d in Game.all_devices():
+		if d.type == "switch":
+			for inst in d.mst_instances:
+				seen[int(inst)] = true
+	var out: Array = seen.keys()
+	out.sort()
+	return out
+
+static func instance_of_vlan(vlan: int) -> int:
+	for d in Game.all_devices():
+		if d.type != "switch":
+			continue
+		for inst in d.mst_instances:
+			if vlan in d.mst_instances[inst]:
+				return int(inst)
+	return 0
+
+static func stp_blocked_for(i: Net.Iface, vlan: int) -> bool:
+	## MST runs a separate tree per instance, so a port can be forwarding for
+	## one set of VLANs and discarding for another. That is the whole point of
+	## it: two links between switches both carry traffic.
+	_stp_ensure()
+	var inst := instance_of_vlan(vlan)
+	return _stp_blocked_inst.get(inst, {}).has(i)
+
+static var _stp_blocked_inst := {}  # instance -> {Iface: true}
+static var _stp_wanted_since := {}  # Iface -> cycle it first wanted to forward
+
 static func _stp_ensure() -> void:
-	## Simplified 802.1D: lowest-MAC switch is root; BFS spanning tree over
-	## switch-switch links; every off-tree link blocks its far-from-root end.
+	## Simplified 802.1D/802.1s: the lowest bridge id is root; a spanning tree
+	## per MST instance over switch-switch links; every off-tree link blocks
+	## its far-from-root end.
 	if not _stp_dirty:
 		return
 	_stp_dirty = false
 	_stp_blocked = {}
+	_stp_blocked_inst = {}
 	_stp_roots = {}
+	for inst in mst_instances():
+		_stp_blocked_inst[inst] = _stp_tree(int(inst))
+	_stp_blocked = _stp_blocked_inst.get(0, {})
+
+static func _stp_tree(instance: int) -> Dictionary:
+	var blocked := {}
 	var switches: Array = []
 	for d in Game.all_devices():
 		if d.type == "switch" and d.status == "active":
 			switches.append(d)
 	if switches.is_empty():
-		return
-	switches.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
+		return blocked
+	switches.sort_custom(func(x, y): return stp_id(x) < stp_id(y))
 	var sw_links: Array = []
 	for l in Game.links:
 		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
 			sw_links.append(l)
+	# each instance walks the links in its own order, so the alternate port
+	# lands on a different link per instance and both cables carry traffic
+	if instance > 0:
+		sw_links.reverse()
 	# collapse lag bundles into single logical edges
 	var edges := {}
 	for l in sw_links:
@@ -465,13 +513,13 @@ static func _stp_ensure() -> void:
 	# one spanning tree per connected component, rooted at its lowest MAC
 	var dist := {}
 	var tree := {}
-	for sw in switches:  # sorted by mac, so the first unseen switch roots its component
+	for sw in switches:  # sorted by bridge id, so the best one roots its component
 		if dist.has(sw):
 			continue
 		dist[sw] = 0
 		var frontier: Array = [sw]
 		while not frontier.is_empty():
-			frontier.sort_custom(func(x, y): return x.ifaces[0].mac < y.ifaces[0].mac)
+			frontier.sort_custom(func(x, y): return stp_id(x) < stp_id(y))
 			var cur: Net.NDevice = frontier.pop_front()
 			_stp_roots[cur] = sw
 			for key in edges:
@@ -494,10 +542,30 @@ static func _stp_ensure() -> void:
 		var da: int = dist.get(e["a"], 1 << 30)
 		var db: int = dist.get(e["b"], 1 << 30)
 		var victim_dev: Net.NDevice = e["a"]
-		if db > da or (db == da and e["b"].ifaces[0].mac > e["a"].ifaces[0].mac):
+		if db > da or (db == da and stp_id(e["b"]) > stp_id(e["a"])):
 			victim_dev = e["b"]
 		for l in e["links"]:
-			_stp_blocked[l.a if l.a.dev == victim_dev else l.b] = true
+			var port: Net.Iface = l.a if l.a.dev == victim_dev else l.b
+			blocked[port] = true
+			_stp_wanted_since.erase(port)
+	# classic 802.1D waits before it dares forward on a port that has just
+	# become the best path. RSTP does not, which is the reason nobody runs the
+	# old one any more.
+	for port2 in _stp_prev_blocked(instance):
+		if blocked.has(port2) or not is_instance_valid(port2.dev):
+			continue
+		if port2.dev.stp_mode != "stp":
+			continue
+		if not _stp_wanted_since.has(port2):
+			_stp_wanted_since[port2] = Game.cycle
+		if Game.cycle - int(_stp_wanted_since[port2]) < STP_HOLD:
+			blocked[port2] = true  # still listening/learning
+	return blocked
+
+const STP_HOLD := 1  # cycles classic STP holds a port down before forwarding
+
+static func _stp_prev_blocked(instance: int) -> Array:
+	return _stp_blocked_inst.get(instance, {}).keys()
 
 # ---------- IP stack (hosts & routers) ----------
 
@@ -896,8 +964,8 @@ static func _reset_storm_counters() -> void:
 			i.storm_count = 0
 
 static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> void:
-	if stp_blocked(in_if):
-		return  # spanning tree: discarding state
+	if stp_blocked(in_if) and _rx_instance_blocked(dev, in_if, frame):
+		return  # spanning tree: discarding state for this frame's instance
 	var vlan: int
 	if in_if.mode == "access":
 		if frame["vlan"] != 0:
@@ -970,7 +1038,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 					wanted[port] = true
 		dev.mac_table[vlan][frame["src"]] = in_if
 		for o2: Net.Iface in wanted:
-			if o2 == in_if or stp_blocked(o2) or not o2.enabled:
+			if o2 == in_if or stp_blocked_for(o2, vlan) or not o2.enabled:
 				continue
 			if o2.mode == "access" and o2.untagged_vlan != vlan:
 				continue
@@ -1006,7 +1074,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	var lags_done := {}
 	var mlags_done := {}
 	for o: Net.Iface in outs:
-		if o == in_if or stp_blocked(o):
+		if o == in_if or stp_blocked_for(o, vlan):
 			continue
 		# private VLANs: isolated ports may talk to the gateway, not to each other
 		if in_if.pvlan == "isolated" and o.pvlan == "isolated":
@@ -1037,6 +1105,12 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		else:
 			continue
 		_tx(o, f)
+
+static func _rx_instance_blocked(_dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> bool:
+	var vlan := int(frame.get("vlan", 0))
+	if vlan == 0:
+		vlan = in_if.untagged_vlan if in_if.mode == "access" else 1
+	return stp_blocked_for(in_if, vlan)
 
 static func _logical_rx_iface(phys: Net.Iface, frame: Dictionary) -> Net.Iface:
 	## a tagged frame belongs to the matching 802.1Q subinterface, if any

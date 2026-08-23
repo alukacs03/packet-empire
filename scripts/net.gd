@@ -57,6 +57,9 @@ class NDevice:
 	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
 	var dai := false  # dynamic ARP inspection, using the snooping bindings
 	var bindings := {}  # mac -> address learned from a legitimate lease
+	var stp_mode := "rstp"  # rstp (modern default), stp (slow) or mst
+	var stp_priority := 32768  # lower wins the root election
+	var mst_instances := {}  # instance id -> [vlan ids] when running MST
 	var talkers := {}  # "src>dst" -> packets forwarded, netflow-style
 	var snmp := ""  # read community; empty means the agent is not running
 	var psu := "A"  # which feed(s) this device is plugged into: A, B or AB
