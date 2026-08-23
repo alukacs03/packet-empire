@@ -265,6 +265,13 @@ func _sb(bg: Color, border: Color, radius := 6, margin := 8) -> StyleBoxFlat:
 	s.set_content_margin_all(margin)
 	return s
 
+func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 560.0) -> Label:
+	## a label that wraps instead of pushing its container sideways
+	var l := _label(text, size, color)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(width, 0)
+	return l
+
 func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
 	var l := Label.new()
 	l.text = text
@@ -1952,6 +1959,7 @@ func _build_contracts_overlay() -> void:
 		contracts_tabs[name] = tb
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(600, 480)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	v.add_child(scroll)
 	contracts_box = VBoxContainer.new()
 	contracts_box.add_theme_constant_override("separation", 10)
@@ -2327,22 +2335,19 @@ func _build_jobs_tab() -> void:
 		cv.add_child(_label("%s   ·   %s   ·   %s" % [offer["customer"],
 			Market.label_for(offer["kind"]), ct2.get("label", "")], 16, Color.WHITE))
 		if ct2.has("note"):
-			cv.add_child(_label(ct2["note"], 13, Color(0.7, 0.72, 0.8)))
-		cv.add_child(_label("Word is: %s." % offer["hint"], 13, Color(0.75, 0.7, 0.85)))
+			cv.add_child(_wrap(ct2["note"], 13, Color(0.7, 0.72, 0.8)))
+		cv.add_child(_wrap("Word is: %s." % offer["hint"], 13, Color(0.75, 0.7, 0.85)))
 		var otier := Market.tier(int(offer.get("sla", 0)))
 		if float(otier["uptime"]) > 0.0:
-			cv.add_child(_label("📜 Service level: %s. Miss it and they charge back %.1fx the fee."
+			cv.add_child(_wrap("📜 Service level: %s. Miss it and they charge back %.1fx the fee."
 				% [otier["label"], float(otier["penalty"])], 13, Color(1.0, 0.8, 0.5)))
 		else:
 			cv.add_child(_label("📜 Service level: best effort.", 13, Color(0.65, 0.7, 0.75)))
-		var brief := _label(offer["brief"], 14, Color(0.78, 0.8, 0.88))
-		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		brief.custom_minimum_size = Vector2(560, 0)
-		cv.add_child(brief)
-		cv.add_child(_label("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
+		cv.add_child(_wrap(offer["brief"], 14, Color(0.78, 0.8, 0.88)))
+		cv.add_child(_wrap("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
 		var est: Array = Game.market_estimate(offer)
 		if Rivals.best_bidder(offer).is_empty():
-			cv.add_child(_label("📉 No competitor is chasing this one: price it properly.",
+			cv.add_child(_wrap("📉 No competitor is chasing this one: price it properly.",
 				13, Color(0.7, 0.9, 0.65)))
 		elif est.is_empty():
 			cv.add_child(_label("📉 You have no read on what competitors charge yet.", 13, Color(0.6, 0.6, 0.7)))
@@ -2351,7 +2356,7 @@ func _build_jobs_tab() -> void:
 				13, Color(0.7, 0.85, 0.6)))
 		cv.add_child(_label("Offer expires in %d cycle(s)." % int(offer["ttl"]), 12, MUTED))
 		if offer["state"] == "counter":
-			cv.add_child(_label("They countered: \"Best we can do is $%d per cycle.\"" % int(offer["budget"]),
+			cv.add_child(_wrap("They countered: \"Best we can do is $%d per cycle.\"" % int(offer["budget"]),
 				14, Color(1.0, 0.8, 0.4)))
 			var row := HBoxContainer.new()
 			cv.add_child(row)
