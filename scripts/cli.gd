@@ -66,7 +66,8 @@ class Session:
 
 class EOS extends Session:
 	var mode := "exec"  # exec | priv | config | if | vlan
-	var ctx_if: Net.Iface
+	var ctx_if: Net.Iface  # the first of ctx_ifs, for single-interface commands
+	var ctx_ifs: Array = []  # every interface the current context applies to
 	var ctx_vlan := 0
 	var _cmds: Array = []
 
@@ -134,6 +135,7 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["firewall", "stateful"], "h": func(_r): return _set_stateful(true)},
 			{"m": ["config"], "p": ["no", "firewall", "stateful"], "h": func(_r): return _set_stateful(false)},
@@ -169,8 +171,8 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "vrrp"], "h": func(_r): ctx_if.vrrp = {}; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
-			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
-			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): ctx_if.enabled = true; Game.topology_changed.emit(); return ""},
+			{"m": ["if"], "p": ["shutdown"], "h": func(_r): return _each(func(i): i.enabled = false; return "")},
+			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): return _each(func(i): i.enabled = true; return "")},
 			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
 			{"m": ["if"], "p": ["encapsulation", "dot1q"], "h": _if_encap},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
@@ -359,6 +361,56 @@ class EOS extends Session:
 		Game.topology_changed.emit()
 		return ""
 
+	func _select_ifaces(list: Array) -> void:
+		ctx_ifs = list
+		ctx_if = list[0] if not list.is_empty() else null
+		mode = "if"
+
+	func _range_only(what: String) -> String:
+		return "%% %s cannot be applied to a range of interfaces\n" % what
+
+	func _each(fn: Callable) -> String:
+		for i: Net.Iface in ctx_ifs:
+			var err: String = fn.call(i)
+			if err != "":
+				return err
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_if_range(r: Array) -> String:
+		## interface range Ethernet1-8  (or et1-8, or a comma list)
+		if r.size() != 1:
+			return "usage: interface range <first>-<last>[,<more>]\n"
+		var picked: Array = []
+		for part in String(r[0]).split(",", false):
+			var bits := String(part).split("-")
+			if bits.size() == 2:
+				var pfx := String(bits[0]).rstrip("0123456789")
+				var lo := int(String(bits[0]).substr(pfx.length()))
+				var hi := int(bits[1])
+				for n in range(lo, hi + 1):
+					var found := _find_iface("%s%d" % [pfx, n])
+					if found:
+						picked.append(found)
+			else:
+				var one := _find_iface(String(part))
+				if one:
+					picked.append(one)
+		if picked.is_empty():
+			return "% no interfaces matched that range\n"
+		_select_ifaces(picked)
+		return ""
+
+	func _find_iface(want_raw: String) -> Net.Iface:
+		var want := want_raw.to_lower()
+		var digits := want.lstrip("abcdefghijklmnopqrstuvwxyz")
+		var letters := want.trim_suffix(digits)
+		for i: Net.Iface in dev.ifaces:
+			var idg := i.name.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+			if idg == digits and i.name.to_lower().begins_with(letters) and letters != "":
+				return i
+		return null
+
 	func _cfg_interface(r: Array) -> String:
 		if r.size() != 1:
 			return "usage: interface <name>\n"
@@ -378,10 +430,10 @@ class EOS extends Session:
 						parent_name = i.name
 				if parent_name == "":
 					return "% no such parent interface\n"
-				ctx_if = Game.add_subiface(dev, parent_name, int(bits[1]))
-				if ctx_if == null:
+				var sub_if := Game.add_subiface(dev, parent_name, int(bits[1]))
+				if sub_if == null:
 					return "% could not create the subinterface\n"
-				mode = "if"
+				_select_ifaces([sub_if])
 				return ""
 			return "% bad subinterface name\n"
 		if want.begins_with("vl") and want.trim_prefix("vlan").trim_prefix("vl").is_valid_int():
@@ -400,8 +452,7 @@ class EOS extends Session:
 			var w_digits := want.lstrip("abcdefghijklmnopqrstuvwxyz")
 			var w_letters := want.trim_suffix(w_digits)
 			if w_digits == digits and w_letters != "" and letters.begins_with(w_letters):
-				ctx_if = i
-				mode = "if"
+				_select_ifaces([i])
 				return ""
 		return "% no such interface\n"
 
@@ -410,9 +461,9 @@ class EOS extends Session:
 			return "% switchport commands need a switch\n"
 		for m in ["access", "trunk"]:
 			if r.size() == 1 and m.begins_with(r[0]):
-				ctx_if.mode = m
-				Game.topology_changed.emit()
-				return ""
+				return _each(func(i: Net.Iface) -> String:
+					i.mode = m
+					return "")
 		return "usage: switchport mode access|trunk\n"
 
 	func _sw_access_vlan(r: Array) -> String:
@@ -424,17 +475,18 @@ class EOS extends Session:
 		if not dev.vlans.has(vid):
 			if not Game.add_vlan(dev, vid, ""):  # IOS auto-creates the VLAN
 				return "% invalid VLAN id\n"
-		Game.set_access_vlan(ctx_if, vid)
-		return ""
+		return _each(func(i: Net.Iface) -> String:
+			Game.set_access_vlan(i, vid)
+			return "")
 
 	func _port_sec(on: bool) -> String:
 		if dev.type != "switch":
 			return "% port security is a switchport feature\n"
-		ctx_if.port_security = on
-		if not on:
-			ctx_if.secure_mac = ""
-		Game.topology_changed.emit()
-		return ""
+		return _each(func(i: Net.Iface) -> String:
+			i.port_security = on
+			if not on:
+				i.secure_mac = ""
+			return "")
 
 	func _show_port_sec(_r: Array) -> String:
 		var out := "%-11s %-9s %-19s %s\n" % ["Port", "Security", "Secure MAC", "Violations"]
@@ -467,6 +519,8 @@ class EOS extends Session:
 		return ""
 
 	func _if_ip(r: Array) -> String:
+		if ctx_ifs.size() > 1:
+			return _range_only("an address")
 		if dev.type == "switch" and not ctx_if.name.begins_with("Management") \
 				and not ctx_if.name.begins_with("Vlan"):
 			return "% SVIs are not supported yet: use the Management1 port or a router\n"
@@ -487,9 +541,9 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% port-channels need a switch\n"
 		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 1:
-			ctx_if.lag = int(r[0])
-			Game.topology_changed.emit()
-			return ""
+			return _each(func(i: Net.Iface) -> String:
+				i.lag = int(r[0])
+				return "")
 		return "usage: channel-group <1-64>\n"
 
 	func _show_lag(_r: Array) -> String:
@@ -516,6 +570,8 @@ class EOS extends Session:
 		return out
 
 	func _if_vrrp(r: Array) -> String:
+		if ctx_ifs.size() > 1:
+			return _range_only("a VRRP group")
 		if not dev.ip_forwarding:
 			return "% VRRP needs a router or firewall\n"
 		# vrrp <group> ip <vip>   |   vrrp <group> priority <n>
@@ -575,9 +631,9 @@ class EOS extends Session:
 
 	func _if_mtu(r: Array) -> String:
 		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 576 and int(r[0]) <= 9216:
-			ctx_if.mtu = int(r[0])
-			Game.topology_changed.emit()
-			return ""
+			return _each(func(i: Net.Iface) -> String:
+				i.mtu = int(r[0])
+				return "")
 		return "usage: mtu <576-9216>\n"
 
 	func _set_stateful(on: bool) -> String:
