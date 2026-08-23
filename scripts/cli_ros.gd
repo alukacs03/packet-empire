@@ -90,6 +90,33 @@ func exec(line: String) -> String:
 				i.mode = p["mode"]
 			Game.topology_changed.emit()
 			return ""
+		"interface bonding add":
+			if dev.type != "switch":
+				return "failure: bonding needs a switch here\n"
+			if p.has("slaves"):
+				var group := 1
+				for i: Net.Iface in dev.ifaces:
+					group = maxi(group, i.lag + 1)
+				var names := String(p["slaves"]).split(",", false)
+				for nm in names:
+					if _iface(nm) == null:
+						return "failure: no interface %s\n" % nm
+				for nm in names:
+					_iface(nm).lag = group
+				Game.topology_changed.emit()
+				return ""
+			return "usage: /interface bonding add slaves=ether2,ether3\n"
+		"interface bonding print":
+			var out := " GROUP  MEMBERS\n"
+			var groups := {}
+			for i: Net.Iface in dev.ifaces:
+				if i.lag > 0:
+					if not groups.has(i.lag):
+						groups[i.lag] = []
+					groups[i.lag].append(i.name)
+			for g in groups:
+				out += " %-6d %s\n" % [g, ",".join(PackedStringArray(groups[g]))]
+			return out if not groups.is_empty() else "(no bonds)\n"
 		"interface bridge vlan add":
 			if dev.type != "switch":
 				return "no bridge on this device\n"
@@ -278,6 +305,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
 	"interface print", "interface print stats", "interface set",
+	"interface bonding add", "interface bonding print",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
 	"ip address add", "ip address remove", "ip address print",
 	"ip route add", "ip route remove", "ip route print",

@@ -733,6 +733,12 @@ static func run() -> int:
 	lsw1.ifaces[1].enabled = true
 	Game.topology_changed.emit()
 
+	check(Game.try_complete_contract(_contract("double_the_pipe")), "lag: double-the-pipe contract verifies")
+	var ros_bond := CLI.new_session(mkt_sw)
+	ros_bond.exec("/interface bonding add slaves=ether3,ether4")
+	check(mkt_sw.ifaces[2].lag > 0 and mkt_sw.ifaces[2].lag == mkt_sw.ifaces[3].lag,
+		"lag: RouterOS bonding maps to the same model")
+
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
 	check(Game.iface_speed(mkt_sw.ifaces[0]) == 1000, "capacity: PacketTik port is 1G")

@@ -1,0 +1,23 @@
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  sim-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot headless
+        run: |
+          curl -sL -o godot.zip https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip
+          unzip -q godot.zip
+          mv Godot_v4.7.2-stable_linux.x86_64 godot
+      - name: Import project
+        run: ./godot --headless --path . --import || true
+      - name: Run suite
+        run: |
+          set -o pipefail
+          PACKET_TEST=1 ./godot --headless --path . --quit-after 600 2>&1 | tee out.log
+          ! grep -q "SCRIPT ERROR" out.log
+          grep -q -- "---- 0 failures" out.log

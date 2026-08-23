@@ -175,6 +175,17 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "double_the_pipe",
+			"title": "Double the pipe",
+			"customer": "Alfa Ltd (still growing)",
+			"reward": 1600,
+			"brief": "Your redundant inter-switch link bothers Alfa's consultants: 'one link idle because of spanning tree? Bundle them!' Port-channels aggregate parallel links into one logical pipe: full capacity AND redundancy, no blocked spare. On BOTH switches put both inter-switch ports in the same group: Cisco-style 'channel-group 1' under each interface, PacketTik '/interface bonding add slaves=ether4,ether5'. 'show port-channel' should list the members and 'show spanning-tree' should show nothing discarding between that pair.",
+			"reqs": [
+				{"d": "A 2+ member bundle between two switches", "t": func() -> bool: return _bundle_exists()},
+				{"d": "No STP-blocked port inside the bundle", "t": func() -> bool: return _bundle_unblocked()},
+			],
+		},
+		{
 			"id": "bandwidth_crunch",
 			"title": "Bandwidth crunch",
 			"customer": "Everyone at once",
@@ -241,6 +252,26 @@ static func _vip_pings() -> bool:
 				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
 					return true
 	return false
+
+static func _bundle_links() -> Array:
+	for l in Game.links:
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch":
+			var members := Game.lag_members(l)
+			if members.size() >= 2:
+				return members
+	return []
+
+static func _bundle_exists() -> bool:
+	return _bundle_links().size() >= 2
+
+static func _bundle_unblocked() -> bool:
+	var members := _bundle_links()
+	if members.is_empty():
+		return false
+	for l in members:
+		if Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b):
+			return false
+	return true
 
 static func _has_10g_link() -> bool:
 	for l in Game.links:
