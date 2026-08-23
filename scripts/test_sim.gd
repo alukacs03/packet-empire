@@ -391,6 +391,12 @@ static func run() -> int:
 	check(wls.exec("lldp").contains(edge.name), "cli: Linux lldp sees the router")
 	var rs2 := CLI.new_session(mkt_sw)
 	check("bridge host" in rs2.exec("help"), "cli: ROS help lists bridge host print")
+	check("print" in rs2.complete("/interface ") and "set" in rs2.complete("/interface "),
+		"cli: ROS tab completes next word after a full token")
+	check(rs2.complete("/ip ad") == ["address"], "cli: ROS tab completes partial second token")
+	check("arp" in rs2.complete("/ip a") and "address" in rs2.complete("/ip a"),
+		"cli: ROS tab lists all matching branches")
+	check("add" in rs2.complete("/ip address vlan-ids=5 "), "cli: ROS tab ignores key=value args")
 
 	# --- OSPF dynamic routing ---
 	var r5 := Game.add_rack(Vector2i(0, 1))

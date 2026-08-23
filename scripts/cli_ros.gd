@@ -306,16 +306,28 @@ func _export() -> String:
 	return out
 
 func complete(line: String) -> Array:
-	var cur := line.strip_edges().trim_prefix("/")
-	var out: Array = []
-	var seen := {}
+	var raw := line.lstrip(" ").trim_prefix("/")
+	var ends_space := raw.ends_with(" ")
+	var toks := Array(raw.split(" ", false))
+	var cur: String = "" if ends_space or toks.is_empty() else toks.pop_back()
+	if "=" in cur:
+		return []  # param values aren't completed (yet)
+	var ctx: Array = []
+	for t in toks:
+		if "=" not in String(t):
+			ctx.append(t)
+	var cands := {}
 	for c in PATHS:
-		if c.begins_with(cur):
-			# complete only the next word
-			var rest: String = c.substr(cur.rfind(" ") + 1 if " " in cur else 0)
-			var word: String = rest.split(" ")[0]
-			if not seen.has(word):
-				seen[word] = true
-				out.append(word)
+		var words: PackedStringArray = String(c).split(" ")
+		if words.size() <= ctx.size():
+			continue
+		var okc := true
+		for k in ctx.size():
+			if not String(words[k]).begins_with(ctx[k]):
+				okc = false
+				break
+		if okc and String(words[ctx.size()]).begins_with(cur):
+			cands[words[ctx.size()]] = true
+	var out := cands.keys()
 	out.sort()
 	return out
