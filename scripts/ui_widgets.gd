@@ -222,6 +222,9 @@ class RackSlot extends Control:
 				pc = Color(0.7, 0.3, 0.25)
 			draw_rect(Rect2(px, inner.position.y + inner.size.y / 2.0 - 4, 9, 8), pc)
 			n += 1
+		if Game.config_dirty(dev):  # unsaved configuration marker
+			draw_string(_mono, inner.position + Vector2(inner.size.x - 30, inner.size.y - 8), "unsaved",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1.0, 0.75, 0.35))
 		# status LED
 		var t := Time.get_ticks_msec() / 1000.0
 		var led := Color(0.9, 0.3, 0.2)

@@ -25,6 +25,7 @@ var svc_lbl: Label
 var cap_box: VBoxContainer
 var cap_out: RichTextLabel
 var cap_toggle: Button
+var save_cfg_btn: Button
 var cli_box: VBoxContainer
 var cli_out: RichTextLabel
 var cli_in: LineEdit
@@ -561,6 +562,13 @@ func _build_dev_overlay() -> void:
 		if cap_box.visible:
 			_scroll_to_bottom.call_deferred())
 	btn_row.add_child(cap_toggle)
+	save_cfg_btn = Button.new()
+	save_cfg_btn.text = "Save config"
+	save_cfg_btn.tooltip_text = "write memory: survive a reboot"
+	save_cfg_btn.pressed.connect(func() -> void:
+		cur_dev.startup = Game.device_config(cur_dev)
+		_refresh_ports())
+	btn_row.add_child(save_cfg_btn)
 	var uninstall := Button.new()
 	uninstall.text = "Uninstall (50% refund)"
 	uninstall.pressed.connect(func() -> void:
@@ -679,6 +687,12 @@ func _refresh_ports() -> void:
 	if not cur_dev.ospf.is_empty():
 		svc_bits.append("ospf")
 	svc_lbl.text = ("  ⚙ " + "   ".join(PackedStringArray(svc_bits))) if not svc_bits.is_empty() else ""
+	var dirty := Game.config_dirty(cur_dev)
+	save_cfg_btn.visible = cur_dev.type not in ["server", "uplink", "cooling"]
+	save_cfg_btn.text = "⚠ Save config" if dirty else "Save config"
+	save_cfg_btn.modulate = Color(1.3, 1.0, 0.6) if dirty else Color.WHITE
+	if dirty:
+		svc_lbl.text += "      ⚠ unsaved configuration: a reboot would lose it"
 	_refresh_vlans()
 
 func _refresh_vlans() -> void:

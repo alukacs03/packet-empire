@@ -142,6 +142,12 @@ func add_svi(dev: Net.NDevice, vid: int) -> Net.Iface:
 	topology_changed.emit()
 	return svi
 
+func config_dirty(d: Net.NDevice) -> bool:
+	## running config differs from what a reboot would restore
+	if d.type in ["server", "uplink", "cooling"]:
+		return false
+	return JSON.stringify(device_config(d)) != JSON.stringify(d.startup)
+
 func iface_speed(i: Net.Iface) -> int:
 	## Mbps; management ports are 100M service ports
 	if i.name.begins_with("Management") or i.name == "lo":
