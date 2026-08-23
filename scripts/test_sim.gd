@@ -232,5 +232,33 @@ static func run() -> int:
 	Game.sla_tick()
 	check(Game.money - m4 < 90 + 40 + 50, "stage: power bill now reduces cycle income")
 
+	# --- marketplace negotiation & delivery ---
+	var off := {"id": "t1", "kind": "hosting", "customer": "TestCo", "brief": "", "costs": "",
+		"params": {"ip": "10.9.9.10"}, "budget": 100, "hint": "", "state": "open", "ttl": 5}
+	Game.offers.append(off)
+	check(Game.respond_offer(off, 200) == "rejected" and not (off in Game.offers),
+		"market: greedy quote is rejected, customer walks")
+	var off2 := off.duplicate(true)
+	off2["state"] = "open"
+	Game.offers.append(off2)
+	check(Game.respond_offer(off2, 120) == "counter" and off2["state"] == "counter",
+		"market: near-budget quote draws a counteroffer")
+	Game.accept_counter(off2)
+	check(Game.deals.size() == 1 and int(Game.deals[0]["fee"]) == 100,
+		"market: counter signs at their budget")
+	Game.sla_tick()
+	check(Game.deals[0]["healthy"] == false, "market: undelivered deal does not pay")
+	Game.add_ip(b2.ifaces[0], "10.9.9.10/24")
+	Game.add_ip(a2.ifaces[0], "10.9.9.11/24")
+	var m6 := Game.money
+	Game.sla_tick()
+	check(Game.deals[0]["healthy"], "market: delivering the service marks the deal healthy")
+	check(Game.money > m6, "market: healthy deal fee lands in the cycle income")
+	var off3 := off.duplicate(true)
+	off3["state"] = "open"
+	Game.offers.append(off3)
+	check(Game.respond_offer(off3, 90) == "accepted" and Game.deals.size() == 2,
+		"market: fair quote accepted directly")
+
 	print("---- %d failures" % fails)
 	return fails

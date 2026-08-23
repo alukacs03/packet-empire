@@ -41,6 +41,8 @@ var links: Array = []
 var money := 2000
 var stage := 0
 var contracts_done: Array = []
+var offers: Array = []  # open marketplace offers
+var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "rack": 0, "mac": 0}
 
 func grid_size() -> Vector2i:
@@ -87,6 +89,29 @@ func _ready() -> void:
 	t.timeout.connect(sla_tick)
 	add_child(t)
 
+func respond_offer(offer: Dictionary, quote: int) -> String:
+	var result := Market.negotiate(offer, quote)
+	match result:
+		"accepted":
+			_offer_to_deal(offer, quote)
+		"counter":
+			offer["state"] = "counter"
+		"rejected":
+			offers.erase(offer)
+	return result
+
+func accept_counter(offer: Dictionary) -> void:
+	_offer_to_deal(offer, int(offer["budget"]))
+
+func dismiss_offer(offer: Dictionary) -> void:
+	offers.erase(offer)
+
+func _offer_to_deal(offer: Dictionary, fee: int) -> void:
+	offers.erase(offer)
+	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
+		"params": offer["params"], "fee": fee, "brief": offer["brief"], "healthy": false})
+	money_changed.emit()
+
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees — but only while
 	## their requirements still hold. Break the network, lose the revenue.
@@ -104,6 +129,16 @@ func sla_tick() -> void:
 		sla_status[c["id"]] = ok
 		if ok:
 			earned += int(c["reward"]) / 10
+	for deal in deals:
+		deal["healthy"] = Market.check(deal["kind"], deal["params"])
+		if deal["healthy"]:
+			earned += int(deal["fee"])
+	for offer in offers.duplicate():
+		offer["ttl"] = int(offer["ttl"]) - 1
+		if offer["ttl"] <= 0:
+			offers.erase(offer)
+	if offers.size() < 2 and contracts_done.size() >= 2 and randf() < 0.7:
+		offers.append(Market.gen_offer())  # customers show up once you have a track record
 	if earned != 0:
 		money += earned
 		money_changed.emit()
@@ -304,7 +339,7 @@ func save_game() -> void:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"money": money, "stage": stage, "counters": _counter,
-		"contracts_done": contracts_done,
+		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
 
 func _ser_device(d: Net.NDevice) -> Dictionary:
@@ -328,6 +363,8 @@ func load_game() -> bool:
 	money = int(data["money"])
 	contracts_done = data.get("contracts_done", [])
 	stage = int(data.get("stage", 0))
+	offers = data.get("offers", [])
+	deals = data.get("deals", [])
 	for k in data["counters"]:
 		_counter[k] = int(data["counters"][k])
 	var by_name := {}

@@ -693,9 +693,91 @@ func open_contracts() -> void:
 func close_contracts() -> void:
 	contracts_overlay.visible = false
 
+func _build_market_section() -> void:
+	if not Game.offers.is_empty():
+		contracts_box.add_child(_label("INCOMING OFFERS — quote a price per revenue cycle", 12, MUTED))
+	for offer: Dictionary in Game.offers:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sb(Color(0.12, 0.1, 0.15), Color(0.6, 0.5, 0.8, 0.5), 8, 14))
+		contracts_box.add_child(card)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 6)
+		card.add_child(cv)
+		cv.add_child(_label("%s   (%s — they seem %s)" % [offer["customer"], offer["kind"], offer["hint"]],
+			16, Color.WHITE))
+		var brief := _label(offer["brief"], 14, Color(0.78, 0.8, 0.88))
+		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brief.custom_minimum_size = Vector2(560, 0)
+		cv.add_child(brief)
+		cv.add_child(_label("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
+		cv.add_child(_label("Offer expires in %d cycle(s)." % int(offer["ttl"]), 12, MUTED))
+		if offer["state"] == "counter":
+			cv.add_child(_label("They countered: \"Best we can do is $%d per cycle.\"" % int(offer["budget"]),
+				14, Color(1.0, 0.8, 0.4)))
+			var row := HBoxContainer.new()
+			cv.add_child(row)
+			var acc := Button.new()
+			acc.text = "Accept $%d/cycle" % int(offer["budget"])
+			acc.pressed.connect(func() -> void:
+				Game.accept_counter(offer)
+				_refresh_contracts())
+			row.add_child(acc)
+			var wa := Button.new()
+			wa.text = "Walk away"
+			wa.pressed.connect(func() -> void:
+				Game.dismiss_offer(offer)
+				_refresh_contracts())
+			row.add_child(wa)
+		else:
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			cv.add_child(row)
+			row.add_child(_label("Your price:  $", 14))
+			var quote := _mono_edit(90)
+			quote.placeholder_text = "75"
+			row.add_child(quote)
+			row.add_child(_label("/cycle  ", 14, MUTED))
+			var send := Button.new()
+			send.text = "Send quote"
+			send.pressed.connect(func() -> void:
+				if not quote.text.strip_edges().is_valid_int():
+					return
+				var res: String = Game.respond_offer(offer, int(quote.text.strip_edges()))
+				_refresh_contracts()
+				if res == "rejected":
+					_toast("%s: \"That's robbery. We're going elsewhere.\"" % offer["customer"])
+				elif res == "accepted":
+					_toast("%s signed at $%s/cycle. Now deliver it!" % [offer["customer"], quote.text.strip_edges()]))
+			row.add_child(send)
+			var dis := Button.new()
+			dis.text = "Decline"
+			dis.pressed.connect(func() -> void:
+				Game.dismiss_offer(offer)
+				_refresh_contracts())
+			row.add_child(dis)
+	if not Game.deals.is_empty():
+		contracts_box.add_child(_label("ACTIVE DEALS", 12, MUTED))
+		for deal: Dictionary in Game.deals:
+			var ok: bool = deal["healthy"]
+			contracts_box.add_child(_label(
+				"%s  %s — %s   $%d/cycle" % ["●" if ok else "○", deal["customer"],
+					deal["kind"], int(deal["fee"])] + ("" if ok else "   (NOT DELIVERED — not paying)"),
+				14, Color(0.5, 0.95, 0.6) if ok else Color(0.95, 0.6, 0.45)))
+
+var _toast_lbl: Label
+
+func _toast(text: String) -> void:
+	if _toast_lbl == null or not is_instance_valid(_toast_lbl):
+		_toast_lbl = _label("", 14, Color(1.0, 0.85, 0.5))
+		contracts_box.add_child(_toast_lbl)
+		contracts_box.move_child(_toast_lbl, 0)
+	_toast_lbl.text = text
+
 func _refresh_contracts() -> void:
 	for c in contracts_box.get_children():
 		c.queue_free()
+	_build_market_section()
+	contracts_box.add_child(_label("CAMPAIGN", 12, MUTED))
 	var found_active := false
 	for c in Contracts.all():
 		var done: bool = c["id"] in Game.contracts_done
