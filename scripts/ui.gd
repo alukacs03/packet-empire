@@ -19,7 +19,7 @@ var dev_title: Label
 var name_edit: LineEdit
 var name_hint: Label
 var status_opt: OptionButton
-var port_row: GridContainer
+var port_row: VBoxContainer
 var conn_list: VBoxContainer
 var cli_box: VBoxContainer
 var cli_out: RichTextLabel
@@ -286,9 +286,15 @@ func _build_rack_overlay() -> void:
 	var v := _card(rack_overlay, 560)
 	rack_title = _header(v, close_rack)
 	v.add_child(_label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED))
+	var cabinet := PanelContainer.new()
+	var cab_sb := _sb(Color(0.08, 0.09, 0.12), Color(0.38, 0.42, 0.5), 4, 6)
+	cab_sb.border_width_top = 8
+	cab_sb.border_width_bottom = 8
+	cabinet.add_theme_stylebox_override("panel", cab_sb)
+	v.add_child(cabinet)
 	slot_box = VBoxContainer.new()
-	slot_box.add_theme_constant_override("separation", 4)
-	v.add_child(slot_box)
+	slot_box.add_theme_constant_override("separation", 3)
+	cabinet.add_child(slot_box)
 
 func open_rack(r: Net.Rack) -> void:
 	cur_rack = r
@@ -305,35 +311,14 @@ func _refresh_slots() -> void:
 	for c in slot_box.get_children():
 		c.queue_free()
 	for i in range(Net.Rack.SLOTS - 1, -1, -1):  # top of rack first
-		var b := Button.new()
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.custom_minimum_size = Vector2(0, 42)
-		b.add_theme_font_override("font", mono)
 		var dev: Net.NDevice = cur_rack.slots[i]
+		var slot := UIW.RackSlot.new()
 		if dev:
-			var up := 0
-			for pi in dev.ifaces:
-				if Game.link_at(pi):
-					up += 1
-			b.text = " U%-2d  %-8s %-20s %d/%d links" % [i + 1, dev.name, Game.MODELS[dev.model]["label"], up, dev.ifaces.size()]
-			var slot_col := Color(0.6, 0.75, 1.0)
-			if dev.type == "switch":
-				slot_col = Color(0.4, 0.9, 0.95)
-			elif dev.type == "router":
-				slot_col = Color(1.0, 0.75, 0.45)
-			elif dev.type == "firewall":
-				slot_col = Color(1.0, 0.5, 0.5)
-			elif dev.type == "uplink":
-				slot_col = Color(0.85, 0.7, 1.0)
-			elif dev.type == "cooling":
-				slot_col = Color(0.65, 0.9, 1.0)
-			b.add_theme_color_override("font_color", slot_col)
-			b.pressed.connect(func() -> void: open_dev(dev))
+			slot.setup(i + 1, dev, func() -> void: open_dev(dev))
 		else:
-			b.text = " U%-2d  — empty slot —" % [i + 1]
-			b.add_theme_color_override("font_color", Color(0.45, 0.5, 0.6))
-			b.pressed.connect(func() -> void: _pick_new_device(i, b))
-		slot_box.add_child(b)
+			var idx := i
+			slot.setup(i + 1, null, func() -> void: _pick_new_device(idx, slot))
+		slot_box.add_child(slot)
 
 func _pick_new_device(slot: int, at: Control) -> void:
 	var keys := Game.MODELS.keys()
@@ -377,10 +362,8 @@ func _build_dev_overlay() -> void:
 	plate_sb.border_width_top = 3
 	plate.add_theme_stylebox_override("panel", plate_sb)
 	v.add_child(plate)
-	port_row = GridContainer.new()
-	port_row.columns = 12
-	port_row.add_theme_constant_override("h_separation", 8)
-	port_row.add_theme_constant_override("v_separation", 8)
+	port_row = VBoxContainer.new()
+	port_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	plate.add_child(port_row)
 
 	conn_list = VBoxContainer.new()
@@ -485,24 +468,11 @@ func _refresh_ports() -> void:
 		c.queue_free()
 	for c in conn_list.get_children():
 		c.queue_free()
+	var center := CenterContainer.new()
+	center.add_child(UIW.Faceplate.new().setup(cur_dev, open_iface))
+	port_row.add_child(center)
 	for i: Net.Iface in cur_dev.ifaces:
 		var connected := Game.link_at(i) != null
-		var b := Button.new()
-		b.custom_minimum_size = Vector2(52, 46)
-		b.text = i.name.replace("Ethernet", "Et")
-		b.add_theme_font_override("font", mono)
-		b.add_theme_font_size_override("font_size", 12)
-		if not i.enabled:
-			b.add_theme_stylebox_override("normal", _sb(Color(0.25, 0.1, 0.1), Color(0.6, 0.3, 0.3), 6))
-			b.tooltip_text = "Disabled"
-		elif connected:
-			b.add_theme_stylebox_override("normal", _sb(Color(0.08, 0.25, 0.14), Color(0.35, 0.95, 0.5), 6))
-			b.add_theme_color_override("font_color", Color(0.5, 1.0, 0.6))
-			b.tooltip_text = "Connected to " + Game.peer_label(i)
-		else:
-			b.tooltip_text = "Free port"
-		b.pressed.connect(open_iface.bind(i))
-		port_row.add_child(b)
 		if connected:
 			var extra := ""
 			if not i.ips.is_empty():
