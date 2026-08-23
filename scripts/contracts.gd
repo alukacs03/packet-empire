@@ -13,6 +13,9 @@ static func retired(id: String) -> bool:
 	return false
 
 static func all() -> Array:
+	return Demo.visible_contracts(_campaign())
+
+static func _campaign() -> Array:
 	return [
 		{
 			"id": "rackup",

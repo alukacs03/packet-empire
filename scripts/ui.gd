@@ -108,6 +108,7 @@ func _ready() -> void:
 	_build_if_overlay()
 	_build_contracts_overlay()
 	_build_welcome()
+	_build_demo_end()
 	_build_map()
 	_build_menu()
 	_build_help()
@@ -179,7 +180,8 @@ func _refresh_money() -> void:
 				next_c = c["title"]
 				break
 		if next_c != "":
-			objective_lbl.text = "▸ " + next_c
+			objective_lbl.text = ("%s  ▸ %s" % [Demo.progress_text(), next_c]) if Demo.active() \
+				else "▸ " + next_c
 		else:
 			var nr := Game.next_rank()
 			objective_lbl.text = "★ %s" % Game.rank() if nr.is_empty() \
@@ -1511,13 +1513,26 @@ func _build_menu() -> void:
 		Game.save_game()
 		menu_overlay.visible = false)
 	v.add_child(save)
-	var newg := Button.new()
-	newg.text = "New game (wipes save!)"
-	newg.pressed.connect(func() -> void:
-		_menu(newg, ["Yes, start over: my datacenter will be GONE"], func(_id: int) -> void:
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
-			get_tree().reload_current_scene()))
-	v.add_child(newg)
+	var save_as := Button.new()
+	save_as.text = "Save to slot…"
+	save_as.pressed.connect(func() -> void:
+		var opts: Array = []
+		for i in Game.SLOTS:
+			var info := Game.slot_info(i)
+			opts.append("Slot %d: %s" % [i + 1, "empty" if info.get("empty", true)
+				else "%s, cycle %d" % [info["company"], int(info["cycle"])]])
+		_menu(save_as, opts, func(id: int) -> void:
+			Game.current_slot = id
+			Game.save_game()
+			hud_toast("Saved to slot %d." % (id + 1), true)))
+	v.add_child(save_as)
+	var title_btn := Button.new()
+	title_btn.text = "Save and return to title"
+	title_btn.pressed.connect(func() -> void:
+		Game.save_game()
+		menu_overlay.visible = false
+		get_parent().show_title())
+	v.add_child(title_btn)
 	var scen_btn := Button.new()
 	scen_btn.text = "Scenarios…"
 	scen_btn.tooltip_text = "Authored situations to work through; your own datacenter waits for you"
@@ -1794,9 +1809,11 @@ func _build_welcome() -> void:
 	var v := _card(welcome_overlay, 620)
 	var t := _header(v, func() -> void: welcome_overlay.visible = false)
 	t.text = "Welcome to Packet Empire"
+	welcome_overlay.set_meta("title_label", t)
 	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire: by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n   •  Learn opens an encyclopedia, F1 lists every key\n\nEverything costs money: contracts pay, and rival companies are bidding for the same customers, so your prices have to beat the market. Later you can lease more sites, link them with WAN circuits, and buy competitors outright.\n\nOpen Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(560, 0)
+	welcome_overlay.set_meta("body_label", body)
 	v.add_child(body)
 	var go := Button.new()
 	go.text = "Open Contracts"
@@ -1807,7 +1824,55 @@ func _build_welcome() -> void:
 	v.add_child(go)
 
 func show_welcome() -> void:
+	if Demo.active():
+		var head := welcome_overlay.get_meta("title_label") as Label
+		if head != null:
+			head.text = "Welcome to the Packet Empire demo"
+		var body := welcome_overlay.get_meta("body_label") as Label
+		if body != null:
+			body.text = "You run a tiny corner of a colocation floor. The demo is the opening arc of the campaign: six jobs that take you from an empty rack to two offices routed together, and it should take about half an hour.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n   •  Learn opens an encyclopedia, F1 lists every key\n\nNothing here is faked. The switches take Arista-style commands and the cheap gear takes RouterOS, so when a ping fails there is a real reason and you can go and find it.\n\nOpen Contracts and take the first job. The briefs teach you every command you need."
 	_show_overlay(welcome_overlay)
+
+# ---------- demo ----------
+
+var demo_overlay: Control
+
+func _build_demo_end() -> void:
+	demo_overlay = _overlay()
+	var v := _card(demo_overlay, 640)
+	var t := _header(v, func() -> void: demo_overlay.visible = false)
+	t.text = "That is the demo"
+	var body := _label("You started with an empty rack and a colo contract. You now have two switches, a redundant core that survives a cut cable, tenants who cannot see each other, and two offices routed together. Every bit of that ran on a real simulation: MAC learning, VLAN tagging, spanning tree and longest-prefix routing.\n\nThe demo stops here. The full game carries straight on from this point.", 15, Color(0.82, 0.87, 0.93))
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	body.custom_minimum_size = Vector2(580, 0)
+	v.add_child(body)
+	v.add_child(_section("WHAT IS BEYOND THIS"))
+	for line: String in Demo.BEYOND:
+		v.add_child(_label("  •  " + line, 14, Color(0.72, 0.8, 0.88)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	v.add_child(row)
+	var keep := Button.new()
+	keep.text = "Keep poking at it"
+	keep.tooltip_text = "The world stays exactly as it is; nothing new unlocks"
+	keep.pressed.connect(func() -> void: demo_overlay.visible = false)
+	_accent(keep)
+	row.add_child(keep)
+	var back := Button.new()
+	back.text = "Back to the title screen"
+	back.pressed.connect(func() -> void:
+		Game.save_game()
+		demo_overlay.visible = false
+		get_parent().show_title())
+	row.add_child(back)
+
+var _demo_end_shown := false
+
+func check_demo_end() -> void:
+	if not Demo.complete() or _demo_end_shown:
+		return
+	_demo_end_shown = true
+	_show_overlay(demo_overlay)
 
 # ---------- contracts ----------
 
@@ -2442,10 +2507,13 @@ func _refresh_contracts() -> void:
 		_accent(btn)
 		btn.pressed.connect(func() -> void:
 			Game.try_complete_contract(c)
-			_refresh_contracts())
+			_refresh_contracts()
+			check_demo_end())
 		cv.add_child(btn)
 	if not found_active:
-		contracts_box.add_child(_label("All contracts complete! More arrive with future updates -\nsee the GitHub roadmap.", 14, Color(0.7, 0.85, 0.75)))
+		contracts_box.add_child(_label("The demo arc is finished. The full game carries on from here."
+			if Demo.active() else "All contracts complete! More arrive with future updates -\nsee the GitHub roadmap.",
+			14, Color(0.7, 0.85, 0.75)))
 
 # ---------- refresh / CLI ----------
 
@@ -2568,6 +2636,8 @@ func _cli_submit(cmd: String) -> void:
 		get_parent().play_trace(Sim.last_trace)
 
 func _unhandled_input(e: InputEvent) -> void:
+	if not visible:
+		return  # the title screen is up; the game is not listening
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
 		if if_overlay.visible:
 			close_iface()

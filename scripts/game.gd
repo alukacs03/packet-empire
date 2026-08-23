@@ -56,7 +56,12 @@ const DIFFICULTIES := [
 		"blurb": "Thin margins, hungry rivals, and things break often."},
 ]
 const RACK_PRICE := 500
-var save_path := "user://save.json"
+const SLOTS := 3  # named slots, plus one autosave that lives at index SLOTS
+var save_path := "user://save.json"  # the original single save; imported once, then left alone
+var current_slot := 0
+var slot_prefix := "user://slot"
+var company_name := "Packet Empire"
+var demo := false  # the demo build stops after the opening arc
 
 var sites: Array = []  # [{name, grid: [w,h], kind}]; site 0 is your own floor
 var current_site := 0
@@ -689,6 +694,7 @@ const SLA_PERIOD := 45.0  # seconds per billing cycle
 var sla_status := {}  # contract id -> bool (last billing check passed)
 var last_link_load := {}  # Link -> Mbps, from the latest cycle
 var last_cycle_delta := 0
+var _pristine := {}  # what a brand new game looks like
 var last_pl := {}  # line item -> amount, from the latest cycle
 var cycle_timer: Timer
 var speed := 1  # 0 = paused, otherwise a multiplier on the revenue cycle
@@ -713,6 +719,7 @@ func _ready() -> void:
 	_scale_rival_aggression()
 	if OS.get_environment("PACKET_TEST") == "1":
 		save_path = "user://save_test.json"  # never touch the real save from tests
+		slot_prefix = "user://slot_test"
 	topology_changed.connect(Sim.flush_learned_state)
 	cycle_timer = Timer.new()
 	cycle_timer.wait_time = SLA_PERIOD
@@ -720,6 +727,19 @@ func _ready() -> void:
 	cycle_timer.timeout.connect(sla_tick)
 	add_child(cycle_timer)
 	set_speed(speed)
+	_ensure_sites()
+	_pristine = _serialize()  # a snapshot of an untouched game, for New Game
+
+func reset_new(company: String, diff: int, is_demo: bool) -> void:
+	## start over from the state the game boots into, rather than trying to
+	## remember by hand which of the several dozen fields need clearing
+	_apply(_pristine.duplicate(true))
+	company_name = company if company.strip_edges() != "" else "Packet Empire"
+	demo = is_demo
+	apply_difficulty(diff)
+	rivals = Rivals.spawn()
+	_scale_rival_aggression()
+	topology_changed.emit()
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var result := Market.negotiate(offer, quote)
@@ -1382,9 +1402,16 @@ func _deal_path_links(deal: Dictionary) -> Array:
 			seen[l] = true
 	return seen.keys()
 
+func autosave_due() -> void:
+	## a quiet safety net every few cycles, so a crash costs minutes not hours
+	if drill_active or cycle == 0 or cycle % 5 != 0:
+		return
+	save_game(SLOTS)
+
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees: but only while
 	## their requirements still hold. Break the network, lose the revenue.
+	autosave_due()
 	if drill_active:
 		return  # the economy pauses while you run a drill
 	if sandbox:
@@ -1832,11 +1859,66 @@ func snapshot() -> String:
 func restore(snap: String) -> void:
 	_apply(JSON.parse_string(snap))
 
-func save_game() -> void:
+func slot_path(i: int) -> String:
+	return "%s_auto.json" % slot_prefix if i >= SLOTS else "%s%d.json" % [slot_prefix, i]
+
+func slot_info(i: int) -> Dictionary:
+	## what the title screen shows on a slot button
+	var path := slot_path(i)
+	if not FileAccess.file_exists(path):
+		return {"empty": true, "auto": i >= SLOTS}
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(data) != TYPE_DICTIONARY:
+		return {"empty": true, "auto": i >= SLOTS, "broken": true}
+	var d: Dictionary = data
+	return {"empty": false, "auto": i >= SLOTS,
+		"company": String(d.get("company_name", "Packet Empire")),
+		"cycle": int(d.get("cycle", 0)), "money": int(d.get("money", 0)),
+		"stage": int(d.get("stage", 0)), "demo": bool(d.get("demo", false)),
+		"saved": String(d.get("saved_at", ""))}
+
+func any_save() -> bool:
+	for i in SLOTS + 1:
+		if FileAccess.file_exists(slot_path(i)):
+			return true
+	return FileAccess.file_exists(save_path)
+
+func import_legacy_save() -> void:
+	## the single old save becomes slot 1 the first time we see it, so nobody
+	## loses the game they were in the middle of
+	if not FileAccess.file_exists(save_path) or FileAccess.file_exists(slot_path(0)):
+		return
+	var raw := FileAccess.get_file_as_string(save_path)
+	var f := FileAccess.open(slot_path(0), FileAccess.WRITE)
+	if f != null:
+		f.store_string(raw)
+
+func delete_slot(i: int) -> void:
+	var path := slot_path(i)
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+
+func load_slot(i: int) -> bool:
+	var path := slot_path(i)
+	if not FileAccess.file_exists(path):
+		return false
+	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(data) != TYPE_DICTIONARY:
+		return false
+	current_slot = i
+	_apply(data)
+	return true
+
+func save_game(slot := -1) -> void:
 	if drill_active:
 		return  # never write drill state over the real save
-	var f := FileAccess.open(save_path, FileAccess.WRITE)
-	f.store_string(JSON.stringify(_serialize(), "  "))
+	if slot < 0:
+		slot = current_slot
+	var payload := _serialize()
+	payload["saved_at"] = Time.get_datetime_string_from_system(false, true)
+	var f := FileAccess.open(slot_path(slot), FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(payload, "  "))
 
 func _serialize() -> Dictionary:
 	var devs := {}  # name -> serialized (names are unique)
@@ -1852,6 +1934,7 @@ func _serialize() -> Dictionary:
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
+		"company_name": company_name, "demo": demo,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
@@ -2109,6 +2192,9 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ifaces": ifs}
 
 func load_game() -> bool:
+	## the current slot if it exists, otherwise the original single save
+	if FileAccess.file_exists(slot_path(current_slot)):
+		return load_slot(current_slot)
 	if not FileAccess.file_exists(save_path):
 		return false
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(save_path))
@@ -2121,6 +2207,8 @@ func _apply(data: Dictionary) -> void:
 	racks = []
 	links = []
 	money = int(data["money"])
+	company_name = String(data.get("company_name", "Packet Empire"))
+	demo = bool(data.get("demo", false))
 	contracts_done = data.get("contracts_done", [])
 	stage = int(data.get("stage", 0))
 	offers = data.get("offers", [])

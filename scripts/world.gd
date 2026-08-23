@@ -10,6 +10,7 @@ var mode := Mode.SELECT:
 			ui.update_mode(v)
 var hover: RackVisual = null
 var ui: UILayer
+var title: TitleScreen
 
 func _ready() -> void:
 	if OS.get_environment("PACKET_TEST") == "1":
@@ -26,10 +27,46 @@ func _ready() -> void:
 		_shoot_all.call_deferred()
 		return
 	Game.topology_changed.connect(_site_watch)
-	if Game.load_game():
-		rebuild_racks()
-	else:
-		ui.show_welcome()
+	show_title()
+
+func show_title() -> void:
+	## the front door: the world keeps running behind it but nobody can touch it
+	if title != null:
+		title.visible = true
+		title._build_menu()
+		title.show_intro()
+		ui.visible = false
+		Game.set_speed(0)
+		return
+	title = TitleScreen.new()
+	add_child(title)
+	ui.visible = false
+	Game.set_speed(0)  # nothing ticks while nobody is playing
+	title.start_requested.connect(_start_new)
+	title.continue_requested.connect(_continue)
+
+
+func _leave_title() -> void:
+	title.visible = false
+	ui.visible = true
+	Game.set_speed(1)
+	rebuild_racks()
+	ui._refresh_money()
+	ui._refresh_attention()
+
+func _start_new(slot: int, company: String, diff: int, is_demo: bool) -> void:
+	Game.reset_new(company, diff, is_demo)
+	Game.current_slot = slot
+	Game.save_game()
+	_leave_title()
+	if is_demo:
+		Demo.begin()
+	ui.show_welcome()
+
+func _continue(slot: int) -> void:
+	if not Game.load_slot(slot):
+		return
+	_leave_title()
 
 func _shoot_all() -> void:
 	## PACKET_SHOT=<dir>: photograph every screen, then quit
@@ -45,7 +82,12 @@ func _shoot_all() -> void:
 		if d.type == "switch" and sw == null:
 			sw = d
 	var shots: Array = [
-		["floor", func() -> void: pass],
+		["title", func() -> void: show_title()],
+		["title_slots", func() -> void: title.show_slots()],
+		["title_new", func() -> void: title.show_new_game(true)],
+		["floor", func() -> void:
+			title.visible = false
+			ui.visible = true],
 		["rack", func() -> void: ui.open_rack(r)],
 		["device", func() -> void: ui.open_dev(sw)],
 		["console", func() -> void:
@@ -125,6 +167,8 @@ func _process(dt: float) -> void:
 			hover.highlighted = true
 
 func _unhandled_input(e: InputEvent) -> void:
+	if title != null and title.visible:
+		return
 	if e is InputEventKey and e.pressed:
 		match e.keycode:
 			KEY_Q:

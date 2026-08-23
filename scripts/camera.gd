@@ -30,6 +30,9 @@ func fit_to_floor() -> void:
 	zoom = Vector2.ONE * clampf(z, ZOOM_MIN, 1.6)
 
 func _unhandled_input(e: InputEvent) -> void:
+	var w := get_parent()
+	if w != null and w.get("title") != null and w.title.visible:
+		return  # nothing to pan while the title screen is up
 	if e is InputEventMouseMotion and (e.button_mask & (MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)):
 		position -= e.relative / zoom
 	elif e is InputEventMouseButton and e.pressed:
