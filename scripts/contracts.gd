@@ -195,6 +195,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "router_on_a_stick",
+			"title": "One port, two networks",
+			"customer": "Beta Kft",
+			"reward": 1900,
+			"brief": "Beta needs their two VLANs (60 and 61) routed, and you have exactly one router port left. That is what router-on-a-stick is for: cable the router port to a switch TRUNK, then split it into 802.1Q subinterfaces. On the router: 'interface Ethernet1.60', 'encapsulation dot1q 60', 'ip address 10.90.60.1/24', then the same for .61 with 10.90.61.1/24. Put a server in each VLAN (10.90.60.10 and 10.90.61.10) pointing at those gateways. Both must reach each other over that single physical link.",
+			"reqs": [
+				{"d": "A router leg split into two 802.1Q subinterfaces", "t": func() -> bool: return _subiface_pair()},
+				{"d": "Servers own 10.90.60.10 and 10.90.61.10", "t": func() -> bool: return _owner("10.90.60.10") != null and _owner("10.90.61.10") != null},
+				{"d": "The VLANs route through the trunked port", "t": func() -> bool: return _ping("10.90.60.10", "10.90.61.10", true) and _ping("10.90.61.10", "10.90.60.10", true)},
+			],
+		},
+		{
 			"id": "one_switch_two_nets",
 			"title": "Collapse the core",
 			"customer": "Alfa Ltd",
@@ -271,6 +283,17 @@ static func _vip_pings() -> bool:
 		for r in d.static_routes:
 			for i: Net.Iface in _vrrp_ifaces():
 				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
+					return true
+	return false
+
+static func _subiface_pair() -> bool:
+	var by_parent := {}
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.parent != "" and not i.ips.is_empty():
+				var key := "%s|%s" % [d.name, i.parent]
+				by_parent[key] = by_parent.get(key, 0) + 1
+				if by_parent[key] >= 2:
 					return true
 	return false
 

@@ -162,6 +162,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): ctx_if.enabled = true; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
+			{"m": ["if"], "p": ["encapsulation", "dot1q"], "h": _if_encap},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
@@ -334,6 +335,27 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: interface <name>\n"
 		var want := String(r[0]).to_lower()
+		if "." in want:  # 802.1Q subinterface, e.g. Ethernet1.10 or et1.10
+			var bits := want.split(".")
+			if bits.size() == 2 and String(bits[1]).is_valid_int():
+				if not dev.ip_forwarding:
+					return "% subinterfaces need a router or firewall\n"
+				var parent_name := ""
+				var pd := String(bits[0]).lstrip("abcdefghijklmnopqrstuvwxyz")
+				for i: Net.Iface in dev.ifaces:
+					if i.parent != "":
+						continue
+					var idg := i.name.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+					if idg == pd and i.name.to_lower().begins_with(String(bits[0]).trim_suffix(pd)):
+						parent_name = i.name
+				if parent_name == "":
+					return "% no such parent interface\n"
+				ctx_if = Game.add_subiface(dev, parent_name, int(bits[1]))
+				if ctx_if == null:
+					return "% could not create the subinterface\n"
+				mode = "if"
+				return ""
+			return "% bad subinterface name\n"
 		if want.begins_with("vl") and want.trim_prefix("vlan").trim_prefix("vl").is_valid_int():
 			var vid := int(want.trim_prefix("vlan").trim_prefix("vl"))
 			if not Game.is_l3_switch(dev):
@@ -492,6 +514,15 @@ class EOS extends Session:
 			for cidr in ctx_if.ips.duplicate():
 				Game.remove_ip(ctx_if, cidr)
 		return ""
+
+	func _if_encap(r: Array) -> String:
+		if ctx_if.parent == "":
+			return "% encapsulation applies to subinterfaces (interface Et1.10)\n"
+		if r.size() == 1 and String(r[0]).is_valid_int():
+			if int(r[0]) != ctx_if.dot1q:
+				return "%% this subinterface carries VLAN %d (it is named for it)\n" % ctx_if.dot1q
+			return ""
+		return "usage: encapsulation dot1q <vlan-id>\n"
 
 	func _if_mtu(r: Array) -> String:
 		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 576 and int(r[0]) <= 9216:
@@ -802,6 +833,8 @@ class EOS extends Session:
 			if i.name == "lo":
 				continue
 			out += "interface %s\n" % i.name
+			if i.parent != "":
+				out += "   encapsulation dot1q %d\n" % i.dot1q
 			if i.mode == "trunk":
 				out += "   switchport mode trunk\n"
 				if not i.tagged_vlans.is_empty():

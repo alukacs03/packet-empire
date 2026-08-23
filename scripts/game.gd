@@ -106,6 +106,28 @@ func overheating() -> bool:
 func is_l3_switch(dev: Net.NDevice) -> bool:
 	return dev.type == "switch" and bool(MODELS.get(dev.model, {}).get("l3", false))
 
+func add_subiface(dev: Net.NDevice, parent_name: String, vid: int) -> Net.Iface:
+	## 802.1Q subinterface: router-on-a-stick
+	if not dev.ip_forwarding or vid < 1 or vid > 4094:
+		return null
+	var parent: Net.Iface = null
+	for i: Net.Iface in dev.ifaces:
+		if i.name == parent_name and i.parent == "":
+			parent = i
+	if parent == null:
+		return null
+	var sub_name := "%s.%d" % [parent_name, vid]
+	for i: Net.Iface in dev.ifaces:
+		if i.name == sub_name:
+			return i
+	var sub := Net.Iface.new(dev, sub_name, _new_mac())
+	sub.mode = "routed"
+	sub.parent = parent_name
+	sub.dot1q = vid
+	dev.ifaces.append(sub)
+	topology_changed.emit()
+	return sub
+
 func add_svi(dev: Net.NDevice, vid: int) -> Net.Iface:
 	## a virtual routed interface for VLAN vid on an L3 switch
 	if not is_l3_switch(dev) or not dev.vlans.has(vid):
@@ -530,7 +552,8 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 		if d == exclude:
 			continue
 		for i in d.ifaces:
-			if link_at(i) == null and i.name != "lo" and not i.name.begins_with("Vlan"):
+			if link_at(i) == null and i.name != "lo" and not i.name.begins_with("Vlan") \
+					and i.parent == "":
 				out.append(i)
 	return out
 
@@ -629,7 +652,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	for i: Net.Iface in d.ifaces:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
-			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper, "ips": i.ips})
+			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
+			"parent": i.parent, "dot1q": i.dot1q, "ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
@@ -689,6 +713,8 @@ func _apply(data: Dictionary) -> void:
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
 			i.helper = si.get("helper", "")
+			i.parent = si.get("parent", "")
+			i.dot1q = int(si.get("dot1q", 0))
 			i.ips = si["ips"]
 			d.ifaces.append(i)
 		if d.type == "switch":

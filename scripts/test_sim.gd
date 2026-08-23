@@ -842,6 +842,44 @@ static func run() -> int:
 	check(l2sw.exec("interface Vlan40").contains("no L3 switching"), "svi: budget switches refuse SVIs")
 	check(Game.try_complete_contract(_contract("one_switch_two_nets")), "svi: collapse-the-core contract verifies")
 
+	# --- router on a stick: 802.1Q subinterfaces ---
+	var ros_rtr := Game.new_device("rtr-edge")
+	var h60 := Game.new_device("srv-1")
+	var h61 := Game.new_device("srv-1")
+	var stick_sw := Game.new_device("sw-8")
+	var r9 := Game.add_rack(Vector2i(5, 1))
+	r9.slots[0] = ros_rtr
+	r9.slots[1] = stick_sw
+	r9.slots[2] = h60
+	r9.slots[3] = h61
+	Game.connect_ifaces(ros_rtr.ifaces[0], stick_sw.ifaces[7])
+	Game.connect_ifaces(h60.ifaces[0], stick_sw.ifaces[0])
+	Game.connect_ifaces(h61.ifaces[0], stick_sw.ifaces[1])
+	Game.add_vlan(stick_sw, 60, "sixty")
+	Game.add_vlan(stick_sw, 61, "sixtyone")
+	stick_sw.ifaces[0].untagged_vlan = 60
+	stick_sw.ifaces[1].untagged_vlan = 61
+	stick_sw.ifaces[7].mode = "trunk"
+	Game.add_ip(h60.ifaces[0], "10.90.60.10/24")
+	Game.add_ip(h61.ifaces[0], "10.90.61.10/24")
+	Game.add_static_route(h60, "0.0.0.0", 0, "10.90.60.1")
+	Game.add_static_route(h61, "0.0.0.0", 0, "10.90.61.1")
+	check(not Sim.ping(h60, "10.90.61.10")["ok"], "stick: VLANs isolated before the router is configured")
+	var st := CLI.new_session(ros_rtr)
+	st.exec("en")
+	st.exec("conf t")
+	check(st.exec("interface Ethernet1.60").is_empty(), "stick: subinterface created")
+	check(st.exec("encapsulation dot1q 60").is_empty(), "stick: encapsulation matches the subinterface")
+	st.exec("ip address 10.90.60.1/24")
+	st.exec("interface Ethernet1.61")
+	st.exec("ip address 10.90.61.1/24")
+	st.exec("end")
+	check(Sim.ping(h60, "10.90.60.1")["ok"], "stick: host reaches its tagged gateway")
+	check(Sim.ping(h60, "10.90.61.10")["ok"] and Sim.ping(h61, "10.90.60.10")["ok"],
+		"stick: one physical port routes both VLANs")
+	check(st.exec("sh run").contains("encapsulation dot1q 60"), "stick: rendered in running-config")
+	check(Game.try_complete_contract(_contract("router_on_a_stick")), "stick: contract verifies")
+
 	# --- DHCP relay ---
 	var rel_r := Game.new_device("rtr-edge")
 	var rel_srv := Game.new_device("server")

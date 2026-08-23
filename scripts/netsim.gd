@@ -436,6 +436,15 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if iface.name.begins_with("Vlan"):
 		_svi_tx(iface.dev, iface, frame)
 		return
+	if iface.parent != "":  # 802.1Q subinterface: tag and leave via the parent
+		for p_if: Net.Iface in iface.dev.ifaces:
+			if p_if.name == iface.parent:
+				var tagged := frame.duplicate(true)
+				tagged["vlan"] = iface.dot1q
+				tagged["src"] = iface.mac
+				_tx(p_if, tagged)
+				return
+		return
 	var l := Game.link_at(iface)
 	if l == null:
 		return
@@ -451,7 +460,7 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if peer.dev.type == "switch" and not peer.name.begins_with("Management"):
 		_switch_rx(peer.dev, peer, frame)
 	else:
-		_host_rx(peer.dev, peer, frame)
+		_host_rx(peer.dev, _logical_rx_iface(peer, frame), frame)
 	_depth -= 1
 
 static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void:
@@ -544,6 +553,15 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		else:
 			continue
 		_tx(o, f)
+
+static func _logical_rx_iface(phys: Net.Iface, frame: Dictionary) -> Net.Iface:
+	## a tagged frame belongs to the matching 802.1Q subinterface, if any
+	if int(frame.get("vlan", 0)) == 0:
+		return phys
+	for sub: Net.Iface in phys.dev.ifaces:
+		if sub.parent == phys.name and sub.dot1q == int(frame["vlan"]) and sub.enabled:
+			return sub
+	return phys
 
 static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	if frame["dst"] != iface.mac and frame["dst"] != BCAST:
