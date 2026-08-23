@@ -192,6 +192,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): return _each(func(i): i.enabled = false; return "")},
 			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): return _each(func(i): i.enabled = true; return "")},
 			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
+			{"m": ["if"], "p": ["qos", "priority-queueing"], "h": func(_r): return _qos(true)},
+			{"m": ["if"], "p": ["no", "qos", "priority-queueing"], "h": func(_r): return _qos(false)},
+			{"m": EP, "p": ["show", "qos"], "h": _show_qos},
 			{"m": ["if"], "p": ["encapsulation", "dot1q"], "h": _if_encap},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
@@ -646,6 +649,20 @@ class EOS extends Session:
 				return "%% this subinterface carries VLAN %d (it is named for it)\n" % ctx_if.dot1q
 			return ""
 		return "usage: encapsulation dot1q <vlan-id>\n"
+
+	func _qos(on: bool) -> String:
+		return _each(func(i: Net.Iface) -> String:
+			i.qos = on
+			return "")
+
+	func _show_qos(_r: Array) -> String:
+		var out := "%-11s %s\n" % ["Interface", "Policy"]
+		for i: Net.Iface in dev.ifaces:
+			if i.name == "lo":
+				continue
+			out += "%-11s %s\n" % [EOS._short(i.name),
+				"priority queueing (service levels first)" if i.qos else "first come, first served"]
+		return out
 
 	func _if_mtu(r: Array) -> String:
 		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 576 and int(r[0]) <= 9216:

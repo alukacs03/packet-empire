@@ -47,6 +47,7 @@ var if_vlan_row: HBoxContainer
 var if_trunk_note: Label
 var if_trunk_edit: LineEdit
 var if_portsec: CheckButton
+var if_qos: CheckButton
 var if_ip_section: VBoxContainer
 var if_ip_box: VBoxContainer
 var if_ip_in: LineEdit
@@ -893,6 +894,13 @@ func _build_if_overlay() -> void:
 	if_vlan.item_selected.connect(func(idx: int) -> void:
 		Game.set_access_vlan(cur_if, if_vlan.get_item_id(idx)))
 	if_vlan_row.add_child(if_vlan)
+	if_qos = CheckButton.new()
+	if_qos.text = "QoS"
+	if_qos.tooltip_text = "When this link is congested, serve strict service levels first"
+	if_qos.toggled.connect(func(on: bool) -> void:
+		cur_if.qos = on
+		Game.topology_changed.emit())
+	row2.add_child(if_qos)
 	if_portsec = CheckButton.new()
 	if_portsec.tooltip_text = "Lock this port to the first device it sees"
 	if_portsec.toggled.connect(func(on: bool) -> void:
@@ -993,6 +1001,7 @@ func _refresh_iface() -> void:
 	if_vlan_row.visible = is_switch and cur_if.mode == "access"
 	if_trunk_note.visible = is_switch and cur_if.mode == "trunk"
 	if_trunk_edit.visible = if_trunk_note.visible
+	if_qos.set_pressed_no_signal(cur_if.qos)
 	if_portsec.visible = is_switch and cur_if.mode == "access"
 	if_portsec.set_pressed_no_signal(cur_if.port_security)
 	if_portsec.text = "Port security" + ("  (locked to %s)" % cur_if.secure_mac if cur_if.secure_mac else "")

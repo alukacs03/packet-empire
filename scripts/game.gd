@@ -966,6 +966,30 @@ func _field_fault() -> void:
 		% [victim.dev.name, victim.name])
 	topology_changed.emit()
 
+func _qos_protect(link_load: Dictionary, deal_links: Dictionary) -> Dictionary:
+	## On a congested link with QoS enabled, bandwidth is not created, it is
+	## allocated: the strictest service levels are served first and whatever
+	## does not fit is what degrades.
+	var protected := {}
+	for l in link_load:
+		if int(link_load[l]) <= link_capacity(l):
+			continue
+		if not (l.a.qos or l.b.qos):
+			continue  # no policy: everyone shares the pain equally
+		var riders: Array = []
+		for deal in deals:
+			if l in deal_links.get(deal["id"], []):
+				riders.append(deal)
+		riders.sort_custom(func(x, y):
+			return int(x.get("sla", 0)) > int(y.get("sla", 0)))
+		var budget := link_capacity(l)
+		for deal in riders:
+			var need: int = int(deal.get("load", 200))
+			if budget - need >= 0:
+				budget -= need
+				protected[deal["id"]] = true
+	return protected
+
 func _deal_path_links(deal: Dictionary) -> Array:
 	## where this customer's traffic actually flows: the sim path from their
 	## server toward its default gateway (good-enough stand-in for its uplink)
@@ -1081,6 +1105,7 @@ func sla_tick() -> void:
 			for l in used:
 				link_load[l] = link_load.get(l, 0) + load
 	last_link_load = link_load
+	var protected := _qos_protect(link_load, deal_links)
 	for deal in deals.duplicate():
 		deal["cycles"] = int(deal.get("cycles", 0)) + 1
 		if deal["healthy"]:
@@ -1117,7 +1142,7 @@ func sla_tick() -> void:
 		deal["missed"] = 0
 		var congested := false
 		for l in deal_links.get(deal["id"], []):
-			if link_load[l] > link_capacity(l):
+			if link_load[l] > link_capacity(l) and not protected.has(deal["id"]):
 				congested = true
 		if congested and not deal.get("degraded", false):
 			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
@@ -1611,7 +1636,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
 			"parent": i.parent, "dot1q": i.dot1q,
-			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf,
+			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
@@ -1699,6 +1724,7 @@ func _apply(data: Dictionary) -> void:
 			i.lag = int(si.get("lag", 0))
 			i.helper = si.get("helper", "")
 			i.vrf = si.get("vrf", "")
+			i.qos = bool(si.get("qos", false))
 			i.port_security = si.get("port_security", false)
 			i.secure_mac = si.get("secure_mac", "")
 			i.parent = si.get("parent", "")

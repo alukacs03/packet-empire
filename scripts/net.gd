@@ -17,6 +17,7 @@ class Iface:
 	var lag := 0  # port-channel group id; 0 = standalone
 	var helper := ""  # DHCP relay target (ip helper-address)
 	var vrf := ""  # routing table this interface belongs to ("" = global)
+	var qos := false  # when congested, serve traffic in service-level order
 	var port_security := false  # sticky-MAC lockdown on an access port
 	var secure_mac := ""  # the MAC this port is locked to
 	var violations := 0

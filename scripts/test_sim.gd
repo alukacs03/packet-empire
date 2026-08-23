@@ -1042,6 +1042,11 @@ static func run() -> int:
 	Game.sla_tick()
 	check(not cap_deal.get("degraded", true), "capacity: modest load fits, deal recovers")
 	Game.connect_ifaces(vr1.ifaces[1], vr2.ifaces[1])  # 10G Junivista-to-Junivista core link
+	for l in Game.links:  # the crunch contract wants no congested deals at all
+		l.a.qos = false
+		l.b.qos = false
+	cap_deal["load"] = 200
+	Game.sla_tick()
 	check(Game.try_complete_contract(_contract("bandwidth_crunch")), "capacity: bandwidth-crunch contract verifies")
 	Game.deals.erase(cap_deal)
 
@@ -1430,6 +1435,43 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- QoS under congestion ---
+	Game.deals = []
+	var qos_rack := Game.add_rack(Vector2i(19, 1))
+	var qos_sw := Game.new_device("sw-8")   # 1 Gbit ports, and an EOS-style CLI
+	var qos_a := Game.new_device("srv-1")
+	var qos_b := Game.new_device("srv-1")
+	qos_rack.slots[0] = qos_sw
+	qos_rack.slots[1] = qos_a
+	qos_rack.slots[2] = qos_b
+	Game.connect_ifaces(qos_a.ifaces[0], qos_sw.ifaces[0])
+	Game.connect_ifaces(qos_b.ifaces[0], qos_sw.ifaces[1])
+	Game.add_ip(qos_a.ifaces[0], "10.180.0.10/24")
+	Game.add_ip(qos_b.ifaces[0], "10.180.0.11/24")
+	Game.add_static_route(qos_a, "0.0.0.0", 0, "10.180.0.11")
+	Game.add_static_route(qos_b, "0.0.0.0", 0, "10.180.0.10")
+	var premium := {"id": "q1", "customer": "Strict Kft", "kind": "hosting", "sla": 2,
+		"params": {"ip": "10.180.0.10"}, "fee": 200, "load": 900, "brief": "",
+		"cycles": 0, "up_cycles": 0, "healthy": true}
+	var cheap := {"id": "q2", "customer": "Cheap Bt", "kind": "hosting", "sla": 0,
+		"params": {"ip": "10.180.0.11"}, "fee": 80, "load": 900, "brief": "",
+		"cycles": 0, "up_cycles": 0, "healthy": true}
+	Game.deals = [premium, cheap]
+	for i: Net.Iface in qos_sw.ifaces:
+		i.qos = false
+	Game.sla_tick()
+	check(bool(premium.get("degraded", false)) and bool(cheap.get("degraded", false)),
+		"qos: without a policy an oversubscribed link degrades everyone")
+	for i: Net.Iface in qos_sw.ifaces:
+		i.qos = true
+	Game.sla_tick()
+	check(not bool(premium.get("degraded", true)), "qos: the strict service level is served first")
+	check(bool(cheap.get("degraded", false)), "qos: the best-effort customer absorbs the shortfall")
+	var qs := CLI.new_session(qos_sw)
+	qs.exec("en")
+	check(qs.exec("show qos").contains("priority queueing"), "qos: the policy is reported")
+	Game.deals = []
 
 	# --- load balancing ---
 	var lb_rack := Game.add_rack(Vector2i(18, 1))
