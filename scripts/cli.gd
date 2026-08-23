@@ -181,6 +181,10 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
+			{"m": ["if"], "p": ["dot1x"], "h": func(_r): return _dot1x(true)},
+			{"m": ["if"], "p": ["no", "dot1x"], "h": func(_r): return _dot1x(false)},
+			{"m": ["config"], "p": ["radius-server", "host"], "h": _cfg_radius},
+			{"m": EP, "p": ["show", "dot1x"], "h": _show_dot1x},
 			{"m": ["if"], "p": ["switchport", "protected"], "h": func(_r): return _pvlan("isolated")},
 			{"m": ["if"], "p": ["no", "switchport", "protected"], "h": func(_r): return _pvlan("")},
 			{"m": ["if"], "p": ["storm-control", "broadcast"], "h": _storm},
@@ -539,6 +543,34 @@ class EOS extends Session:
 		return _each(func(i: Net.Iface) -> String:
 			Game.set_access_vlan(i, vid)
 			return "")
+
+	func _dot1x(on: bool) -> String:
+		if dev.type not in ["switch", "ap"]:
+			return "% port authentication belongs on a switch or access point\n"
+		return _each(func(i: Net.Iface) -> String:
+			i.dot1x = on
+			if not on:
+				i.dot1x_ok = ""
+			return "")
+
+	func _cfg_radius(r: Array) -> String:
+		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
+			return "usage: radius-server host <ip>\n"
+		dev.radius = r[0]
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_dot1x(_r: Array) -> String:
+		var out := "Authentication server: %s\n%-11s %-8s %s\n" % [
+			dev.radius if dev.radius != "" else "(none)", "Port", "802.1X", "Authorised"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if not i.dot1x:
+				continue
+			any = true
+			out += "%-11s %-8s %s\n" % [EOS._short(i.name), "on",
+				i.dot1x_ok if i.dot1x_ok != "" else "nobody yet"]
+		return out if any else out + "  (no ports require authentication)\n"
 
 	func _pvlan(role: String) -> String:
 		if dev.type != "switch":
@@ -1399,6 +1431,8 @@ class EOS extends Session:
 				out += "   ip dhcp snooping trust\n"
 			if i.pvlan == "isolated":
 				out += "   switchport protected\n"
+			if i.dot1x:
+				out += "   dot1x\n"
 			if i.storm_limit > 0:
 				out += "   storm-control broadcast %d\n" % i.storm_limit
 			if i.mtu != 1500:
@@ -1423,7 +1457,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1490,6 +1524,25 @@ class Linux extends Session:
 									", ".join(PackedStringArray(i.ips))]
 					return out if out != "" else "(no virtual machines)\n"
 				return "usage: vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list\n"
+			"radiusd":
+				# radiusd add <mac> [vlan] | radiusd list
+				if not dev.services.has("radius"):
+					dev.services["radius"] = {"users": {}}
+				if t.size() >= 3 and t[1] == "add":
+					var vid := int(t[3]) if t.size() > 3 and String(t[3]).is_valid_int() else 0
+					dev.services["radius"]["users"][t[2]] = vid
+					Game.topology_changed.emit()
+					return "radiusd: %s may join%s\n" % [t[2],
+						" VLAN %d" % vid if vid > 0 else ""]
+				if t.size() >= 2 and t[1] == "list":
+					var users: Dictionary = dev.services["radius"]["users"]
+					if users.is_empty():
+						return "(nobody authorised yet)\n"
+					var out := ""
+					for u in users:
+						out += "%-19s vlan %s\n" % [u, str(users[u]) if int(users[u]) > 0 else "-"]
+					return out
+				return "radiusd: collecting authentication requests\nusage: radiusd add <mac> [vlan] | radiusd list\n"
 			"wifi":
 				if t.size() == 3 and t[1] == "join":
 					var err := Game.wifi_join(dev, t[2])
@@ -1699,7 +1752,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

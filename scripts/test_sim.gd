@@ -1445,6 +1445,53 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- 802.1X port authentication ---
+	var dx_rack := Game.add_rack(Vector2i(30, 1))
+	var dx_sw := Game.new_device("sw-8")
+	var dx_auth := Game.new_device("srv-1")   # the authentication server
+	var dx_known := Game.new_device("srv-1")  # a machine the company owns
+	var dx_stranger := Game.new_device("srv-1")
+	dx_rack.slots[0] = dx_sw
+	dx_rack.slots[1] = dx_auth
+	dx_rack.slots[2] = dx_known
+	dx_rack.slots[3] = dx_stranger
+	Game.connect_ifaces(dx_auth.ifaces[0], dx_sw.ifaces[0])
+	Game.connect_ifaces(dx_known.ifaces[0], dx_sw.ifaces[1])
+	Game.connect_ifaces(dx_stranger.ifaces[0], dx_sw.ifaces[2])
+	Game.add_ip(dx_auth.ifaces[0], "10.115.0.5/24")
+	Game.add_ip(dx_known.ifaces[0], "10.115.0.10/24")
+	Game.add_ip(dx_stranger.ifaces[0], "10.115.0.11/24")
+	var auth_cli := CLI.new_session(dx_auth)
+	check(auth_cli.exec("radiusd add %s" % dx_known.ifaces[0].mac).contains("may join"),
+		"dot1x: a machine can be authorised on the server")
+	var dx_cli := CLI.new_session(dx_sw)
+	dx_cli.exec("en")
+	dx_cli.exec("conf t")
+	# the switch needs to reach the server itself, which means a management address
+	dx_cli.exec("interface Management1")
+	dx_cli.exec("ip address 10.115.0.2/24")
+	dx_cli.exec("exit")
+	check(dx_cli.exec("radius-server host 10.115.0.5").is_empty(), "dot1x: the switch is pointed at it")
+	dx_cli.exec("interface range Ethernet2-3")
+	check(dx_cli.exec("dot1x").is_empty(), "dot1x: ports can require authentication")
+	dx_cli.exec("end")
+	# the management port has to be patched into the network to be any use
+	Game.connect_ifaces(dx_sw.ifaces[dx_sw.ifaces.size() - 1], dx_sw.ifaces[7])
+	Sim.flush_learned_state()
+	check(Sim.ping(dx_known, "10.115.0.5")["ok"], "dot1x: an authorised machine gets on")
+	check(dx_sw.ifaces[1].dot1x_ok == dx_known.ifaces[0].mac, "dot1x: the port records who it let in")
+	Sim.flush_learned_state()
+	check(not Sim.ping(dx_stranger, "10.115.0.5")["ok"], "dot1x: an unknown machine gets nothing")
+	check(dx_cli.exec("show dot1x").contains("10.115.0.5"), "dot1x: the state is reported")
+	# the server can also decide which VLAN a machine belongs in
+	Game.add_vlan(dx_sw, 45, "trusted")
+	auth_cli.exec("radiusd add %s 45" % dx_stranger.ifaces[0].mac)
+	dx_sw.ifaces[2].dot1x_ok = ""
+	Sim.flush_learned_state()
+	Sim.ping(dx_stranger, "10.115.0.5")
+	check(dx_sw.ifaces[2].untagged_vlan == 45,
+		"dot1x: the authentication server decides which VLAN you land in")
+
 	# --- wireless ---
 	var wifi_rack := Game.add_rack(Vector2i(29, 1))
 	var wifi_sw := Game.new_device("sw-8")

@@ -18,6 +18,8 @@ class Iface:
 	var helper := ""  # DHCP relay target (ip helper-address)
 	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var qos := false  # when congested, serve traffic in service-level order
+	var dot1x := false  # port-based authentication before any traffic passes
+	var dot1x_ok := ""  # the MAC currently authorised on this port
 	var pvlan := ""  # "" | "isolated" | "promiscuous": private VLAN role
 	var storm_limit := 0  # broadcast frames allowed per operation, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation
@@ -53,6 +55,7 @@ class NDevice:
 	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
 	var dai := false  # dynamic ARP inspection, using the snooping bindings
 	var bindings := {}  # mac -> address learned from a legitimate lease
+	var radius := ""  # switch/AP: address of the authentication server
 	var ssids := {}  # access point: SSID name -> VLAN id
 	var wifi := ""  # host: the SSID it is associated with
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins

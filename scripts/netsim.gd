@@ -751,6 +751,30 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 					_host_rx(peer.dev, peer, f)
 		_depth -= 1
 
+static func _dot1x_authorise(sw: Net.NDevice, port: Net.Iface, mac: String) -> bool:
+	## ask the RADIUS server whether this machine is allowed on the network,
+	## and let it say which VLAN the machine belongs in
+	if sw.radius == "":
+		Game.device_log(sw, "802.1X on %s but no authentication server configured" % port.name)
+		return false
+	var server := _ip_owner(sw.radius)
+	if server == null or not server.services.has("radius"):
+		return false
+	if not ping(sw, sw.radius)["ok"]:
+		Game.device_log(sw, "802.1X could not reach the authentication server")
+		return false
+	var users: Dictionary = server.services["radius"].get("users", {})
+	if not users.has(mac):
+		Game.device_log(sw, "802.1X rejected %s on %s" % [mac, port.name])
+		return false
+	port.dot1x_ok = mac
+	var vid := int(users[mac])
+	if vid > 0 and sw.vlans.has(vid):
+		port.untagged_vlan = vid  # the server decides where you belong
+	Game.device_log(sw, "802.1X authorised %s on %s%s" % [mac, port.name,
+		" into VLAN %d" % vid if vid > 0 else ""])
+	return true
+
 static func _reset_storm_counters() -> void:
 	for d in Game.all_devices():
 		for i: Net.Iface in d.ifaces:
@@ -800,6 +824,10 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		in_if.storm_count += 1
 		if in_if.storm_count > in_if.storm_limit:
 			Game.device_log(dev, "storm control suppressed broadcast on %s" % in_if.name)
+			return
+	# 802.1X: nothing passes until the authentication server says who this is
+	if in_if.dot1x and String(frame["src"]) != in_if.dot1x_ok:
+		if not _dot1x_authorise(dev, in_if, String(frame["src"])):
 			return
 	if in_if.port_security:
 		if in_if.secure_mac == "":
