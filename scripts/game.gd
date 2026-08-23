@@ -116,6 +116,23 @@ func add_site(name: String, grid: Vector2i, kind := "acquired") -> int:
 	sites.append({"name": name, "grid": [grid.x, grid.y], "kind": kind})
 	return sites.size() - 1
 
+const SITE_OFFERS := [
+	{"label": "Small branch room", "grid": [5, 5], "setup": 9000, "rent": 120},
+	{"label": "Regional server room", "grid": [8, 8], "setup": 22000, "rent": 300},
+	{"label": "Second datacenter floor", "grid": [12, 12], "setup": 60000, "rent": 700},
+]
+
+func lease_site(offer_idx: int) -> String:
+	var o: Dictionary = SITE_OFFERS[offer_idx]
+	if not try_spend(int(o["setup"])):
+		return "you cannot afford the $%d fit-out" % int(o["setup"])
+	var g: Array = o["grid"]
+	var idx := add_site("%s %d" % [o["label"], site_count()], Vector2i(int(g[0]), int(g[1])), "leased")
+	sites[idx]["rent"] = int(o["rent"])
+	log_event("SITE: leased a %s ($%d/cycle rent). Reaching it needs a circuit." % [o["label"], int(o["rent"])])
+	topology_changed.emit()
+	return ""
+
 const CIRCUIT_GRADES := [
 	{"label": "100 Mbit metro line", "mbps": 100, "setup": 1200, "fee": 60},
 	{"label": "1 Gbit leased line", "mbps": 1000, "setup": 4000, "fee": 180},
@@ -660,6 +677,11 @@ func sla_tick() -> void:
 	for c in circuits:
 		last_pl["wan circuits"] = int(last_pl.get("wan circuits", 0)) - int(c["fee"])
 		earned -= int(c["fee"])
+	for s_i in sites:
+		var rent := int(s_i.get("rent", 0))
+		if rent > 0:
+			last_pl["site rent"] = int(last_pl.get("site rent", 0)) - rent
+			earned -= rent
 	if stage >= 1:  # colo includes power; your own room doesn't
 		var power_bill := power_draw() / 10
 		last_pl["power"] = -power_bill

@@ -1465,6 +1465,25 @@ func _build_market_section() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("SITES"))
+	for i in Game.site_count():
+		var rent := int(Game.sites[i].get("rent", 0))
+		contracts_box.add_child(_label("  %-26s %dx%d   %d racks%s" % [Game.site_name(i),
+			Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size(),
+			"   $%d/cycle rent" % rent if rent > 0 else ""], 13, Color(0.75, 0.8, 0.85)))
+	var lease := Button.new()
+	lease.text = "Lease another site…"
+	lease.pressed.connect(func() -> void:
+		var opts: Array = []
+		for o: Dictionary in Game.SITE_OFFERS:
+			opts.append("%-26s %dx%d   $%d fit-out, $%d/cycle" % [o["label"],
+				int(o["grid"][0]), int(o["grid"][1]), int(o["setup"]), int(o["rent"])])
+		_menu(lease, opts, func(id: int) -> void:
+			var err: String = Game.lease_site(id)
+			_refresh_contracts()
+			if err != "":
+				_toast(err)))
+	contracts_box.add_child(lease)
 	if Game.site_count() > 1:
 		contracts_box.add_child(_section("WAN CIRCUITS"))
 		for c: Dictionary in Game.circuits.duplicate():

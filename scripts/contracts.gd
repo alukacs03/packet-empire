@@ -230,6 +230,19 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "two_sites",
+			"title": "Two roofs, one service",
+			"customer": "Tisza Bank",
+			"reward": 4200,
+			"brief": "Tisza Bank will not run their service under a single roof again. They want it present on TWO of your sites: lease a second site (Business screen) or acquire a company that owns one, order a WAN circuit between the two, and stand up a server on each site (10.120.1.10 and 10.120.2.10). Both must be reachable from the other site across the circuit, so the loss of one building does not take the service with it.",
+			"reqs": [
+				{"d": "You operate at least two sites", "t": func() -> bool: return Game.site_count() >= 2},
+				{"d": "A WAN circuit links two of them", "t": func() -> bool: return not Game.circuits.is_empty()},
+				{"d": "A server on each of two sites (10.120.1.10, 10.120.2.10)", "t": func() -> bool: return _sites_of_hosts(["10.120.1.10", "10.120.2.10"]).size() >= 2},
+				{"d": "They reach each other across the circuit", "t": func() -> bool: return _ping("10.120.1.10", "10.120.2.10", true) and _ping("10.120.2.10", "10.120.1.10", true)},
+			],
+		},
+		{
 			"id": "big_client",
 			"title": "The big client",
 			"customer": "Omega Holding",
@@ -285,6 +298,17 @@ static func _vip_pings() -> bool:
 				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
 					return true
 	return false
+
+static func _sites_of_hosts(ips: Array) -> Array:
+	var found := {}
+	for ip in ips:
+		var d := _owner(ip)
+		if d == null:
+			continue
+		var rk := Game.rack_of(d)
+		if rk:
+			found[rk.site] = true
+	return found.keys()
 
 static func _subiface_pair() -> bool:
 	var by_parent := {}

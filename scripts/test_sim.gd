@@ -1282,6 +1282,40 @@ static func run() -> int:
 	Rivals.tick()
 	check(Rivals.has_site(growth_r), "market: a flush rival buys premises of its own")
 
+	# --- leasing a site and delivering across it ---
+	Game.money = 300000
+	var sites_pre := Game.site_count()
+	check(Game.lease_site(0).is_empty(), "lease: a branch site can be leased")
+	check(Game.site_count() == sites_pre + 1, "lease: it becomes a site you operate")
+	var branch := Game.site_count() - 1
+	var m_rent := Game.money
+	Game.sla_tick()
+	check(Game.last_pl.has("site rent"), "lease: rent lands in the cycle P&L")
+	# stand up the two-site service the bank wants
+	Game.switch_site(branch)
+	var br_rack := Game.add_rack(Vector2i(0, 0), branch)
+	var br_sw := Game.new_device("sw-8")
+	var br_srv := Game.new_device("srv-1")
+	br_rack.slots[0] = br_sw
+	br_rack.slots[1] = br_srv
+	Game.connect_ifaces(br_srv.ifaces[0], br_sw.ifaces[0])
+	Game.add_ip(br_srv.ifaces[0], "10.120.2.10/24")
+	Game.switch_site(0)
+	var home_rack := Game.add_rack(Vector2i(1, 1), 0)
+	var hm_sw := Game.new_device("sw-8")
+	var hm_srv := Game.new_device("srv-1")
+	home_rack.slots[0] = hm_sw
+	home_rack.slots[1] = hm_srv
+	Game.connect_ifaces(hm_srv.ifaces[0], hm_sw.ifaces[0])
+	Game.add_ip(hm_srv.ifaces[0], "10.120.1.10/24")
+	check(not Game.try_complete_contract(_contract("two_sites")), "dr: not deliverable without a circuit")
+	check(Game.buy_circuit(0, branch, 1).is_empty(), "dr: circuit ordered between the two sites")
+	check(Game.connect_ifaces(hm_sw.ifaces[5], br_sw.ifaces[5]), "dr: the sites are cabled over the circuit")
+	Game.add_ip(hm_srv.ifaces[0], "10.120.2.100/24")  # a foot in the other subnet, as a bank would
+	Game.add_ip(br_srv.ifaces[0], "10.120.1.100/24")
+	check(Sim.ping(hm_srv, "10.120.2.10")["ok"], "dr: home site reaches the branch server")
+	check(Game.try_complete_contract(_contract("two_sites")), "dr: the two-site contract verifies")
+
 	# --- full save/load roundtrip over the modern state ---
 	Game.save_game()
 	var snap_sites := Game.site_count()
