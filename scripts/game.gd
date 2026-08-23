@@ -456,6 +456,58 @@ func cooling_capacity() -> int:
 func overheating() -> bool:
 	return stage >= 1 and power_draw() > cooling_capacity()
 
+# ---------- airflow: where the heat is, not just how much ----------
+
+const CRAC_REACH := 3.0  # tiles a cooling unit meaningfully serves
+const CROWDING_PENALTY := 0.18  # extra heat per directly adjacent rack
+
+func rack_watts(r: Net.Rack) -> int:
+	var w := 0
+	for d in r.slots:
+		if d != null and d.status == "active":
+			w += int(WATTS.get(d.model, 0))
+	return w
+
+func rack_heat(r: Net.Rack) -> int:
+	## a rack's own draw, plus a penalty for every cabinet pressed against it.
+	## Racks in a solid block recirculate each other's exhaust; an aisle is
+	## what stops that, and an aisle is just an empty tile.
+	var neighbours := 0
+	for other in racks_on(r.site):
+		if other == r:
+			continue
+		var off: Vector2i = other.tile - r.tile
+		if absi(off.x) <= 1 and absi(off.y) <= 1:
+			neighbours += 1
+	return int(round(float(rack_watts(r)) * (1.0 + CROWDING_PENALTY * neighbours)))
+
+func rack_cooling(r: Net.Rack) -> int:
+	## cold air does not teleport: a unit on the far side of the room is worth
+	## much less than one at the end of the row
+	var total := float(BASE_COOLING) / maxf(1.0, float(racks_on(r.site).size()))
+	for other in racks_on(r.site):
+		for d in other.slots:
+			if d == null or d.type != "cooling" or d.status != "active":
+				continue
+			var dist := Vector2(r.tile - other.tile).length()
+			if dist > CRAC_REACH:
+				continue
+			total += float(MODELS[d.model].get("cools", 0)) * (1.0 - dist / (CRAC_REACH + 1.0))
+	return int(round(total))
+
+func rack_hot(r: Net.Rack) -> bool:
+	return stage >= 1 and rack_heat(r) > rack_cooling(r)
+
+func hottest_rack(site: int) -> Net.Rack:
+	var worst: Net.Rack = null
+	var worst_margin := -(1 << 30)
+	for r in racks_on(site):
+		var margin := rack_heat(r) - rack_cooling(r)
+		if margin > worst_margin:
+			worst_margin = margin
+			worst = r
+	return worst
+
 func is_l3_switch(dev: Net.NDevice) -> bool:
 	return dev.type == "switch" and bool(MODELS.get(dev.model, {}).get("l3", false))
 
@@ -1933,12 +1985,25 @@ func sla_tick() -> void:
 				last_pl["transit ports"] = int(last_pl.get("transit ports", 0)) - TRANSIT_FEE
 				earned -= TRANSIT_FEE
 	if overheating():
-		# heat kills: one active device trips per cycle until capacity recovers
-		for d in all_devices():
-			if d.status == "active" and d.type != "cooling":
-				d.status = "offline"
-				topology_changed.emit()
-				break
+		# heat kills, and it kills where the heat is: the hottest cabinet loses
+		# a device first, which is what makes CRAC placement a decision
+		var hot := hottest_rack(0)
+		var tripped := false
+		if hot != null:
+			for d in hot.slots:
+				if d != null and d.status == "active" and d.type != "cooling":
+					d.status = "offline"
+					log_event("HEAT: %s in %s tripped. That cabinet is running at %dW against %dW of cooling."
+						% [d.name, hot.name, rack_heat(hot), rack_cooling(hot)])
+					topology_changed.emit()
+					tripped = true
+					break
+		if not tripped:
+			for d in all_devices():
+				if d.status == "active" and d.type != "cooling":
+					d.status = "offline"
+					topology_changed.emit()
+					break
 	Rivals.tick()
 	_maybe_poach()
 	_attack_tick()

@@ -1329,6 +1329,24 @@ func _refresh_ops() -> void:
 	var advice := _capacity_advice()
 	if advice != "":
 		ops_box.add_child(_wrap("  " + advice, 13, Color(1.0, 0.82, 0.5), 780))
+	if Game.stage >= 1:
+		ops_box.add_child(_section("AIRFLOW"))
+		var any_hot := false
+		for r_air in Game.racks_on(Game.current_site):
+			var heat := Game.rack_heat(r_air)
+			var cool := Game.rack_cooling(r_air)
+			if heat == 0:
+				continue
+			var hot := heat > cool
+			any_hot = any_hot or hot
+			var al := _label("  %-10s %5dW produced   %5dW removed   %s" % [r_air.name, heat, cool,
+				"HOT" if hot else "ok"], 12,
+				Prefs.bad_colour() if hot else Color(0.7, 0.78, 0.85))
+			al.add_theme_font_override("font", mono)
+			ops_box.add_child(al)
+		if any_hot:
+			ops_box.add_child(_wrap("  Cold air does not travel far. Put a cooling unit in or beside the hot row, and leave an aisle: cabinets pressed against each other recirculate their own exhaust.",
+				12, Color(1.0, 0.82, 0.5), 780))
 	var talkers := Game.top_talkers(6)
 	if not talkers.is_empty():
 		ops_box.add_child(_section("TOP TALKERS"))

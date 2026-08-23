@@ -3129,6 +3129,28 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- airflow: heat is somewhere, not just a total ---
+	var air_stage := Game.stage
+	Game.stage = 1
+	var air_a := Game.add_rack(Vector2i(2, 20))
+	var air_b := Game.add_rack(Vector2i(2, 21))  # pressed against it
+	var air_far := Game.add_rack(Vector2i(11, 20))  # on its own
+	for air_i in 4:
+		air_a.slots[air_i] = Game.new_device("srv-2")
+		air_far.slots[air_i] = Game.new_device("srv-2")
+	check(Game.rack_watts(air_a) == Game.rack_watts(air_far),
+		"airflow: the two cabinets draw the same power")
+	check(Game.rack_heat(air_a) > Game.rack_heat(air_far),
+		"airflow: but the crowded one runs hotter, because it breathes its neighbour's exhaust")
+	var cool_far := Game.rack_cooling(air_far)
+	air_b.slots[0] = Game.new_device("crac-1")
+	check(Game.rack_cooling(air_a) > Game.rack_cooling(air_far),
+		"airflow: a unit next door cools this row and not the far one")
+	check(Game.rack_cooling(air_far) <= cool_far + 1,
+		"airflow: cold air does not travel across the room")
+	check(Game.hottest_rack(0) != null, "airflow: there is always a worst cabinet")
+	Game.stage = air_stage
+
 	# --- transit billed on the 95th percentile, and peering ---
 	check(Game.percentile_95([]) == 0, "transit: nothing measured costs nothing")
 	# twenty samples, one enormous spike: the spike is in the free five percent

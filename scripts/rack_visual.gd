@@ -112,6 +112,10 @@ func _draw() -> void:
 	draw_rect(Rect2(badge_pos, Vector2(40, 17)), Color(0.35, 0.42, 0.55, 0.7), false, 1.0)
 	draw_string(ThemeDB.fallback_font, badge_pos + Vector2(7, 13), rack.name,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.8, 0.87, 0.97))
+	# a hot cabinet glows at its base, so a bad row is visible from the floor
+	if Game.rack_hot(rack):
+		var pulse_h := 0.3 + 0.18 * sin(tms / 420.0)
+		draw_colored_polygon(PackedVector2Array([n, e, s, w]), Color(1.0, 0.35, 0.2, pulse_h))
 	if highlighted:
 		var pulse := 0.55 + 0.35 * sin(tms / 240.0)
 		draw_polyline(PackedVector2Array([n, e, s, w, n]), Color(0.5, 0.9, 1.0, pulse), 2.5)
