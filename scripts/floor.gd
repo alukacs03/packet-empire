@@ -1,10 +1,10 @@
 extends Node2D
 ## Draws the datacenter floor: iso tile grid with a hovered-tile highlight.
 
-const GRID_W := 12
-const GRID_H := 12
-
 var hover_tile := Vector2i(-1, -1)
+
+func _ready() -> void:
+	Game.topology_changed.connect(queue_redraw)
 
 func _process(_dt: float) -> void:
 	var t := Iso.world_to_tile(get_global_mouse_position())
@@ -13,8 +13,9 @@ func _process(_dt: float) -> void:
 		queue_redraw()
 
 func _draw() -> void:
-	for y in GRID_H:
-		for x in GRID_W:
+	var grid: Vector2i = Game.grid_size()
+	for y in grid.y:
+		for x in grid.x:
 			var t := Vector2i(x, y)
 			var c := Color(0.16, 0.18, 0.23) if (x + y) % 2 == 0 else Color(0.14, 0.16, 0.21)
 			if t == hover_tile:

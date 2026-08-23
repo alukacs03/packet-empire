@@ -57,6 +57,7 @@ var cur_dev: Net.NDevice
 var cur_if: Net.Iface
 var cli_session: CLI.Session
 var money_lbl: Label
+var expand_btn: Button
 var theme_res: Theme
 var mono: SystemFont
 
@@ -71,11 +72,22 @@ func _ready() -> void:
 	_build_contracts_overlay()
 	_build_welcome()
 	Game.topology_changed.connect(_refresh_open)
+	Game.topology_changed.connect(_refresh_money)
 	Game.money_changed.connect(_refresh_money)
 	_refresh_money()
 
 func _refresh_money() -> void:
-	money_lbl.text = "  $%d" % Game.money
+	var power := ""
+	if Game.stage >= 1:
+		power = "   ⚡%dW (-$%d/cycle)" % [Game.power_draw(), Game.power_draw() / 10]
+	money_lbl.text = "  $%d%s" % [Game.money, power]
+	if Game.stage < Game.STAGES.size() - 1:
+		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
+		expand_btn.text = "Expand: %s ($%d)" % [nxt["name"], nxt["price"]]
+		expand_btn.tooltip_text = nxt["blurb"]
+		expand_btn.visible = true
+	else:
+		expand_btn.visible = false
 
 func _process(_dt: float) -> void:
 	# focus watchdog: while the console is open, dropped focus/editing returns to it
@@ -199,6 +211,11 @@ func _build_toolbar() -> void:
 	cb.text = "Contracts"
 	cb.pressed.connect(open_contracts)
 	h.add_child(cb)
+	expand_btn = Button.new()
+	expand_btn.pressed.connect(func() -> void:
+		if Game.expand():
+			_refresh_money())
+	h.add_child(expand_btn)
 	var save_btn := Button.new()
 	save_btn.text = "Save"
 	save_btn.pressed.connect(func() -> void: Game.save_game())
@@ -254,6 +271,8 @@ func _refresh_slots() -> void:
 				slot_col = Color(0.4, 0.9, 0.95)
 			elif dev.type == "router":
 				slot_col = Color(1.0, 0.75, 0.45)
+			elif dev.type == "firewall":
+				slot_col = Color(1.0, 0.5, 0.5)
 			b.add_theme_color_override("font_color", slot_col)
 			b.pressed.connect(func() -> void: open_dev(dev))
 		else:

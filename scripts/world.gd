@@ -71,8 +71,8 @@ func _unhandled_input(e: InputEvent) -> void:
 					ui.open_rack(r)
 
 func _place_rack(tile: Vector2i) -> void:
-	var f := $Floor
-	if tile.x < 0 or tile.y < 0 or tile.x >= f.GRID_W or tile.y >= f.GRID_H:
+	var grid: Vector2i = Game.grid_size()
+	if tile.x < 0 or tile.y < 0 or tile.x >= grid.x or tile.y >= grid.y:
 		return
 	if Game.rack_at(tile):
 		return

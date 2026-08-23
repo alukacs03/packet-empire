@@ -78,6 +78,18 @@ static func all() -> Array:
 				{"d": "That client can ping www.delta.hu by name", "t": func() -> bool: return _client_pings_name("www.delta.hu")},
 			],
 		},
+		{
+			"id": "lock_it_down",
+			"title": "Lock it down",
+			"customer": "Epsilon Bank",
+			"reward": 2500,
+			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console: 'acl deny 172.16.1.0/24 172.16.2.20/32' — first match wins, everything else is permitted. Verify with 'show acl' and pings both ways.",
+			"reqs": [
+				{"d": "A firewall with at least one deny rule", "t": func() -> bool: return _fw_with_deny() != null},
+				{"d": "Office 172.16.1.10 reaches app 172.16.2.10", "t": func() -> bool: return _ping("172.16.1.10", "172.16.2.10", true)},
+				{"d": "Office 172.16.1.10 is blocked from vault 172.16.2.20", "t": func() -> bool: return _owner("172.16.2.20") != null and _ping("172.16.1.10", "172.16.2.20", false)},
+			],
+		},
 	]
 
 # ---------- check helpers ----------
@@ -193,6 +205,14 @@ static func _client_pings_name(name: String) -> bool:
 			if ip != "" and Sim.ping(d, ip)["ok"]:
 				return true
 	return false
+
+static func _fw_with_deny() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.type == "firewall":
+			for rule in d.acls:
+				if rule["action"] == "deny":
+					return d
+	return null
 
 static func _router_owns(ips: Array) -> bool:
 	for d in Game.all_devices():

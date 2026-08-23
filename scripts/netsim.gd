@@ -267,6 +267,8 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		elif l4["proto"] == "dns-resp":
 			_dns_results.append(l4)
 	elif dev.ip_forwarding:
+		if not _acl_permits(dev, p["src_ip"], p["dst_ip"]):
+			return  # filtered by firewall policy
 		if p["ttl"] <= 1:
 			_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)})
 			return
@@ -299,6 +301,13 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	dev.capture.append("%-10s %s%s" % [iface.name, desc, vl])
 	if dev.capture.size() > 50:
 		dev.capture.pop_front()
+
+static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bool:
+	for rule in dev.acls:  # first match wins; default permit
+		if Net.same_subnet(src_ip, rule["src"], int(rule["splen"])) \
+				and Net.same_subnet(dst_ip, rule["dst"], int(rule["dplen"])):
+			return rule["action"] == "permit"
+	return true
 
 static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 	for cidr: String in iface.ips:

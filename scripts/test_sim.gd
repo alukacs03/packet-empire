@@ -192,5 +192,45 @@ static func run() -> int:
 	a3.ifaces[0].enabled = true
 	Game.topology_changed.emit()
 
+	# --- firewall ACLs ---
+	var r3 := Game.add_rack(Vector2i(1, 0))
+	var fw := Game.new_device("fw-1")
+	var office := Game.new_device("server")
+	var vault := Game.new_device("server")
+	r3.slots[0] = fw
+	r3.slots[1] = office
+	r3.slots[2] = vault
+	Game.connect_ifaces(office.ifaces[0], fw.ifaces[0])
+	Game.connect_ifaces(vault.ifaces[0], fw.ifaces[1])
+	Game.add_ip(office.ifaces[0], "172.16.1.10/24")
+	Game.add_ip(vault.ifaces[0], "172.16.2.20/24")
+	Game.add_ip(fw.ifaces[0], "172.16.1.1/24")
+	Game.add_ip(fw.ifaces[1], "172.16.2.1/24")
+	Game.add_static_route(office, "0.0.0.0", 0, "172.16.1.1")
+	Game.add_static_route(vault, "0.0.0.0", 0, "172.16.2.1")
+	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: default permit forwards")
+	var fs := CLI.new_session(fw)
+	fs.exec("en")
+	fs.exec("conf t")
+	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
+	check(not Sim.ping(office, "172.16.2.20")["ok"], "fw: deny rule blocks office->vault")
+	check(not Sim.ping(vault, "172.16.1.10")["ok"],
+		"fw: stateless — vault->office echo passes but its reply is filtered (the classic lesson)")
+	check(fs.exec("end") == "" and fs.exec("show acl").contains("deny"), "fw: show acl lists the rule")
+	fs.exec("conf t")
+	fs.exec("no acl 1")
+	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: removing the rule restores traffic")
+	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
+
+	# --- stages & power ---
+	check(Game.grid_size() == Vector2i(3, 3), "stage: colo corner is 3x3")
+	check(Game.power_draw() > 0, "stage: hardware draws watts")
+	var m3 := Game.money
+	check(Game.expand(), "stage: expansion purchasable")
+	check(Game.money == m3 - 5000 and Game.grid_size() == Vector2i(7, 7), "stage: server room paid and unlocked")
+	var m4 := Game.money
+	Game.sla_tick()
+	check(Game.money - m4 < 90 + 40 + 50, "stage: power bill now reduces cycle income")
+
 	print("---- %d failures" % fails)
 	return fails

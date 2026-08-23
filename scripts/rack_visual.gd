@@ -45,6 +45,8 @@ func _draw() -> void:
 				col = Color(0.2, 0.7, 0.75)
 			elif dev.type == "router":
 				col = Color(0.85, 0.6, 0.3)
+			elif dev.type == "firewall":
+				col = Color(0.85, 0.35, 0.35)
 			var lo2 := lerp(s, s + up, frac + 0.07)
 			var hi2 := lerp(e, e + up, frac + 0.07)
 			draw_colored_polygon(PackedVector2Array([

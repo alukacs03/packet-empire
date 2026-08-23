@@ -27,6 +27,7 @@ class NDevice:
 	var vlans := {}  # vid -> name; per-device VLAN database (switches)
 	var ip_forwarding := false  # routers forward, hosts don't
 	var static_routes: Array = []  # {"prefix": "0.0.0.0", "plen": 0, "via": "10.0.0.1"}
+	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var services := {}  # "dhcp": {iface,start,end,plen,gw,dns,leases}, "dns": {records}
 	var resolver := ""  # DNS server ip for this host
 	# runtime state (not saved): learned tables

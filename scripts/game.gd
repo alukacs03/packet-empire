@@ -14,12 +14,24 @@ const MODELS := {
 	"srv-2": {"type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
 	"rtr-lite": {"type": "router", "ports": 4, "label": "PacketTik R4", "price": 350},
 	"rtr-edge": {"type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
+	"fw-1": {"type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
 }
-const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite"}
+const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
+	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40}
+const STAGES := [
+	{"name": "Colo corner", "grid": Vector2i(3, 3), "price": 0,
+		"blurb": "A few tiles in someone else's colo. Power included."},
+	{"name": "Server room", "grid": Vector2i(7, 7), "price": 5000,
+		"blurb": "Your own room: more floor, but the power bill is yours now."},
+	{"name": "Datacenter floor", "grid": Vector2i(12, 12), "price": 25000,
+		"blurb": "A real floor. Grow the empire."},
+]
+const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1"}
 const TYPE_SPECS := {
 	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
 	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
 	"router": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "rtr"},
+	"firewall": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "fw"},
 }
 const RACK_PRICE := 500
 const SAVE_PATH := "user://save.json"
@@ -27,8 +39,28 @@ const SAVE_PATH := "user://save.json"
 var racks: Array = []
 var links: Array = []
 var money := 2000
+var stage := 0
 var contracts_done: Array = []
-var _counter := {"switch": 0, "server": 0, "router": 0, "rack": 0, "mac": 0}
+var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "rack": 0, "mac": 0}
+
+func grid_size() -> Vector2i:
+	return STAGES[stage]["grid"]
+
+func expand() -> bool:
+	if stage >= STAGES.size() - 1:
+		return false
+	if not try_spend(STAGES[stage + 1]["price"]):
+		return false
+	stage += 1
+	topology_changed.emit()
+	return true
+
+func power_draw() -> int:
+	var w := 0
+	for d in all_devices():
+		if d.status == "active":
+			w += WATTS.get(d.model, 0)
+	return w
 
 func try_complete_contract(c: Dictionary) -> bool:
 	if c["id"] in contracts_done:
@@ -57,6 +89,8 @@ func sla_tick() -> void:
 	## Completed contracts pay recurring service fees — but only while
 	## their requirements still hold. Break the network, lose the revenue.
 	var earned := 0
+	if stage >= 1:  # colo includes power; your own room doesn't
+		earned -= power_draw() / 10
 	for c in Contracts.all():
 		if c["id"] not in contracts_done:
 			continue
@@ -68,7 +102,7 @@ func sla_tick() -> void:
 		sla_status[c["id"]] = ok
 		if ok:
 			earned += int(c["reward"]) / 10
-	if earned > 0:
+	if earned != 0:
 		money += earned
 		money_changed.emit()
 
@@ -118,7 +152,7 @@ func new_device(model: String) -> Net.NDevice:
 	d.model = model
 	if type == "switch":
 		d.vlans = {1: "default"}
-	if type == "router":
+	if type in ["router", "firewall"]:
 		d.ip_forwarding = true
 	for i in m["ports"]:
 		var ifc := Net.Iface.new(d, spec["if_prefix"] + str(spec["if_start"] + i), _new_mac())
@@ -267,7 +301,7 @@ func save_game() -> void:
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"money": money, "counters": _counter,
+	f.store_string(JSON.stringify({"money": money, "stage": stage, "counters": _counter,
 		"contracts_done": contracts_done,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
 
@@ -279,7 +313,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
-		"services": d.services, "resolver": d.resolver, "ifaces": ifs}
+		"services": d.services, "resolver": d.resolver, "acls": d.acls, "ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(SAVE_PATH):
@@ -291,6 +325,7 @@ func load_game() -> bool:
 	links = []
 	money = int(data["money"])
 	contracts_done = data.get("contracts_done", [])
+	stage = int(data.get("stage", 0))
 	for k in data["counters"]:
 		_counter[k] = int(data["counters"][k])
 	var by_name := {}
@@ -302,6 +337,7 @@ func load_game() -> bool:
 		d.ip_forwarding = sd["ip_forwarding"]
 		d.static_routes = sd["static_routes"]
 		d.services = sd.get("services", {})
+		d.acls = sd.get("acls", [])
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]

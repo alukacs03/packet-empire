@@ -4,7 +4,7 @@ class_name CLI
 ## Everything mutates the same Game state the web UI renders.
 
 static func new_session(dev: Net.NDevice) -> Session:
-	return EOS.new(dev) if dev.type in ["switch", "router"] else Linux.new(dev)
+	return EOS.new(dev) if dev.type in ["switch", "router", "firewall"] else Linux.new(dev)
 
 static func fmt_ping(dev: Net.NDevice, target: String) -> String:
 	var ip := Sim.resolve(dev, target)
@@ -93,6 +93,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "mac", "address-table"], "h": _show_mac},
 			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
+			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
@@ -101,6 +102,9 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
+			{"m": ["config"], "p": ["acl", "permit"], "h": _cfg_acl.bind("permit")},
+			{"m": ["config"], "p": ["acl", "deny"], "h": _cfg_acl.bind("deny")},
+			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl},
 			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
 			{"m": ["vlan"], "p": ["name"], "h": func(r): return _vlan_name(r)},
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
@@ -334,6 +338,39 @@ class EOS extends Session:
 			return ""
 		return "usage: mtu <576-9216>\n"
 
+	func _cfg_acl(r: Array, action: String) -> String:
+		if dev.type != "firewall":
+			return "% ACLs need a firewall\n"
+		if r.size() != 2:
+			return "usage: acl %s <src-cidr|any> <dst-cidr|any>\n" % action
+		var src := "0.0.0.0/0" if r[0] == "any" else String(r[0])
+		var dst := "0.0.0.0/0" if r[1] == "any" else String(r[1])
+		if not Net.valid_cidr(src) or not Net.valid_cidr(dst):
+			return "% bad prefix — use a.b.c.d/len or 'any'\n"
+		var sp := src.split("/")
+		var dp := dst.split("/")
+		dev.acls.append({"action": action, "src": sp[0], "splen": int(sp[1]),
+			"dst": dp[0], "dplen": int(dp[1])})
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_no_acl(r: Array) -> String:
+		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 1 and int(r[0]) <= dev.acls.size():
+			dev.acls.remove_at(int(r[0]) - 1)
+			Game.topology_changed.emit()
+			return ""
+		return "usage: no acl <rule-number>   (see 'show acl')\n"
+
+	func _show_acl(_r: Array) -> String:
+		if dev.acls.is_empty():
+			return "  (no rules — default permit)\n"
+		var out := ""
+		var n := 1
+		for rule in dev.acls:
+			out += "%2d  %-7s %s/%d -> %s/%d\n" % [n, rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
+			n += 1
+		return out + "    (first match wins; default permit)\n"
+
 	func _cfg_ip_route(r: Array) -> String:
 		if not dev.ip_forwarding:
 			return "% static routing needs a router\n"
@@ -430,6 +467,8 @@ class EOS extends Session:
 			out += "vlan %d\n   name %s\n!\n" % [vid, dev.vlans[vid]]
 		for r in dev.static_routes:
 			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
+		for rule in dev.acls:
+			out += "acl %s %s/%d %s/%d\n!\n" % [rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
 		for i: Net.Iface in dev.ifaces:
 			out += "interface %s\n" % i.name
 			if i.mode == "trunk":
