@@ -1452,6 +1452,50 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- MLAG: a server dual-homed to two switches ---
+	var ml_rack := Game.add_rack(Vector2i(33, 1))
+	var ml_a := Game.new_device("sw-8")
+	var ml_b := Game.new_device("sw-8")
+	var ml_srv := Game.new_device("srv-2")
+	var ml_peer_host := Game.new_device("srv-1")
+	ml_rack.slots[0] = ml_a
+	ml_rack.slots[1] = ml_b
+	ml_rack.slots[2] = ml_srv
+	ml_rack.slots[3] = ml_peer_host
+	Game.connect_ifaces(ml_a.ifaces[7], ml_b.ifaces[7])  # peer link
+	Game.connect_ifaces(ml_srv.ifaces[0], ml_a.ifaces[0])
+	Game.connect_ifaces(ml_srv.ifaces[1], ml_b.ifaces[0])
+	Game.connect_ifaces(ml_peer_host.ifaces[0], ml_a.ifaces[1])
+	Game.add_ip(ml_srv.ifaces[0], "10.171.0.10/24")
+	var ml_srv_cli := CLI.new_session(ml_srv)
+	check(ml_srv_cli.exec("bond %s %s" % [ml_srv.ifaces[0].name, ml_srv.ifaces[1].name]).contains("bond"),
+		"mlag: the server bonds both of its cables")
+	check(ml_srv.ifaces[1].mac == ml_srv.ifaces[0].mac, "mlag: a bond presents one address")
+	Game.add_ip(ml_peer_host.ifaces[0], "10.171.0.20/24")
+	var ml_cli_a := CLI.new_session(ml_a)
+	var ml_cli_b := CLI.new_session(ml_b)
+	for c2 in [ml_cli_a, ml_cli_b]:
+		c2.exec("en")
+		c2.exec("conf t")
+	check(ml_cli_a.exec("mlag peer %s" % ml_b.name).is_empty(), "mlag: a switch can name its peer")
+	check(ml_b.mlag_peer == ml_a.name, "mlag: pairing is set from both sides")
+	for c3 in [ml_cli_a, ml_cli_b]:
+		c3.exec("interface Ethernet8")
+		c3.exec("mlag peer-link")
+		c3.exec("switchport mode trunk")
+		c3.exec("interface Ethernet1")
+		c3.exec("mlag 1")
+		c3.exec("end")
+	check(Sim.ping(ml_peer_host, "10.171.0.10")["ok"], "mlag: the dual-homed server is reachable")
+	check(ml_cli_a.exec("show mlag").contains(ml_b.name), "mlag: show mlag names the peer")
+	# pull the primary leg: the peer link must carry it to the surviving member
+	ml_a.ifaces[0].enabled = false
+	Sim.flush_learned_state()
+	check(Sim.ping(ml_peer_host, "10.171.0.10")["ok"],
+		"mlag: losing one leg does not take the server off the network")
+	ml_a.ifaces[0].enabled = true
+	Sim.flush_learned_state()
+
 	# --- multicast ---
 	var mc_rack := Game.add_rack(Vector2i(32, 1))
 	var mc_sw := Game.new_device("sw-8")

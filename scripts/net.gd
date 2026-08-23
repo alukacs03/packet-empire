@@ -24,6 +24,8 @@ class Iface:
 	var storm_limit := 0  # broadcast frames allowed per operation, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation
 	var vm := ""  # a virtual machine's NIC, hosted on this server
+	var mlag := 0  # member of a bundle shared with the peer switch
+	var mlag_peerlink := false  # the link that keeps the two switches in step
 	var dhcp_trusted := false  # a port allowed to carry DHCP server replies
 	var tunnel_src := ""  # tunnel interfaces ride the underlay between two endpoints
 	var tunnel_dst := ""
@@ -55,6 +57,7 @@ class NDevice:
 	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
 	var dai := false  # dynamic ARP inspection, using the snooping bindings
 	var bindings := {}  # mac -> address learned from a legitimate lease
+	var mlag_peer := ""  # switch: the name of the switch it shares bundles with
 	var igmp_snooping := false  # forward multicast only where it was asked for
 	var mcast_ports := {}  # group -> {Iface: true} learned from membership reports
 	var mcast_groups: Array = []  # host: the groups it has joined

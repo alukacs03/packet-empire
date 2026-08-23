@@ -2002,7 +2002,7 @@ func config_diff(old_cfg: Dictionary, new_cfg: Dictionary) -> Array:
 			out.append("+ interface %s" % name)
 			continue
 		var oi: Dictionary = old_if[name]
-		for field in ["mode", "untagged_vlan", "mtu", "enabled", "nat", "lag", "helper",
+		for field in ["mode", "untagged_vlan", "mtu", "enabled", "nat", "lag", "mlag", "helper",
 				"port_security", "tagged_vlans", "ips"]:
 			var a := JSON.stringify(oi.get(field, null))
 			var b := JSON.stringify(ni.get(field, null))
@@ -2077,6 +2077,8 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.nat = si.get("nat", "")
 		target.vrrp = si.get("vrrp", {}).duplicate(true)
 		target.lag = int(si.get("lag", 0))
+		target.mlag = int(si.get("mlag", 0))
+		target.mlag_peerlink = bool(si.get("mlag_peerlink", false))
 		target.helper = si.get("helper", "")
 	topology_changed.emit()
 
@@ -2086,6 +2088,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
+			"mlag": i.mlag, "mlag_peerlink": i.mlag_peerlink,
 			"parent": i.parent, "dot1q": i.dot1q,
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
@@ -2099,6 +2102,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
 		"ssids": d.ssids, "wifi": d.wifi, "radius": d.radius,
 		"igmp_snooping": d.igmp_snooping, "mcast_groups": d.mcast_groups,
+		"mlag_peer": d.mlag_peer,
 		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
 		"log_host": d.log_host, "ntp_server": d.ntp_server,
@@ -2178,6 +2182,7 @@ func _apply(data: Dictionary) -> void:
 			d.ssids[sk] = int(sd["ssids"][sk])
 		d.wifi = sd.get("wifi", "")
 		d.radius = sd.get("radius", "")
+		d.mlag_peer = sd.get("mlag_peer", "")
 		d.igmp_snooping = bool(sd.get("igmp_snooping", false))
 		d.mcast_groups = sd.get("mcast_groups", [])
 		d.startup = sd.get("startup", {})
@@ -2200,6 +2205,8 @@ func _apply(data: Dictionary) -> void:
 			i.nat = si.get("nat", "")
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
+			i.mlag = int(si.get("mlag", 0))
+			i.mlag_peerlink = bool(si.get("mlag_peerlink", false))
 			i.helper = si.get("helper", "")
 			i.vrf = si.get("vrf", "")
 			i.qos = bool(si.get("qos", false))

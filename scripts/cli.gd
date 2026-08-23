@@ -192,6 +192,12 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
+			{"m": ["config"], "p": ["mlag", "peer"], "h": func(r): return _mlag_peer(r[0] if r.size() > 0 else "")},
+			{"m": ["config"], "p": ["no", "mlag"], "h": func(_r): return _mlag_peer("")},
+			{"m": ["if"], "p": ["mlag", "peer-link"], "h": func(_r): return _mlag_if(-1)},
+			{"m": ["if"], "p": ["mlag"], "h": func(r): return _mlag_if(int(r[0]) if r.size() > 0 else 0)},
+			{"m": ["if"], "p": ["no", "mlag"], "h": func(_r): return _mlag_if(0)},
+			{"m": EP, "p": ["show", "mlag"], "h": _show_mlag},
 			{"m": ["config"], "p": ["ip", "igmp", "snooping"], "h": func(_r): return _igmp(true)},
 			{"m": ["config"], "p": ["no", "ip", "igmp", "snooping"], "h": func(_r): return _igmp(false)},
 			{"m": EP, "p": ["show", "ip", "igmp", "snooping"], "h": _show_igmp},
@@ -599,6 +605,58 @@ class EOS extends Session:
 			if not on:
 				i.secure_mac = ""
 			return "")
+
+	func _mlag_peer(other: String) -> String:
+		if dev.type != "switch":
+			return "% only switches pair up\n"
+		if other == "":
+			var was := dev.mlag_peer
+			dev.mlag_peer = ""
+			for d in Game.all_devices():
+				if d.name == was:
+					d.mlag_peer = ""
+			Game.topology_changed.emit()
+			return ""
+		var peer: Net.NDevice = null
+		for d in Game.all_devices():
+			if d.name == other:
+				peer = d
+		if peer == null:
+			return "% no device named %s\n" % other
+		if peer == dev or peer.type != "switch":
+			return "% the peer must be another switch\n"
+		dev.mlag_peer = peer.name
+		peer.mlag_peer = dev.name  # a pair is a pair from both sides
+		Game.topology_changed.emit()
+		return ""
+
+	func _mlag_if(id: int) -> String:
+		if dev.type != "switch":
+			return "% only switches pair up\n"
+		for i: Net.Iface in ctx_ifs:
+			i.mlag_peerlink = id == -1
+			i.mlag = 0 if id <= 0 else id
+			if id > 0:
+				i.mode = "access" if i.mode == "routed" else i.mode
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_mlag(_r: Array) -> String:
+		if dev.mlag_peer == "":
+			return "MLAG is not configured\n"
+		var peer := Sim.mlag_peer_of(dev)
+		var out := "peer      : %s (%s)\n" % [dev.mlag_peer, "up" if peer != null else "down"]
+		var pl := Sim.mlag_peerlink(dev)
+		out += "peer-link : %s\n" % (EOS._short(pl.name) if pl != null else "none: the pair cannot stay in step")
+		out += "%-6s %-12s %s\n" % ["ID", "LOCAL", "PEER"]
+		for i: Net.Iface in dev.ifaces:
+			if i.mlag <= 0:
+				continue
+			var far := Sim.mlag_port(peer, i.mlag) if peer != null else null
+			out += "%-6d %-12s %s\n" % [i.mlag, "%s %s" % [EOS._short(i.name),
+				"up" if Game.link_at(i) != null and i.enabled else "down"],
+				("%s %s" % [EOS._short(far.name), "up" if Game.link_at(far) != null and far.enabled else "down"]) if far != null else "missing"]
+		return out
 
 	func _igmp(on: bool) -> String:
 		if dev.type not in ["switch", "ap"]:
@@ -1481,7 +1539,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1548,6 +1606,25 @@ class Linux extends Session:
 									", ".join(PackedStringArray(i.ips))]
 					return out if out != "" else "(no virtual machines)\n"
 				return "usage: vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list\n"
+			"bond":
+				if t.size() < 3:
+					return "usage: bond <iface> <iface> [...]  (one address, several cables)\n"
+				var legs: Array = []
+				for nm in t.slice(1):
+					var found := _iface(String(nm))
+					if found == null:
+						return "bond: no interface %s\n" % nm
+					legs.append(found)
+				var gid := 1
+				for i2: Net.Iface in dev.ifaces:
+					gid = maxi(gid, i2.lag + 1)
+				for idx in legs.size():
+					var leg: Net.Iface = legs[idx]
+					leg.lag = gid
+					if idx > 0:
+						leg.mac = legs[0].mac  # a bond presents one address
+				Game.topology_changed.emit()
+				return "bond%d: %s\n" % [gid, " ".join(PackedStringArray(t.slice(1)))]
 			"igmp":
 				if t.size() == 3 and t[1] == "join":
 					var err := Sim.igmp_join(dev, t[2])
@@ -1787,7 +1864,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

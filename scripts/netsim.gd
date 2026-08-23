@@ -306,6 +306,46 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 				frontier.append(nb["dev"])
 	return out
 
+static func mlag_peer_of(dev: Net.NDevice) -> Net.NDevice:
+	## the switch this one shares bundles with, if it is up
+	if dev.mlag_peer == "":
+		return null
+	for d in Game.all_devices():
+		if d.name == dev.mlag_peer and d.type == "switch" and d.status == "active":
+			return d
+	return null
+
+static func mlag_port(dev: Net.NDevice, id: int) -> Net.Iface:
+	for i: Net.Iface in dev.ifaces:
+		if i.mlag == id:
+			return i
+	return null
+
+static func mlag_peerlink(dev: Net.NDevice) -> Net.Iface:
+	for i: Net.Iface in dev.ifaces:
+		if i.mlag_peerlink and i.enabled and Game.link_at(i) != null:
+			return i
+	return null
+
+static func leg_usable(port: Net.Iface) -> bool:
+	## a cable is only useful when both ends are up
+	if port == null or not port.enabled:
+		return false
+	var l := Game.link_at(port)
+	if l == null:
+		return false
+	var far: Net.Iface = l.b if l.a == port else l.a
+	return far.enabled and far.dev.status == "active"
+
+static func _mlag_live(port: Net.Iface) -> bool:
+	return leg_usable(port) and not stp_blocked(port)
+
+static func _mlag_peer_covers(dev: Net.NDevice, id: int) -> bool:
+	## true when the peer switch can deliver this bundle itself, which is why
+	## a frame that came over the peer link must not be sent out again here
+	var peer := mlag_peer_of(dev)
+	return peer != null and _mlag_live(mlag_port(peer, id))
+
 static func mcast_mac(group: String) -> String:
 	## the link-layer address a multicast group maps to
 	var parts := group.split(".")
@@ -601,6 +641,12 @@ static func _has_ip(dev: Net.NDevice, ip: String) -> bool:
 # ---------- wire / receive ----------
 
 static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
+	if iface.lag > 0 and not leg_usable(iface):
+		# a bond survives losing a leg: hand the frame to one that is still up
+		for member: Net.Iface in bond_members(iface):
+			if leg_usable(member):
+				iface = member
+				break
 	if _depth > MAX_DEPTH:
 		return
 	if not iface.enabled or iface.dev.status != "active":
@@ -762,6 +808,8 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 	for o: Net.Iface in outs:
 		if o == svi or o.name.begins_with("Vlan") or o.name == "lo" or stp_blocked(o):
 			continue
+		if o.mlag > 0 and not _mlag_live(o):
+			continue  # the peer link will carry it to the surviving member
 		if o.lag > 0:
 			if lags_done.has(o.lag):
 				continue
@@ -904,6 +952,16 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			_tx(o2, mf)
 		return
 	dev.mac_table[vlan][frame["src"]] = in_if
+	if in_if.mlag > 0:
+		# the pair keeps one view of the world: whatever one member learns,
+		# the other must know about, pointing at its own side of the bundle
+		var mpeer := mlag_peer_of(dev)
+		if mpeer != null:
+			var mport := mlag_port(mpeer, in_if.mlag)
+			if mport != null:
+				if not mpeer.mac_table.has(vlan):
+					mpeer.mac_table[vlan] = {}
+				mpeer.mac_table[vlan][frame["src"]] = mport
 	for svi: Net.Iface in dev.ifaces:
 		if not svi.name.begins_with("Vlan") or not svi.enabled:
 			continue
@@ -915,14 +973,25 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		if frame["dst"] == BCAST:
 			_host_rx(dev, svi, frame)  # e.g. ARP for the gateway; still flooded below
 	var known: Net.Iface = dev.mac_table[vlan].get(frame["dst"])
+	if known != null and known.mlag > 0 and not _mlag_live(known):
+		known = mlag_peerlink(dev)  # our leg of the bundle is gone: go via the peer
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
 	var lags_done := {}
+	var mlags_done := {}
 	for o: Net.Iface in outs:
 		if o == in_if or stp_blocked(o):
 			continue
 		# private VLANs: isolated ports may talk to the gateway, not to each other
 		if in_if.pvlan == "isolated" and o.pvlan == "isolated":
 			continue
+		if o.mlag > 0:
+			if mlags_done.has(o.mlag):
+				continue
+			mlags_done[o.mlag] = true
+			if in_if.mlag_peerlink and _mlag_peer_covers(dev, o.mlag):
+				continue  # the peer already delivered this; two copies is a bug
+			if not _mlag_live(o):
+				continue  # the peer link will carry it to the surviving member
 		if o.lag > 0:
 			if lags_done.has(o.lag) or (in_if.lag > 0 and in_if.lag == o.lag):
 				continue
@@ -1169,8 +1238,21 @@ static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bo
 			return rule["action"] == "permit"
 	return true
 
+static func bond_members(iface: Net.Iface) -> Array:
+	## every leg of the same bond on this device, itself included
+	if iface.lag <= 0:
+		return [iface]
+	var out: Array = []
+	for i: Net.Iface in iface.dev.ifaces:
+		if i.lag == iface.lag:
+			out.append(i)
+	return out
+
 static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
-	for cidr: String in iface.ips:
-		if Net.addr_eq(cidr.split("/")[0], ip):
-			return true
+	# a bond is one interface as far as addressing is concerned, so any leg
+	# answers for an address configured on any other leg
+	for member: Net.Iface in bond_members(iface):
+		for cidr: String in member.ips:
+			if Net.addr_eq(cidr.split("/")[0], ip):
+				return true
 	return false
