@@ -1442,6 +1442,48 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- ageing, insurance and marketing ---
+	Game.insured = false
+	Game.marketing = 0
+	var old_sw := Game.new_device("sw-8")
+	var age_rack := Game.add_rack(Vector2i(26, 1))
+	age_rack.slots[0] = old_sw
+	old_sw.installed_cycle = Game.cycle - 500  # ancient
+	check(Game.device_age(old_sw) > 400, "ageing: a device knows how long it has been in service")
+	var failed := false
+	for i in 200:
+		Game._ageing_tick()
+		if old_sw.status != "active":
+			failed = true
+			break
+	check(failed, "ageing: old hardware eventually fails")
+	old_sw.status = "active"
+	old_sw.installed_cycle = Game.cycle
+	var young_ok := true
+	for i in 200:
+		Game._ageing_tick()
+		if old_sw.status != "active":
+			young_ok = false
+			break
+	check(young_ok, "ageing: new hardware does not fail on its own")
+	# insurance pays towards the replacement
+	Game.insured = true
+	old_sw.installed_cycle = Game.cycle - 500
+	var money_pre_fail := Game.money
+	for i in 200:
+		Game._ageing_tick()
+		if old_sw.status != "active":
+			break
+	check(Game.money > money_pre_fail, "insurance: a covered failure pays out")
+	old_sw.status = "active"
+	old_sw.installed_cycle = Game.cycle
+	Game.insured = false
+	# marketing widens the funnel
+	Game.marketing = 3 * Game.MARKETING_STEP
+	Game.sla_tick()
+	check(Game.last_pl.has("marketing"), "marketing: the spend shows in the cycle P&L")
+	Game.marketing = 0
+
 	# --- private VLANs and storm control ---
 	var pv_rack := Game.add_rack(Vector2i(25, 1))
 	var pv_sw := Game.new_device("sw-8")

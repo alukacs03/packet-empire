@@ -58,6 +58,7 @@ class NDevice:
 	var startup := {}  # saved configuration ('write memory')
 	var versions: Array = []  # [{cycle, cfg}] history for diff and rollback
 	var acquired_from := ""  # inherited with a company you bought
+	var installed_cycle := 0  # for ageing: hardware does not last forever
 	var log_host := ""  # syslog collector
 	var ntp_server := ""  # clock source
 	var clock_skew := 0  # cycles of drift when the clock is unsynchronised

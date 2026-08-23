@@ -1751,6 +1751,35 @@ func _build_business_tab() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("MARKETING AND COVER"))
+	var mk_row := HBoxContainer.new()
+	contracts_box.add_child(mk_row)
+	mk_row.add_child(_label("  Marketing $%d/cycle   ·   more and better enquiries" % Game.marketing,
+		13, Color(0.8, 0.85, 0.7) if Game.marketing > 0 else Color(0.75, 0.75, 0.8)))
+	var mk_up := Button.new()
+	mk_up.text = "Spend more"
+	mk_up.pressed.connect(func() -> void:
+		Game.marketing += Game.MARKETING_STEP
+		_refresh_contracts())
+	mk_row.add_child(mk_up)
+	if Game.marketing > 0:
+		var mk_down := Button.new()
+		mk_down.text = "Cut back"
+		mk_down.pressed.connect(func() -> void:
+			Game.marketing = maxi(0, Game.marketing - Game.MARKETING_STEP)
+			_refresh_contracts())
+		mk_row.add_child(mk_down)
+	var ins_row := HBoxContainer.new()
+	contracts_box.add_child(ins_row)
+	ins_row.add_child(_label("  Hardware insurance: %s   ($%d/cycle, pays half a replacement)" % [
+		"ON" if Game.insured else "off", Game.INSURANCE_FEE], 13,
+		Color(0.7, 0.9, 0.7) if Game.insured else Color(0.75, 0.75, 0.8)))
+	var ins_btn := Button.new()
+	ins_btn.text = "Cancel" if Game.insured else "Take cover"
+	ins_btn.pressed.connect(func() -> void:
+		Game.insured = not Game.insured
+		_refresh_contracts())
+	ins_row.add_child(ins_btn)
 	contracts_box.add_child(_section("CHANGE MANAGEMENT"))
 	var maint_row := HBoxContainer.new()
 	contracts_box.add_child(maint_row)

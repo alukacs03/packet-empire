@@ -188,6 +188,10 @@ var maintenance_used := 0  # windows taken this quarter: customers notice
 var incidents: Array = []  # things worth reviewing afterwards
 var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
 var scrubbing := false  # upstream scrubbing service, billed per cycle
+var insured := false  # insurance against hardware failure, billed per cycle
+var marketing := 0  # spend per cycle to bring more work in
+const INSURANCE_FEE := 140
+const MARKETING_STEP := 150
 const SCRUB_FEE := 220
 var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
 var history: Array = []  # per-cycle snapshot for the graphs
@@ -1082,6 +1086,33 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 		% [inc["summary"], inc["cause"]])
 	return ""
 
+func device_age(d: Net.NDevice) -> int:
+	return maxi(0, cycle - d.installed_cycle)
+
+func _ageing_tick() -> void:
+	## hardware does not last forever: the chance of a failure climbs with age,
+	## and insurance turns an unpredictable outage into a predictable fee
+	for d in all_devices():
+		if d.status != "active" or d.type == "cooling":
+			continue
+		var age := device_age(d)
+		if age < 40:
+			continue
+		var chance := 0.002 * float(age - 40) / 10.0
+		if randf() >= minf(chance, 0.05):
+			continue
+		d.status = "offline"
+		device_log(d, "hardware failure after %d cycles in service" % age)
+		record_incident("hardware", "%s failed after %d cycles" % [d.name, age])
+		var payout := 0
+		if insured:
+			payout = int(MODELS[d.model]["price"]) / 2
+			money += payout
+			money_changed.emit()
+		log_event("HARDWARE: %s failed after %d cycles.%s" % [d.name, age,
+			"  Insurance paid $%d towards a replacement." % payout if insured
+			else "  You are not insured."])
+
 func _attack_tick() -> void:
 	## volumetric attacks: they eat bandwidth on the path to the victim until
 	## they are absorbed, blackholed, or simply burn out
@@ -1281,6 +1312,13 @@ func sla_tick() -> void:
 	if scrubbing:
 		last_pl["scrubbing"] = -SCRUB_FEE
 		earned -= SCRUB_FEE
+	if insured:
+		last_pl["insurance"] = -INSURANCE_FEE
+		earned -= INSURANCE_FEE
+	if marketing > 0:
+		last_pl["marketing"] = -marketing
+		earned -= marketing
+	_ageing_tick()
 	lb_health_check()
 	_run_monitors()
 	clock_tick()
@@ -1365,7 +1403,9 @@ func sla_tick() -> void:
 		offer["ttl"] = int(offer["ttl"]) - 1
 		if offer["ttl"] <= 0:
 			offers.erase(offer)
-	if offers.size() < 2 and contracts_done.size() >= 2 and randf() < 0.7:
+	var offer_cap := 2 + int(marketing / MARKETING_STEP)
+	var offer_chance := 0.7 + 0.06 * float(marketing) / float(MARKETING_STEP)
+	if offers.size() < offer_cap and contracts_done.size() >= 2 and randf() < offer_chance:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
 	last_cycle_delta = earned
 	if earned > 0:
@@ -1445,6 +1485,7 @@ func new_device(model: String) -> Net.NDevice:
 	_counter[type] += 1
 	var d := Net.NDevice.new(type, spec["name_prefix"] + str(_counter[type]))
 	d.model = model
+	d.installed_cycle = cycle
 	if type == "switch":
 		d.vlans = {1: "default"}
 	if type in ["router", "firewall", "uplink", "loadbalancer"]:
@@ -1663,7 +1704,7 @@ func _serialize() -> Dictionary:
 		"difficulty": difficulty, "achievements": achievements,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates, "reports": reports,
-		"attacks": attacks, "scrubbing": scrubbing,
+		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"incidents": incidents,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -1859,7 +1900,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
 		"startup": d.startup, "versions": d.versions,
-		"acquired_from": d.acquired_from, "log_host": d.log_host, "ntp_server": d.ntp_server,
+		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
+		"log_host": d.log_host, "ntp_server": d.ntp_server,
 		"ifaces": ifs}
 
 func load_game() -> bool:
@@ -1893,6 +1935,8 @@ func _apply(data: Dictionary) -> void:
 	incidents = data.get("incidents", [])
 	attacks = data.get("attacks", [])
 	scrubbing = bool(data.get("scrubbing", false))
+	insured = bool(data.get("insured", false))
+	marketing = int(data.get("marketing", 0))
 	templates = data.get("templates", [])
 	monitors = data.get("monitors", [])
 	history = data.get("history", [])
@@ -1929,6 +1973,7 @@ func _apply(data: Dictionary) -> void:
 		d.startup = sd.get("startup", {})
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
+		d.installed_cycle = int(sd.get("installed_cycle", 0))
 		d.log_host = sd.get("log_host", "")
 		d.ntp_server = sd.get("ntp_server", "")
 		d.resolver = sd.get("resolver", "")
