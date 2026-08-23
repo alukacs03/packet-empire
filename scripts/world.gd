@@ -56,6 +56,8 @@ func _leave_title() -> void:
 
 func _start_new(slot: int, company: String, diff: int, is_demo: bool) -> void:
 	Game.reset_new(company, diff, is_demo)
+	ui._demo_end_shown = false
+	ui.tutorial_hidden = false
 	Game.current_slot = slot
 	Game.save_game()
 	_leave_title()

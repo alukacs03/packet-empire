@@ -14,6 +14,17 @@ godot --path .          # or open in the Godot 4 editor (4.7+)
 
 macOS: `/Applications/Godot.app/Contents/MacOS/Godot --path .`
 
+## The demo
+
+Picking **Play the demo** on the title screen runs the opening arc of the
+campaign: rack and stack, first ping, VLAN isolation, trunking two switches,
+a redundant core that survives a cut cable, and routing two offices together.
+Six jobs, roughly half an hour, ending on a card that says what the full game
+carries on into. Every job has a live checklist in the corner and a hint you
+can ask for if you get stuck.
+
+Saves live in three named slots plus an autosave written every five cycles.
+
 ## Play
 
 - **Q** select · **R** place rack · right/middle-drag pan · scroll zoom · **Esc** back
@@ -32,7 +43,8 @@ macOS: `/Applications/Godot.app/Contents/MacOS/Godot --path .`
 ## What's simulated
 
 - **L2**: MAC learning per VLAN, flooding, access/trunk tagging with allowed
-  lists, spanning tree (root election, blocked ports, failover)
+  lists, spanning tree (root election, blocked ports, failover), LACP bundles,
+  MLAG pairs for dual-homed servers, IGMP snooping for multicast
 - **L3**: ARP, ICMP with TTL, longest-prefix routing (connected/static),
   routers and stateless-ACL firewalls, source NAT (masquerade)
 - **Dynamic routing**: eBGP-lite to an ISP handoff (transit fees, prefix
@@ -76,7 +88,7 @@ CLI and UI mutate the same `Game` state: they can never disagree.
 PACKET_TEST=1 godot --headless --path . --quit-after 600
 ```
 
-100+ integration checks over the sim, all three CLI dialects, contracts,
+590+ integration checks over the sim, all three CLI dialects, contracts,
 marketplace, save/load. Exit code 0 = green. Tests write their own save file
 (`save_test.json`), never the player's.
 
