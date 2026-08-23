@@ -2072,6 +2072,39 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	return h
 
 func _build_business_tab() -> void:
+	contracts_box.add_child(_section("RECEIVABLES"))
+	var owed := Game.receivables()
+	var late := Game.overdue_invoices()
+	contracts_box.add_child(_wrap(
+		"Owed to you: $%d across %d invoice(s).%s" % [owed, Game.invoices.size(),
+			"  %d of them are overdue." % late.size() if not late.is_empty() else ""],
+		13, Prefs.bad_colour() if not late.is_empty() else Color(0.75, 0.82, 0.9), 560))
+	if Game.invoices.is_empty():
+		contracts_box.add_child(_label("  Nothing outstanding: everything you have billed has been paid.",
+			12, MUTED))
+	for inv: Dictionary in Game.invoices.slice(0, 8):
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(row)
+		var due_in: int = int(inv["due"]) - Game.cycle
+		var state := "overdue by %d" % -due_in if due_in < 0 else \
+			("due now" if due_in == 0 else "due in %d" % due_in)
+		var il := _label("  %-18s $%-7d %s" % [inv["customer"], int(inv["amount"]), state], 12,
+			Prefs.bad_colour() if due_in < 0 else Color(0.72, 0.78, 0.86))
+		il.add_theme_font_override("font", mono)
+		row.add_child(il)
+		if due_in <= 0 and not bool(inv["chased"]):
+			var chase := Button.new()
+			chase.text = "Chase"
+			chase.tooltip_text = "They pay on the next cycle, and think slightly less of you for it"
+			chase.pressed.connect(func() -> void:
+				var err := Game.chase_invoice(inv)
+				if err != "":
+					_toast(err)
+				_refresh_contracts())
+			row.add_child(chase)
+	if Game.invoices.size() > 8:
+		contracts_box.add_child(_label("  ...and %d more." % (Game.invoices.size() - 8), 12, MUTED))
 	var bank := HBoxContainer.new()
 	bank.add_theme_constant_override("separation", 10)
 	contracts_box.add_child(bank)

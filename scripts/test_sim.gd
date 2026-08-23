@@ -569,7 +569,13 @@ static func run() -> int:
 	var m6 := Game.money
 	Game.sla_tick()
 	check(Game.deals[0]["healthy"], "market: delivering the service marks the deal healthy")
-	check(Game.money > m6, "market: healthy deal fee lands in the cycle income")
+	check(Game.receivables() > 0, "market: a delivered cycle raises an invoice")
+	var owed6 := Game.receivables()
+	var m6b := Game.money
+	for _c6 in 6:  # let the customer's payment terms come round
+		Game.sla_tick()
+	check(Game.money > m6b or Game.receivables() > owed6,
+		"market: invoiced work turns into cash once the terms are up")
 	var off3 := off.duplicate(true)
 	off3["state"] = "open"
 	Game.offers.append(off3)
@@ -805,10 +811,12 @@ static func run() -> int:
 	var money_b := Game.money
 	check(Game.borrow() and Game.money == money_b + 1000 and Game.debt == 1000, "bank: borrow lands a tranche")
 	Game.debt = 0
+	Game.invoices = []  # measure the interest, not what happened to land this cycle
 	var d0_start := Game.money
 	Game.sla_tick()
 	var delta0 := Game.money - d0_start
 	Game.debt = 10000
+	Game.invoices = []
 	var d1_start := Game.money
 	Game.sla_tick()
 	var delta1 := Game.money - d1_start
@@ -1337,6 +1345,7 @@ static func run() -> int:
 	# now break the service and verify the pressure lands
 	eh1.ifaces[0].enabled = false
 	Game.topology_changed.emit()
+	Game.invoices = []  # everything already earned is in the bank
 	var money_broken := Game.money
 	var rep_broken := Game.reputation
 	for i in 8:
@@ -1686,6 +1695,31 @@ static func run() -> int:
 		"mlag: losing one leg does not take the server off the network")
 	ml_a.ifaces[0].enabled = true
 	Sim.flush_learned_state()
+
+	# --- invoicing and receivables ---
+	Game.invoices = []
+	var inv_deal := {"customer": "Terms Kft", "id": "inv-test", "ctype": "public", "fee": 300}
+	check(Game.payment_terms(inv_deal) == 4, "invoicing: a public body takes its time")
+	check(Game.payment_terms({"ctype": "startup"}) == 1, "invoicing: a startup pays quickly")
+	var inv_cycle := Game.cycle
+	Game.raise_invoice(inv_deal, 300)
+	check(Game.receivables() == 300, "invoicing: billed work is owed, not banked")
+	check(Game.collect_invoices() == 0, "invoicing: nothing is collected before the terms are up")
+	Game.invoices[0]["due"] = inv_cycle
+	Game.invoices[0]["chased"] = true  # deterministic: a chased invoice does not slip
+	check(Game.collect_invoices() == 300, "invoicing: it lands once it falls due")
+	check(Game.receivables() == 0, "invoicing: and stops being owed")
+	Game.raise_invoice(inv_deal, 500)
+	Game.invoices[0]["due"] = Game.cycle - 1
+	check(Game.overdue_invoices().size() == 1, "invoicing: an unpaid invoice shows as overdue")
+	var rep_before_chase := Game.reputation
+	check(Game.chase_invoice(Game.invoices[0]) == "", "invoicing: an overdue invoice can be chased")
+	check(Game.reputation < rep_before_chase, "invoicing: chasing costs a little goodwill")
+	check(Game.chase_invoice(Game.invoices[0]) != "", "invoicing: chasing twice is refused")
+	Game.invoices[0]["due"] = Game.cycle - Game.WRITE_OFF_AFTER - 1
+	Game.collect_invoices()
+	check(Game.receivables() == 0, "invoicing: a long-overdue invoice is written off")
+	Game.invoices = []
 
 	# --- power distribution: A and B feeds ---
 	var pw_rack := Game.add_rack(Vector2i(34, 1))

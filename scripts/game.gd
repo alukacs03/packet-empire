@@ -558,6 +558,74 @@ const RANKS := [
 	["Packet Emperor", 150000],
 ]
 
+# ---------- invoicing and receivables ----------
+
+func payment_terms(deal: Dictionary) -> int:
+	## how many cycles this customer takes to pay. Big organisations are
+	## slower, which is the trade you make when you sign one.
+	match String(deal.get("ctype", "enterprise")):
+		"startup":
+			return 1
+		"public":
+			return 4
+		"isp":
+			return 3
+	return 2
+
+func raise_invoice(deal: Dictionary, amount: int) -> void:
+	if amount <= 0:
+		return
+	var terms := payment_terms(deal)
+	invoices.append({"customer": String(deal["customer"]), "deal": String(deal["id"]),
+		"amount": amount, "raised": cycle, "due": cycle + terms, "chased": false})
+	last_pl["invoiced"] = int(last_pl.get("invoiced", 0)) + amount
+
+func collect_invoices() -> int:
+	## money that has actually landed this cycle, plus the ones that slipped
+	var collected := 0
+	for inv in invoices.duplicate():
+		if int(inv["due"]) > cycle:
+			continue
+		# a customer who has not been chased sometimes simply pays late
+		if not bool(inv["chased"]) and randf() < 0.18:
+			inv["due"] = int(inv["due"]) + randi_range(1, 2)
+			if not bool(inv.get("slipped", false)):
+				inv["slipped"] = true
+				log_event("LATE: %s has not paid the $%d they owe." % [inv["customer"], int(inv["amount"])])
+			continue
+		collected += int(inv["amount"])
+		invoices.erase(inv)
+	for inv2 in invoices.duplicate():
+		if cycle - int(inv2["due"]) > WRITE_OFF_AFTER:
+			invoices.erase(inv2)
+			reputation = maxi(0, reputation - 2)
+			log_event("WRITTEN OFF: $%d from %s is never arriving." % [int(inv2["amount"]), inv2["customer"]])
+	if collected > 0:
+		last_pl["collections"] = int(last_pl.get("collections", 0)) + collected
+	return collected
+
+func receivables() -> int:
+	var total := 0
+	for inv in invoices:
+		total += int(inv["amount"])
+	return total
+
+func overdue_invoices() -> Array:
+	var out: Array = []
+	for inv in invoices:
+		if int(inv["due"]) < cycle:
+			out.append(inv)
+	return out
+
+func chase_invoice(inv: Dictionary) -> String:
+	if bool(inv["chased"]):
+		return "you have already chased that one"
+	inv["chased"] = true
+	inv["due"] = cycle  # it will be collected on the next cycle
+	reputation = maxi(0, reputation - CHASE_REPUTATION)
+	log_event("CHASED: %s has been asked for the $%d they owe." % [inv["customer"], int(inv["amount"])])
+	return ""
+
 # ---------- power distribution ----------
 
 static func default_psu(model: String) -> String:
@@ -822,6 +890,9 @@ const SLA_PERIOD := 45.0  # seconds per billing cycle
 var sla_status := {}  # contract id -> bool (last billing check passed)
 var last_link_load := {}  # Link -> Mbps, from the latest cycle
 var last_cycle_delta := 0
+var invoices: Array = []  # money billed but not yet in the bank
+const CHASE_REPUTATION := 1  # nagging a customer costs a little goodwill
+const WRITE_OFF_AFTER := 8  # cycles past due before it is never coming
 var feeds := {}  # site -> {"A": true, "B": true}; false while that feed is out
 var feed_out_until := {}  # "site|feed" -> cycle the utility expects to be back
 var ups := {}  # site -> cycles of battery the UPS can still cover
@@ -1699,8 +1770,9 @@ func sla_tick() -> void:
 		if deal.has("renewal"):
 			continue  # nothing is billed while the customer is deciding
 		var paid: int = int(deal["fee"]) / (2 if congested else 1)
-		last_pl["customer deals"] = int(last_pl.get("customer deals", 0)) + paid
-		earned += paid
+		# the work is done and the money is owed, which is not the same as
+		# having it: it goes out as an invoice on the customer's terms
+		raise_invoice(deal, paid)
 		reputation = mini(100, reputation + 1)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
@@ -1713,6 +1785,7 @@ func sla_tick() -> void:
 	var offer_chance := 0.7 + 0.06 * float(marketing) / float(MARKETING_STEP)
 	if offers.size() < offer_cap and contracts_done.size() >= 2 and randf() < offer_chance:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
+	earned += collect_invoices()
 	last_cycle_delta = earned
 	if earned > 0:
 		stats["earned"] += earned
@@ -2075,6 +2148,7 @@ func _serialize() -> Dictionary:
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
+		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
@@ -2353,6 +2427,7 @@ func _apply(data: Dictionary) -> void:
 	for k in data.get("feeds", {}):
 		feeds[int(k)] = data["feeds"][k]
 	feed_out_until = data.get("feed_out_until", {})
+	invoices = data.get("invoices", [])
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])
