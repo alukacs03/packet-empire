@@ -753,11 +753,12 @@ func _toggle_cli() -> void:
 		cli_toggle.text = "Close console  ▤"
 		cli_session = CLI.new_session(cur_dev)
 		cli_prompt.text = cli_session.prompt() + " "
-		cli_out.text = cli_session.banner()
+		cli_out.clear()
+		cli_out.append_text(cli_session.banner())
 		cli_in.call_deferred("grab_focus")
 	else:
 		cli_toggle.text = "Open console  ▤"
-		cli_out.text = ""
+		cli_out.clear()
 		cli_session = null
 
 func _cli_key(e: InputEvent) -> void:
@@ -784,6 +785,9 @@ func _cli_key(e: InputEvent) -> void:
 func _cli_submit(cmd: String) -> void:
 	cli_in.clear()
 	cli_in.call_deferred("grab_focus")
+	if cmd.strip_edges() == "clear":
+		cli_out.clear()
+		return
 	cli_out.append_text("%s %s\n" % [cli_session.prompt(), cmd])
 	Sim.last_trace = []
 	cli_out.append_text(cli_session.exec(cmd))
