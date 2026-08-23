@@ -179,6 +179,10 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
+			{"m": ["if"], "p": ["switchport", "protected"], "h": func(_r): return _pvlan("isolated")},
+			{"m": ["if"], "p": ["no", "switchport", "protected"], "h": func(_r): return _pvlan("")},
+			{"m": ["if"], "p": ["storm-control", "broadcast"], "h": _storm},
+			{"m": ["if"], "p": ["no", "storm-control", "broadcast"], "h": func(_r): return _storm([0])},
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
@@ -532,6 +536,22 @@ class EOS extends Session:
 				return "% invalid VLAN id\n"
 		return _each(func(i: Net.Iface) -> String:
 			Game.set_access_vlan(i, vid)
+			return "")
+
+	func _pvlan(role: String) -> String:
+		if dev.type != "switch":
+			return "% protected ports are a switch feature\n"
+		return _each(func(i: Net.Iface) -> String:
+			i.pvlan = role
+			return "")
+
+	func _storm(r: Array) -> String:
+		if dev.type != "switch":
+			return "% storm control is a switch feature\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "usage: storm-control broadcast <frames>\n"
+		return _each(func(i: Net.Iface) -> String:
+			i.storm_limit = maxi(0, int(r[0]))
 			return "")
 
 	func _port_sec(on: bool) -> String:
@@ -1350,6 +1370,10 @@ class EOS extends Session:
 				out += "   switchport port-security\n"
 			if i.dhcp_trusted:
 				out += "   ip dhcp snooping trust\n"
+			if i.pvlan == "isolated":
+				out += "   switchport protected\n"
+			if i.storm_limit > 0:
+				out += "   storm-control broadcast %d\n" % i.storm_limit
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
 			if not i.enabled:

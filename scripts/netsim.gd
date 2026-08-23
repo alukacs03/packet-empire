@@ -35,6 +35,7 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dict
 	_echo_results = []
 	if _depth == 0:
 		last_trace = []
+		_reset_storm_counters()
 	if _has_ip(dev, dst_ip):
 		_echo_results = outer_results
 		rtt_ms = outer_rtt
@@ -80,6 +81,7 @@ static func dhcp_request(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
 	_dhcp_offer = {}
 	if _depth == 0:
 		last_trace = []
+		_reset_storm_counters()
 	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0, "type": "dhcp",
 		"pl": {"op": "discover", "mac": iface.mac}})
 	if _dhcp_offer.is_empty():
@@ -749,6 +751,11 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 					_host_rx(peer.dev, peer, f)
 		_depth -= 1
 
+static func _reset_storm_counters() -> void:
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			i.storm_count = 0
+
 static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> void:
 	if stp_blocked(in_if):
 		return  # spanning tree: discarding state
@@ -788,6 +795,12 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 				return
 	if not dev.mac_table.has(vlan):
 		dev.mac_table[vlan] = {}
+	# storm control: a port may only contribute so much broadcast per operation
+	if frame["dst"] == BCAST and in_if.storm_limit > 0:
+		in_if.storm_count += 1
+		if in_if.storm_count > in_if.storm_limit:
+			Game.device_log(dev, "storm control suppressed broadcast on %s" % in_if.name)
+			return
 	if in_if.port_security:
 		if in_if.secure_mac == "":
 			in_if.secure_mac = frame["src"]  # sticky: learn the first device
@@ -815,6 +828,9 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	var lags_done := {}
 	for o: Net.Iface in outs:
 		if o == in_if or stp_blocked(o):
+			continue
+		# private VLANs: isolated ports may talk to the gateway, not to each other
+		if in_if.pvlan == "isolated" and o.pvlan == "isolated":
 			continue
 		if o.lag > 0:
 			if lags_done.has(o.lag) or (in_if.lag > 0 and in_if.lag == o.lag):

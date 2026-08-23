@@ -1852,6 +1852,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
+			"pvlan": i.pvlan, "storm_limit": i.storm_limit,
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
@@ -1949,6 +1950,8 @@ func _apply(data: Dictionary) -> void:
 			i.qos = bool(si.get("qos", false))
 			i.dhcp_trusted = bool(si.get("dhcp_trusted", false))
 			i.vm = si.get("vm", "")
+			i.pvlan = si.get("pvlan", "")
+			i.storm_limit = int(si.get("storm_limit", 0))
 			i.port_security = si.get("port_security", false)
 			i.secure_mac = si.get("secure_mac", "")
 			i.tunnel_src = si.get("tunnel_src", "")

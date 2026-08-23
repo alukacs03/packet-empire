@@ -1442,6 +1442,41 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- private VLANs and storm control ---
+	var pv_rack := Game.add_rack(Vector2i(25, 1))
+	var pv_sw := Game.new_device("sw-8")
+	var pv_a := Game.new_device("srv-1")
+	var pv_b := Game.new_device("srv-1")
+	var pv_gw := Game.new_device("rtr-lite")
+	pv_rack.slots[0] = pv_sw
+	pv_rack.slots[1] = pv_a
+	pv_rack.slots[2] = pv_b
+	pv_rack.slots[3] = pv_gw
+	Game.connect_ifaces(pv_a.ifaces[0], pv_sw.ifaces[0])
+	Game.connect_ifaces(pv_b.ifaces[0], pv_sw.ifaces[1])
+	Game.connect_ifaces(pv_gw.ifaces[0], pv_sw.ifaces[2])
+	Game.add_ip(pv_a.ifaces[0], "10.120.0.10/24")
+	Game.add_ip(pv_b.ifaces[0], "10.120.0.11/24")
+	Game.add_ip(pv_gw.ifaces[0], "10.120.0.1/24")
+	check(Sim.ping(pv_a, "10.120.0.11")["ok"], "pvlan: tenants can see each other by default")
+	var pvs := CLI.new_session(pv_sw)
+	pvs.exec("en")
+	pvs.exec("conf t")
+	pvs.exec("interface range Ethernet1-2")
+	check(pvs.exec("switchport protected").is_empty(), "pvlan: customer ports can be protected")
+	pvs.exec("end")
+	Sim.flush_learned_state()
+	check(not Sim.ping(pv_a, "10.120.0.11")["ok"],
+		"pvlan: protected ports cannot reach each other any more")
+	check(Sim.ping(pv_a, "10.120.0.1")["ok"], "pvlan: but they still reach the gateway")
+	# storm control
+	pvs.exec("conf t")
+	pvs.exec("interface Ethernet1")
+	check(pvs.exec("storm-control broadcast 1").is_empty(), "storm: a broadcast limit can be set")
+	pvs.exec("end")
+	check(pv_sw.ifaces[0].storm_limit == 1, "storm: the limit is stored")
+	check(pvs.exec("show run").contains("storm-control broadcast 1"), "storm: it renders in the config")
+
 	# --- anycast: the same address in two places ---
 	var any_rack := Game.add_rack(Vector2i(24, 1))
 	var any_client_r := Game.new_device("rtr-edge")
