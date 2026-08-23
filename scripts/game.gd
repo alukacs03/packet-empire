@@ -49,6 +49,7 @@ var money := 2000
 var stage := 0
 var contracts_done: Array = []
 var cycle := 0
+var reputation := 50  # 0-100; feeds customer budgets
 var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var offers: Array = []  # open marketplace offers
@@ -162,6 +163,7 @@ func _security_sweep() -> int:
 				if Sim.ping(srv, mgmt_ip)["ok"]:
 					incidents_seen[key] = true
 					cost += 100
+					reputation = maxi(0, reputation - 5)
 					log_event("SECURITY: %s's machine %s reached %s management at %s — incident response -$100. Isolate your management plane (firewall it off from customer networks)!"
 						% [deal["customer"], srv.name, d.name, mgmt_ip])
 					break
@@ -185,6 +187,8 @@ func sla_tick() -> void:
 			if not r["t"].call():
 				ok = false
 				break
+		if sla_status.get(c["id"], true) and not ok:
+			log_event("SLA BREACH: '%s' (%s) is down — fees suspended." % [c["title"], c["customer"]])
 		sla_status[c["id"]] = ok
 		if ok:
 			earned += int(c["reward"]) / 10
@@ -203,6 +207,9 @@ func sla_tick() -> void:
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
 		if deal["healthy"]:
 			earned += int(deal["fee"])
+			reputation = mini(100, reputation + 1)
+		else:
+			reputation = maxi(0, reputation - 3)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
 			offers.erase(offer)  # defensive: drop malformed offers
@@ -422,6 +429,7 @@ func save_game() -> void:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"money": money, "stage": stage, "cycle": cycle,
+		"reputation": reputation,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
@@ -449,6 +457,7 @@ func load_game() -> bool:
 	stage = int(data.get("stage", 0))
 	offers = data.get("offers", [])
 	cycle = int(data.get("cycle", 0))
+	reputation = int(data.get("reputation", 50))
 	events = data.get("events", [])
 	incidents_seen = data.get("incidents_seen", {})
 	deals = data.get("deals", [])

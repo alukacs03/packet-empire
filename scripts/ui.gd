@@ -32,6 +32,8 @@ var if_title: Label
 var if_mac: Label
 var if_enabled: CheckButton
 var if_mtu: LineEdit
+var if_nat: OptionButton
+var if_nat_row: HBoxContainer
 var if_mode: OptionButton
 var if_vlan: OptionButton
 var if_vlan_row: HBoxContainer
@@ -94,7 +96,8 @@ func _refresh_money() -> void:
 		power = "   ⚡%dW / ❄%dW" % [Game.power_draw(), Game.cooling_capacity()]
 		if Game.overheating():
 			power += "  🔥 OVERHEATING"
-	money_lbl.text = "  $%d%s" % [Game.money, power]
+	money_lbl.text = "  $%d   ♦%d%s" % [Game.money, Game.reputation, power]
+	money_lbl.tooltip_text = "Money · Reputation (drives customer budgets) · Power/Cooling"
 	money_lbl.add_theme_color_override("font_color",
 		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
 	if Game.stage < Game.STAGES.size() - 1:
@@ -544,6 +547,15 @@ func _build_if_overlay() -> void:
 		cur_if.enabled = on
 		Game.topology_changed.emit())
 	row1.add_child(if_enabled)
+	if_nat_row = HBoxContainer.new()
+	if_nat_row.add_child(_label("   NAT: ", 14, MUTED))
+	if_nat = OptionButton.new()
+	for opt in ["none", "inside", "outside"]:
+		if_nat.add_item(opt)
+	if_nat.item_selected.connect(func(idx: int) -> void:
+		cur_if.nat = "" if idx == 0 else ["", "inside", "outside"][idx]
+		Game.topology_changed.emit())
+	if_nat_row.add_child(if_nat)
 	row1.add_child(_label("   MTU: ", 14, MUTED))
 	if_mtu = _mono_edit(90)
 	if_mtu.text_submitted.connect(func(t: String) -> void:
@@ -551,6 +563,7 @@ func _build_if_overlay() -> void:
 			cur_if.mtu = int(t)
 		if_mtu.text = str(cur_if.mtu))
 	row1.add_child(if_mtu)
+	row1.add_child(if_nat_row)
 
 	var row2 := HBoxContainer.new()
 	v.add_child(row2)
@@ -629,6 +642,8 @@ func _refresh_iface() -> void:
 	if_enabled.set_pressed_no_signal(cur_if.enabled)
 	if_mtu.text = str(cur_if.mtu)
 	var is_switch := cur_if.dev.type == "switch"
+	if_nat_row.visible = cur_if.dev.ip_forwarding and cur_if.dev.type != "uplink"
+	if_nat.select({"": 0, "inside": 1, "outside": 2}[cur_if.nat])
 	if_ip_section.visible = not is_switch  # SVIs on switches: not yet
 	if_mode.get_parent().visible = is_switch
 	if_mode.select(0 if cur_if.mode == "access" else 1)

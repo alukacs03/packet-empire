@@ -392,5 +392,16 @@ static func run() -> int:
 	var rs2 := CLI.new_session(mkt_sw)
 	check("bridge host" in rs2.exec("help"), "cli: ROS help lists bridge host print")
 
+	# --- reputation & public hosting ---
+	var rep0 := Game.reputation
+	Game.sla_tick()
+	check(Game.reputation != rep0 or Game.reputation in [0, 100], "rep: cycles move reputation")
+	es.exec("conf t")
+	es.exec("router bgp 65001")
+	es.exec("network 10.3.0.0/24")
+	es.exec("end")
+	check(Market.check("public_hosting", {"ip": "10.3.0.10"}), "market: public hosting verified from the uplink side (needs the announcement back)")
+	check(not Market.check("public_hosting", {"ip": "10.0.0.1"}), "market: unreachable-from-internet host fails the check")
+
 	print("---- %d failures" % fails)
 	return fails

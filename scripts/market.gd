@@ -17,6 +17,9 @@ const KINDS := {
 	"dhcp_pool": {"base": 80, "spread": 70,
 		"brief": "We keep plugging in machines. Run DHCP for our subnet %s.0/24 — at least one client must hold a lease.",
 		"costs": "A server running dhcpd (from $400). Little extra power."},
+	"public_hosting": {"base": 220, "spread": 160,
+		"brief": "We want a public web presence: host our server at %s and make it reachable FROM THE INTERNET (your upstream must be able to reach it — think BGP announcement or NAT... announcement, since it must accept inbound).",
+		"costs": "A server + working transit (uplink, BGP session, prefix announced). Premium tier."},
 	"secure_host": {"base": 130, "spread": 110,
 		"brief": "Compliance demands it: our server at %s must sit behind a firewall that explicitly blocks outside access to it.",
 		"costs": "A firewall ($800) + a server. The expensive tier — quote accordingly."},
@@ -25,12 +28,15 @@ const KINDS := {
 static var _next_id := 0
 
 static func gen_offer() -> Dictionary:
-	var kind: String = KINDS.keys()[randi() % KINDS.size()]
+	var kinds: Array = KINDS.keys()
+	if not _has_uplink():
+		kinds.erase("public_hosting")  # nobody asks before you have transit
+	var kind: String = kinds[randi() % kinds.size()]
 	var spec: Dictionary = KINDS[kind]
 	var params := {}
 	var subject := ""
 	match kind:
-		"hosting", "secure_host":
+		"hosting", "secure_host", "public_hosting":
 			params["ip"] = "10.%d.%d.10" % [randi() % 180 + 20, randi() % 250]
 			subject = params["ip"]
 		"own_vlan":
@@ -40,6 +46,7 @@ static func gen_offer() -> Dictionary:
 			params["subnet"] = "10.%d.%d" % [randi() % 180 + 20, randi() % 250]
 			subject = params["subnet"]
 	var budget: int = spec["base"] + randi() % int(spec["spread"])
+	budget = int(budget * (0.6 + Game.reputation / 100.0 * 0.8))  # reputation sells
 	var hint := "budget-conscious"
 	if budget >= spec["base"] + spec["spread"] * 2 / 3:
 		hint = "deep pockets"
@@ -73,6 +80,14 @@ static func check(kind: String, params: Dictionary) -> bool:
 	match kind:
 		"hosting":
 			return _hosted_and_reachable(params["ip"])
+		"public_hosting":
+			var owner := Contracts._owner(params["ip"])
+			if owner == null or owner.type != "server":
+				return false
+			for d in Game.all_devices():
+				if d.type == "uplink" and Sim.ping(d, params["ip"])["ok"]:
+					return true
+			return false
 		"own_vlan":
 			var vid: int = int(params["vid"])
 			for d in Game.all_devices():
@@ -99,6 +114,12 @@ static func check(kind: String, params: Dictionary) -> bool:
 						if rule["action"] == "deny" and rule["dst"] == params["ip"] and int(rule["dplen"]) == 32:
 							return true
 			return false
+	return false
+
+static func _has_uplink() -> bool:
+	for d in Game.all_devices():
+		if d.type == "uplink":
+			return true
 	return false
 
 static func _hosted_and_reachable(ip: String) -> bool:
