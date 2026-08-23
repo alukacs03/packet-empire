@@ -19,7 +19,7 @@ var dev_title: Label
 var name_edit: LineEdit
 var name_hint: Label
 var status_opt: OptionButton
-var port_row: HBoxContainer
+var port_row: GridContainer
 var conn_list: VBoxContainer
 var cli_box: VBoxContainer
 var cli_out: RichTextLabel
@@ -248,7 +248,7 @@ func _refresh_slots() -> void:
 			for pi in dev.ifaces:
 				if Game.link_at(pi):
 					up += 1
-			b.text = " U%-2d  %-8s %-8s %d/%d links" % [i + 1, dev.name, dev.type, up, dev.ifaces.size()]
+			b.text = " U%-2d  %-8s %-20s %d/%d links" % [i + 1, dev.name, Game.MODELS[dev.model]["label"], up, dev.ifaces.size()]
 			var slot_col := Color(0.6, 0.75, 1.0)
 			if dev.type == "switch":
 				slot_col = Color(0.4, 0.9, 0.95)
@@ -263,15 +263,15 @@ func _refresh_slots() -> void:
 		slot_box.add_child(b)
 
 func _pick_new_device(slot: int, at: Control) -> void:
-	var types := ["switch", "server", "router"]
+	var keys := Game.MODELS.keys()
 	var items: Array = []
-	for t in types:
-		var spec: Dictionary = Game.DEVICE_SPECS[t]
-		items.append("Install %-8s %d ports   $%d" % [t, spec["ports"], spec["price"]])
+	for k in keys:
+		var m: Dictionary = Game.MODELS[k]
+		items.append("%-22s %-7s %2d ports  $%d" % [m["label"], m["type"], m["ports"], m["price"]])
 	_menu(at, items, func(id: int) -> void:
-		if not Game.try_spend(Game.DEVICE_SPECS[types[id]]["price"]):
+		if not Game.try_spend(Game.MODELS[keys[id]]["price"]):
 			return
-		cur_rack.slots[slot] = Game.new_device(types[id])
+		cur_rack.slots[slot] = Game.new_device(keys[id])
 		cur_rack.visual.queue_redraw()
 		_refresh_slots())
 
@@ -302,9 +302,10 @@ func _build_dev_overlay() -> void:
 	var plate := PanelContainer.new()
 	plate.add_theme_stylebox_override("panel", _sb(Color(0.14, 0.15, 0.18), Color(0.35, 0.38, 0.45), 8, 14))
 	v.add_child(plate)
-	port_row = HBoxContainer.new()
-	port_row.add_theme_constant_override("separation", 10)
-	port_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	port_row = GridContainer.new()
+	port_row.columns = 12
+	port_row.add_theme_constant_override("h_separation", 8)
+	port_row.add_theme_constant_override("v_separation", 8)
 	plate.add_child(port_row)
 
 	conn_list = VBoxContainer.new()
@@ -390,7 +391,7 @@ func close_dev() -> void:
 	cur_dev = null
 
 func _refresh_dev_header() -> void:
-	dev_title.text = "%s  /  %s — %s" % [Game.rack_of(cur_dev).name, cur_dev.name, cur_dev.type]
+	dev_title.text = "%s  /  %s — %s" % [Game.rack_of(cur_dev).name, cur_dev.name, Game.MODELS[cur_dev.model]["label"]]
 	name_edit.text = cur_dev.name
 	status_opt.select(0 if cur_dev.status == "active" else 1)
 	name_hint.text = ""
@@ -412,7 +413,7 @@ func _refresh_ports() -> void:
 	for i: Net.Iface in cur_dev.ifaces:
 		var connected := Game.link_at(i) != null
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(64, 54)
+		b.custom_minimum_size = Vector2(52, 46)
 		b.text = i.name.replace("Ethernet", "Et")
 		b.add_theme_font_override("font", mono)
 		b.add_theme_font_size_override("font_size", 12)

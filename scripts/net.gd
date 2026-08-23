@@ -19,7 +19,8 @@ class Iface:
 		mac = m
 
 class NDevice:
-	var type: String  # "switch" | "server"
+	var type: String  # "switch" | "server" | "router"
+	var model := ""  # key into Game.MODELS
 	var name: String
 	var status := "active"  # active | offline
 	var ifaces: Array = []

@@ -5,11 +5,21 @@ extends Node
 signal topology_changed
 signal money_changed
 
-# per-type spec. New device type = new entry. (Vendor tiers: issue #13)
-const DEVICE_SPECS := {
-	"switch": {"if_prefix": "Ethernet", "if_start": 1, "ports": 8, "name_prefix": "sw", "price": 250},
-	"server": {"if_prefix": "eth", "if_start": 0, "ports": 1, "name_prefix": "srv", "price": 400},
-	"router": {"if_prefix": "Ethernet", "if_start": 1, "ports": 4, "name_prefix": "rtr", "price": 600},
+# Hardware catalog: fictional vendors, real tiers. New model = new entry.
+const MODELS := {
+	"sw-lite": {"type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90},
+	"sw-8": {"type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
+	"sw-24": {"type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
+	"srv-1": {"type": "server", "ports": 1, "label": "Dill R110", "price": 400},
+	"srv-2": {"type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
+	"rtr-lite": {"type": "router", "ports": 4, "label": "PacketTik R4", "price": 350},
+	"rtr-edge": {"type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
+}
+const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite"}
+const TYPE_SPECS := {
+	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
+	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
+	"router": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "rtr"},
 }
 const RACK_PRICE := 500
 const SAVE_PATH := "user://save.json"
@@ -69,15 +79,20 @@ func rack_of(dev: Net.NDevice) -> Net.Rack:
 
 # ---------- devices ----------
 
-func new_device(type: String) -> Net.NDevice:
-	var spec: Dictionary = DEVICE_SPECS[type]
+func new_device(model: String) -> Net.NDevice:
+	if not MODELS.has(model):
+		model = TYPE_DEFAULTS[model]  # accept a bare type, pick its default model
+	var m: Dictionary = MODELS[model]
+	var type: String = m["type"]
+	var spec: Dictionary = TYPE_SPECS[type]
 	_counter[type] += 1
 	var d := Net.NDevice.new(type, spec["name_prefix"] + str(_counter[type]))
+	d.model = model
 	if type == "switch":
 		d.vlans = {1: "default"}
 	if type == "router":
 		d.ip_forwarding = true
-	for i in spec["ports"]:
+	for i in m["ports"]:
 		var ifc := Net.Iface.new(d, spec["if_prefix"] + str(spec["if_start"] + i), _new_mac())
 		if type != "switch":
 			ifc.mode = "routed"
@@ -92,7 +107,7 @@ func uninstall_device(dev: Net.NDevice) -> void:
 		r.slots[r.slots.find(dev)] = null
 		if r.visual:
 			r.visual.queue_redraw()
-	_refund(DEVICE_SPECS[dev.type]["price"] / 2)
+	_refund(MODELS[dev.model]["price"] / 2)
 	topology_changed.emit()
 
 func _new_mac() -> String:
@@ -234,7 +249,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"ips": i.ips})
-	return {"type": d.type, "name": d.name, "status": d.status, "vlans": d.vlans,
+	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes, "ifaces": ifs}
 
 func load_game() -> bool:
@@ -253,6 +268,7 @@ func load_game() -> bool:
 	for dname in data["devices"]:
 		var sd: Dictionary = data["devices"][dname]
 		var d := Net.NDevice.new(sd["type"], sd["name"])
+		d.model = sd.get("model", TYPE_DEFAULTS[sd["type"]])
 		d.status = sd["status"]
 		d.ip_forwarding = sd["ip_forwarding"]
 		d.static_routes = sd["static_routes"]
