@@ -136,6 +136,14 @@ func _unhandled_input(e: InputEvent) -> void:
 				ui.toggle_ops()
 			KEY_F1:
 				ui.toggle_help()
+			KEY_SPACE:
+				Game.toggle_pause()
+			KEY_1:
+				Game.set_speed(1)
+			KEY_2:
+				Game.set_speed(2)
+			KEY_3:
+				Game.set_speed(3)
 			KEY_ESCAPE:
 				mode = Mode.SELECT
 	elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:

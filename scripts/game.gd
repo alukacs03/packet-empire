@@ -350,6 +350,22 @@ var last_link_load := {}  # Link -> Mbps, from the latest cycle
 var last_cycle_delta := 0
 var last_pl := {}  # line item -> amount, from the latest cycle
 var cycle_timer: Timer
+var speed := 1  # 0 = paused, otherwise a multiplier on the revenue cycle
+
+signal speed_changed
+
+func set_speed(v: int) -> void:
+	speed = clampi(v, 0, 3)
+	if cycle_timer:
+		cycle_timer.paused = speed == 0
+		if speed > 0:
+			cycle_timer.wait_time = SLA_PERIOD / float(speed)
+			if cycle_timer.is_stopped():
+				cycle_timer.start()
+	speed_changed.emit()
+
+func toggle_pause() -> void:
+	set_speed(0 if speed > 0 else 1)
 
 func _ready() -> void:
 	rivals = Rivals.spawn()
@@ -361,6 +377,7 @@ func _ready() -> void:
 	cycle_timer.autostart = true
 	cycle_timer.timeout.connect(sla_tick)
 	add_child(cycle_timer)
+	set_speed(speed)
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var result := Market.negotiate(offer, quote)

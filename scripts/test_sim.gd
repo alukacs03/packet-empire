@@ -1417,6 +1417,20 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- speed controls ---
+	Game.set_speed(1)
+	check(Game.speed == 1 and not Game.cycle_timer.paused, "speed: normal speed runs the clock")
+	Game.toggle_pause()
+	check(Game.speed == 0 and Game.cycle_timer.paused, "speed: pause stops the revenue cycle")
+	Game.toggle_pause()
+	check(Game.speed == 1, "speed: unpausing returns to normal")
+	Game.set_speed(3)
+	check(is_equal_approx(Game.cycle_timer.wait_time, Game.SLA_PERIOD / 3.0),
+		"speed: faster speed shortens the cycle")
+	Game.set_speed(9)
+	check(Game.speed == 3, "speed: the multiplier is clamped")
+	Game.set_speed(1)
+
 	# --- IPv6 address handling ---
 	check(Net.is_v6("2001:db8::1") and not Net.is_v6("10.0.0.1"), "v6: family detection")
 	check(Net.v6_hextets("2001:db8::1") == [0x2001, 0xdb8, 0, 0, 0, 0, 0, 1], "v6: :: expands correctly")

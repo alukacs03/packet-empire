@@ -87,6 +87,7 @@ var contracts_btn: Button
 var objective_lbl: Label
 var expand_btn: Button
 var site_btn: Button
+var speed_btns := {}
 var theme_res: Theme
 var mono: SystemFont
 
@@ -111,6 +112,7 @@ func _ready() -> void:
 	Game.topology_changed.connect(_refresh_open)
 	Game.topology_changed.connect(_refresh_money)
 	Game.money_changed.connect(_refresh_money)
+	Game.speed_changed.connect(_refresh_speed)
 	Game.money_changed.connect(_money_flash)
 	_refresh_money()
 
@@ -135,7 +137,12 @@ func _refresh_attention() -> void:
 		contracts_btn.text = "Contracts"
 		contracts_btn.modulate = Color.WHITE
 
+func _refresh_speed() -> void:
+	for k in speed_btns:
+		speed_btns[k].button_pressed = (k == Game.speed)
+
 func _refresh_money() -> void:
+	_refresh_speed()
 	_refresh_attention()
 	if objective_lbl:
 		var next_c := ""
@@ -179,7 +186,9 @@ func _process(_dt: float) -> void:
 	if _cycle_lbl_accum > 0.5 and cycle_lbl:
 		_cycle_lbl_accum = 0.0
 		var t := Game.cycle_timer
-		if t:
+		if Game.speed == 0:
+			cycle_lbl.text = "⏸ paused"
+		elif t:
 			cycle_lbl.text = "⏱ %ds" % int(ceil(t.time_left))
 	# focus watchdog: while the console is open, dropped focus/editing returns to it
 	if cli_box and cli_box.visible and not if_overlay.visible:
@@ -420,6 +429,15 @@ func _build_toolbar() -> void:
 	objective_lbl = _label("", 13, Color(0.65, 0.8, 0.9))
 	objective_lbl.tooltip_text = "Current campaign objective: details in Contracts"
 	h.add_child(objective_lbl)
+	for spec in [["⏸", 0, "Pause (Space)"], ["▶", 1, "Normal speed (1)"],
+			["▶▶", 2, "Fast (2)"], ["▶▶▶", 3, "Faster (3)"]]:
+		var spd_btn := Button.new()
+		spd_btn.text = spec[0]
+		spd_btn.tooltip_text = spec[2]
+		spd_btn.toggle_mode = true
+		spd_btn.pressed.connect(func() -> void: Game.set_speed(spec[1]))
+		h.add_child(spd_btn)
+		speed_btns[spec[1]] = spd_btn
 	cycle_lbl = _label("", 13, Color(0.5, 0.58, 0.7))
 	cycle_lbl.add_theme_font_override("font", mono)
 	cycle_lbl.tooltip_text = "Time to the next revenue cycle: fees, bills, SLA checks"
@@ -435,7 +453,7 @@ func _build_toolbar() -> void:
 	var hint := _label("Q select   ·   R place rack   ·   right-drag pan   ·   scroll zoom   ·   Esc back", 12, Color(0.45, 0.5, 0.62))
 	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	hint.position = Vector2(20, -30)
-	hint.text = "Q select  ·  R place rack  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
+	hint.text = "Space pause  ·  Q select  ·  R place rack  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
 	hint.theme = theme_res
 	add_child(hint)
 
@@ -1154,6 +1172,8 @@ func _build_help() -> void:
 	var rows := [
 		["FLOOR", ""],
 		["Q / R", "select mode / place-rack mode"],
+		["Space", "pause and resume"],
+		["1 / 2 / 3", "normal, fast and faster"],
 		["O", "operations dashboard (device health)"],
 		["M", "logical topology map"],
 		["F1", "this help"],
