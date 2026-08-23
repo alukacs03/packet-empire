@@ -32,6 +32,19 @@ const KINDS := {
 		"costs": "A firewall ($800) + a server. The expensive tier: quote accordingly."},
 }
 
+const KIND_LABELS := {
+	"hosting": "Server hosting",
+	"public_hosting": "Public web presence",
+	"own_vlan": "Private VLAN",
+	"managed_switch": "Managed switch",
+	"dhcp_pool": "DHCP service",
+	"secure_host": "Firewalled host",
+	"redundant_gw": "Redundant gateway",
+}
+
+static func label_for(kind: String) -> String:
+	return KIND_LABELS.get(kind, kind)
+
 static var _next_id := 0
 
 static func gen_offer() -> Dictionary:
@@ -59,11 +72,11 @@ static func gen_offer() -> Dictionary:
 			subject = params["subnet"]
 	var budget: int = spec["base"] + randi() % int(spec["spread"])
 	budget = int(budget * (0.6 + Game.reputation / 100.0 * 0.8))  # reputation sells
-	var hint := "budget-conscious"
+	var hint := "they are watching every forint"
 	if budget >= spec["base"] + spec["spread"] * 2 / 3:
-		hint = "deep pockets"
+		hint = "money does not seem to be their problem"
 	elif budget >= spec["base"] + spec["spread"] / 3:
-		hint = "established business"
+		hint = "an established business, they can pay fairly"
 	_next_id += 1
 	return {
 		"id": "mkt_%d" % _next_id,

@@ -1274,8 +1274,9 @@ func _build_market_section() -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 6)
 		card.add_child(cv)
-		cv.add_child(_label("%s   (%s: they seem %s)" % [offer["customer"], offer["kind"], offer["hint"]],
+		cv.add_child(_label("%s   ·   %s" % [offer["customer"], Market.label_for(offer["kind"])],
 			16, Color.WHITE))
+		cv.add_child(_label("Word is: %s." % offer["hint"], 13, Color(0.75, 0.7, 0.85)))
 		var brief := _label(offer["brief"], 14, Color(0.78, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
@@ -1343,7 +1344,7 @@ func _build_market_section() -> void:
 			contracts_box.add_child(_chip_row(
 				chip_txt,
 				chip_col,
-				"%s: %s   $%d/cycle%s" % [deal["customer"], deal["kind"], int(deal["fee"]),
+				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
 					"" if ok else "   (not delivered: not paying)"],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
 			var detail := String(deal.get("brief", ""))
