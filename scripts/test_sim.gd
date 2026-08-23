@@ -95,7 +95,8 @@ static func run() -> int:
 	s.exec("end")
 	check(s.exec("sh vlan").contains("30"), "EOS: 'sh vlan' lists vlan 30")
 	check(s.exec("sh run").begins_with("hostname"), "EOS: show running-config renders")
-	check(s.exec("s").begins_with("% Incomplete"), "EOS: bare ambiguous prefix reports incomplete")
+	check(s.exec("s").begins_with("% Ambiguous"), "EOS: bare 's' is ambiguous (ssh vs show)")
+	check(s.exec("sh").begins_with("% Incomplete"), "EOS: 'sh' alone is an incomplete command")
 	check("interface" in s.exec("help"), "EOS: help lists config commands in config-reachable mode")
 
 	# --- Linux CLI ---
@@ -464,6 +465,43 @@ static func run() -> int:
 	check(s_cnt.exec("show interfaces counters").contains("InFrames"), "counters: EOS table renders")
 	s_cnt.exec("clear counters")
 	check(sw_a.ifaces[0].rx_frames == 0, "counters: clear counters resets")
+
+	# --- OOB management + ssh ---
+	var mg: Net.Iface = null
+	for ifc: Net.Iface in sw_a.ifaces:
+		if ifc.name.begins_with("Management"):
+			mg = ifc
+	check(mg != null, "mgmt: save migration added Management1 to old switches")
+	Game.connect_ifaces(mg, sw_b.ifaces[5])
+	var ms := CLI.new_session(sw_a)
+	ms.exec("en")
+	ms.exec("conf t")
+	ms.exec("int man1")
+	check(ms.prompt().contains("Management1"), "mgmt: interface Management1 reachable by abbreviation")
+	ms.exec("ip address 10.0.0.99/24")
+	ms.exec("end")
+	check(Sim.ping(a2, "10.0.0.99")["ok"], "mgmt: switch answers ping on its mgmt address")
+	check(Sim.ping(sw_a, "10.0.0.1")["ok"], "mgmt: switch pings out via mgmt")
+	var blocked_after := 0
+	for ifc in [sw_a.ifaces[1], sw_a.ifaces[3], sw_b.ifaces[3], sw_b.ifaces[4]]:
+		if Sim.stp_blocked(ifc):
+			blocked_after += 1
+	check(blocked_after == 1, "mgmt: mgmt link doesn't disturb spanning tree")
+	var ssh_ls := CLI.new_session(a2)
+	var ssh_out: String = ssh_ls.exec("ssh 10.0.0.99")
+	check("Connected to" in ssh_out and ssh_ls.pending_ssh == sw_a, "ssh: server reaches switch mgmt")
+	var inner := CLI.new_session(ssh_ls.pending_ssh)
+	check(inner.prompt().begins_with(sw_a.name), "ssh: nested session lands on the switch")
+	inner.exec("exit")
+	check(inner.wants_exit, "ssh: exit flags return to the outer session")
+	check("No route" in ssh_ls.exec("ssh 172.31.9.9"), "ssh: unreachable target refused")
+	Game.incidents_seen.clear()
+	Game.sla_tick()
+	var found_sw_event := false
+	for ev in Game.events:
+		if "SECURITY" in ev and sw_a.name in ev:
+			found_sw_event = true
+	check(found_sw_event, "mgmt: exposed switch management triggers a security incident")
 
 	print("---- %d failures" % fails)
 	return fails

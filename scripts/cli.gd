@@ -8,6 +8,18 @@ static func new_session(dev: Net.NDevice) -> Session:
 		return ROS.new(dev)
 	return EOS.new(dev) if dev.type in ["switch", "router", "firewall", "uplink"] else Linux.new(dev)
 
+static func try_ssh(session: Session, target: String) -> String:
+	var ip := Sim.resolve(session.dev, target)
+	if ip == "":
+		ip = target
+	if not ip.is_valid_ip_address():
+		return "ssh: Could not resolve hostname %s\n" % target
+	var owner := Sim._ip_owner(ip)
+	if owner == null or owner == session.dev or not Sim.ping(session.dev, ip)["ok"]:
+		return "ssh: connect to host %s: No route to host\n" % ip
+	session.pending_ssh = owner
+	return "Connected to %s (%s).\n" % [owner.name, ip]
+
 static func fmt_ping(dev: Net.NDevice, target: String) -> String:
 	var ip := Sim.resolve(dev, target)
 	if ip == "":
@@ -37,6 +49,8 @@ static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
 
 class Session:
 	var dev: Net.NDevice
+	var pending_ssh: Net.NDevice = null
+	var wants_exit := false
 	func _init(d: Net.NDevice) -> void:
 		dev = d
 	func banner() -> String:
@@ -93,6 +107,7 @@ class EOS extends Session:
 			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
 			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping, "dyn": null},
 			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
+			{"m": ["exec", "priv"], "p": ["ssh"], "h": _ssh},
 			{"m": EP, "p": ["show", "version"], "h": _show_version},
 			{"m": EP, "p": ["show", "interfaces"], "h": _show_interfaces},
 			{"m": EP, "p": ["show", "vlan"], "h": _show_vlan},
@@ -177,6 +192,23 @@ class EOS extends Session:
 		if winners.size() > 1:
 			return "% Ambiguous command\n"
 		var cmd: Dictionary = winners[0]
+		# Cisco-style ambiguity: a longer command whose words diverge from the
+		# winner within the typed tokens makes the abbreviation ambiguous
+		# ("s" = ssh|show), while shared-prefix extensions don't
+		# ("sh int" runs show interfaces even though ...counters exists).
+		for c in _cmds:
+			if mode not in c["m"] or c == cmd or toks.size() >= c["p"].size():
+				continue
+			var pref := true
+			for k in toks.size():
+				if not String(c["p"][k]).begins_with(toks[k]):
+					pref = false
+					break
+			if not pref:
+				continue
+			for k in mini(toks.size(), cmd["p"].size()):
+				if String(c["p"][k]) != String(cmd["p"][k]):
+					return "% Ambiguous command\n"
 		return cmd["h"].call(toks.slice(cmd["p"].size()))
 
 	func complete(line: String) -> Array:
@@ -217,7 +249,8 @@ class EOS extends Session:
 			"priv":
 				mode = "exec"
 			"exec":
-				return "logout (session stays open)\n"
+				wants_exit = true
+				return ""
 		return ""
 
 	func _help(_r: Array) -> String:
@@ -243,6 +276,11 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: traceroute <ip>\n"
 		return CLI.fmt_traceroute(dev, r[0])
+
+	func _ssh(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: ssh <ip>\n"
+		return CLI.try_ssh(self, r[0])
 
 	func _vlan_ids() -> Array:
 		var out: Array = []
@@ -339,8 +377,8 @@ class EOS extends Session:
 		return ""
 
 	func _if_ip(r: Array) -> String:
-		if dev.type == "switch":
-			return "% SVIs are not supported yet — use a router for L3\n"
+		if dev.type == "switch" and not ctx_if.name.begins_with("Management"):
+			return "% SVIs are not supported yet — use the Management1 port or a router\n"
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
@@ -761,6 +799,11 @@ class Linux extends Session:
 						any = true
 						out += "%-8s %-14s %s\n" % [i.name, l.other(i).dev.name, l.other(i).name]
 				return out if any else "(no neighbors detected)\n"
+			"ssh":
+				return CLI.try_ssh(self, t[1]) if t.size() == 2 else "usage: ssh <ip|name>\n"
+			"exit", "logout":
+				wants_exit = true
+				return ""
 			"tcpdump":
 				if dev.capture.is_empty():
 					return "tcpdump: 0 packets captured (generate some traffic)\n"
@@ -852,7 +895,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "clear", "help"]
+				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

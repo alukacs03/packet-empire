@@ -151,7 +151,7 @@ func _security_sweep() -> int:
 		if srv == null or srv.type != "server":
 			continue
 		for d in all_devices():
-			if not d.ip_forwarding or d.type == "uplink":
+			if d.type == "uplink" or not (d.ip_forwarding or d.type == "switch"):
 				continue
 			var key := "%s|%s" % [srv.name, d.name]
 			if incidents_seen.has(key):
@@ -280,6 +280,10 @@ func new_device(model: String) -> Net.NDevice:
 		if type != "switch":
 			ifc.mode = "routed"
 		d.ifaces.append(ifc)
+	if type == "switch":
+		var mgmt := Net.Iface.new(d, "Management1", _new_mac())
+		mgmt.mode = "routed"
+		d.ifaces.append(mgmt)
 	if type == "uplink":
 		d.ifaces[0].ips.append("100.64.0.1/30")
 		var lo := Net.Iface.new(d, "lo", _new_mac())
@@ -490,6 +494,15 @@ func load_game() -> bool:
 			i.nat = si.get("nat", "")
 			i.ips = si["ips"]
 			d.ifaces.append(i)
+		if d.type == "switch":
+			var has_mgmt := false
+			for i: Net.Iface in d.ifaces:
+				if i.name.begins_with("Management"):
+					has_mgmt = true
+			if not has_mgmt:  # migrate saves from before OOB management
+				var mgmt := Net.Iface.new(d, "Management1", _new_mac())
+				mgmt.mode = "routed"
+				d.ifaces.append(mgmt)
 		by_name[d.name] = d
 	for rd in data["racks"]:
 		var r := Net.Rack.new(rd["name"], Vector2i(int(rd["tile"][0]), int(rd["tile"][1])))

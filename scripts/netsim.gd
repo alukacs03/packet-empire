@@ -287,7 +287,7 @@ static func _stp_ensure() -> void:
 	_stp_root = switches[0]
 	var sw_links: Array = []
 	for l in Game.links:
-		if l.a.dev.type == "switch" and l.b.dev.type == "switch" 				and l.a.enabled and l.b.enabled 				and l.a.dev.status == "active" and l.b.dev.status == "active":
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
 			sw_links.append(l)
 	var dist := {_stp_root: 0}
 	var tree := {}
@@ -406,7 +406,7 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	_cap(peer.dev, peer, frame)
 	_depth += 1
-	if peer.dev.type == "switch" and frame["type"] != "bgp":
+	if peer.dev.type == "switch" and not peer.name.begins_with("Management"):
 		_switch_rx(peer.dev, peer, frame)
 	else:
 		_host_rx(peer.dev, peer, frame)

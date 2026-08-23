@@ -230,7 +230,7 @@ class Faceplate extends Control:
 				led = Color(0.4, 1.0, 0.5)
 			draw_circle(r.position + Vector2(r.size.x + 0.0, -4), 2.2, led)
 			# port label
-			var num := i.name.trim_prefix("Ethernet").trim_prefix("ether").trim_prefix("eth").trim_prefix("port")
+			var num := i.name.replace("Management", "M").trim_prefix("Ethernet").trim_prefix("ether").trim_prefix("eth").trim_prefix("port")
 			var below := (idx % 2 == 1) if _ports.size() > 6 else true
 			var ty := r.end.y + 13 if below else r.position.y - 6
 			draw_string(_mono, Vector2(r.position.x + r.size.x / 2.0 - 6, ty), num if num != "" else i.name,

@@ -44,6 +44,11 @@ func exec(line: String) -> String:
 			return CLI.fmt_ping(dev, args[0]) if args.size() >= 1 else "usage: /ping <ip>\n"
 		"tool traceroute":
 			return CLI.fmt_traceroute(dev, args[0]) if args.size() >= 1 else "usage: /tool traceroute <ip>\n"
+		"system ssh":
+			return CLI.try_ssh(self, args[0]) if args.size() >= 1 else "usage: /system ssh <ip>\n"
+		"quit":
+			wants_exit = true
+			return ""
 		"system identity set":
 			if p.has("name") and Game.rename_device(dev, p["name"]):
 				return ""
@@ -261,7 +266,7 @@ func exec(line: String) -> String:
 			return out
 	return "bad command name %s (try 'help')\n" % path.split(" ")[0]
 
-const PATHS := ["help", "export", "ping", "tool traceroute",
+const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit",
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
 	"interface print", "interface print stats", "interface set",

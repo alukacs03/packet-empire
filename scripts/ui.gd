@@ -60,6 +60,7 @@ var cur_rack: Net.Rack
 var cur_dev: Net.NDevice
 var cur_if: Net.Iface
 var cli_session: CLI.Session
+var cli_stack: Array = []  # ssh nesting
 var cli_history: Array = []
 var cli_hist_idx := 0
 var money_lbl: Label
@@ -644,7 +645,7 @@ func _refresh_iface() -> void:
 	var is_switch := cur_if.dev.type == "switch"
 	if_nat_row.visible = cur_if.dev.ip_forwarding and cur_if.dev.type != "uplink"
 	if_nat.select({"": 0, "inside": 1, "outside": 2}[cur_if.nat])
-	if_ip_section.visible = not is_switch  # SVIs on switches: not yet
+	if_ip_section.visible = not is_switch or cur_if.name.begins_with("Management")
 	if_mode.get_parent().visible = is_switch
 	if_mode.select(0 if cur_if.mode == "access" else 1)
 	if_vlan_row.visible = is_switch and cur_if.mode == "access"
@@ -984,6 +985,7 @@ func _toggle_cli() -> void:
 	if cli_box.visible:
 		cli_toggle.text = "Close console  ▤"
 		cli_session = CLI.new_session(cur_dev)
+		cli_stack.clear()
 		cli_history.clear()
 		cli_hist_idx = 0
 		cli_prompt.text = cli_session.prompt() + " "
@@ -1048,6 +1050,19 @@ func _cli_submit(cmd: String) -> void:
 	cli_out.append_text("%s %s\n" % [cli_session.prompt(), cmd])
 	Sim.last_trace = []
 	cli_out.append_text(cli_session.exec(cmd))
+	if cli_session.pending_ssh:
+		var target: Net.NDevice = cli_session.pending_ssh
+		cli_session.pending_ssh = null
+		cli_stack.append(cli_session)
+		cli_session = CLI.new_session(target)
+		cli_out.append_text(cli_session.banner())
+	elif cli_session.wants_exit:
+		cli_session.wants_exit = false
+		if cli_stack.is_empty():
+			cli_out.append_text("logout (session stays open)\n")
+		else:
+			cli_session = cli_stack.pop_back()
+			cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)
 	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
 	if not Sim.last_trace.is_empty():
 		get_parent().play_trace(Sim.last_trace)
