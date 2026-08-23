@@ -12,9 +12,20 @@ var hover: RackVisual = null
 var ui: UILayer
 
 func _ready() -> void:
+	if OS.get_environment("PACKET_TEST") == "1":
+		var fails: int = SimTests.run()
+		get_tree().quit(1 if fails > 0 else 0)
+		return
 	ui = UILayer.new()
 	add_child(ui)
 	Game.topology_changed.connect(queue_redraw)
+	if Game.load_game():
+		for r in Game.racks:
+			add_child(RackVisual.new().setup(r))
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui:
+		Game.save_game()
 
 func _process(_dt: float) -> void:
 	if ui.is_open():
@@ -55,6 +66,8 @@ func _place_rack(tile: Vector2i) -> void:
 	if tile.x < 0 or tile.y < 0 or tile.x >= f.GRID_W or tile.y >= f.GRID_H:
 		return
 	if Game.rack_at(tile):
+		return
+	if not Game.try_spend(Game.RACK_PRICE):
 		return
 	add_child(RackVisual.new().setup(Game.add_rack(tile)))
 	queue_redraw()

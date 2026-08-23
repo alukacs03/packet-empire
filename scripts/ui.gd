@@ -36,6 +36,7 @@ var if_mode: OptionButton
 var if_vlan: OptionButton
 var if_vlan_row: HBoxContainer
 var if_trunk_note: Label
+var if_ip_section: VBoxContainer
 var if_ip_box: VBoxContainer
 var if_ip_in: LineEdit
 var if_ip_hint: Label
@@ -50,6 +51,8 @@ var vlan_name_in: LineEdit
 var cur_rack: Net.Rack
 var cur_dev: Net.NDevice
 var cur_if: Net.Iface
+var cli_session: CLI.Session
+var money_lbl: Label
 var theme_res: Theme
 var mono: SystemFont
 
@@ -62,6 +65,11 @@ func _ready() -> void:
 	_build_dev_overlay()
 	_build_if_overlay()
 	Game.topology_changed.connect(_refresh_open)
+	Game.money_changed.connect(_refresh_money)
+	_refresh_money()
+
+func _refresh_money() -> void:
+	money_lbl.text = "  $%d" % Game.money
 
 func _process(_dt: float) -> void:
 	# focus watchdog: while the console is open, dropped focus/editing returns to it
@@ -180,6 +188,13 @@ func _build_toolbar() -> void:
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
+	var save_btn := Button.new()
+	save_btn.text = "Save"
+	save_btn.pressed.connect(func() -> void: Game.save_game())
+	h.add_child(save_btn)
+	money_lbl = _label("", 16, Color(0.55, 0.95, 0.6))
+	money_lbl.add_theme_font_override("font", mono)
+	h.add_child(money_lbl)
 	update_mode(0)
 
 func update_mode(m: int) -> void:
@@ -223,8 +238,12 @@ func _refresh_slots() -> void:
 				if Game.link_at(pi):
 					up += 1
 			b.text = " U%-2d  %-8s %-8s %d/%d links" % [i + 1, dev.name, dev.type, up, dev.ifaces.size()]
-			b.add_theme_color_override("font_color",
-				Color(0.4, 0.9, 0.95) if dev.type == "switch" else Color(0.6, 0.75, 1.0))
+			var slot_col := Color(0.6, 0.75, 1.0)
+			if dev.type == "switch":
+				slot_col = Color(0.4, 0.9, 0.95)
+			elif dev.type == "router":
+				slot_col = Color(1.0, 0.75, 0.45)
+			b.add_theme_color_override("font_color", slot_col)
 			b.pressed.connect(func() -> void: open_dev(dev))
 		else:
 			b.text = " U%-2d  — empty slot —" % [i + 1]
@@ -233,8 +252,15 @@ func _refresh_slots() -> void:
 		slot_box.add_child(b)
 
 func _pick_new_device(slot: int, at: Control) -> void:
-	_menu(at, ["Install switch  (8 ports)", "Install server  (1 NIC)"], func(id: int) -> void:
-		cur_rack.slots[slot] = Game.new_device("switch" if id == 0 else "server")
+	var types := ["switch", "server", "router"]
+	var items: Array = []
+	for t in types:
+		var spec: Dictionary = Game.DEVICE_SPECS[t]
+		items.append("Install %-8s %d ports   $%d" % [t, spec["ports"], spec["price"]])
+	_menu(at, items, func(id: int) -> void:
+		if not Game.try_spend(Game.DEVICE_SPECS[types[id]]["price"]):
+			return
+		cur_rack.slots[slot] = Game.new_device(types[id])
 		cur_rack.visual.queue_redraw()
 		_refresh_slots())
 
@@ -296,10 +322,23 @@ func _build_dev_overlay() -> void:
 			vlan_name_in.clear())
 	vrow.add_child(vadd)
 
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 8)
+	v.add_child(btn_row)
 	cli_toggle = Button.new()
 	cli_toggle.text = "Open console  ▤"
+	cli_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cli_toggle.pressed.connect(_toggle_cli)
-	v.add_child(cli_toggle)
+	btn_row.add_child(cli_toggle)
+	var uninstall := Button.new()
+	uninstall.text = "Uninstall (50% refund)"
+	uninstall.pressed.connect(func() -> void:
+		var dev := cur_dev
+		close_dev()
+		Game.uninstall_device(dev)
+		if cur_rack:
+			rack_overlay.visible = true)
+	btn_row.add_child(uninstall)
 
 	cli_box = VBoxContainer.new()
 	cli_box.visible = false
@@ -348,8 +387,8 @@ func _refresh_dev_header() -> void:
 func _rename_dev(new_name: String) -> void:
 	if Game.rename_device(cur_dev, new_name):
 		_refresh_dev_header()
-		if cli_box.visible:
-			cli_prompt.text = cur_dev.name + "> "
+		if cli_box.visible and cli_session:
+			cli_prompt.text = cli_session.prompt() + " "
 	else:
 		name_hint.text = "  invalid or taken"
 		name_edit.text = cur_dev.name
@@ -363,7 +402,7 @@ func _refresh_ports() -> void:
 		var connected := Game.link_at(i) != null
 		var b := Button.new()
 		b.custom_minimum_size = Vector2(64, 54)
-		b.text = i.name
+		b.text = i.name.replace("Ethernet", "Et")
 		b.add_theme_font_override("font", mono)
 		b.add_theme_font_size_override("font_size", 12)
 		if not i.enabled:
@@ -462,12 +501,14 @@ func _build_if_overlay() -> void:
 	if_trunk_note = _label("   carries all VLANs (tagged)", 13, MUTED)
 	row2.add_child(if_trunk_note)
 
-	v.add_child(HSeparator.new())
-	v.add_child(_label("IP ADDRESSES", 12, MUTED))
+	if_ip_section = VBoxContainer.new()
+	v.add_child(if_ip_section)
+	if_ip_section.add_child(HSeparator.new())
+	if_ip_section.add_child(_label("IP ADDRESSES", 12, MUTED))
 	if_ip_box = VBoxContainer.new()
-	v.add_child(if_ip_box)
+	if_ip_section.add_child(if_ip_box)
 	var ip_row := HBoxContainer.new()
-	v.add_child(ip_row)
+	if_ip_section.add_child(ip_row)
 	if_ip_in = _mono_edit(200)
 	if_ip_in.placeholder_text = "10.0.0.5/24"
 	if_ip_in.text_submitted.connect(_add_ip)
@@ -506,6 +547,7 @@ func _refresh_iface() -> void:
 	if_enabled.set_pressed_no_signal(cur_if.enabled)
 	if_mtu.text = str(cur_if.mtu)
 	var is_switch := cur_if.dev.type == "switch"
+	if_ip_section.visible = not is_switch  # SVIs on switches: not yet
 	if_mode.get_parent().visible = is_switch
 	if_mode.select(0 if cur_if.mode == "access" else 1)
 	if_vlan_row.visible = is_switch and cur_if.mode == "access"
@@ -578,19 +620,20 @@ func _toggle_cli() -> void:
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
 		cli_toggle.text = "Close console  ▤"
-		cli_prompt.text = cur_dev.name + "> "
-		if cli_out.text == "":
-			cli_out.text = "%s serial console — type 'help'\n" % cur_dev.name
+		cli_session = CLI.new_session(cur_dev)
+		cli_prompt.text = cli_session.prompt() + " "
+		cli_out.text = cli_session.banner()
 		cli_in.call_deferred("grab_focus")
 	else:
 		cli_toggle.text = "Open console  ▤"
 		cli_out.text = ""
+		cli_session = null
 
 func _cli_key(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_TAB:
 		cli_in.accept_event()
 		var text := cli_in.text
-		var cands := CLI.complete(cur_dev, text)
+		var cands := cli_session.complete(text)
 		if cands.is_empty():
 			return
 		var start := text.rfind(" ") + 1
@@ -610,9 +653,9 @@ func _cli_key(e: InputEvent) -> void:
 func _cli_submit(cmd: String) -> void:
 	cli_in.clear()
 	cli_in.call_deferred("grab_focus")
-	cli_out.append_text("%s> %s\n" % [cur_dev.name, cmd])
-	cli_out.append_text(CLI.exec(cur_dev, cmd))
-	cli_prompt.text = cur_dev.name + "> "  # hostname may have changed
+	cli_out.append_text("%s %s\n" % [cli_session.prompt(), cmd])
+	cli_out.append_text(cli_session.exec(cmd))
+	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:

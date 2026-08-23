@@ -40,7 +40,11 @@ func _draw() -> void:
 		var hi := lerp(e, e + up, frac)
 		var dev: Net.NDevice = rack.slots[i]
 		if dev:
-			var col := Color(0.2, 0.7, 0.75) if dev.type == "switch" else Color(0.45, 0.55, 0.8)
+			var col := Color(0.45, 0.55, 0.8)
+			if dev.type == "switch":
+				col = Color(0.2, 0.7, 0.75)
+			elif dev.type == "router":
+				col = Color(0.85, 0.6, 0.3)
 			var lo2 := lerp(s, s + up, frac + 0.07)
 			var hi2 := lerp(e, e + up, frac + 0.07)
 			draw_colored_polygon(PackedVector2Array([

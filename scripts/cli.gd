@@ -1,191 +1,538 @@
 class_name CLI
-## Device CLI. Mutates the same Game state the web UI shows, so both stay
-## in sync for free. Add commands by extending the match tables below.
+## Session-based device CLIs. Switches and routers speak Arista/Cisco-style
+## EOS (modes, abbreviations, show running-config); servers speak Linux.
+## Everything mutates the same Game state the web UI renders.
 
-static func exec(dev: Net.NDevice, line: String) -> String:
-	var args := line.strip_edges().split(" ", false)
-	if args.is_empty():
+static func new_session(dev: Net.NDevice) -> Session:
+	return EOS.new(dev) if dev.type in ["switch", "router"] else Linux.new(dev)
+
+static func fmt_ping(dev: Net.NDevice, target: String) -> String:
+	var r := Sim.ping(dev, target)
+	var out := "PING %s\n" % target
+	if r["ok"]:
+		for seq in [1, 2, 3]:
+			out += "64 bytes from %s: icmp_seq=%d ttl=64 time=0.0%d ms\n" % [r["from"], seq, seq + 3]
+		return out + "3 packets transmitted, 3 received, 0% packet loss\n"
+	if r["detail"] == "ttl-exceeded":
+		return out + "From %s: icmp_seq=1 Time to live exceeded\n" % r["from"]
+	if r["detail"] == "timeout":
+		return out + "3 packets transmitted, 0 received, 100% packet loss\n"
+	return out + "ping: %s\n" % r["detail"]
+
+static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
+	var out := "traceroute to %s, 16 hops max\n" % target
+	var n := 1
+	for hop in Sim.traceroute(dev, target):
+		out += "%2d  %s\n" % [n, hop]
+		n += 1
+	return out
+
+class Session:
+	var dev: Net.NDevice
+	func _init(d: Net.NDevice) -> void:
+		dev = d
+	func banner() -> String:
 		return ""
-	match args[0]:
-		"help":
-			return _help(dev)
-		"show":
-			return _show(dev, args)
-		"hostname":
-			if args.size() != 2:
-				return "usage: hostname <name>\n"
-			return "" if Game.rename_device(dev, args[1]) else "% invalid or duplicate name\n"
-		"vlan":
-			return _vlan(dev, args)
-		"set":
-			return _cmd_set(dev, args)
-	return "% Unknown command — try 'help'\n"
+	func prompt() -> String:
+		return "> "
+	func exec(_line: String) -> String:
+		return ""
+	func complete(_line: String) -> Array:
+		return []
 
-static func complete(dev: Net.NDevice, line: String) -> Array:
-	## Candidates for the token being typed at the end of `line`.
-	var ends_space := line.ends_with(" ")
-	var toks := Array(line.strip_edges().split(" ", false))
-	var cur: String = "" if ends_space or toks.is_empty() else toks.pop_back()
-	var out: Array = []
-	for c in _candidates(dev, toks):
-		if c.begins_with(cur):
-			out.append(c)
-	out.sort()
-	return out
+# ============================================================== EOS ==
 
-static func _candidates(dev: Net.NDevice, ctx: Array) -> Array:
-	var is_sw := dev.type == "switch"
-	var ifnames: Array = []
-	for i: Net.Iface in dev.ifaces:
-		ifnames.append(i.name)
-	match ctx.size():
-		0:
-			var cmds := ["help", "show", "hostname", "set"]
-			if is_sw:
-				cmds.append("vlan")
-			return cmds
-		1:
-			match ctx[0]:
-				"show":
-					return ["interfaces", "vlans", "version"] if is_sw else ["interfaces", "version"]
-				"set":
-					return ifnames
-				"vlan":
-					return ["add", "del"] if is_sw else []
-		2:
-			if ctx[0] == "set" and ctx[1] in ifnames:
-				var props := ["ip", "enable", "disable", "mtu"]
-				if is_sw:
-					props += ["mode", "vlan"]
-				return props
-			if ctx[0] == "vlan" and ctx[1] == "del":
-				return _vids(dev)
-		3:
-			if ctx[0] == "set":
-				match ctx[2]:
-					"mode":
-						return ["access", "trunk"]
-					"vlan":
-						return _vids(dev)
-					"ip":
-						return ["add", "del"]
-		4:
-			if ctx[0] == "set" and ctx[2] == "ip" and ctx[3] == "del":
-				for i: Net.Iface in dev.ifaces:
-					if i.name == ctx[1]:
-						return i.ips.duplicate()
-	return []
+class EOS extends Session:
+	var mode := "exec"  # exec | priv | config | if | vlan
+	var ctx_if: Net.Iface
+	var ctx_vlan := 0
+	var _cmds: Array = []
 
-static func _vids(dev: Net.NDevice) -> Array:
-	var out: Array = []
-	for vid in dev.vlans:
-		out.append(str(vid))
-	return out
+	func _init(d: Net.NDevice) -> void:
+		super(d)
+		_build_cmds()
 
-static func _help(dev: Net.NDevice) -> String:
-	var out := "  show interfaces | show version | hostname <name>
-  set <iface> ip add <a.b.c.d/len>   set <iface> ip del <cidr>
-  set <iface> enable|disable         set <iface> mtu <bytes>
-"
-	if dev.type == "switch":
-		out += "  show vlans
-  vlan add <vid> [name]              vlan del <vid>
-  set <iface> mode access|trunk      set <iface> vlan <vid>
-"
-	return out
+	func banner() -> String:
+		return "%s — PacketOS EOS. Type '?' area: try 'enable', then 'configure terminal'.\n" % dev.name
 
-static func _show(dev: Net.NDevice, args: PackedStringArray) -> String:
-	var what := args[1] if args.size() > 1 else ""
-	match what:
-		"version":
-			return "%s — PacketOS 0.2 (%s, %d interfaces)\n" % [dev.name, dev.type, dev.ifaces.size()]
-		"interfaces", "int":
-			var out := "%-6s %-5s %-6s %-18s %-19s %s\n" % ["name", "state", "mode", "addresses", "mac", "peer"]
-			for i: Net.Iface in dev.ifaces:
-				var peer := Game.peer_label(i)
-				var state := "down"
-				if not i.enabled:
-					state = "admin"
-				elif peer != "":
-					state = "up"
-				var mode_s := ("vl%d" % i.untagged_vlan) if i.mode == "access" else "trunk"
-				var addrs := ",".join(i.ips) if not i.ips.is_empty() else "-"
-				out += "%-6s %-5s %-6s %-18s %-19s %s\n" % [i.name, state, mode_s, addrs, i.mac, peer if peer else "-"]
-			return out
-		"vlans":
-			if dev.type != "switch":
-				return "% no VLAN database on this device\n"
-			var out := "%-6s %-14s %s\n" % ["vid", "name", "access ports"]
-			var vids := dev.vlans.keys()
-			vids.sort()
-			for vid in vids:
-				var ports: Array = []
-				for i: Net.Iface in dev.ifaces:
-					if i.mode == "access" and i.untagged_vlan == vid:
-						ports.append(i.name)
-				out += "%-6d %-14s %s\n" % [vid, dev.vlans[vid], ", ".join(ports)]
-			return out
-	return "usage: show interfaces|vlans|version\n"
+	func prompt() -> String:
+		match mode:
+			"exec":
+				return dev.name + ">"
+			"priv":
+				return dev.name + "#"
+			"config":
+				return dev.name + "(config)#"
+			"if":
+				return "%s(config-if-%s)#" % [dev.name, _short(ctx_if.name)]
+			"vlan":
+				return "%s(config-vlan-%d)#" % [dev.name, ctx_vlan]
+		return dev.name + ">"
 
-static func _vlan(dev: Net.NDevice, args: PackedStringArray) -> String:
-	if dev.type != "switch":
-		return "% no VLAN database on this device\n"
-	if args.size() >= 3 and args[1] == "add" and args[2].is_valid_int():
-		var name := args[3] if args.size() > 3 else ""
-		if Game.add_vlan(dev, int(args[2]), name):
+	static func _short(ifname: String) -> String:
+		return ifname.replace("Ethernet", "Et")
+
+	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
+	func _build_cmds() -> void:
+		var EP := ["exec", "priv", "config", "if", "vlan"]  # show/ping work everywhere via 'do'-free shortcut
+		_cmds = [
+			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
+			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
+			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping, "dyn": null},
+			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
+			{"m": EP, "p": ["show", "version"], "h": _show_version},
+			{"m": EP, "p": ["show", "interfaces"], "h": _show_interfaces},
+			{"m": EP, "p": ["show", "vlan"], "h": _show_vlan},
+			{"m": EP, "p": ["show", "mac", "address-table"], "h": _show_mac},
+			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
+			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
+			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
+			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
+			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
+			{"m": ["config"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
+			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
+			{"m": ["config"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
+			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
+			{"m": ["vlan"], "p": ["name"], "h": func(r): return _vlan_name(r)},
+			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
+			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
+			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
+			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
+			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
+			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): ctx_if.enabled = true; Game.topology_changed.emit(); return ""},
+			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
+			{"m": ["config", "if", "vlan"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": EP, "p": ["exit"], "h": _exit},
+			{"m": EP, "p": ["help"], "h": _help},
+		]
+
+	func exec(line: String) -> String:
+		var toks := Array(line.strip_edges().split(" ", false))
+		if toks.is_empty():
 			return ""
-		return "% invalid vid (1-4094) or vlan exists\n"
-	if args.size() == 3 and args[1] == "del" and args[2].is_valid_int():
-		if Game.remove_vlan(dev, int(args[2])):
-			return ""
-		return "% cannot remove (unknown vid, or vlan 1)\n"
-	return "usage: vlan add <vid> [name] | vlan del <vid>\n"
+		# resolve with per-token prefix matching (Cisco-style abbreviation)
+		var full: Array = []
+		for c in _cmds:
+			if mode not in c["m"] or toks.size() < c["p"].size():
+				continue
+			var okc := true
+			for k in c["p"].size():
+				if not String(c["p"][k]).begins_with(toks[k]):
+					okc = false
+					break
+			if okc:
+				full.append(c)
+		if full.is_empty():
+			for c in _cmds:
+				if mode not in c["m"]:
+					continue
+				var okc := true
+				for k in mini(toks.size(), c["p"].size()):
+					if not String(c["p"][k]).begins_with(toks[k]):
+						okc = false
+						break
+				if okc:
+					return "% Incomplete command\n"
+			return "% Invalid input\n"
+		var best_len := 0
+		for c in full:
+			best_len = maxi(best_len, c["p"].size())
+		var winners := full.filter(func(c): return c["p"].size() == best_len)
+		if winners.size() > 1:
+			return "% Ambiguous command\n"
+		var cmd: Dictionary = winners[0]
+		return cmd["h"].call(toks.slice(cmd["p"].size()))
 
-static func _cmd_set(dev: Net.NDevice, args: PackedStringArray) -> String:
-	if args.size() < 3:
-		return "usage: set <iface> <property> ... — see 'help'\n"
-	var iface: Net.Iface = null
-	for i: Net.Iface in dev.ifaces:
-		if i.name == args[1]:
-			iface = i
-	if iface == null:
-		return "%% no such interface '%s'\n" % args[1]
-	match args[2]:
-		"enable", "disable":
-			iface.enabled = args[2] == "enable"
+	func complete(line: String) -> Array:
+		var ends_space := line.ends_with(" ")
+		var toks := Array(line.strip_edges().split(" ", false))
+		var cur: String = "" if ends_space or toks.is_empty() else toks.pop_back()
+		var cands := {}
+		for c in _cmds:
+			if mode not in c["m"]:
+				continue
+			var okc := true
+			for k in mini(toks.size(), c["p"].size()):
+				if not String(c["p"][k]).begins_with(toks[k]):
+					okc = false
+					break
+			if not okc:
+				continue
+			if toks.size() < c["p"].size():
+				cands[c["p"][toks.size()]] = true
+			elif c.get("dyn") != null and toks.size() == c["p"].size():
+				for opt in c["dyn"].call():
+					cands[str(opt)] = true
+		var out: Array = []
+		for k in cands:
+			if String(k).begins_with(cur):
+				out.append(k)
+		out.sort()
+		return out
+
+	# ---- handlers ----
+
+	func _exit(_r: Array) -> String:
+		match mode:
+			"if", "vlan":
+				mode = "config"
+			"config":
+				mode = "priv"
+			"priv":
+				mode = "exec"
+			"exec":
+				return "logout (session stays open)\n"
+		return ""
+
+	func _help(_r: Array) -> String:
+		var seen := {}
+		for c in _cmds:
+			if mode in c["m"]:
+				seen[" ".join(PackedStringArray(c["p"]))] = true
+		var keys := seen.keys()
+		keys.sort()
+		return "  " + "\n  ".join(PackedStringArray(keys)) + "\n"
+
+	func _hostname(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: hostname <name>\n"
+		return "" if Game.rename_device(dev, r[0]) else "% invalid or duplicate name\n"
+
+	func _ping(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: ping <ip>\n"
+		return CLI.fmt_ping(dev, r[0])
+
+	func _traceroute(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: traceroute <ip>\n"
+		return CLI.fmt_traceroute(dev, r[0])
+
+	func _vlan_ids() -> Array:
+		var out: Array = []
+		for vid in dev.vlans:
+			out.append(str(vid))
+		return out
+
+	func _if_names() -> Array:
+		var out: Array = []
+		for i: Net.Iface in dev.ifaces:
+			out.append(i.name)
+		return out
+
+	func _cfg_vlan(r: Array) -> String:
+		if dev.type != "switch":
+			return "% VLANs are configured on switches\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "usage: vlan <1-4094>\n"
+		var vid := int(r[0])
+		if vid < 1 or vid > 4094:
+			return "% invalid VLAN id\n"
+		if not dev.vlans.has(vid):
+			Game.add_vlan(dev, vid, "")
+		ctx_vlan = vid
+		mode = "vlan"
+		return ""
+
+	func _cfg_no_vlan(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "usage: no vlan <vid>\n"
+		return "" if Game.remove_vlan(dev, int(r[0])) else "% cannot remove (unknown vid, or vlan 1)\n"
+
+	func _vlan_name(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: name <word>\n"
+		dev.vlans[ctx_vlan] = r[0]
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_interface(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: interface <name>\n"
+		var want := String(r[0]).to_lower()
+		for i: Net.Iface in dev.ifaces:
+			var full := i.name.to_lower()
+			var digits := i.name.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+			var letters := full.trim_suffix(digits.to_lower())
+			var w_digits := want.lstrip("abcdefghijklmnopqrstuvwxyz")
+			var w_letters := want.trim_suffix(w_digits)
+			if w_digits == digits and w_letters != "" and letters.begins_with(w_letters):
+				ctx_if = i
+				mode = "if"
+				return ""
+		return "% no such interface\n"
+
+	func _sw_mode(r: Array) -> String:
+		if dev.type != "switch":
+			return "% switchport commands need a switch\n"
+		for m in ["access", "trunk"]:
+			if r.size() == 1 and m.begins_with(r[0]):
+				ctx_if.mode = m
+				Game.topology_changed.emit()
+				return ""
+		return "usage: switchport mode access|trunk\n"
+
+	func _sw_access_vlan(r: Array) -> String:
+		if dev.type != "switch":
+			return "% switchport commands need a switch\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "usage: switchport access vlan <vid>\n"
+		var vid := int(r[0])
+		if not dev.vlans.has(vid):
+			if not Game.add_vlan(dev, vid, ""):  # IOS auto-creates the VLAN
+				return "% invalid VLAN id\n"
+		Game.set_access_vlan(ctx_if, vid)
+		return ""
+
+	func _if_ip(r: Array) -> String:
+		if dev.type == "switch":
+			return "% SVIs are not supported yet — use a router for L3\n"
+		if r.size() != 1:
+			return "usage: ip address <a.b.c.d/len>\n"
+		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
+
+	func _if_no_ip(r: Array) -> String:
+		if r.size() == 1:
+			Game.remove_ip(ctx_if, r[0])
+		else:
+			for cidr in ctx_if.ips.duplicate():
+				Game.remove_ip(ctx_if, cidr)
+		return ""
+
+	func _if_mtu(r: Array) -> String:
+		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 576 and int(r[0]) <= 9216:
+			ctx_if.mtu = int(r[0])
 			Game.topology_changed.emit()
 			return ""
-		"mtu":
-			if args.size() == 4 and args[3].is_valid_int() \
-					and int(args[3]) >= 576 and int(args[3]) <= 9216:
-				iface.mtu = int(args[3])
+		return "usage: mtu <576-9216>\n"
+
+	func _cfg_ip_route(r: Array) -> String:
+		if not dev.ip_forwarding:
+			return "% static routing needs a router\n"
+		if r.size() == 2 and Net.valid_cidr(r[0]):
+			var parts := String(r[0]).split("/")
+			if Game.add_static_route(dev, parts[0], int(parts[1]), r[1]):
+				return ""
+		return "usage: ip route <prefix/len> <next-hop>\n"
+
+	func _cfg_no_ip_route(r: Array) -> String:
+		if r.size() >= 1 and Net.valid_cidr(r[0]):
+			var parts := String(r[0]).split("/")
+			Game.remove_static_route(dev, parts[0], int(parts[1]))
+			return ""
+		return "usage: no ip route <prefix/len>\n"
+
+	# ---- show ----
+
+	func _show_version(_r: Array) -> String:
+		return "PacketOS EOS 0.3\nHardware: %s (%s), %d interfaces\n" % [dev.name, dev.type, dev.ifaces.size()]
+
+	func _show_interfaces(_r: Array) -> String:
+		var out := "%-11s %-6s %-8s %-18s %-18s %s\n" % ["Interface", "Status", "Mode", "Addresses", "MAC", "Peer"]
+		for i: Net.Iface in dev.ifaces:
+			var peer := Game.peer_label(i)
+			var status := "disabled" if not i.enabled else ("up" if peer != "" else "notconnect")
+			var mode_s := i.mode
+			if i.mode == "access":
+				mode_s = "access(%d)" % i.untagged_vlan
+			var addrs := ",".join(i.ips) if not i.ips.is_empty() else "-"
+			out += "%-11s %-6s %-8s %-18s %-18s %s\n" % [EOS._short(i.name), status, mode_s, addrs, i.mac, peer if peer else "-"]
+		return out
+
+	func _show_vlan(_r: Array) -> String:
+		if dev.type != "switch":
+			return "% no VLAN database on this device\n"
+		var out := "%-6s %-16s %s\n" % ["VLAN", "Name", "Ports"]
+		var vids := dev.vlans.keys()
+		vids.sort()
+		for vid in vids:
+			var ports: Array = []
+			for i: Net.Iface in dev.ifaces:
+				if i.mode == "trunk" or (i.mode == "access" and i.untagged_vlan == vid):
+					ports.append(EOS._short(i.name))
+			out += "%-6d %-16s %s\n" % [vid, dev.vlans[vid], ", ".join(PackedStringArray(ports))]
+		return out
+
+	func _show_mac(_r: Array) -> String:
+		var out := "%-6s %-18s %s\n" % ["Vlan", "Mac Address", "Port"]
+		var vlans := dev.mac_table.keys()
+		vlans.sort()
+		for vlan in vlans:
+			for mac in dev.mac_table[vlan]:
+				out += "%-6d %-18s %s\n" % [vlan, mac, EOS._short(dev.mac_table[vlan][mac].name)]
+		return out if vlans else "  (empty — send some traffic first)\n"
+
+	func _show_arp(_r: Array) -> String:
+		if dev.arp.is_empty():
+			return "  (empty)\n"
+		var out := "%-16s %s\n" % ["Address", "Hardware Addr"]
+		for ip in dev.arp:
+			out += "%-16s %s\n" % [ip, dev.arp[ip]]
+		return out
+
+	func _show_ip_route(_r: Array) -> String:
+		var out := ""
+		for i: Net.Iface in dev.ifaces:
+			for cidr: String in i.ips:
+				var parts := cidr.split("/")
+				out += "C  %s/%s is directly connected, %s\n" % [parts[0], parts[1], EOS._short(i.name)]
+		for r in dev.static_routes:
+			out += "S  %s/%d [1/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
+		return out if out else "  (no routes — configure ip addresses)\n"
+
+	func _show_ip_brief(_r: Array) -> String:
+		var out := "%-11s %-18s %-8s\n" % ["Interface", "IP Address", "Status"]
+		for i: Net.Iface in dev.ifaces:
+			var ip: String = i.ips[0] if not i.ips.is_empty() else "unassigned"
+			out += "%-11s %-18s %-8s\n" % [EOS._short(i.name), ip, "up" if i.enabled else "admin-down"]
+		return out
+
+	func _show_run(_r: Array) -> String:
+		var out := "hostname %s\n!\n" % dev.name
+		var vids := dev.vlans.keys()
+		vids.sort()
+		for vid in vids:
+			if vid == 1:
+				continue
+			out += "vlan %d\n   name %s\n!\n" % [vid, dev.vlans[vid]]
+		for r in dev.static_routes:
+			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
+		for i: Net.Iface in dev.ifaces:
+			out += "interface %s\n" % i.name
+			if i.mode == "trunk":
+				out += "   switchport mode trunk\n"
+			elif i.mode == "access" and i.untagged_vlan != 1:
+				out += "   switchport access vlan %d\n" % i.untagged_vlan
+			for cidr in i.ips:
+				out += "   ip address %s\n" % cidr
+			if i.mtu != 1500:
+				out += "   mtu %d\n" % i.mtu
+			if not i.enabled:
+				out += "   shutdown\n"
+			out += "!\n"
+		return out
+
+# ============================================================ Linux ==
+
+class Linux extends Session:
+	func banner() -> String:
+		return "Welcome to PacketLinux. Try 'ip addr', 'ip route', 'ping <ip>', 'help'.\n"
+
+	func prompt() -> String:
+		return "root@%s:~#" % dev.name
+
+	func exec(line: String) -> String:
+		var t := Array(line.strip_edges().split(" ", false))
+		if t.is_empty():
+			return ""
+		match t[0]:
+			"help":
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip>   traceroute <ip>   hostname <name>\n"
+			"hostname":
+				if t.size() == 1:
+					return dev.name + "\n"
+				return "" if Game.rename_device(dev, t[1]) else "hostname: invalid or duplicate name\n"
+			"ping":
+				return CLI.fmt_ping(dev, t[1]) if t.size() == 2 else "usage: ping <ip>\n"
+			"traceroute":
+				return CLI.fmt_traceroute(dev, t[1]) if t.size() == 2 else "usage: traceroute <ip>\n"
+			"ip":
+				return _ip(t.slice(1))
+		return "%s: command not found\n" % t[0]
+
+	func _iface(name: String) -> Net.Iface:
+		for i: Net.Iface in dev.ifaces:
+			if i.name == name:
+				return i
+		return null
+
+	func _ip(t: Array) -> String:
+		if t.is_empty():
+			return "usage: ip addr|link|route ...\n"
+		if String(t[0]).begins_with("a"):  # ip addr
+			if t.size() == 1:
+				var out := ""
+				for i: Net.Iface in dev.ifaces:
+					out += "%s: <%s> mtu %d\n    link/ether %s\n" % [i.name,
+						"UP" if i.enabled else "DOWN", i.mtu, i.mac]
+					for cidr in i.ips:
+						out += "    inet %s\n" % cidr
+				return out
+			if t.size() == 5 and t[1] in ["add", "del"] and t[3] == "dev":
+				var ifc := _iface(t[4])
+				if ifc == null:
+					return "Cannot find device \"%s\"\n" % t[4]
+				if t[1] == "add":
+					return "" if Game.add_ip(ifc, t[2]) else "Error: invalid or duplicate address\n"
+				if t[2] in ifc.ips:
+					Game.remove_ip(ifc, t[2])
+					return ""
+				return "Error: address not found\n"
+			return "usage: ip addr [add|del <cidr> dev <if>]\n"
+		if String(t[0]).begins_with("l"):  # ip link set IF up|down
+			if t.size() == 4 and t[1] == "set" and t[3] in ["up", "down"]:
+				var ifc := _iface(t[2])
+				if ifc == null:
+					return "Cannot find device \"%s\"\n" % t[2]
+				ifc.enabled = t[3] == "up"
 				Game.topology_changed.emit()
 				return ""
-			return "usage: set <iface> mtu <576-9216>\n"
-		"mode":
-			if dev.type != "switch":
-				return "% switchport mode is for switches\n"
-			if args.size() == 4 and args[3] in ["access", "trunk"]:
-				iface.mode = args[3]
-				Game.topology_changed.emit()
-				return ""
-			return "usage: set <iface> mode access|trunk\n"
-		"vlan":
-			if dev.type != "switch":
-				return "% switchport vlan is for switches\n"
-			if args.size() == 4 and args[3].is_valid_int() \
-					and Game.set_access_vlan(iface, int(args[3])):
-				return ""
-			return "% unknown vid — create it first: vlan add <vid>\n"
-		"ip":
-			if args.size() == 5 and args[3] == "add":
-				if Game.add_ip(iface, args[4]):
+			return "usage: ip link set <if> up|down\n"
+		if String(t[0]).begins_with("r"):  # ip route
+			if t.size() == 1:
+				var out := ""
+				for r in dev.static_routes:
+					if r["plen"] == 0:
+						out += "default via %s\n" % r["via"]
+					else:
+						out += "%s/%d via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
+				for i: Net.Iface in dev.ifaces:
+					for cidr: String in i.ips:
+						out += "%s dev %s scope link\n" % [cidr, i.name]
+				return out if out else "(no routes)\n"
+			if t.size() == 4 and t[1] == "add" and t[3] != "":
+				if t[2] == "default" or Net.valid_cidr(t[2]):
+					return "usage: ip route add default|<cidr> via <gw>\n"
+			if t.size() == 5 and t[1] == "add" and t[3] == "via":
+				var pfx := "0.0.0.0/0" if t[2] == "default" else String(t[2])
+				if not Net.valid_cidr(pfx):
+					return "Error: invalid prefix\n"
+				var parts := pfx.split("/")
+				return "" if Game.add_static_route(dev, parts[0], int(parts[1]), t[4]) \
+					else "Error: invalid gateway\n"
+			if t.size() == 3 and t[1] == "del":
+				var pfx := "0.0.0.0/0" if t[2] == "default" else String(t[2])
+				if Net.valid_cidr(pfx):
+					var parts := pfx.split("/")
+					Game.remove_static_route(dev, parts[0], int(parts[1]))
 					return ""
-				return "% invalid CIDR (a.b.c.d/len) or duplicate\n"
-			if args.size() == 5 and args[3] == "del":
-				if args[4] in iface.ips:
-					Game.remove_ip(iface, args[4])
-					return ""
-				return "% address not on interface\n"
-			return "usage: set <iface> ip add|del <cidr>\n"
-	return "%% unknown property '%s' — see 'help'\n" % args[2]
+				return "Error: invalid prefix\n"
+			return "usage: ip route [add default|<cidr> via <gw> | del default|<cidr>]\n"
+		return "usage: ip addr|link|route ...\n"
+
+	func complete(line: String) -> Array:
+		var ends_space := line.ends_with(" ")
+		var toks := Array(line.strip_edges().split(" ", false))
+		var cur: String = "" if ends_space or toks.is_empty() else toks.pop_back()
+		var opts: Array = []
+		match toks.size():
+			0:
+				opts = ["ip", "ping", "traceroute", "hostname", "help"]
+			1:
+				if toks[0] == "ip":
+					opts = ["addr", "link", "route"]
+			2:
+				if toks[0] == "ip" and String(toks[1]).begins_with("a"):
+					opts = ["add", "del"]
+				elif toks[0] == "ip" and String(toks[1]).begins_with("r"):
+					opts = ["add", "del"]
+				elif toks[0] == "ip" and String(toks[1]).begins_with("l"):
+					opts = ["set"]
+		var out: Array = []
+		for o in opts:
+			if String(o).begins_with(cur):
+				out.append(o)
+		out.sort()
+		return out
