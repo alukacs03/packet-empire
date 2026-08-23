@@ -28,6 +28,8 @@ func _notification(what: int) -> void:
 		Game.save_game()
 
 func _process(_dt: float) -> void:
+	if ui == null:
+		return
 	if ui.is_open():
 		if hover:
 			hover.highlighted = false

@@ -115,5 +115,14 @@ static func run() -> int:
 			a_l = d
 	check(a_l != null and Sim.ping(a_l, "10.1.0.2")["ok"], "save: reloaded topology still routes end-to-end")
 
+	# --- contracts ---
+	var money0 := Game.money
+	var cs := Contracts.all()
+	check(Game.try_complete_contract(cs[0]), "contracts: rack-and-stack completes against live state")
+	check(Game.try_complete_contract(cs[1]), "contracts: first-ping completes (sim-verified)")
+	check(not Game.try_complete_contract(cs[2]), "contracts: vlan-isolation contract not yet satisfiable")
+	check(not Game.try_complete_contract(cs[0]), "contracts: no double collection")
+	check(Game.money == money0 + 900, "contracts: rewards paid once")
+
 	print("---- %d failures" % fails)
 	return fails

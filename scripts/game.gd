@@ -17,7 +17,19 @@ const SAVE_PATH := "user://save.json"
 var racks: Array = []
 var links: Array = []
 var money := 2000
+var contracts_done: Array = []
 var _counter := {"switch": 0, "server": 0, "router": 0, "rack": 0, "mac": 0}
+
+func try_complete_contract(c: Dictionary) -> bool:
+	if c["id"] in contracts_done:
+		return false
+	for r in c["reqs"]:
+		if not r["t"].call():
+			return false
+	contracts_done.append(c["id"])
+	money += c["reward"]
+	money_changed.emit()
+	return true
 
 func _ready() -> void:
 	topology_changed.connect(Sim.flush_learned_state)
@@ -213,6 +225,7 @@ func save_game() -> void:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"money": money, "counters": _counter,
+		"contracts_done": contracts_done,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
 
 func _ser_device(d: Net.NDevice) -> Dictionary:
@@ -232,6 +245,7 @@ func load_game() -> bool:
 	racks = []
 	links = []
 	money = int(data["money"])
+	contracts_done = data.get("contracts_done", [])
 	for k in data["counters"]:
 		_counter[k] = int(data["counters"][k])
 	var by_name := {}

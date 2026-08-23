@@ -43,6 +43,8 @@ var if_ip_hint: Label
 var if_cable_lbl: Label
 var if_cable_btn: Button
 
+var contracts_overlay: Control
+var contracts_box: VBoxContainer
 var vlan_section: VBoxContainer
 var vlan_box: VBoxContainer
 var vlan_vid_in: LineEdit
@@ -64,6 +66,7 @@ func _ready() -> void:
 	_build_rack_overlay()
 	_build_dev_overlay()
 	_build_if_overlay()
+	_build_contracts_overlay()
 	Game.topology_changed.connect(_refresh_open)
 	Game.money_changed.connect(_refresh_money)
 	_refresh_money()
@@ -80,7 +83,8 @@ func _process(_dt: float) -> void:
 			cli_in.edit()
 
 func is_open() -> bool:
-	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible
+	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
+		or contracts_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -188,6 +192,10 @@ func _build_toolbar() -> void:
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
+	var cb := Button.new()
+	cb.text = "Contracts"
+	cb.pressed.connect(open_contracts)
+	h.add_child(cb)
 	var save_btn := Button.new()
 	save_btn.text = "Save"
 	save_btn.pressed.connect(func() -> void: Game.save_game())
@@ -606,6 +614,66 @@ func _cable_action() -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
 
+# ---------- contracts ----------
+
+func _build_contracts_overlay() -> void:
+	contracts_overlay = _overlay()
+	var v := _card(contracts_overlay, 640)
+	var t := _header(v, close_contracts)
+	t.text = "Contracts"
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(600, 480)
+	v.add_child(scroll)
+	contracts_box = VBoxContainer.new()
+	contracts_box.add_theme_constant_override("separation", 10)
+	contracts_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(contracts_box)
+
+func open_contracts() -> void:
+	_refresh_contracts()
+	contracts_overlay.visible = true
+
+func close_contracts() -> void:
+	contracts_overlay.visible = false
+
+func _refresh_contracts() -> void:
+	for c in contracts_box.get_children():
+		c.queue_free()
+	var found_active := false
+	for c in Contracts.all():
+		var done: bool = c["id"] in Game.contracts_done
+		if done:
+			contracts_box.add_child(_label("✓  %s — %s  (+$%d)" % [c["title"], c["customer"], c["reward"]],
+				14, Color(0.45, 0.8, 0.5)))
+			continue
+		if found_active:
+			contracts_box.add_child(_label("🔒  (more contracts after the current one)", 13, Color(0.45, 0.5, 0.6)))
+			break
+		found_active = true
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sb(Color(0.09, 0.12, 0.16), ACCENT * Color(1, 1, 1, 0.5), 8, 14))
+		contracts_box.add_child(card)
+		var cv := VBoxContainer.new()
+		cv.add_theme_constant_override("separation", 8)
+		card.add_child(cv)
+		cv.add_child(_label("%s — %s      reward $%d" % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
+		var brief := _label(c["brief"], 14, Color(0.75, 0.8, 0.88))
+		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brief.custom_minimum_size = Vector2(560, 0)
+		cv.add_child(brief)
+		for r in c["reqs"]:
+			var ok: bool = r["t"].call()
+			cv.add_child(_label(("●  " if ok else "○  ") + r["d"], 14,
+				Color(0.5, 0.95, 0.6) if ok else Color(0.65, 0.6, 0.55)))
+		var btn := Button.new()
+		btn.text = "Check requirements & collect"
+		btn.pressed.connect(func() -> void:
+			Game.try_complete_contract(c)
+			_refresh_contracts())
+		cv.add_child(btn)
+	if not found_active:
+		contracts_box.add_child(_label("All contracts complete! More arrive with future updates —\nsee the GitHub roadmap.", 14, Color(0.7, 0.85, 0.75)))
+
 # ---------- refresh / CLI ----------
 
 func _refresh_open() -> void:
@@ -668,6 +736,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					rack_overlay.visible = true
+		elif contracts_overlay.visible:
+			close_contracts()
 		elif rack_overlay.visible:
 			close_rack()
 		else:
