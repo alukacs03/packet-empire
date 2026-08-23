@@ -18,6 +18,7 @@ class Iface:
 	var helper := ""  # DHCP relay target (ip helper-address)
 	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var qos := false  # when congested, serve traffic in service-level order
+	var vm := ""  # a virtual machine's NIC, hosted on this server
 	var dhcp_trusted := false  # a port allowed to carry DHCP server replies
 	var tunnel_src := ""  # tunnel interfaces ride the underlay between two endpoints
 	var tunnel_dst := ""

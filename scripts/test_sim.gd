@@ -1436,6 +1436,41 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- virtual machines and live migration ---
+	var vm_rack := Game.add_rack(Vector2i(22, 1))
+	var vm_sw := Game.new_device("sw-8")
+	var host_a := Game.new_device("srv-2")
+	var host_b := Game.new_device("srv-2")
+	var vm_peer := Game.new_device("srv-1")
+	vm_rack.slots[0] = vm_sw
+	vm_rack.slots[1] = host_a
+	vm_rack.slots[2] = host_b
+	vm_rack.slots[3] = vm_peer
+	Game.connect_ifaces(host_a.ifaces[0], vm_sw.ifaces[0])
+	Game.connect_ifaces(host_b.ifaces[0], vm_sw.ifaces[1])
+	Game.connect_ifaces(vm_peer.ifaces[0], vm_sw.ifaces[2])
+	Game.add_ip(vm_peer.ifaces[0], "10.160.0.9/24")
+	var ha := CLI.new_session(host_a)
+	check(ha.exec("vm create web01").contains("created"), "vm: a machine can be created on a host")
+	check(ha.exec("vm addr web01 10.160.0.20/24").is_empty(), "vm: it takes its own address")
+	check(Sim.ping(vm_peer, "10.160.0.20")["ok"], "vm: the machine answers on the network")
+	check(ha.exec("vm list").contains("web01"), "vm: machines are listed with their host")
+	# live migration to another host in the same segment: the machine keeps working
+	check(ha.exec("vm migrate web01 %s" % host_b.name).contains("now runs on"),
+		"vm: it migrates to another host")
+	check(Game.find_vm("web01").dev == host_b, "vm: it really moved")
+	check(Sim.ping(vm_peer, "10.160.0.20")["ok"],
+		"vm: with layer 2 stretched across both hosts, the address survives the move")
+	# now put the second host in a different VLAN: the same migration breaks it
+	Game.add_vlan(vm_sw, 88, "other")
+	vm_sw.ifaces[1].untagged_vlan = 88
+	Game.topology_changed.emit()
+	check(not Sim.ping(vm_peer, "10.160.0.20")["ok"],
+		"vm: move it outside its broadcast domain and the address stops working")
+	vm_sw.ifaces[1].untagged_vlan = 1
+	Game.topology_changed.emit()
+	check(Sim.ping(vm_peer, "10.160.0.20")["ok"], "vm: restoring the segment restores the machine")
+
 	# --- DHCP snooping and ARP inspection ---
 	var sn_rack := Game.add_rack(Vector2i(21, 1))
 	var sn_sw := Game.new_device("sw-8")

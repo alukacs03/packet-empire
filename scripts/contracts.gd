@@ -230,6 +230,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "keep_it_moving",
+			"title": "Keep it moving",
+			"customer": "Obsidian Cloud",
+			"reward": 3800,
+			"brief": "Obsidian runs virtual machines and expects to move them between hosts without their customers noticing. Put two dual-NIC servers on the same switch and the same VLAN, create a machine on one ('vm create obs01', 'vm addr obs01 10.160.5.20/24'), prove another host can reach it, then migrate it to the second server ('vm migrate obs01 <host>'). It must still answer on the same address afterwards, which only works while both hosts share a broadcast domain.",
+			"reqs": [
+				{"d": "A virtual machine at 10.160.5.20", "t": func() -> bool: return _vm_at("10.160.5.20") != null},
+				{"d": "It has been migrated between hosts", "t": func() -> bool: return _vm_migrated()},
+				{"d": "It still answers after the move", "t": func() -> bool: return _server_pings("10.160.5.20")},
+			],
+		},
+		{
 			"id": "always_on",
 			"title": "Always on",
 			"customer": "Fecske Media",
@@ -368,6 +380,22 @@ static func _l3_switch_svis() -> int:
 				n += 1
 		best = maxi(best, n)
 	return best
+
+static func _vm_at(ip: String) -> Net.Iface:
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.vm == "":
+				continue
+			for cidr: String in i.ips:
+				if Net.addr_eq(cidr.split("/")[0], ip):
+					return i
+	return null
+
+static func _vm_migrated() -> bool:
+	for ev in Game.events:
+		if "MIGRATION:" in ev:
+			return true
+	return false
 
 static func _lb_pool() -> int:
 	var best := 0

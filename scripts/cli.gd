@@ -1312,7 +1312,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1345,6 +1345,40 @@ class Linux extends Session:
 					"dns": t[6] if t.size() > 6 else "", "leases": {}}
 				Game.topology_changed.emit()
 				return "dhcpd: serving %s-%s/%s on %s\n" % [t[2], t[3], t[4], t[1]]
+			"vm":
+				# vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list
+				if t.size() >= 3 and t[1] == "create":
+					var nic := Game.create_vm(dev, t[2])
+					if nic == null:
+						return "vm: could not create '%s' (servers only, names are unique)\n" % t[2]
+					return "vm '%s' created with MAC %s\n" % [t[2], nic.mac]
+				if t.size() == 4 and t[1] == "addr":
+					var nic2 := Game.find_vm(t[2])
+					if nic2 == null or nic2.dev != dev:
+						return "vm: '%s' does not run here\n" % t[2]
+					if Game.add_ip(nic2, t[3]):
+						return ""
+					return "vm: invalid or duplicate address\n"
+				if t.size() == 4 and t[1] == "migrate":
+					var target: Net.NDevice = null
+					for d in Game.all_devices():
+						if d.name == t[3]:
+							target = d
+					if target == null:
+						return "vm: no host called '%s'\n" % t[3]
+					var err := Game.migrate_vm(t[2], target)
+					if err != "":
+						return "vm: %s\n" % err
+					return "vm '%s' now runs on %s. Its addresses came with it.\n" % [t[2], t[3]]
+				if t.size() >= 2 and t[1] == "list":
+					var out := ""
+					for d in Game.all_devices():
+						for i: Net.Iface in d.ifaces:
+							if i.vm != "":
+								out += "%-14s on %-10s %-19s %s\n" % [i.vm, d.name, i.mac,
+									", ".join(PackedStringArray(i.ips))]
+					return out if out != "" else "(no virtual machines)\n"
+				return "usage: vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list\n"
 			"syslogd":
 				dev.services["syslog"] = dev.services.get("syslog", {"messages": []})
 				return "syslogd: collecting logs on this host\n"
@@ -1509,10 +1543,12 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]
+				elif toks[0] == "vm":
+					opts = ["create", "addr", "migrate", "list"]
 			2:
 				if toks[0] == "ip" and String(toks[1]).begins_with("a"):
 					opts = ["add", "del"]

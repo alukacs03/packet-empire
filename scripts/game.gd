@@ -345,6 +345,48 @@ func overheating() -> bool:
 func is_l3_switch(dev: Net.NDevice) -> bool:
 	return dev.type == "switch" and bool(MODELS.get(dev.model, {}).get("l3", false))
 
+func create_vm(host: Net.NDevice, name: String) -> Net.Iface:
+	## a virtual machine on a server: its own NIC, riding the host's uplink
+	if host.type != "server" or name.strip_edges() == "":
+		return null
+	for d in all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.vm == name:
+				return null  # names are unique across the estate
+	var nic := Net.Iface.new(host, "vnic-%s" % name, _new_mac())
+	nic.mode = "routed"
+	nic.vm = name
+	host.ifaces.append(nic)
+	topology_changed.emit()
+	return nic
+
+func find_vm(name: String) -> Net.Iface:
+	for d in all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.vm == name:
+				return i
+	return null
+
+func migrate_vm(name: String, target: Net.NDevice) -> String:
+	## live migration: the machine keeps its addresses and moves house. Whether
+	## it still works afterwards is a question for the network, not the server.
+	var nic := find_vm(name)
+	if nic == null:
+		return "no virtual machine called '%s'" % name
+	if target.type != "server":
+		return "virtual machines run on servers"
+	if nic.dev == target:
+		return "it already runs there"
+	var source := nic.dev
+	source.ifaces.erase(nic)
+	nic.dev = target
+	target.ifaces.append(nic)
+	log_event("MIGRATION: %s moved from %s to %s, keeping %s."
+		% [name, source.name, target.name,
+			", ".join(PackedStringArray(nic.ips)) if not nic.ips.is_empty() else "no address"])
+	topology_changed.emit()
+	return ""
+
 func add_tunnel(dev: Net.NDevice, num: int) -> Net.Iface:
 	## a virtual point-to-point interface that rides whatever path exists
 	if not dev.ip_forwarding:
@@ -1401,7 +1443,7 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 			continue
 		for i in d.ifaces:
 			if link_at(i) == null and i.name != "lo" and not i.name.begins_with("Vlan") \
-					and not i.name.begins_with("Tunnel") and i.parent == "":
+					and not i.name.begins_with("Tunnel") and i.parent == "" and i.vm == "":
 				out.append(i)
 	return out
 
@@ -1709,7 +1751,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"parent": i.parent, "dot1q": i.dot1q,
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
-			"dhcp_trusted": i.dhcp_trusted,
+			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
@@ -1803,6 +1845,7 @@ func _apply(data: Dictionary) -> void:
 			i.vrf = si.get("vrf", "")
 			i.qos = bool(si.get("qos", false))
 			i.dhcp_trusted = bool(si.get("dhcp_trusted", false))
+			i.vm = si.get("vm", "")
 			i.port_security = si.get("port_security", false)
 			i.secure_mac = si.get("secure_mac", "")
 			i.tunnel_src = si.get("tunnel_src", "")

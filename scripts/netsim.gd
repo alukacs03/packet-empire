@@ -541,6 +541,17 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if iface.name.begins_with("Vlan"):
 		_svi_tx(iface.dev, iface, frame)
 		return
+	if iface.vm != "":
+		# the host bridges its machines onto its own uplink
+		for phys: Net.Iface in iface.dev.ifaces:
+			if phys.vm != "" or phys.name.begins_with("Vlan") or phys.name == "lo":
+				continue
+			if Game.link_at(phys) != null:
+				var out_frame := frame.duplicate(true)
+				out_frame["src"] = iface.mac
+				_tx(phys, out_frame)
+				return
+		return
 	if iface.name.begins_with("Tunnel"):
 		_tunnel_tx(iface, frame)
 		return
@@ -747,6 +758,16 @@ static func _logical_rx_iface(phys: Net.Iface, frame: Dictionary) -> Net.Iface:
 	return phys
 
 static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
+	# a frame for one of the host's virtual machines is that machine's business
+	if iface.vm == "":
+		for guest: Net.Iface in dev.ifaces:
+			if guest.vm == "" or not guest.enabled:
+				continue
+			if frame["dst"] == guest.mac:
+				_host_rx(dev, guest, frame)
+				return
+			if frame["dst"] == BCAST:
+				_host_rx(dev, guest, frame)
 	if frame["dst"] != iface.mac and frame["dst"] != BCAST:
 		return
 	var p: Dictionary = frame["pl"]
