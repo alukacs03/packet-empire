@@ -1197,6 +1197,11 @@ func _refresh_contracts() -> void:
 		if done:
 			var healthy: bool = Game.sla_status.get(c["id"], true)
 			var mrr: int = int(c["reward"]) / 10
+			if Contracts.retired(c["id"]):
+				contracts_box.add_child(_chip_row("RETIRED", Color(0.55, 0.6, 0.7),
+					"%s: %s   superseded by a later job" % [c["title"], c["customer"]],
+					14, Color(0.55, 0.6, 0.7)))
+				continue
 			if healthy:
 				contracts_box.add_child(_chip_row("DONE", Color(0.4, 0.85, 0.5),
 					"%s: %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],

@@ -283,6 +283,9 @@ func sla_tick() -> void:
 	for c in Contracts.all():
 		if c["id"] not in contracts_done:
 			continue
+		if Contracts.retired(c["id"]):
+			sla_status[c["id"]] = true  # retired: no fee, no breach
+			continue
 		var ok := true
 		for r in c["reqs"]:
 			if not r["t"].call():

@@ -3,6 +3,15 @@ class_name Contracts
 ## Game/Sim state, so completion is verified by the actual simulation.
 ## Add a contract = add a dict here; helpers below cover common checks.
 
+## a completed contract retires an earlier one it makes impossible
+const SUPERSEDES := {"two_tenants": "first_ping"}
+
+static func retired(id: String) -> bool:
+	for successor in SUPERSEDES:
+		if SUPERSEDES[successor] == id and successor in Game.contracts_done:
+			return true
+	return false
+
 static func all() -> Array:
 	return [
 		{

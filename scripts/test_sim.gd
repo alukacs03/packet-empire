@@ -239,6 +239,14 @@ static func run() -> int:
 	check(cls_.exec("ping www.delta.hu").contains("3 received"), "dns: ping by name works (client owns the A record)")
 	check(cls_.exec("nslookup nope.example").contains("can't find"), "dns: unknown name fails cleanly")
 
+	# --- superseded contracts retire instead of breaching ---
+	check(not Contracts.retired("first_ping"), "retire: first_ping active before two_tenants")
+	Game.contracts_done.append("two_tenants")
+	check(Contracts.retired("first_ping"), "retire: two_tenants supersedes first_ping")
+	Game.sla_tick()
+	check(Game.sla_status.get("first_ping", false), "retire: retired contract never breaches")
+	Game.contracts_done.erase("two_tenants")
+
 	# --- SLA recurring revenue ---
 	var m1 := Game.money
 	Game.sla_tick()
