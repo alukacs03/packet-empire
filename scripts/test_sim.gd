@@ -3074,6 +3074,32 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- carrier outages and diversity ---
+	Game.circuits = []
+	Game.carrier_outage = {}
+	var ca_before := Game.money
+	Game.money = ca_before + 20000
+	while Game.site_count() < 2:
+		Game.lease_site(0)
+	check(Game.buy_circuit(0, 1, 0, Game.CARRIERS[0]) == "", "carrier: a circuit can be ordered")
+	check(Game.buy_circuit(0, 1, 0, Game.CARRIERS[0]).contains("same fibre"),
+		"carrier: a second circuit from the same carrier is refused as false redundancy")
+	check(not Game.carrier_diverse(0, 1), "carrier: one carrier is not diversity")
+	check(Game.buy_circuit(0, 1, 0, Game.CARRIERS[1]) == "",
+		"carrier: a second carrier on the same route is allowed")
+	check(Game.carrier_diverse(0, 1), "carrier: two carriers is")
+	Game.carrier_outage[Game.CARRIERS[0]] = Game.cycle + 3
+	check(not Game.carrier_up(Game.CARRIERS[0]), "carrier: an outage takes that carrier down")
+	var ca_live := Game.circuit_between(0, 1)
+	check(String(ca_live.get("carrier", "")) == Game.CARRIERS[1],
+		"carrier: traffic falls back to the carrier that is still up")
+	Game.carrier_outage[Game.CARRIERS[1]] = Game.cycle + 3
+	check(Game.circuit_between(0, 1).is_empty(),
+		"carrier: with both carriers out there is no path, which is the honest answer")
+	Game.carrier_outage = {}
+	Game.circuits = []
+	Game.money = ca_before
+
 	# --- the working day ---
 	var day_saved := Game.cycle
 	var day_seen := {}

@@ -2321,9 +2321,12 @@ func _build_business_tab() -> void:
 		for c: Dictionary in Game.circuits.duplicate():
 			var crow := HBoxContainer.new()
 			contracts_box.add_child(crow)
-			var cl := _label("  %s: %s ⇄ %s   $%d/cycle" % [c["label"],
-				Game.site_name(int(c["a"])), Game.site_name(int(c["b"])), int(c["fee"])],
-				13, Color(0.7, 0.85, 0.9))
+			var carrier_name := String(c.get("carrier", "?"))
+			var carrier_ok := Game.carrier_up(carrier_name)
+			var cl := _label("  %s: %s ⇄ %s   %s   $%d/cycle%s" % [c["label"],
+				Game.site_name(int(c["a"])), Game.site_name(int(c["b"])), carrier_name,
+				int(c["fee"]), "" if carrier_ok else "   CARRIER OUTAGE"],
+				13, Color(0.7, 0.85, 0.9) if carrier_ok else Prefs.bad_colour())
 			cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			crow.add_child(cl)
 			var cancel := Button.new()
@@ -2333,6 +2336,17 @@ func _build_business_tab() -> void:
 				Game.cancel_circuit(c)
 				_refresh_contracts())
 			crow.add_child(cancel)
+		for i2 in Game.site_count():
+			for j2 in range(i2 + 1, Game.site_count()):
+				var route := Game.circuits_between(i2, j2)
+				if route.size() >= 2 and not Game.carrier_diverse(i2, j2):
+					contracts_box.add_child(_wrap(
+						"  %s ⇄ %s has two circuits from the same carrier. That is one bad afternoon away from being no circuits at all."
+						% [Game.site_name(i2), Game.site_name(j2)], 12, Color(1.0, 0.8, 0.5), 560))
+				elif Game.carrier_diverse(i2, j2):
+					contracts_box.add_child(_label(
+						"  %s ⇄ %s is carrier diverse." % [Game.site_name(i2), Game.site_name(j2)],
+						12, Color(0.6, 0.88, 0.7)))
 		var order := Button.new()
 		order.text = "Order a circuit…"
 		order.pressed.connect(func() -> void:
@@ -2340,21 +2354,26 @@ func _build_business_tab() -> void:
 			var combos: Array = []
 			for i in Game.site_count():
 				for j in range(i + 1, Game.site_count()):
-					if not Game.circuit_between(i, j).is_empty():
-						continue
-					for g in Game.CIRCUIT_GRADES.size():
-						var gr: Dictionary = Game.CIRCUIT_GRADES[g]
-						pairs.append("%s ⇄ %s (%d km)   %s   $%d install, $%d/cycle" % [
-							Game.site_name(i), Game.site_name(j),
-							int(Game.site_distance_km(i, j)), gr["label"],
-							int(gr["setup"]), int(gr["fee"])])
-						combos.append([i, j, g])
+					var taken := {}
+					for have: Dictionary in Game.circuits_between(i, j):
+						taken[String(have.get("carrier", ""))] = true
+					for carrier: String in Game.CARRIERS:
+						if taken.has(carrier):
+							continue
+						for g in Game.CIRCUIT_GRADES.size():
+							var gr: Dictionary = Game.CIRCUIT_GRADES[g]
+							pairs.append("%s ⇄ %s (%d km)   %s   %s   $%d install, $%d/cycle" % [
+								Game.site_name(i), Game.site_name(j),
+								int(Game.site_distance_km(i, j)), carrier, gr["label"],
+								int(gr["setup"]), int(gr["fee"])])
+							combos.append([i, j, g, carrier])
 			if pairs.is_empty():
-				_toast("every pair of sites is already linked")
+				_toast("every carrier already runs a circuit on every route")
 				return
 			_menu(order, pairs, func(id: int) -> void:
 				var pick: Array = combos[id]
-				var err: String = Game.buy_circuit(int(pick[0]), int(pick[1]), int(pick[2]))
+				var err: String = Game.buy_circuit(int(pick[0]), int(pick[1]), int(pick[2]),
+					String(pick[3]))
 				_refresh_contracts()
 				if err != "":
 					_toast(err)))

@@ -322,33 +322,83 @@ func lease_site(offer_idx: int) -> String:
 	topology_changed.emit()
 	return ""
 
+## Carriers dig up the same streets everyone else does. Two circuits from the
+## same one share the same fibre, the same duct and the same bad afternoon.
+const CARRIERS := ["Danube Telecom", "Karpat Networks", "Vertex Fibre"]
+
 const CIRCUIT_GRADES := [
 	{"label": "100 Mbit metro line", "mbps": 100, "setup": 1200, "fee": 60},
 	{"label": "1 Gbit leased line", "mbps": 1000, "setup": 4000, "fee": 180},
 	{"label": "10 Gbit dark fibre", "mbps": 10000, "setup": 14000, "fee": 500},
 ]
 
-func circuit_between(site_a: int, site_b: int) -> Dictionary:
+var carrier_outage := {}  # carrier name -> cycle it expects to be back
+
+func carrier_up(name: String) -> bool:
+	return cycle >= int(carrier_outage.get(name, 0))
+
+func circuits_between(site_a: int, site_b: int) -> Array:
+	var out: Array = []
 	for c in circuits:
 		if (int(c["a"]) == site_a and int(c["b"]) == site_b) \
 				or (int(c["a"]) == site_b and int(c["b"]) == site_a):
+			out.append(c)
+	return out
+
+func circuit_between(site_a: int, site_b: int) -> Dictionary:
+	## the first circuit that is actually carrying traffic right now
+	var all_of_them := circuits_between(site_a, site_b)
+	for c in all_of_them:
+		if carrier_up(String(c.get("carrier", ""))):
 			return c
 	return {}
 
-func buy_circuit(site_a: int, site_b: int, grade: int) -> String:
+func carrier_tick() -> void:
+	## somebody puts a digger through a duct now and then
+	for name in CARRIERS:
+		if not carrier_up(name):
+			if cycle == int(carrier_outage[name]):
+				log_event("CARRIER: %s is back. Circuits on them are up." % name)
+			continue
+		var uses := 0
+		for c in circuits:
+			if String(c.get("carrier", "")) == name:
+				uses += 1
+		if uses == 0:
+			continue
+		if randf() < 0.02 * DIFFICULTIES[difficulty]["faults"]:
+			carrier_outage[name] = cycle + randi_range(1, 4)
+			log_event("CARRIER: %s has an outage. Every circuit you buy from them is down."
+				% name)
+			topology_changed.emit()
+
+func buy_circuit(site_a: int, site_b: int, grade: int, carrier := "") -> String:
 	if site_a == site_b:
 		return "a site does not need a circuit to itself"
-	if not circuit_between(site_a, site_b).is_empty():
-		return "those sites are already linked"
+	if carrier == "":
+		carrier = CARRIERS[0]
+	if carrier not in CARRIERS:
+		return "no such carrier"
+	for existing in circuits_between(site_a, site_b):
+		if String(existing.get("carrier", "")) == carrier:
+			return "%s already runs a circuit on that route; a second one from them shares the same fibre" % carrier
 	var g: Dictionary = CIRCUIT_GRADES[grade]
 	if not try_spend(int(g["setup"])):
 		return "you cannot afford the $%d installation" % int(g["setup"])
 	circuits.append({"a": site_a, "b": site_b, "mbps": int(g["mbps"]),
-		"fee": int(g["fee"]), "label": g["label"]})
-	log_event("CIRCUIT: %s ordered between %s and %s ($%d/cycle)." % [g["label"],
-		site_name(site_a), site_name(site_b), int(g["fee"])])
+		"fee": int(g["fee"]), "label": g["label"], "carrier": carrier})
+	log_event("CIRCUIT: %s from %s ordered between %s and %s ($%d/cycle)." % [g["label"],
+		carrier, site_name(site_a), site_name(site_b), int(g["fee"])])
 	topology_changed.emit()
 	return ""
+
+func carrier_diverse(site_a: int, site_b: int) -> bool:
+	## two circuits on a route is only redundancy when they are not the same
+	## company's fibre, which is the expensive lesson this exists to teach
+	var seen := {}
+	for c in circuits_between(site_a, site_b):
+		seen[String(c.get("carrier", ""))] = true
+	return seen.size() >= 2
 
 func cancel_circuit(c: Dictionary) -> void:
 	for l in links.duplicate():
@@ -1700,6 +1750,7 @@ func sla_tick() -> void:
 	autosave_due()
 	if not sandbox and not drill_active:
 		power_tick()
+		carrier_tick()
 	if drill_active:
 		return  # the economy pauses while you run a drill
 	if sandbox:
@@ -2231,6 +2282,7 @@ func _serialize() -> Dictionary:
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
+		"carrier_outage": carrier_outage,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
@@ -2514,6 +2566,7 @@ func _apply(data: Dictionary) -> void:
 		feeds[int(k)] = data["feeds"][k]
 	feed_out_until = data.get("feed_out_until", {})
 	invoices = data.get("invoices", [])
+	carrier_outage = data.get("carrier_outage", {})
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])
