@@ -1421,34 +1421,34 @@ static func run() -> int:
 	var rng_sw := Game.new_device("sw-24")
 	var rng_rack := Game.add_rack(Vector2i(9, 1))
 	rng_rack.slots[0] = rng_sw
-	var rs := CLI.new_session(rng_sw)
-	rs.exec("en")
-	rs.exec("conf t")
-	rs.exec("vlan 55")
-	check(rs.exec("interface range Ethernet1-8").is_empty(), "range: a range of interfaces can be selected")
-	check(rs.exec("switchport access vlan 55").is_empty(), "range: a vlan applies to the whole range")
+	var rng_s := CLI.new_session(rng_sw)
+	rng_s.exec("en")
+	rng_s.exec("conf t")
+	rng_s.exec("vlan 55")
+	check(rng_s.exec("interface range Ethernet1-8").is_empty(), "range: a range of interfaces can be selected")
+	check(rng_s.exec("switchport access vlan 55").is_empty(), "range: a vlan applies to the whole range")
 	var in_55 := 0
 	for i: Net.Iface in rng_sw.ifaces:
 		if i.untagged_vlan == 55:
 			in_55 += 1
 	check(in_55 == 8, "range: exactly the eight ports moved (got %d)" % in_55)
-	rs.exec("shutdown")
+	rng_s.exec("shutdown")
 	var down := 0
 	for i: Net.Iface in rng_sw.ifaces:
 		if not i.enabled:
 			down += 1
 	check(down == 8, "range: shutdown applies to the range")
-	rs.exec("no shutdown")
-	check(rs.exec("ip address 10.0.0.1/24").contains("cannot be applied to a range"),
+	rng_s.exec("no shutdown")
+	check(rng_s.exec("ip address 10.0.0.1/24").contains("cannot be applied to a range"),
 		"range: an address is refused for a range")
-	check(rs.exec("interface range et20-22,et24").is_empty(), "range: abbreviations and lists work")
-	rs.exec("switchport port-security")
+	check(rng_s.exec("interface range et20-22,et24").is_empty(), "range: abbreviations and lists work")
+	rng_s.exec("switchport port-security")
 	var secured_n := 0
 	for i: Net.Iface in rng_sw.ifaces:
 		if i.port_security:
 			secured_n += 1
 	check(secured_n == 4, "range: a comma list selected four ports")
-	rs.exec("end")
+	rng_s.exec("end")
 
 	# --- speed controls ---
 	Game.set_speed(1)
