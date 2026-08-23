@@ -398,6 +398,7 @@ static func run() -> int:
 	check("arp" in rs2.complete("/ip a") and "address" in rs2.complete("/ip a"),
 		"cli: ROS tab lists all matching branches")
 	check("add" in rs2.complete("/ip address vlan-ids=5 "), "cli: ROS tab ignores key=value args")
+	check(rs2.exec("routing bgp").begins_with("incomplete command"), "cli: ROS partial path lists what can follow")
 
 	# --- OSPF dynamic routing ---
 	var r5 := Game.add_rack(Vector2i(0, 1))

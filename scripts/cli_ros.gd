@@ -264,6 +264,14 @@ func exec(line: String) -> String:
 			if not dev.bgp["networks"].is_empty():
 				out += "networks: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
 			return out
+	var nexts := {}
+	for c in PATHS:
+		if path != "" and c.begins_with(path + " "):
+			nexts[String(c.substr(path.length() + 1)).split(" ")[0]] = true
+	if not nexts.is_empty():
+		var opts := nexts.keys()
+		opts.sort()
+		return "incomplete command — next: %s\n" % ", ".join(PackedStringArray(opts))
 	return "bad command name %s (try 'help')\n" % path.split(" ")[0]
 
 const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit",

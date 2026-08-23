@@ -1137,7 +1137,8 @@ func _cli_key(e: InputEvent) -> void:
 		if cands.is_empty():
 			return
 		var start := text.rfind(" ") + 1
-		var cur := text.substr(start)
+		var keep := "/" if start == 0 and text.begins_with("/") else ""
+		var cur := text.substr(start + keep.length())
 		var common: String = cands[0]
 		for c: String in cands:
 			while not c.begins_with(common):
@@ -1145,7 +1146,7 @@ func _cli_key(e: InputEvent) -> void:
 		if cands.size() == 1:
 			common += " "
 		if common.length() > cur.length():
-			cli_in.text = text.left(start) + common
+			cli_in.text = text.left(start) + keep + common
 			cli_in.caret_column = cli_in.text.length()
 		elif cands.size() > 1:
 			cli_out.append_text("  ".join(PackedStringArray(cands)) + "\n")
