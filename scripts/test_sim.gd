@@ -1263,5 +1263,24 @@ static func run() -> int:
 	check(Game.circuits.is_empty() and Game.link_at(home_port) == null,
 		"wan: cancelling the circuit drops the cables riding it")
 
+	# --- the market moves on its own ---
+	Game.rivals = Rivals.spawn()
+	var whale: Dictionary = Game.rivals[6]
+	whale["cash"] = 40000
+	var minnow: Dictionary = Game.rivals[0]
+	minnow["cash"] = 500
+	minnow["deals"] = 0
+	var consolidated := false
+	for i in 300:  # 4% a cycle: it happens, and it is logged
+		Rivals._maybe_consolidate()
+		if not Rivals.alive(minnow):
+			consolidated = true
+			break
+	check(consolidated and minnow.has("merged_into"), "market: rivals consolidate among themselves")
+	var growth_r: Dictionary = Game.rivals[1]
+	growth_r["cash"] = 30000
+	Rivals.tick()
+	check(Rivals.has_site(growth_r), "market: a flush rival buys premises of its own")
+
 	print("---- %d failures" % fails)
 	return fails

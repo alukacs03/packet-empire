@@ -1092,7 +1092,9 @@ func _refresh_ops() -> void:
 	if devs.is_empty():
 		ops_box.add_child(_label("  Nothing installed yet.", 14, MUTED))
 		return
-	var head := _label("  %-9s %-22s %-9s %-7s %-20s %s" % ["DEVICE", "MODEL", "STATUS", "LINKS", "ADDRESSES", "ALERTS"],
+	var multi := Game.site_count() > 1
+	var head := _label("  %-9s %-14s %-20s %-9s %-7s %-18s %s" % ["DEVICE",
+		"SITE" if multi else "", "MODEL", "STATUS", "LINKS", "ADDRESSES", "ALERTS"],
 		12, Color(0.5, 0.58, 0.72))
 	head.add_theme_font_override("font", mono)
 	ops_box.add_child(head)
@@ -1115,15 +1117,21 @@ func _refresh_ops() -> void:
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.add_theme_font_override("font", mono)
 		b.add_theme_font_size_override("font_size", 12)
-		b.text = "  %-9s %-22s %-9s %-7s %-20s %s" % [d.name, Game.MODELS[d.model]["label"],
-			d.status, "%d/%d" % [up, total],
+		var rk := Game.rack_of(d)
+		b.text = "  %-9s %-14s %-20s %-9s %-7s %-18s %s" % [d.name,
+			(Game.site_name(rk.site) if (multi and rk) else ""),
+			Game.MODELS[d.model]["label"], d.status, "%d/%d" % [up, total],
 			", ".join(PackedStringArray(addrs)) if not addrs.is_empty() else "-",
 			", ".join(PackedStringArray(alerts))]
 		b.add_theme_color_override("font_color",
 			Color(0.95, 0.6, 0.45) if not alerts.is_empty() else Color(0.7, 0.8, 0.75))
 		b.pressed.connect(func() -> void:
 			ops_overlay.visible = false
-			cur_rack = Game.rack_of(d)
+			var rk2 := Game.rack_of(d)
+			if rk2 and rk2.site != Game.current_site:
+				Game.switch_site(rk2.site)  # jump to the floor it stands on
+				get_parent().rebuild_racks()
+			cur_rack = rk2
 			open_dev(d))
 		ops_box.add_child(b)
 
@@ -1502,7 +1510,9 @@ func _build_market_section() -> void:
 	contracts_box.add_child(_section("THE COMPETITION"))
 	for r: Dictionary in Game.rivals:
 		if not Rivals.alive(r):
-			contracts_box.add_child(_label("  %s: acquired by you" % r["name"], 13, Color(0.5, 0.8, 0.6)))
+			var fate: String = "acquired by %s" % r["merged_into"] if r.has("merged_into") else "acquired by you"
+			contracts_box.add_child(_label("  %s: %s" % [r["name"], fate], 13,
+				Color(0.6, 0.62, 0.68) if r.has("merged_into") else Color(0.5, 0.8, 0.6)))
 			continue
 		var price := Rivals.asking_price(r)
 		var row := HBoxContainer.new()
@@ -1537,8 +1547,8 @@ func _build_market_section() -> void:
 		var cv := VBoxContainer.new()
 		card.add_child(cv)
 		cv.add_child(_label("INTEGRATION: %s" % a["rival"], 16, Color.WHITE))
-		var where: String = ("on their own site '%s' (switch floors in the HUD)" % Game.site_name(int(a.get("site", 0)))) \
-			if bool(a.get("premises", false)) else "moved into your room"
+		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
+			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
 		var brief := _label(("Their kit is %s, but it still runs their way: subnet %s.0/24 on VLAN %d, "
 			+ "cabled only to itself. Merge it into your network without breaking their customers, "
 			+ "then save the configs.") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))

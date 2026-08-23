@@ -90,7 +90,42 @@ static func tick() -> void:
 		if not alive(r):
 			continue
 		r["cash"] = int(r["cash"]) + int(r["deals"]) * 90
-		if int(r["cash"]) > 9000 and int(r["capacity"]) < 8:
+		# they win business on their own too
+		if int(r["deals"]) < int(r["capacity"]) and randf() < 0.06:
+			r["deals"] = int(r["deals"]) + 1
+		if int(r["cash"]) > 9000 and int(r["capacity"]) < 12:
 			r["cash"] = int(r["cash"]) - 3000
 			r["capacity"] = int(r["capacity"]) + 1
 			r["racks"].append(["sw-8", "srv-1"])
+		# a flush operator eventually needs premises of its own
+		if int(r["cash"]) > 22000 and not has_site(r):
+			r["cash"] = int(r["cash"]) - 15000
+			r["site"] = {"name": "%s room" % String(r["name"]).split(" ")[0],
+				"grid": [6, 6], "kind": "room"}
+			Game.log_event("MARKET: %s moved into premises of their own." % r["name"])
+	_maybe_consolidate()
+
+static func _maybe_consolidate() -> void:
+	## the market consolidates: a rich rival swallows a struggling one
+	if randf() > 0.04:
+		return
+	var buyer := {}
+	var prey := {}
+	for r in Game.rivals:
+		if not alive(r):
+			continue
+		if int(r["cash"]) > 20000 and (buyer.is_empty() or int(r["cash"]) > int(buyer["cash"])):
+			buyer = r
+		if int(r["deals"]) <= 1 and int(r["cash"]) < 2500 and prey.is_empty():
+			prey = r
+	if buyer.is_empty() or prey.is_empty() or buyer == prey:
+		return
+	buyer["cash"] = int(buyer["cash"]) - 8000
+	buyer["deals"] = int(buyer["deals"]) + int(prey["deals"])
+	buyer["capacity"] = int(buyer["capacity"]) + int(prey["capacity"])
+	for rack in prey["racks"]:
+		buyer["racks"].append(rack)
+	prey["bought"] = true
+	prey["merged_into"] = buyer["name"]
+	Game.log_event("MARKET: %s acquired %s. The field is getting smaller."
+		% [buyer["name"], prey["name"]])

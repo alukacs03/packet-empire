@@ -19,6 +19,10 @@ func _in_grid(t: Vector2i) -> bool:
 
 func _draw() -> void:
 	var grid: Vector2i = Game.grid_size()
+	if Game.site_count() > 1:  # which floor am I standing on
+		var anchor := Iso.tile_to_world(Vector2i(0, grid.y)) + Vector2(-60, 40)
+		draw_string(ThemeDB.fallback_font, anchor, Game.site_name(Game.current_site),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.45, 0.7, 0.8, 0.8))
 	for y in grid.y:
 		for x in grid.x:
 			var t := Vector2i(x, y)
