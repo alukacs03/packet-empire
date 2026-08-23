@@ -3129,6 +3129,42 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- out-of-band console: reaching a device when the device is the problem ---
+	var ob_rack := Game.add_rack(Vector2i(42, 1))
+	var ob_con := Game.new_device("con-1")
+	var ob_sw := Game.new_device("sw-24")
+	var ob_jump := Game.new_device("srv-1")
+	ob_rack.slots[0] = ob_con
+	ob_rack.slots[1] = ob_sw
+	ob_rack.slots[2] = ob_jump
+	Game.connect_ifaces(ob_con.ifaces[0], ob_sw.ifaces[23])   # console cable to the switch
+	Game.connect_ifaces(ob_jump.ifaces[0], ob_sw.ifaces[0])   # the network path
+	var ob_svi := Game.add_svi(ob_sw, 1)
+	Game.add_ip(ob_svi, "10.240.0.1/24")
+	Game.add_ip(ob_jump.ifaces[0], "10.240.0.10/24")
+	Sim.flush_learned_state()
+	var ob_jcli := CLI.new_session(ob_jump)
+	check(ob_jcli.exec("ssh 10.240.0.1").contains("Connected"),
+		"oob: while the network works, ssh reaches the switch")
+	ob_jcli.exec("exit")
+	var ob_ccli := CLI.new_session(ob_con)
+	check(ob_ccli.exec("console list").contains(ob_sw.name),
+		"oob: the console server lists what is cabled to it")
+	# now fat-finger the switch's management address, exactly as one does
+	Game.remove_ip(ob_svi, "10.240.0.1/24")
+	Sim.flush_learned_state()
+	check(ob_jcli.exec("ssh 10.240.0.1").contains("No route to host"),
+		"oob: with its address gone, the switch cannot be reached over the network")
+	var ob_open := ob_ccli.exec("console %s" % ob_sw.name)
+	check(ob_open.contains("Connected to %s" % ob_sw.name),
+		"oob: the serial console does not care about IP, which is why it exists")
+	check(ob_ccli.pending_ssh == ob_sw, "oob: and it really lands on that device")
+	ob_ccli.pending_ssh = null
+	check(ob_ccli.exec("console nosuchbox").contains("nothing named"),
+		"oob: a device with no serial cable cannot be reached that way either")
+	Game.add_ip(ob_svi, "10.240.0.1/24")
+	Sim.flush_learned_state()
+
 	# --- airflow: heat is somewhere, not just a total ---
 	var air_stage := Game.stage
 	Game.stage = 1

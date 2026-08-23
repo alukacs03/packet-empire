@@ -21,13 +21,16 @@ const MODELS := {
 	"ap-1": {"speed": 1000, "tier": 1, "type": "ap", "ports": 9, "label": "AirTurul AP3",
 		"price": 320},
 	"isp-uplink": {"speed": 1000, "tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
+	"con-1": {"speed": 100, "tier": 1, "type": "console", "ports": 9,
+		"label": "OutOfBand C8", "price": 550,
+		"blurb": "Eight serial ports and its own way in. The box you reach a device from when the device is the problem."},
 	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 ## Which models ship with two power supplies. Everything else has one, and a
 ## single-supply device is only as reliable as the feed you plugged it into.
 const DUAL_PSU := ["sw-24", "srv-2", "rtr-edge", "fw-1", "lb-1"]
 
-const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
+const WATTS := {"con-1": 15, "sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
 	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100, "lb-1": 120,
 	"ap-1": 15}
 const TRANSIT_FEE := 30  # port charge per cycle per established upstream session
@@ -49,7 +52,8 @@ const STAGES := [
 		"blurb": "A real floor. Grow the empire."},
 ]
 const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1",
-	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1", "ap": "ap-1"}
+	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1", "ap": "ap-1",
+	"console": "con-1"}
 const TYPE_SPECS := {
 	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
 	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
@@ -59,6 +63,7 @@ const TYPE_SPECS := {
 	"cooling": {"if_prefix": "port", "if_start": 1, "name_prefix": "crac"},
 	"loadbalancer": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "lb"},
 	"ap": {"if_prefix": "radio", "if_start": 1, "name_prefix": "ap"},
+	"console": {"if_prefix": "console", "if_start": 1, "name_prefix": "con"},
 }
 const DIFFICULTIES := [
 	{"name": "Apprentice", "cash": 4000, "aggression": 0.75, "faults": 0.5, "cycle": 60.0,
@@ -229,7 +234,7 @@ var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
-	"cooling": 0, "loadbalancer": 0, "ap": 0, "rack": 0, "mac": 0}
+	"cooling": 0, "loadbalancer": 0, "ap": 0, "console": 0, "rack": 0, "mac": 0}
 
 func _ensure_sites() -> void:
 	if sites.is_empty():

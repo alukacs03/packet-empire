@@ -1715,7 +1715,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1830,6 +1830,35 @@ class Linux extends Session:
 				for frow in frows.slice(0, 15):
 					fout += "%-38s %10d\n" % [frow[0], frow[1]]
 				return fout
+			"console":
+				if dev.type != "console":
+					return "console: this is not a console server\n"
+				var attached: Array = []
+				for ci: Net.Iface in dev.ifaces:
+					if not ci.name.begins_with("console"):
+						continue
+					var cl := Game.link_at(ci)
+					if cl == null:
+						continue
+					attached.append([ci.name, cl.other(ci).dev])
+				if t.size() >= 2 and t[1] == "list" or t.size() == 1:
+					if attached.is_empty():
+						return "no serial cables: run one from a console port to a device\n"
+					var cout := "%-12s %s\n" % ["PORT", "DEVICE"]
+					for row in attached:
+						cout += "%-12s %s\n" % [row[0], row[1].name]
+					return cout
+				if t.size() == 2:
+					for row2 in attached:
+						var target: Net.NDevice = row2[1]
+						if target.name == String(t[1]):
+							# a serial console does not care about IP at all,
+							# which is the entire reason it is worth having
+							pending_ssh = target
+							return "Connected to %s over %s. Press Ctrl-D or 'exit' to return.\n" \
+								% [target.name, row2[0]]
+					return "console: nothing named %s is cabled to this console server\n" % t[1]
+				return "usage: console list | console <device>\n"
 			"snmpwalk":
 				if t.size() < 3:
 					return "usage: snmpwalk <address> <community>\n"
@@ -2109,7 +2138,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]
