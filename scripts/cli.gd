@@ -176,6 +176,13 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
+			{"m": ["config"], "p": ["ip", "dhcp", "snooping"], "h": func(_r): return _snoop(true)},
+			{"m": ["config"], "p": ["no", "ip", "dhcp", "snooping"], "h": func(_r): return _snoop(false)},
+			{"m": ["config"], "p": ["ip", "arp", "inspection"], "h": func(_r): return _dai(true)},
+			{"m": ["config"], "p": ["no", "ip", "arp", "inspection"], "h": func(_r): return _dai(false)},
+			{"m": ["if"], "p": ["ip", "dhcp", "snooping", "trust"], "h": func(_r): return _trust(true)},
+			{"m": ["if"], "p": ["no", "ip", "dhcp", "snooping", "trust"], "h": func(_r): return _trust(false)},
+			{"m": EP, "p": ["show", "ip", "dhcp", "snooping"], "h": _show_snoop},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
 			{"m": ["if"], "p": ["ipv6", "address"], "h": _if_ip},
 			{"m": EP, "p": ["show", "ipv6", "interface", "brief"], "h": _show_v6_brief},
@@ -520,6 +527,45 @@ class EOS extends Session:
 			if not on:
 				i.secure_mac = ""
 			return "")
+
+	func _snoop(on: bool) -> String:
+		if dev.type != "switch":
+			return "% DHCP snooping is a switch feature\n"
+		dev.snooping = on
+		if not on:
+			dev.bindings.clear()
+		Game.topology_changed.emit()
+		return ""
+
+	func _dai(on: bool) -> String:
+		if dev.type != "switch":
+			return "% ARP inspection is a switch feature\n"
+		dev.dai = on
+		Game.topology_changed.emit()
+		return ""
+
+	func _trust(on: bool) -> String:
+		if dev.type != "switch":
+			return "% trust applies to switchports\n"
+		return _each(func(i: Net.Iface) -> String:
+			i.dhcp_trusted = on
+			return "")
+
+	func _show_snoop(_r: Array) -> String:
+		var out := "DHCP snooping: %s     ARP inspection: %s\n" % [
+			"on" if dev.snooping else "off", "on" if dev.dai else "off"]
+		var trusted: Array = []
+		for i: Net.Iface in dev.ifaces:
+			if i.dhcp_trusted:
+				trusted.append(EOS._short(i.name))
+		out += "Trusted ports: %s\n" % (", ".join(PackedStringArray(trusted)) if trusted else "(none)")
+		if dev.bindings.is_empty():
+			out += "Bindings: (none yet)\n"
+		else:
+			out += "%-19s %s\n" % ["MAC", "LEASED ADDRESS"]
+			for m in dev.bindings:
+				out += "%-19s %s\n" % [m, dev.bindings[m]]
+		return out
 
 	func _show_port_sec(_r: Array) -> String:
 		var out := "%-11s %-9s %-19s %s\n" % ["Port", "Security", "Secure MAC", "Violations"]
@@ -1242,6 +1288,8 @@ class EOS extends Session:
 				out += "   channel-group %d\n" % i.lag
 			if i.port_security:
 				out += "   switchport port-security\n"
+			if i.dhcp_trusted:
+				out += "   ip dhcp snooping trust\n"
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
 			if not i.enabled:

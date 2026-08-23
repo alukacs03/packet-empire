@@ -1436,6 +1436,53 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- DHCP snooping and ARP inspection ---
+	var sn_rack := Game.add_rack(Vector2i(21, 1))
+	var sn_sw := Game.new_device("sw-8")
+	var sn_srv := Game.new_device("srv-1")   # the legitimate DHCP server
+	var sn_cli := Game.new_device("srv-1")   # an honest client
+	var sn_rogue := Game.new_device("srv-1") # a customer machine handing out leases
+	sn_rack.slots[0] = sn_sw
+	sn_rack.slots[1] = sn_srv
+	sn_rack.slots[2] = sn_cli
+	sn_rack.slots[3] = sn_rogue
+	Game.connect_ifaces(sn_srv.ifaces[0], sn_sw.ifaces[0])
+	Game.connect_ifaces(sn_cli.ifaces[0], sn_sw.ifaces[1])
+	Game.connect_ifaces(sn_rogue.ifaces[0], sn_sw.ifaces[2])
+	Game.add_ip(sn_srv.ifaces[0], "10.170.0.5/24")
+	Game.add_ip(sn_rogue.ifaces[0], "10.170.0.66/24")
+	CLI.new_session(sn_srv).exec("dhcpd eth0 10.170.0.10 10.170.0.99 24 10.170.0.1")
+	CLI.new_session(sn_rogue).exec("dhcpd eth0 10.170.0.200 10.170.0.240 24 10.170.0.66")
+	var honest := CLI.new_session(sn_cli)
+	var lease1: String = honest.exec("dhclient eth0")
+	check(lease1.contains("bound to"), "snooping: without protection a lease is handed out")
+	# turn on snooping, trust only the port facing the real server
+	var sn_s := CLI.new_session(sn_sw)
+	sn_s.exec("en")
+	sn_s.exec("conf t")
+	check(sn_s.exec("ip dhcp snooping").is_empty(), "snooping: it can be enabled")
+	sn_s.exec("interface Ethernet1")
+	sn_s.exec("ip dhcp snooping trust")
+	sn_s.exec("exit")
+	sn_s.exec("ip arp inspection")
+	sn_s.exec("end")
+	for cidr in sn_cli.ifaces[0].ips.duplicate():
+		Game.remove_ip(sn_cli.ifaces[0], cidr)
+	var lease2: String = honest.exec("dhclient eth0")
+	check(lease2.contains("10.170.0."), "snooping: the trusted server still serves leases")
+	check(not lease2.contains("10.170.0.2"), "snooping: the rogue server's range is not used")
+	check(sn_sw.bindings.size() >= 1, "snooping: a binding is recorded for the lease")
+	check(sn_s.exec("show ip dhcp snooping").contains("Trusted ports"), "snooping: state is reported")
+	# ARP inspection: a machine claiming somebody else's address is dropped
+	var victim_ip: String = String(sn_sw.bindings[sn_cli.ifaces[0].mac])
+	check(victim_ip.begins_with("10.170.0."), "snooping: the binding holds the leased address")
+	var logged_drop := false
+	Game.device_log(sn_sw, "test")
+	for l in sn_sw.logs:
+		if "inspection" in l or "snooping" in l:
+			logged_drop = true
+	check(logged_drop, "snooping: drops are written to the device log")
+
 	# --- capacity and quarterly reports ---
 	var cap0: Dictionary = Game.capacity(0)
 	check(int(cap0["tiles"]) > 0 and int(cap0["slots"]) >= int(cap0["slots_used"]),

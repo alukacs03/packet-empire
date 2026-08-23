@@ -665,6 +665,29 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			return  # VLAN not allowed on this trunk
 	if not dev.vlans.has(vlan):
 		return
+	# DHCP snooping: only a trusted port may carry a server's answer
+	if dev.snooping and frame["type"] == "dhcp":
+		var dp: Dictionary = frame["pl"]
+		if dp["op"] == "ack" and not in_if.dhcp_trusted:
+			Game.device_log(dev, "DHCP snooping dropped a server reply on untrusted port %s"
+				% in_if.name)
+			return
+		if dp["op"] == "ack":
+			dev.bindings[dp["mac"]] = dp["ip"]  # remember the legitimate lease
+	# dynamic ARP inspection: an address claim must match what we saw leased
+	if dev.dai and frame["type"] == "arp":
+		var ap: Dictionary = frame["pl"]
+		var claimed: String = String(ap["spa"])
+		var owner_mac: String = String(frame["src"])
+		if dev.bindings.has(owner_mac) and String(dev.bindings[owner_mac]) != claimed and claimed != "0.0.0.0":
+			Game.device_log(dev, "ARP inspection dropped %s claiming %s on %s"
+				% [owner_mac, claimed, in_if.name])
+			return
+		for bound_mac in dev.bindings:
+			if String(dev.bindings[bound_mac]) == claimed and bound_mac != owner_mac:
+				Game.device_log(dev, "ARP inspection dropped %s spoofing %s on %s"
+					% [owner_mac, claimed, in_if.name])
+				return
 	if not dev.mac_table.has(vlan):
 		dev.mac_table[vlan] = {}
 	if in_if.port_security:

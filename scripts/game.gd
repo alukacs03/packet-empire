@@ -1709,11 +1709,13 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"parent": i.parent, "dot1q": i.dot1q,
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
+			"dhcp_trusted": i.dhcp_trusted,
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
-		"ospf": d.ospf, "vrfs": d.vrfs, "startup": d.startup, "versions": d.versions,
+		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
+		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "log_host": d.log_host, "ntp_server": d.ntp_server,
 		"ifaces": ifs}
 
@@ -1776,6 +1778,8 @@ func _apply(data: Dictionary) -> void:
 		d.bgp = sd.get("bgp", {})
 		d.ospf = sd.get("ospf", {})
 		d.vrfs = sd.get("vrfs", [])
+		d.snooping = bool(sd.get("snooping", false))
+		d.dai = bool(sd.get("dai", false))
 		d.startup = sd.get("startup", {})
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
@@ -1798,6 +1802,7 @@ func _apply(data: Dictionary) -> void:
 			i.helper = si.get("helper", "")
 			i.vrf = si.get("vrf", "")
 			i.qos = bool(si.get("qos", false))
+			i.dhcp_trusted = bool(si.get("dhcp_trusted", false))
 			i.port_security = si.get("port_security", false)
 			i.secure_mac = si.get("secure_mac", "")
 			i.tunnel_src = si.get("tunnel_src", "")

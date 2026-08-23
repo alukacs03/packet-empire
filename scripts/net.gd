@@ -18,6 +18,7 @@ class Iface:
 	var helper := ""  # DHCP relay target (ip helper-address)
 	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var qos := false  # when congested, serve traffic in service-level order
+	var dhcp_trusted := false  # a port allowed to carry DHCP server replies
 	var tunnel_src := ""  # tunnel interfaces ride the underlay between two endpoints
 	var tunnel_dst := ""
 	var port_security := false  # sticky-MAC lockdown on an access port
@@ -43,6 +44,9 @@ class NDevice:
 	var ip_forwarding := false  # routers forward, hosts don't
 	var static_routes: Array = []  # {"prefix", "plen", "via", optional "vrf"}
 	var vrfs: Array = []  # named routing tables on this device
+	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
+	var dai := false  # dynamic ARP inspection, using the snooping bindings
+	var bindings := {}  # mac -> address learned from a legitimate lease
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var stateful := false  # track flows, auto-permit return traffic
 	var startup := {}  # saved configuration ('write memory')
