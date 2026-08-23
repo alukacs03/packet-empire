@@ -42,7 +42,7 @@ var if_ip_hint: Label
 var if_cable_lbl: Label
 var if_cable_btn: Button
 
-var vlan_overlay: Control
+var vlan_section: VBoxContainer
 var vlan_box: VBoxContainer
 var vlan_vid_in: LineEdit
 var vlan_name_in: LineEdit
@@ -61,7 +61,6 @@ func _ready() -> void:
 	_build_rack_overlay()
 	_build_dev_overlay()
 	_build_if_overlay()
-	_build_vlan_overlay()
 	Game.topology_changed.connect(_refresh_open)
 
 func _process(_dt: float) -> void:
@@ -71,8 +70,7 @@ func _process(_dt: float) -> void:
 		cli_in.grab_focus()
 
 func is_open() -> bool:
-	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
-		or vlan_overlay.visible
+	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -180,10 +178,6 @@ func _build_toolbar() -> void:
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
-	var vb := Button.new()
-	vb.text = "VLANs"
-	vb.pressed.connect(open_vlans)
-	h.add_child(vb)
 	update_mode(0)
 
 func update_mode(m: int) -> void:
@@ -277,6 +271,29 @@ func _build_dev_overlay() -> void:
 	conn_list = VBoxContainer.new()
 	v.add_child(conn_list)
 
+	vlan_section = VBoxContainer.new()
+	v.add_child(vlan_section)
+	vlan_section.add_child(HSeparator.new())
+	vlan_section.add_child(_label("VLAN DATABASE (this switch)", 12, MUTED))
+	vlan_box = VBoxContainer.new()
+	vlan_section.add_child(vlan_box)
+	var vrow := HBoxContainer.new()
+	vlan_section.add_child(vrow)
+	vlan_vid_in = _mono_edit(70)
+	vlan_vid_in.placeholder_text = "VID"
+	vrow.add_child(vlan_vid_in)
+	vlan_name_in = _mono_edit(180)
+	vlan_name_in.placeholder_text = "name (optional)"
+	vrow.add_child(vlan_name_in)
+	var vadd := Button.new()
+	vadd.text = "Add VLAN"
+	vadd.pressed.connect(func() -> void:
+		if vlan_vid_in.text.is_valid_int() \
+				and Game.add_vlan(cur_dev, int(vlan_vid_in.text), vlan_name_in.text):
+			vlan_vid_in.clear()
+			vlan_name_in.clear())
+	vrow.add_child(vadd)
+
 	cli_toggle = Button.new()
 	cli_toggle.text = "Open console  ▤"
 	cli_toggle.pressed.connect(_toggle_cli)
@@ -366,6 +383,33 @@ func _refresh_ports() -> void:
 				14, Color(0.55, 0.85, 0.65)))
 	if conn_list.get_child_count() == 0:
 		conn_list.add_child(_label("  no cables connected", 14, Color(0.45, 0.5, 0.6)))
+	_refresh_vlans()
+
+func _refresh_vlans() -> void:
+	vlan_section.visible = cur_dev.type == "switch"
+	if not vlan_section.visible:
+		return
+	for c in vlan_box.get_children():
+		c.queue_free()
+	var vids := cur_dev.vlans.keys()
+	vids.sort()
+	for vid in vids:
+		var row := HBoxContainer.new()
+		var ports: Array = []
+		for i: Net.Iface in cur_dev.ifaces:
+			if i.mode == "access" and i.untagged_vlan == vid:
+				ports.append(i.name)
+		var l := _label("  %-6d %-14s %s" % [vid, cur_dev.vlans[vid], ", ".join(ports)],
+			14, Color(0.7, 0.8, 0.9))
+		l.add_theme_font_override("font", mono)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		if vid != 1:
+			var x := Button.new()
+			x.text = "remove"
+			x.pressed.connect(func() -> void: Game.remove_vlan(cur_dev, vid))
+			row.add_child(x)
+		vlan_box.add_child(row)
 
 # ---------- interface editor ----------
 
@@ -409,7 +453,7 @@ func _build_if_overlay() -> void:
 	if_vlan_row.add_child(_label("   VLAN: ", 14, MUTED))
 	if_vlan = OptionButton.new()
 	if_vlan.item_selected.connect(func(idx: int) -> void:
-		cur_if.untagged_vlan = if_vlan.get_item_id(idx))
+		Game.set_access_vlan(cur_if, if_vlan.get_item_id(idx)))
 	if_vlan_row.add_child(if_vlan)
 	if_trunk_note = _label("   carries all VLANs (tagged)", 13, MUTED)
 	row2.add_child(if_trunk_note)
@@ -457,12 +501,14 @@ func _refresh_iface() -> void:
 	if_mac.text = "MAC %s" % cur_if.mac
 	if_enabled.set_pressed_no_signal(cur_if.enabled)
 	if_mtu.text = str(cur_if.mtu)
+	var is_switch := cur_if.dev.type == "switch"
+	if_mode.get_parent().visible = is_switch
 	if_mode.select(0 if cur_if.mode == "access" else 1)
-	if_vlan_row.visible = cur_if.mode == "access"
-	if_trunk_note.visible = cur_if.mode == "trunk"
+	if_vlan_row.visible = is_switch and cur_if.mode == "access"
+	if_trunk_note.visible = is_switch and cur_if.mode == "trunk"
 	if_vlan.clear()
-	for vid in Game.vlans:
-		if_vlan.add_item("%d (%s)" % [vid, Game.vlans[vid]], vid)
+	for vid in cur_if.dev.vlans:
+		if_vlan.add_item("%d (%s)" % [vid, cur_if.dev.vlans[vid]], vid)
 		if vid == cur_if.untagged_vlan:
 			if_vlan.select(if_vlan.item_count - 1)
 	for c in if_ip_box.get_children():
@@ -514,60 +560,6 @@ func _cable_action() -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
 
-# ---------- VLAN manager ----------
-
-func _build_vlan_overlay() -> void:
-	vlan_overlay = _overlay()
-	var v := _card(vlan_overlay, 460)
-	var t := _header(v, close_vlans)
-	t.text = "VLANs"
-	vlan_box = VBoxContainer.new()
-	v.add_child(vlan_box)
-	var row := HBoxContainer.new()
-	v.add_child(row)
-	vlan_vid_in = _mono_edit(70)
-	vlan_vid_in.placeholder_text = "VID"
-	row.add_child(vlan_vid_in)
-	vlan_name_in = _mono_edit(180)
-	vlan_name_in.placeholder_text = "name"
-	row.add_child(vlan_name_in)
-	var add := Button.new()
-	add.text = "Add VLAN"
-	add.pressed.connect(func() -> void:
-		if vlan_vid_in.text.is_valid_int() \
-				and Game.add_vlan(int(vlan_vid_in.text), vlan_name_in.text):
-			vlan_vid_in.clear()
-			vlan_name_in.clear()
-			_refresh_vlans())
-	row.add_child(add)
-
-func open_vlans() -> void:
-	_refresh_vlans()
-	vlan_overlay.visible = true
-
-func close_vlans() -> void:
-	vlan_overlay.visible = false
-
-func _refresh_vlans() -> void:
-	for c in vlan_box.get_children():
-		c.queue_free()
-	var vids := Game.vlans.keys()
-	vids.sort()
-	for vid in vids:
-		var row := HBoxContainer.new()
-		var l := _label("  %-6d %s" % [vid, Game.vlans[vid]], 14)
-		l.add_theme_font_override("font", mono)
-		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(l)
-		if vid != 1:
-			var x := Button.new()
-			x.text = "remove"
-			x.pressed.connect(func() -> void:
-				Game.remove_vlan(vid)
-				_refresh_vlans())
-			row.add_child(x)
-		vlan_box.add_child(row)
-
 # ---------- refresh / CLI ----------
 
 func _refresh_open() -> void:
@@ -594,29 +586,8 @@ func _cli_submit(cmd: String) -> void:
 	cli_in.clear()
 	cli_in.call_deferred("grab_focus")
 	cli_out.append_text("%s> %s\n" % [cur_dev.name, cmd])
-	var out := ""
-	match cmd.strip_edges():
-		"":
-			pass
-		"help":
-			out = "Commands: help, show interfaces, show version\n"
-		"show version":
-			out = "%s — PacketOS 0.1 (%s, %d interfaces)\n" % [cur_dev.name, cur_dev.type, cur_dev.ifaces.size()]
-		"show interfaces", "show int":
-			out = "%-6s %-5s %-6s %-18s %-20s %s\n" % ["name", "state", "mode", "addresses", "mac", "peer"]
-			for i: Net.Iface in cur_dev.ifaces:
-				var peer := Game.peer_label(i)
-				var state := "down"
-				if not i.enabled:
-					state = "admin"
-				elif peer != "":
-					state = "up"
-				var mode_s := ("vl%d" % i.untagged_vlan) if i.mode == "access" else "trunk"
-				var addrs := ",".join(i.ips) if not i.ips.is_empty() else "-"
-				out += "%-6s %-5s %-6s %-18s %-20s %s\n" % [i.name, state, mode_s, addrs, i.mac, peer if peer else "-"]
-		_:
-			out = "%% Unknown command. Full networking CLI arrives with the packet sim.\n"
-	cli_out.append_text(out)
+	cli_out.append_text(CLI.exec(cur_dev, cmd))
+	cli_prompt.text = cur_dev.name + "> "  # hostname may have changed
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
@@ -629,8 +600,6 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					rack_overlay.visible = true
-		elif vlan_overlay.visible:
-			close_vlans()
 		elif rack_overlay.visible:
 			close_rack()
 		else:

@@ -22,6 +22,7 @@ class NDevice:
 	var name: String
 	var status := "active"  # active | offline
 	var ifaces: Array = []
+	var vlans := {}  # vid -> name; per-device VLAN database (switches)
 	func _init(t: String, n: String) -> void:
 		type = t
 		name = n

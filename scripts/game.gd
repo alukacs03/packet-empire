@@ -12,7 +12,6 @@ const DEVICE_SPECS := {
 
 var racks: Array = []
 var links: Array = []
-var vlans := {1: "default"}  # vid -> name
 var _counter := {"switch": 0, "server": 0, "rack": 0, "mac": 0}
 
 # ---------- racks ----------
@@ -41,6 +40,8 @@ func new_device(type: String) -> Net.NDevice:
 	var spec: Dictionary = DEVICE_SPECS[type]
 	_counter[type] += 1
 	var d := Net.NDevice.new(type, spec["name_prefix"] + str(_counter[type]))
+	if type == "switch":
+		d.vlans = {1: "default"}
 	for i in spec["ports"]:
 		d.ifaces.append(Net.Iface.new(d, spec["if_prefix"] + str(spec["if_start"] + i), _new_mac()))
 	return d
@@ -105,22 +106,32 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 
 # ---------- IPAM ----------
 
-func add_vlan(vid: int, name: String) -> bool:
-	if vid < 1 or vid > 4094 or vlans.has(vid) or name.strip_edges() == "":
+func add_vlan(dev: Net.NDevice, vid: int, name: String) -> bool:
+	name = name.strip_edges()
+	if name == "":
+		name = "vlan%d" % vid
+	if dev.type != "switch" or vid < 1 or vid > 4094 or dev.vlans.has(vid):
 		return false
-	vlans[vid] = name.strip_edges()
+	dev.vlans[vid] = name
 	topology_changed.emit()
 	return true
 
-func remove_vlan(vid: int) -> void:
-	if vid == 1:
-		return  # default VLAN stays
-	vlans.erase(vid)
-	for d in all_devices():
-		for i in d.ifaces:
-			if i.untagged_vlan == vid:
-				i.untagged_vlan = 1
+func remove_vlan(dev: Net.NDevice, vid: int) -> bool:
+	if vid == 1 or not dev.vlans.has(vid):
+		return false  # default VLAN stays
+	dev.vlans.erase(vid)
+	for i in dev.ifaces:
+		if i.untagged_vlan == vid:
+			i.untagged_vlan = 1
 	topology_changed.emit()
+	return true
+
+func set_access_vlan(i: Net.Iface, vid: int) -> bool:
+	if not i.dev.vlans.has(vid):
+		return false
+	i.untagged_vlan = vid
+	topology_changed.emit()
+	return true
 
 func add_ip(i: Net.Iface, cidr: String) -> bool:
 	cidr = cidr.strip_edges()
