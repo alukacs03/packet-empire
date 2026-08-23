@@ -10,7 +10,7 @@ class_name Sim
 ## DHCP pl: {op: "discover"|"ack", mac, ...lease fields}: pure L2 broadcast
 
 const BCAST := "ff:ff:ff:ff:ff:ff"
-const MAX_DEPTH := 400  # loop guard until STP exists (issue #18)
+const MAX_DEPTH := 400  # flood guard for misconfigurations STP cannot see
 
 static var _depth := 0
 static var _echo_id := 0

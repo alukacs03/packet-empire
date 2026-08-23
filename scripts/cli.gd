@@ -105,7 +105,7 @@ class EOS extends Session:
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
 			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
-			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping, "dyn": null},
+			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping},
 			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
 			{"m": ["exec", "priv"], "p": ["ssh"], "h": _ssh},
 			{"m": EP, "p": ["show", "version"], "h": _show_version},

@@ -11,10 +11,13 @@ const TYPE_COLORS := {
 	"server": Color(0.45, 0.55, 0.8),
 }
 
+static var _mono_shared: SystemFont
+
 static func mono_font() -> SystemFont:
-	var f := SystemFont.new()
-	f.font_names = PackedStringArray(["Menlo", "Consolas", "monospace"])
-	return f
+	if _mono_shared == null:
+		_mono_shared = SystemFont.new()
+		_mono_shared.font_names = PackedStringArray(["Menlo", "Consolas", "monospace"])
+	return _mono_shared
 
 # ================================================================ TopoMap ==
 
