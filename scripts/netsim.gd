@@ -275,6 +275,7 @@ static func flush_learned_state() -> void:
 		d.mac_table.clear()
 		d.arp.clear()
 		d.nat_flows.clear()
+		d.flows.clear()
 
 static func stp_blocked(i: Net.Iface) -> bool:
 	_stp_ensure()
@@ -567,8 +568,12 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 						"pl": {"op": "ack", "mac": l4["mac"], "ip": l4["ip"],
 							"plen": l4["plen"], "gw": l4["gw"], "dns": l4["dns"]}})
 	elif dev.ip_forwarding:
-		if not _acl_permits(dev, p["src_ip"], p["dst_ip"]):
+		var flow_key := "%s|%s|%s" % [str(p["l4"].get("id", 0)), p["dst_ip"], p["src_ip"]]
+		var is_return: bool = dev.stateful and dev.flows.has(flow_key)
+		if not is_return and not _acl_permits(dev, p["src_ip"], p["dst_ip"]):
 			return  # filtered by firewall policy
+		if dev.stateful:
+			dev.flows["%s|%s|%s" % [str(p["l4"].get("id", 0)), p["src_ip"], p["dst_ip"]]] = true
 		if p["ttl"] <= 1:
 			_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)})
 			return

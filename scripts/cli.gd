@@ -131,6 +131,8 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
+			{"m": ["config"], "p": ["firewall", "stateful"], "h": func(_r): return _set_stateful(true)},
+			{"m": ["config"], "p": ["no", "firewall", "stateful"], "h": func(_r): return _set_stateful(false)},
 			{"m": ["config"], "p": ["acl", "permit"], "h": _cfg_acl.bind("permit")},
 			{"m": ["config"], "p": ["acl", "deny"], "h": _cfg_acl.bind("deny")},
 			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl},
@@ -488,6 +490,13 @@ class EOS extends Session:
 			return ""
 		return "usage: mtu <576-9216>\n"
 
+	func _set_stateful(on: bool) -> String:
+		if dev.type != "firewall":
+			return "% stateful inspection needs a firewall\n"
+		dev.stateful = on
+		Game.topology_changed.emit()
+		return ""
+
 	func _cfg_acl(r: Array, action: String) -> String:
 		if dev.type != "firewall":
 			return "% ACLs need a firewall\n"
@@ -514,7 +523,7 @@ class EOS extends Session:
 	func _show_acl(_r: Array) -> String:
 		if dev.acls.is_empty():
 			return "  (no rules: default permit)\n"
-		var out := ""
+		var out := "mode: %s\n" % ("stateful (return traffic auto-permitted)" if dev.stateful else "stateless")
 		var n := 1
 		for rule in dev.acls:
 			out += "%2d  %-7s %s/%d -> %s/%d\n" % [n, rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
@@ -763,6 +772,8 @@ class EOS extends Session:
 			out += "vlan %d\n   name %s\n!\n" % [vid, dev.vlans[vid]]
 		for r in dev.static_routes:
 			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
+		if dev.stateful:
+			out += "firewall stateful\n!\n"
 		for rule in dev.acls:
 			out += "acl %s %s/%d %s/%d\n!\n" % [rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
 		if not dev.ospf.is_empty():

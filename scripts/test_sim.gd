@@ -283,6 +283,20 @@ static func run() -> int:
 	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: removing the rule restores traffic")
 	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
 
+	# --- stateful firewall ---
+	var fw_ss := CLI.new_session(fw)
+	fw_ss.exec("en")
+	fw_ss.exec("conf t")
+	fw_ss.exec("firewall stateful")
+	fw_ss.exec("end")
+	check(Sim.ping(vault, "172.16.1.10")["ok"],
+		"fw: stateful mode lets the vault's outbound flow get its replies")
+	check(not Sim.ping(office, "172.16.2.20")["ok"], "fw: the deny still blocks unsolicited office->vault")
+	check(fw_ss.exec("show acl").contains("stateful"), "fw: show acl reports the mode")
+	fw_ss.exec("conf t")
+	fw_ss.exec("no firewall stateful")
+	fw_ss.exec("end")
+
 	# --- stages & power ---
 	check(Game.grid_size() == Vector2i(3, 3), "stage: colo corner is 3x3")
 	check(Game.power_draw() > 0, "stage: hardware draws watts")

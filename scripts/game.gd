@@ -582,7 +582,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper, "ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
-		"services": d.services, "resolver": d.resolver, "acls": d.acls, "bgp": d.bgp,
+		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "ifaces": ifs}
 
 func load_game() -> bool:
@@ -617,6 +617,7 @@ func load_game() -> bool:
 		d.static_routes = sd["static_routes"]
 		d.services = sd.get("services", {})
 		d.acls = sd.get("acls", [])
+		d.stateful = sd.get("stateful", false)
 		d.bgp = sd.get("bgp", {})
 		d.ospf = sd.get("ospf", {})
 		d.resolver = sd.get("resolver", "")
