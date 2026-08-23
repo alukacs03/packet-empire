@@ -1164,6 +1164,18 @@ func _build_market_section() -> void:
 				"%s: %s   $%d/cycle%s" % [deal["customer"], deal["kind"], int(deal["fee"]),
 					"" if ok else "   (not delivered: not paying)"],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
+			var detail := String(deal.get("brief", ""))
+			var spec_bits: Array = []
+			for k in deal["params"]:
+				spec_bits.append("%s: %s" % [k, str(deal["params"][k])])
+			if not spec_bits.is_empty():
+				detail += "   [" + ", ".join(PackedStringArray(spec_bits)) + "]"
+			if detail != "":
+				var dl := _label("      " + detail, 12,
+					Color(0.6, 0.66, 0.76) if ok else Color(0.8, 0.68, 0.6))
+				dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				dl.custom_minimum_size = Vector2(560, 0)
+				contracts_box.add_child(dl)
 
 var _toast_lbl: Label
 
@@ -1193,6 +1205,10 @@ func _refresh_contracts() -> void:
 				contracts_box.add_child(_chip_row("BREACH", Color(0.95, 0.45, 0.35),
 					"%s: %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
 					14, Color(0.95, 0.55, 0.4)))
+				for rq in c["reqs"]:
+					var rq_ok: bool = rq["t"].call()
+					contracts_box.add_child(_label("      %s  %s" % ["●" if rq_ok else "○", rq["d"]],
+						12, Color(0.5, 0.8, 0.55) if rq_ok else Color(0.95, 0.6, 0.45)))
 			continue
 		if found_active:
 			contracts_box.add_child(_label("🔒  (more contracts after the current one)", 13, Color(0.45, 0.5, 0.6)))
