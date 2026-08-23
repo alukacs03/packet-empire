@@ -1472,6 +1472,19 @@ func _build_menu() -> void:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
 			get_tree().reload_current_scene()))
 	v.add_child(newg)
+	var scen_btn := Button.new()
+	scen_btn.text = "Scenarios…"
+	scen_btn.tooltip_text = "Authored situations to work through; your own datacenter waits for you"
+	scen_btn.pressed.connect(func() -> void:
+		var opts: Array = []
+		for sc: Dictionary in Scenarios.all():
+			opts.append("%s: %s" % [sc["name"], sc["blurb"]])
+		_menu(scen_btn, opts, func(id: int) -> void:
+			menu_overlay.visible = false
+			Scenarios.start(Scenarios.all()[id])
+			get_parent().rebuild_racks()
+			_show_scenario_banner()))
+	v.add_child(scen_btn)
 	var sandbox_btn := Button.new()
 	sandbox_btn.text = "Sandbox mode"
 	sandbox_btn.tooltip_text = "Free hardware, no bills, no events: somewhere to try an idea"
@@ -1538,6 +1551,64 @@ func toggle_menu() -> void:
 		menu_overlay.visible = false
 	elif not is_open():
 		_show_overlay(menu_overlay)
+
+# ---------- scenarios ----------
+
+var scenario_panel: PanelContainer
+var scenario_box: VBoxContainer
+
+func _show_scenario_banner() -> void:
+	if scenario_panel == null:
+		scenario_panel = PanelContainer.new()
+		scenario_panel.theme = theme_res
+		scenario_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		scenario_panel.position = Vector2(-280, 70)
+		scenario_panel.custom_minimum_size = Vector2(560, 0)
+		scenario_panel.add_theme_stylebox_override("panel",
+			_sb(Color(0.08, 0.11, 0.14, 0.96), ACCENT * Color(1, 1, 1, 0.7), 8, 12))
+		add_child(scenario_panel)
+		scenario_box = VBoxContainer.new()
+		scenario_box.add_theme_constant_override("separation", 5)
+		scenario_panel.add_child(scenario_box)
+	for c in scenario_box.get_children():
+		c.queue_free()
+	var sc: Dictionary = Scenarios.active
+	if sc.is_empty():
+		scenario_panel.visible = false
+		return
+	scenario_box.add_child(_label("SCENARIO: %s" % sc["name"], 16, Color(0.7, 0.9, 1.0)))
+	var blurb := _label(sc["blurb"], 13, Color(0.78, 0.82, 0.88))
+	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	blurb.custom_minimum_size = Vector2(520, 0)
+	scenario_box.add_child(blurb)
+	for g in sc["goals"]:
+		var ok: bool = g["t"].call()
+		scenario_box.add_child(_label("   %s  %s" % ["●" if ok else "○", g["d"]], 13,
+			Prefs.ok_colour() if ok else Color(0.7, 0.7, 0.75)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	scenario_box.add_child(row)
+	var check_btn := Button.new()
+	check_btn.text = "Check"
+	_accent(check_btn)
+	check_btn.pressed.connect(func() -> void:
+		if Scenarios.solved():
+			var nm: String = Scenarios.active["name"]
+			Scenarios.finish(true)
+			get_parent().rebuild_racks()
+			scenario_panel.visible = false
+			hud_toast("Scenario passed: %s" % nm, true)
+		else:
+			_show_scenario_banner())
+	row.add_child(check_btn)
+	var leave_btn := Button.new()
+	leave_btn.text = "Leave scenario"
+	leave_btn.pressed.connect(func() -> void:
+		Scenarios.finish(false)
+		get_parent().rebuild_racks()
+		scenario_panel.visible = false)
+	row.add_child(leave_btn)
+	scenario_panel.visible = true
 
 # ---------- incident drill ----------
 

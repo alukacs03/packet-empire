@@ -107,6 +107,10 @@ static func ui_smoke(world: Node2D) -> int:
 	ui._refresh_search()
 	ui.toggle_search()
 	ui.hud_toast("smoke test message")
+	Scenarios.start(Scenarios.all()[2])
+	ui._show_scenario_banner()
+	Scenarios.finish(false)
+	ui._show_scenario_banner()
 	ui.toggle_help()
 	ui.toggle_help()
 	ui.open_pedia()
@@ -1447,6 +1451,51 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- scenarios ---
+	var devs_before_sc := Game.all_devices().size()
+	var isp: Dictionary = Scenarios.all()[0]
+	Scenarios.start(isp)
+	check(Game.drill_active and not Game.racks.is_empty(), "scenario: it replaces the world")
+	check(not Scenarios.solved(), "scenario: the inherited network really is broken")
+	# fix what the previous engineer left: the shut uplink, the wrong subnet,
+	# and the customer with no default route
+	var sc_core: Net.NDevice = null
+	var sc_sw_b: Net.NDevice = null
+	var sc_cust_b: Net.NDevice = null
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			for cidr: String in i.ips:
+				if cidr == "10.60.3.1/24":
+					sc_core = d
+				if cidr == "10.60.2.10/24":
+					sc_cust_b = d
+		if d.type == "switch":
+			for i: Net.Iface in d.ifaces:
+				if not i.enabled and Game.link_at(i) != null:
+					sc_sw_b = d
+	check(sc_core != null and sc_sw_b != null and sc_cust_b != null, "scenario: the faults are findable")
+	for i: Net.Iface in sc_core.ifaces:
+		if "10.60.3.1/24" in i.ips:
+			Game.remove_ip(i, "10.60.3.1/24")
+			Game.add_ip(i, "10.60.2.1/24")
+	for i: Net.Iface in sc_sw_b.ifaces:
+		i.enabled = true
+	Game.add_static_route(sc_cust_b, "0.0.0.0", 0, "10.60.2.1")
+	Game.topology_changed.emit()
+	check(Scenarios.solved(), "scenario: fixing the faults satisfies every goal")
+	Scenarios.finish(true)
+	check(not Game.drill_active and Game.all_devices().size() == devs_before_sc,
+		"scenario: your own datacenter comes back untouched")
+	var passed := false
+	for ev in Game.events:
+		if "SCENARIO passed" in ev:
+			passed = true
+	check(passed, "scenario: passing is recorded")
+	Scenarios.start(Scenarios.all()[1])
+	check(not Scenarios.solved(), "scenario: the campus starts unbuilt")
+	Scenarios.finish(false)
+	check(Game.all_devices().size() == devs_before_sc, "scenario: leaving restores the world too")
 
 	# --- contract terms and renewals ---
 	Game.deals = []
