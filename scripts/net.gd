@@ -16,6 +16,9 @@ class Iface:
 	var vrrp := {}  # {"group": int, "vip": String, "priority": int}
 	var lag := 0  # port-channel group id; 0 = standalone
 	var helper := ""  # DHCP relay target (ip helper-address)
+	var port_security := false  # sticky-MAC lockdown on an access port
+	var secure_mac := ""  # the MAC this port is locked to
+	var violations := 0
 	var parent := ""  # 802.1Q subinterface: name of the physical parent
 	var dot1q := 0  # subinterface VLAN tag
 	var tx_frames := 0  # runtime counters

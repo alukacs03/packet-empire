@@ -153,6 +153,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
+			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
+			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
+			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
 			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
 			{"m": ["if"], "p": ["vrrp"], "h": _if_vrrp},
@@ -402,6 +405,27 @@ class EOS extends Session:
 				return "% invalid VLAN id\n"
 		Game.set_access_vlan(ctx_if, vid)
 		return ""
+
+	func _port_sec(on: bool) -> String:
+		if dev.type != "switch":
+			return "% port security is a switchport feature\n"
+		ctx_if.port_security = on
+		if not on:
+			ctx_if.secure_mac = ""
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_port_sec(_r: Array) -> String:
+		var out := "%-11s %-9s %-19s %s\n" % ["Port", "Security", "Secure MAC", "Violations"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if not i.port_security:
+				continue
+			any = true
+			out += "%-11s %-9s %-19s %d%s\n" % [EOS._short(i.name), "enabled",
+				i.secure_mac if i.secure_mac else "(none learned)", i.violations,
+				"   [SHUTDOWN]" if not i.enabled else ""]
+		return out if any else "  (no ports secured: 'switchport port-security' under an interface)\n"
 
 	func _sw_trunk_vlans(r: Array) -> String:
 		if dev.type != "switch":
@@ -877,6 +901,8 @@ class EOS extends Session:
 					out += "   vrrp %d priority %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
 			if i.lag > 0:
 				out += "   channel-group %d\n" % i.lag
+			if i.port_security:
+				out += "   switchport port-security\n"
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
 			if not i.enabled:

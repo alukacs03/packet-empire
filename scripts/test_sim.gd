@@ -855,6 +855,39 @@ static func run() -> int:
 	check(l2sw.exec("interface Vlan40").contains("no L3 switching"), "svi: budget switches refuse SVIs")
 	check(Game.try_complete_contract(_contract("one_switch_two_nets")), "svi: collapse-the-core contract verifies")
 
+	# --- port security ---
+	var ps_sw := Game.new_device("sw-8")
+	var ps_a := Game.new_device("srv-1")
+	var ps_b := Game.new_device("srv-1")
+	var r11 := Game.add_rack(Vector2i(7, 1))
+	r11.slots[0] = ps_sw
+	r11.slots[1] = ps_a
+	r11.slots[2] = ps_b
+	Game.connect_ifaces(ps_a.ifaces[0], ps_sw.ifaces[0])
+	Game.connect_ifaces(ps_b.ifaces[0], ps_sw.ifaces[1])
+	Game.add_ip(ps_a.ifaces[0], "10.95.0.10/24")
+	Game.add_ip(ps_b.ifaces[0], "10.95.0.11/24")
+	var ps := CLI.new_session(ps_sw)
+	ps.exec("en")
+	ps.exec("conf t")
+	ps.exec("interface Ethernet1")
+	ps.exec("switchport port-security")
+	ps.exec("end")
+	check(Sim.ping(ps_a, "10.95.0.11")["ok"], "portsec: the first device is learned and allowed")
+	check(ps_sw.ifaces[0].secure_mac == ps_a.ifaces[0].mac, "portsec: sticky MAC recorded")
+	check(ps.exec("show port-security").contains(ps_a.ifaces[0].mac), "portsec: show lists the secure MAC")
+	# someone swaps the server for their own machine
+	Game.disconnect_iface(ps_sw.ifaces[0])
+	var rogue := Game.new_device("srv-1")
+	r11.slots[3] = rogue
+	Game.connect_ifaces(rogue.ifaces[0], ps_sw.ifaces[0])
+	Game.add_ip(rogue.ifaces[0], "10.95.0.66/24")
+	Sim.ping(rogue, "10.95.0.11")
+	check(not ps_sw.ifaces[0].enabled, "portsec: a different MAC shuts the port down")
+	check(int(ps_sw.ifaces[0].violations) == 1, "portsec: the violation is counted")
+	check("PORT SECURITY" in Game.events[0], "portsec: the violation is logged")
+	check(not Sim.ping(rogue, "10.95.0.11")["ok"], "portsec: the rogue machine gets nothing")
+
 	# --- startup config: write memory / reload ---
 	var cfg_sw := Game.new_device("sw-8")
 	var r10 := Game.add_rack(Vector2i(6, 1))

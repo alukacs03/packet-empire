@@ -753,7 +753,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
-			"parent": i.parent, "dot1q": i.dot1q, "ips": i.ips})
+			"parent": i.parent, "dot1q": i.dot1q,
+			"port_security": i.port_security, "secure_mac": i.secure_mac, "ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
@@ -814,6 +815,8 @@ func _apply(data: Dictionary) -> void:
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
 			i.helper = si.get("helper", "")
+			i.port_security = si.get("port_security", false)
+			i.secure_mac = si.get("secure_mac", "")
 			i.parent = si.get("parent", "")
 			i.dot1q = int(si.get("dot1q", 0))
 			i.ips = si["ips"]

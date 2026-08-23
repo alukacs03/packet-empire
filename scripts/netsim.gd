@@ -518,6 +518,16 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		return
 	if not dev.mac_table.has(vlan):
 		dev.mac_table[vlan] = {}
+	if in_if.port_security:
+		if in_if.secure_mac == "":
+			in_if.secure_mac = frame["src"]  # sticky: learn the first device
+		elif in_if.secure_mac != frame["src"]:
+			in_if.violations += 1
+			in_if.enabled = false
+			Game.log_event("PORT SECURITY: %s %s saw %s instead of %s and shut down."
+				% [dev.name, in_if.name, frame["src"], in_if.secure_mac])
+			Game.topology_changed.emit()
+			return
 	dev.mac_table[vlan][frame["src"]] = in_if
 	for svi: Net.Iface in dev.ifaces:
 		if not svi.name.begins_with("Vlan") or not svi.enabled:
