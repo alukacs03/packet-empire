@@ -306,6 +306,33 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 				frontier.append(nb["dev"])
 	return out
 
+static func snmp_poll(station: Net.NDevice, target_ip: String, community: String) -> Dictionary:
+	## One SNMP get, over the real network. It fails for exactly the reasons a
+	## real one does: no route, the agent is not running, or the community is
+	## wrong, and the caller is told which.
+	var reach := ping(station, target_ip)
+	if not reach["ok"]:
+		return {"ok": false, "why": "unreachable: %s" % reach.get("detail", "no answer")}
+	var target: Net.NDevice = null
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			if _iface_owns_ip(i, target_ip):
+				target = d
+	if target == null:
+		return {"ok": false, "why": "nothing owns that address"}
+	if target.snmp == "":
+		return {"ok": false, "why": "no SNMP agent on %s" % target.name}
+	if target.snmp != community:
+		return {"ok": false, "why": "wrong community for %s" % target.name}
+	var ifs: Array = []
+	for i2: Net.Iface in target.ifaces:
+		if i2.name == "lo" or i2.parent != "":
+			continue
+		ifs.append({"name": i2.name, "up": i2.enabled and Game.link_at(i2) != null,
+			"tx": i2.tx_frames, "rx": i2.rx_frames})
+	return {"ok": true, "name": target.name, "model": target.model,
+		"status": target.status, "ifaces": ifs}
+
 static func mlag_peer_of(dev: Net.NDevice) -> Net.NDevice:
 	## the switch this one shares bundles with, if it is up
 	if dev.mlag_peer == "":

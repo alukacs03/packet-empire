@@ -198,6 +198,10 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["mlag"], "h": func(r): return _mlag_if(int(r[0]) if r.size() > 0 else 0)},
 			{"m": ["if"], "p": ["no", "mlag"], "h": func(_r): return _mlag_if(0)},
 			{"m": EP, "p": ["show", "mlag"], "h": _show_mlag},
+			{"m": ["config"], "p": ["snmp-server", "community"],
+				"h": func(r): return _snmp(r[0] if r.size() > 0 else "")},
+			{"m": ["config"], "p": ["no", "snmp-server"], "h": func(_r): return _snmp("")},
+			{"m": EP, "p": ["show", "snmp"], "h": _show_snmp},
 			{"m": ["config"], "p": ["ip", "igmp", "snooping"], "h": func(_r): return _igmp(true)},
 			{"m": ["config"], "p": ["no", "ip", "igmp", "snooping"], "h": func(_r): return _igmp(false)},
 			{"m": EP, "p": ["show", "ip", "igmp", "snooping"], "h": _show_igmp},
@@ -657,6 +661,16 @@ class EOS extends Session:
 				"up" if Game.link_at(i) != null and i.enabled else "down"],
 				("%s %s" % [EOS._short(far.name), "up" if Game.link_at(far) != null and far.enabled else "down"]) if far != null else "missing"]
 		return out
+
+	func _show_snmp(_r: Array) -> String:
+		if dev.snmp == "":
+			return "SNMP agent: not running\n"
+		return "SNMP agent: community %s (read-only)\n" % dev.snmp
+
+	func _snmp(community: String) -> String:
+		dev.snmp = community
+		Game.topology_changed.emit()
+		return ""
 
 	func _igmp(on: bool) -> String:
 		if dev.type not in ["switch", "ap"]:
@@ -1539,7 +1553,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1625,6 +1639,28 @@ class Linux extends Session:
 						leg.mac = legs[0].mac  # a bond presents one address
 				Game.topology_changed.emit()
 				return "bond%d: %s\n" % [gid, " ".join(PackedStringArray(t.slice(1)))]
+			"snmpd":
+				if t.size() >= 2 and t[1] == "off":
+					dev.snmp = ""
+					Game.topology_changed.emit()
+					return "snmp agent stopped\n"
+				if t.size() < 2:
+					return "usage: snmpd <community> | snmpd off\n"
+				dev.snmp = String(t[1])
+				Game.topology_changed.emit()
+				return "snmp agent listening, community %s\n" % t[1]
+			"snmpwalk":
+				if t.size() < 3:
+					return "usage: snmpwalk <address> <community>\n"
+				var poll := Sim.snmp_poll(dev, String(t[1]), String(t[2]))
+				if not bool(poll["ok"]):
+					return "snmpwalk: %s\n" % poll["why"]
+				var out_s := "%s (%s) is %s\n" % [poll["name"], poll["model"], poll["status"]]
+				out_s += "%-14s %-6s %10s %10s\n" % ["INTERFACE", "STATE", "TX", "RX"]
+				for i3 in poll["ifaces"]:
+					out_s += "%-14s %-6s %10d %10d\n" % [i3["name"],
+						"up" if bool(i3["up"]) else "down", int(i3["tx"]), int(i3["rx"])]
+				return out_s
 			"igmp":
 				if t.size() == 3 and t[1] == "join":
 					var err := Sim.igmp_join(dev, t[2])
@@ -1864,7 +1900,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

@@ -3071,5 +3071,40 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- SNMP: monitoring is a thing you have to configure, on both ends ---
+	var snm_rack := Game.add_rack(Vector2i(35, 1))
+	var snm_sw := Game.new_device("sw-24")  # an L3 switch, so it can own a management address
+	var snm_mon := Game.new_device("srv-1")
+	snm_rack.slots[0] = snm_sw
+	snm_rack.slots[1] = snm_mon
+	Game.connect_ifaces(snm_mon.ifaces[0], snm_sw.ifaces[0])
+	Game.add_ip(snm_mon.ifaces[0], "10.180.0.10/24")
+	var snm_svi := Game.add_svi(snm_sw, 1)
+	Game.add_ip(snm_svi, "10.180.0.1/24")
+	Sim.flush_learned_state()
+	var snm_cli := CLI.new_session(snm_sw)
+	snm_cli.exec("enable")
+	check(Sim.ping(snm_mon, "10.180.0.1")["ok"], "snmp: the station can reach the switch first")
+	var snm_mcli := CLI.new_session(snm_mon)
+	check(snm_mcli.exec("snmpwalk 10.180.0.1 public").contains("no SNMP agent"),
+		"snmp: a device with no agent says so instead of answering")
+	snm_cli.exec("configure terminal")
+	check(snm_cli.exec("snmp-server community public").is_empty(),
+		"snmp: the agent can be started")
+	snm_cli.exec("end")
+	check(snm_mcli.exec("snmpwalk 10.180.0.1 wrongone").contains("wrong community"),
+		"snmp: the wrong community is refused, not silently accepted")
+	var snm_out := snm_mcli.exec("snmpwalk 10.180.0.1 public")
+	check(snm_out.contains(snm_sw.name) and snm_out.contains("Ethernet1"),
+		"snmp: a correct poll returns the interface table")
+	check(snm_cli.exec("show snmp").contains("public"), "snmp: show snmp reports the community")
+	# and it fails for the reason a real one does when the network is broken
+	snm_mon.ifaces[0].enabled = false
+	Sim.flush_learned_state()
+	check(snm_mcli.exec("snmpwalk 10.180.0.1 public").contains("unreachable"),
+		"snmp: no route means no monitoring, which is the lesson")
+	snm_mon.ifaces[0].enabled = true
+	Sim.flush_learned_state()
+
 	print("---- %d failures" % fails)
 	return fails

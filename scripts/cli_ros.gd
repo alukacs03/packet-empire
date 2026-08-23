@@ -53,6 +53,21 @@ func exec(line: String) -> String:
 			if p.has("name") and Game.rename_device(dev, p["name"]):
 				return ""
 			return "usage: /system identity set name=<name>\n"
+		"snmp set":
+			if p.has("community"):
+				dev.snmp = String(p["community"])
+				if String(p.get("enabled", "yes")) == "no":
+					dev.snmp = ""
+				Game.topology_changed.emit()
+				return ""
+			if String(p.get("enabled", "")) == "no":
+				dev.snmp = ""
+				Game.topology_changed.emit()
+				return ""
+			return "usage: /snmp set enabled=yes community=<name>\n"
+		"snmp print":
+			return "enabled: %s\ncommunity: %s\n" % ["yes" if dev.snmp != "" else "no",
+				dev.snmp if dev.snmp != "" else "-"]
 		"system backup save":
 			dev.startup = Game.device_config(dev)
 			return "configuration backup saved\n"
@@ -332,6 +347,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"system backup save", "system backup load", "system reboot",
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
+	"snmp set", "snmp print",
 	"interface print", "interface print stats", "interface set",
 	"interface bonding add", "interface bonding print",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
@@ -356,6 +372,8 @@ func _help() -> String:
 
 func _export() -> String:
 	var out := "# PacketTik export\n/system identity set name=%s\n" % dev.name
+	if dev.snmp != "":
+		out += "/snmp set enabled=yes community=%s\n" % dev.snmp
 	var vids := dev.vlans.keys()
 	vids.sort()
 	for vid in vids:
