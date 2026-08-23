@@ -266,10 +266,12 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 	if dev.ospf.is_empty() or not dev.ip_forwarding:
 		return out
 	var first_hop := {}  # router -> [via_ip, ...] equal-cost first hops
+	var hops := {}  # router -> distance in hops, so nearer wins
 	var frontier: Array = []
 	for nb in ospf_neighbors(dev):
 		if not first_hop.has(nb["dev"]):
 			first_hop[nb["dev"]] = []
+			hops[nb["dev"]] = 1
 			frontier.append(nb["dev"])
 		if nb["via_ip"] not in first_hop[nb["dev"]]:
 			first_hop[nb["dev"]].append(nb["via_ip"])
@@ -283,12 +285,18 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 			for cidr: String in i.ips:
 				var netw := Net.network_of(cidr)
 				for via in first_hop[cur]:
-					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via})
+					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via,
+						"cost": 10 * int(hops.get(cur, 1))})
 		for nb in ospf_neighbors(cur):
 			if not visited.has(nb["dev"]):
+				var next_cost: int = int(hops.get(cur, 1)) + 1
 				if not first_hop.has(nb["dev"]):
 					first_hop[nb["dev"]] = first_hop[cur].duplicate()
-				else:
+					hops[nb["dev"]] = next_cost
+				elif next_cost < int(hops.get(nb["dev"], 1 << 30)):
+					first_hop[nb["dev"]] = first_hop[cur].duplicate()
+					hops[nb["dev"]] = next_cost
+				elif next_cost == int(hops.get(nb["dev"], 1 << 30)):
 					for via in first_hop[cur]:
 						if via not in first_hop[nb["dev"]]:
 							first_hop[nb["dev"]].append(via)
@@ -418,10 +426,14 @@ static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		best_len = maxi(best_len, int(c["plen"]))
 	if best_len < 0:
 		return []
+	var best_cost := 1 << 30
+	for c in cands:
+		if int(c["plen"]) == best_len:
+			best_cost = mini(best_cost, int(c.get("cost", 1)))
 	var out: Array = []
 	var seen := {}
 	for cand in cands:
-		if int(cand["plen"]) != best_len:
+		if int(cand["plen"]) != best_len or int(cand.get("cost", 1)) != best_cost:
 			continue
 		var key := "%s|%s" % [str(cand["next_hop"]), str(cand["iface"])]
 		if seen.has(key):
@@ -442,18 +454,19 @@ static func _all_routes(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 				continue
 			var parts := cidr.split("/")
 			if Net.same_net(dst_ip, parts[0], int(parts[1])):
-				out.append({"iface": i, "next_hop": dst_ip, "plen": int(parts[1])})
+				out.append({"iface": i, "next_hop": dst_ip, "plen": int(parts[1]), "cost": 0})
 	for r in dev.static_routes + _bgp_learned(dev) + _ospf_learned(dev):
 		if Net.is_v6(String(r["prefix"])) != want_v6 or String(r.get("vrf", "")) != vrf:
 			continue
 		if not Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
 			continue
 		if String(r["via"]) == "null0":
-			out.append({"iface": null, "next_hop": "null0", "plen": int(r["plen"])})
+			out.append({"iface": null, "next_hop": "null0", "plen": int(r["plen"]), "cost": 1})
 			continue
 		var via_if := _connected_iface(dev, String(r["via"]), vrf)
 		if via_if:
-			out.append({"iface": via_if, "next_hop": r["via"], "plen": int(r["plen"])})
+			out.append({"iface": via_if, "next_hop": r["via"], "plen": int(r["plen"]),
+				"cost": int(r.get("cost", 1))})
 	return out
 
 static func _route_lookup_single(dev: Net.NDevice, dst_ip: String) -> Dictionary:

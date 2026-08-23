@@ -1140,7 +1140,8 @@ class EOS extends Session:
 		for r in Sim._bgp_learned(dev):
 			out += "B  %s/%d [20/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		for r in Sim._ospf_learned(dev):
-			out += "O  %s/%d [110/%d] via %s\n" % [r["prefix"], int(r["plen"]), 10, r["via"]]
+			out += "O  %s/%d [110/%d] via %s\n" % [r["prefix"], int(r["plen"]),
+				int(r.get("cost", 10)), r["via"]]
 		return out if out else "  (no routes: configure ip addresses)\n"
 
 	func _show_v6_brief(_r: Array) -> String:

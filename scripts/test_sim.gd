@@ -1442,6 +1442,53 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- anycast: the same address in two places ---
+	var any_rack := Game.add_rack(Vector2i(24, 1))
+	var any_client_r := Game.new_device("rtr-edge")
+	var any_near := Game.new_device("rtr-edge")
+	var any_mid := Game.new_device("rtr-edge")
+	var any_far := Game.new_device("rtr-edge")
+	var any_client := Game.new_device("srv-1")
+	any_rack.slots[0] = any_client_r
+	any_rack.slots[1] = any_near
+	any_rack.slots[2] = any_mid
+	any_rack.slots[3] = any_far
+	any_rack.slots[4] = any_client
+	# client router: one hop to the near instance, three to the far one
+	Game.connect_ifaces(any_client_r.ifaces[0], any_near.ifaces[0])
+	Game.connect_ifaces(any_client_r.ifaces[1], any_mid.ifaces[0])
+	Game.connect_ifaces(any_mid.ifaces[1], any_far.ifaces[0])
+	Game.connect_ifaces(any_client.ifaces[0], any_client_r.ifaces[2])
+	Game.add_ip(any_client_r.ifaces[0], "10.130.1.1/30")
+	Game.add_ip(any_near.ifaces[0], "10.130.1.2/30")
+	Game.add_ip(any_client_r.ifaces[1], "10.130.2.1/30")
+	Game.add_ip(any_mid.ifaces[0], "10.130.2.2/30")
+	Game.add_ip(any_mid.ifaces[1], "10.130.3.1/30")
+	Game.add_ip(any_far.ifaces[0], "10.130.3.2/30")
+	Game.add_ip(any_client_r.ifaces[2], "10.130.9.1/24")
+	Game.add_ip(any_client.ifaces[0], "10.130.9.10/24")
+	Game.add_static_route(any_client, "0.0.0.0", 0, "10.130.9.1")
+	# both instances answer on the same service address
+	Game.add_ip(any_near.ifaces[3], "10.130.100.100/32")
+	Game.add_ip(any_far.ifaces[3], "10.130.100.100/32")
+	for any_dev in [any_client_r, any_near, any_mid, any_far]:
+		any_dev.ospf = {"networks": ["10.130.0.0/16"]}
+	Game.topology_changed.emit()
+	var any_paths := Sim._route_paths(any_client_r, "10.130.100.100")
+	check(any_paths.size() == 1, "anycast: the router picks one instance, not both (%d)" % any_paths.size())
+	check(String(any_paths[0]["next_hop"]) == "10.130.1.2",
+		"anycast: it picks the nearer announcement (%s)" % str(any_paths[0]["next_hop"]))
+	check(Sim.ping(any_client, "10.130.100.100")["ok"], "anycast: the service answers")
+	# lose the near instance: the far one takes over without the client changing anything
+	any_near.status = "offline"
+	Game.topology_changed.emit()
+	var failover := Sim._route_paths(any_client_r, "10.130.100.100")
+	check(failover.size() >= 1 and String(failover[0]["next_hop"]) == "10.130.2.2",
+		"anycast: losing the near site moves traffic to the far one")
+	check(Sim.ping(any_client, "10.130.100.100")["ok"], "anycast: the address still answers")
+	any_near.status = "active"
+	Game.topology_changed.emit()
+
 	# --- WireGuard ---
 	var wg_rack := Game.add_rack(Vector2i(23, 1))
 	var wg_l := Game.new_device("rtr-edge")
