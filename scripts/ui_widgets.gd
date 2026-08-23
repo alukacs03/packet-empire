@@ -9,6 +9,7 @@ const TYPE_COLORS := {
 	"uplink": Color(0.7, 0.5, 0.9),
 	"cooling": Color(0.5, 0.8, 0.95),
 	"loadbalancer": Color(0.55, 0.85, 0.55),
+	"ap": Color(0.9, 0.8, 0.45),
 	"server": Color(0.45, 0.55, 0.8),
 }
 

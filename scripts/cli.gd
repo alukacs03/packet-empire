@@ -6,8 +6,8 @@ class_name CLI
 static func new_session(dev: Net.NDevice) -> Session:
 	if Game.MODELS.get(dev.model, {}).get("os", "") == "ros":
 		return ROS.new(dev)
-	return EOS.new(dev) if dev.type in ["switch", "router", "firewall", "uplink", "loadbalancer"] \
-		else Linux.new(dev)
+	return EOS.new(dev) if dev.type in ["switch", "router", "firewall", "uplink",
+		"loadbalancer", "ap"] else Linux.new(dev)
 
 static func try_ssh(session: Session, target: String) -> String:
 	var ip := Sim.resolve(session.dev, target)
@@ -156,6 +156,8 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["ip", "vrf"], "h": _cfg_vrf},
+			{"m": ["config"], "p": ["ssid"], "h": _cfg_ssid},
+			{"m": EP, "p": ["show", "ssid"], "h": _show_ssid},
 			{"m": ["config"], "p": ["virtual-server"], "h": _cfg_vip},
 			{"m": ["config"], "p": ["no", "virtual-server"], "h": _cfg_no_vip},
 			{"m": EP, "p": ["show", "virtual-server"], "h": _show_vip},
@@ -973,6 +975,31 @@ class EOS extends Session:
 			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
 		return out
 
+	func _cfg_ssid(r: Array) -> String:
+		## ssid <name> vlan <id>
+		if r.size() != 3 or String(r[1]) != "vlan" or not String(r[2]).is_valid_int():
+			return "usage: ssid <name> vlan <id>\n"
+		var err := Game.set_ssid(dev, String(r[0]), int(r[2]))
+		return "" if err == "" else "%% %s\n" % err
+
+	func _show_ssid(_r: Array) -> String:
+		if dev.type != "ap":
+			return "% only an access point broadcasts an SSID\n"
+		if dev.ssids.is_empty():
+			return "  (no SSIDs: 'ssid <name> vlan <id>' creates one)\n"
+		var out := "%-18s %-6s %s\n" % ["SSID", "VLAN", "ASSOCIATED"]
+		for name in dev.ssids:
+			var clients: Array = []
+			for radio: Net.Iface in dev.ifaces:
+				if not radio.name.begins_with("radio"):
+					continue
+				var l := Game.link_at(radio)
+				if l and radio.untagged_vlan == int(dev.ssids[name]):
+					clients.append(l.other(radio).dev.name)
+			out += "%-18s %-6d %s\n" % [name, int(dev.ssids[name]),
+				", ".join(PackedStringArray(clients)) if clients else "-"]
+		return out
+
 	func _cfg_vip(r: Array) -> String:
 		## virtual-server <vip> members <ip>,<ip>
 		if dev.type != "loadbalancer":
@@ -1396,7 +1423,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1463,6 +1490,17 @@ class Linux extends Session:
 									", ".join(PackedStringArray(i.ips))]
 					return out if out != "" else "(no virtual machines)\n"
 				return "usage: vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list\n"
+			"wifi":
+				if t.size() == 3 and t[1] == "join":
+					var err := Game.wifi_join(dev, t[2])
+					return "associated with '%s'\n" % t[2] if err == "" else "wifi: %s\n" % err
+				if t.size() >= 2 and t[1] == "leave":
+					Game.wifi_leave(dev)
+					return "disassociated\n"
+				if t.size() >= 2 and t[1] == "status":
+					return "associated with '%s'\n" % dev.wifi if dev.wifi != "" \
+						else "not associated\n"
+				return "usage: wifi join <ssid> | wifi leave | wifi status\n"
 			"wg":
 				# wg up <n> | wg addr <n> <cidr> | wg peer <n> <key> <endpoint> <allowed> | wg show
 				if t.size() == 3 and t[1] == "up":
@@ -1661,7 +1699,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

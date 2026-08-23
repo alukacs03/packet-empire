@@ -230,6 +230,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "guest_wifi",
+			"title": "Guests and staff",
+			"customer": "Balaton Hotel",
+			"reward": 2600,
+			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'), address them in 10.110.30.0/24 and 10.110.31.0/24, and prove the guest side cannot reach the staff side.",
+			"reqs": [
+				{"d": "An access point broadcasting two SSIDs", "t": func() -> bool: return _ap_ssids() >= 2},
+				{"d": "A host associated on each network", "t": func() -> bool: return _wifi_clients() >= 2},
+				{"d": "Guests cannot reach the staff network", "t": func() -> bool: return _owner("10.110.30.10") != null and _ping("10.110.30.10", "10.110.31.10", false)},
+			],
+		},
+		{
 			"id": "wireguard_link",
 			"title": "Encrypt the back road",
 			"customer": "Astra Legal",
@@ -392,6 +404,20 @@ static func _l3_switch_svis() -> int:
 				n += 1
 		best = maxi(best, n)
 	return best
+
+static func _ap_ssids() -> int:
+	var best := 0
+	for d in Game.all_devices():
+		if d.type == "ap":
+			best = maxi(best, d.ssids.size())
+	return best
+
+static func _wifi_clients() -> int:
+	var n := 0
+	for d in Game.all_devices():
+		if d.wifi != "":
+			n += 1
+	return n
 
 static func _wg_ifaces() -> Array:
 	var out: Array = []

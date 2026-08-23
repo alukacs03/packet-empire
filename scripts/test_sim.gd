@@ -1445,6 +1445,52 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- wireless ---
+	var wifi_rack := Game.add_rack(Vector2i(29, 1))
+	var wifi_sw := Game.new_device("sw-8")
+	var ap := Game.new_device("ap-1")
+	var guest := Game.new_device("srv-1")
+	var staff_pc := Game.new_device("srv-1")
+	var wifi_gw := Game.new_device("rtr-lite")
+	wifi_rack.slots[0] = wifi_sw
+	wifi_rack.slots[1] = ap
+	wifi_rack.slots[2] = guest
+	wifi_rack.slots[3] = staff_pc
+	wifi_rack.slots[4] = wifi_gw
+	Game.connect_ifaces(ap.ifaces[0], wifi_sw.ifaces[0])
+	wifi_sw.ifaces[0].mode = "trunk"
+	Game.connect_ifaces(wifi_gw.ifaces[0], wifi_sw.ifaces[1])
+	Game.add_vlan(wifi_sw, 30, "guest")
+	Game.add_vlan(wifi_sw, 31, "staff")
+	wifi_sw.ifaces[1].untagged_vlan = 31
+	Game.add_ip(wifi_gw.ifaces[0], "10.110.31.1/24")
+	var ap_cli := CLI.new_session(ap)
+	ap_cli.exec("en")
+	ap_cli.exec("conf t")
+	check(ap_cli.exec("ssid guest-wifi vlan 30").is_empty(), "wifi: an SSID maps to a VLAN")
+	ap_cli.exec("ssid staff-wifi vlan 31")
+	ap_cli.exec("end")
+	check(ap_cli.exec("show ssid").contains("guest-wifi"), "wifi: SSIDs are listed")
+	var guest_cli := CLI.new_session(guest)
+	check(guest_cli.exec("wifi join guest-wifi").contains("associated"), "wifi: a host can associate")
+	check(guest.wifi == "guest-wifi" and Game.link_at(guest.ifaces[0]) != null,
+		"wifi: association puts it on the access point")
+	var staff_cli := CLI.new_session(staff_pc)
+	staff_cli.exec("wifi join staff-wifi")
+	Game.add_ip(guest.ifaces[0], "10.110.30.10/24")
+	Game.add_ip(staff_pc.ifaces[0], "10.110.31.10/24")
+	check(Sim.ping(staff_pc, "10.110.31.1")["ok"],
+		"wifi: the staff network reaches its gateway through the trunk")
+	check(not Sim.ping(guest, "10.110.31.10")["ok"],
+		"wifi: the guest SSID lands in another VLAN and cannot reach staff")
+	check(guest_cli.exec("wifi status").contains("guest-wifi"), "wifi: status is reported")
+	guest_cli.exec("wifi leave")
+	check(Game.link_at(guest.ifaces[0]) == null, "wifi: leaving drops the association")
+	check(not Game.wifi_join(guest, "nonexistent-wifi").is_empty(),
+		"wifi: joining a network nobody broadcasts fails")
+	Game.wifi_join(guest, "guest-wifi")
+	check(Game.try_complete_contract(_contract("guest_wifi")), "wifi: the hotel contract verifies")
+
 	# --- sandbox mode and rack blueprints ---
 	Game.sandbox = true
 	var poor := Game.money

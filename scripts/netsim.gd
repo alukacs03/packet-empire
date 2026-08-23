@@ -607,7 +607,7 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	_cap(peer.dev, peer, frame)
 	_depth += 1
-	if peer.dev.type == "switch" and not peer.name.begins_with("Management"):
+	if peer.dev.type in ["switch", "ap"] and not peer.name.begins_with("Management"):
 		_switch_rx(peer.dev, peer, frame)
 	else:
 		_host_rx(peer.dev, _logical_rx_iface(peer, frame), frame)

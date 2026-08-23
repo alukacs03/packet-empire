@@ -53,6 +53,8 @@ class NDevice:
 	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
 	var dai := false  # dynamic ARP inspection, using the snooping bindings
 	var bindings := {}  # mac -> address learned from a legitimate lease
+	var ssids := {}  # access point: SSID name -> VLAN id
+	var wifi := ""  # host: the SSID it is associated with
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var stateful := false  # track flows, auto-permit return traffic
 	var startup := {}  # saved configuration ('write memory')

@@ -17,11 +17,14 @@ const MODELS := {
 	"fw-1": {"speed": 1000, "tier": 1, "type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
 	"lb-1": {"speed": 10000, "tier": 2, "type": "loadbalancer", "ports": 4,
 		"label": "Equipoise LB10", "price": 1400},
+	"ap-1": {"speed": 1000, "tier": 1, "type": "ap", "ports": 9, "label": "AirTurul AP3",
+		"price": 320},
 	"isp-uplink": {"speed": 1000, "tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
 	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
-	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100, "lb-1": 120}
+	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100, "lb-1": 120,
+	"ap-1": 15}
 const TRANSIT_FEE := 30  # per cycle per established upstream BGP session
 const BASE_COOLING := 400  # watts the bare room can dissipate
 const STAGES := [
@@ -33,7 +36,7 @@ const STAGES := [
 		"blurb": "A real floor. Grow the empire."},
 ]
 const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1",
-	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1"}
+	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1", "ap": "ap-1"}
 const TYPE_SPECS := {
 	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
 	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
@@ -42,6 +45,7 @@ const TYPE_SPECS := {
 	"uplink": {"if_prefix": "port", "if_start": 1, "name_prefix": "isp"},
 	"cooling": {"if_prefix": "port", "if_start": 1, "name_prefix": "crac"},
 	"loadbalancer": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "lb"},
+	"ap": {"if_prefix": "radio", "if_start": 1, "name_prefix": "ap"},
 }
 const DIFFICULTIES := [
 	{"name": "Apprentice", "cash": 4000, "aggression": 0.75, "faults": 0.5, "cycle": 60.0,
@@ -205,7 +209,7 @@ var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
-	"cooling": 0, "loadbalancer": 0, "rack": 0, "mac": 0}
+	"cooling": 0, "loadbalancer": 0, "ap": 0, "rack": 0, "mac": 0}
 
 func _ensure_sites() -> void:
 	if sites.is_empty():
@@ -384,6 +388,47 @@ func overheating() -> bool:
 
 func is_l3_switch(dev: Net.NDevice) -> bool:
 	return dev.type == "switch" and bool(MODELS.get(dev.model, {}).get("l3", false))
+
+func set_ssid(ap: Net.NDevice, name: String, vid: int) -> String:
+	if ap.type != "ap":
+		return "only an access point broadcasts an SSID"
+	if vid < 1 or vid > 4094:
+		return "that is not a VLAN id"
+	ap.ssids[name] = vid
+	if not ap.vlans.has(vid):
+		ap.vlans[vid] = name
+	topology_changed.emit()
+	return ""
+
+func wifi_join(client: Net.NDevice, ssid: String) -> String:
+	## associating is modelled as the radio link it is: the client ends up on
+	## a port of the access point, in the VLAN that SSID maps to
+	if client.type != "server":
+		return "only a host associates with a network"
+	wifi_leave(client)
+	var client_rack := rack_of(client)
+	for ap in all_devices():
+		if ap.type != "ap" or not ap.ssids.has(ssid) or ap.status != "active":
+			continue
+		var ap_rack := rack_of(ap)
+		if client_rack and ap_rack and client_rack.site != ap_rack.site:
+			continue  # out of range: radios do not cross buildings
+		for radio: Net.Iface in ap.ifaces:
+			if radio.name.begins_with("radio") and link_at(radio) == null:
+				radio.mode = "access"
+				radio.untagged_vlan = int(ap.ssids[ssid])
+				if connect_ifaces(client.ifaces[0], radio):
+					client.wifi = ssid
+					log_event("WIFI: %s associated with '%s' on %s." % [client.name, ssid, ap.name])
+					return ""
+	return "no access point in range is broadcasting '%s'" % ssid
+
+func wifi_leave(client: Net.NDevice) -> void:
+	for i: Net.Iface in client.ifaces:
+		var l := link_at(i)
+		if l and l.other(i).dev.type == "ap":
+			disconnect_iface(i)
+	client.wifi = ""
 
 func create_vm(host: Net.NDevice, name: String) -> Net.Iface:
 	## a virtual machine on a server: its own NIC, riding the host's uplink
@@ -1506,6 +1551,12 @@ func new_device(model: String) -> Net.NDevice:
 		if type != "switch":
 			ifc.mode = "routed"
 		d.ifaces.append(ifc)
+	if type == "ap":
+		# an access point is a small bridge: one wired uplink, the rest radio
+		d.ifaces[0].name = "Ethernet1"
+		d.ifaces[0].mode = "trunk"
+		d.vlans = {1: "default"}
+		d.ssids = {}
 	if type == "switch":
 		var mgmt := Net.Iface.new(d, "Management1", _new_mac())
 		mgmt.mode = "routed"
@@ -1951,6 +2002,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
+		"ssids": d.ssids, "wifi": d.wifi,
 		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
 		"log_host": d.log_host, "ntp_server": d.ntp_server,
@@ -2024,6 +2076,9 @@ func _apply(data: Dictionary) -> void:
 		d.vrfs = sd.get("vrfs", [])
 		d.snooping = bool(sd.get("snooping", false))
 		d.dai = bool(sd.get("dai", false))
+		for sk in sd.get("ssids", {}):
+			d.ssids[sk] = int(sd["ssids"][sk])
+		d.wifi = sd.get("wifi", "")
 		d.startup = sd.get("startup", {})
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")

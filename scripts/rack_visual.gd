@@ -45,6 +45,8 @@ func _dev_color(dev: Net.NDevice) -> Color:
 			return Color(0.5, 0.8, 0.95)
 		"loadbalancer":
 			return Color(0.55, 0.85, 0.55)
+		"ap":
+			return Color(0.9, 0.8, 0.45)
 	return Color(0.45, 0.55, 0.8)
 
 func _draw() -> void:
