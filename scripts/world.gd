@@ -20,6 +20,7 @@ func _ready() -> void:
 		return
 	ui = UILayer.new()
 	add_child(ui)
+	get_tree().root.content_scale_factor = Prefs.ui_scale
 	Game.topology_changed.connect(queue_redraw)
 	if OS.get_environment("PACKET_SHOT") != "":
 		_shoot_all.call_deferred()

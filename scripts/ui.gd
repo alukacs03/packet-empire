@@ -1415,6 +1415,39 @@ func _build_menu() -> void:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
 			get_tree().reload_current_scene()))
 	v.add_child(newg)
+	var prefs_btn := Button.new()
+	prefs_btn.text = "Settings…"
+	prefs_btn.pressed.connect(func() -> void:
+		_menu(prefs_btn, [
+			"Fullscreen: %s" % ("on" if Prefs.fullscreen else "off"),
+			"Interface scale: %d%%" % int(Prefs.ui_scale * 100),
+			"Colourblind-friendly status colours: %s" % ("on" if Prefs.colourblind else "off"),
+		], func(id: int) -> void:
+			match id:
+				0:
+					Prefs.fullscreen = not Prefs.fullscreen
+				1:
+					var steps := [0.9, 1.0, 1.15, 1.3]
+					var idx := steps.find(snappedf(Prefs.ui_scale, 0.05))
+					Prefs.ui_scale = steps[(idx + 1) % steps.size()] if idx >= 0 else 1.0
+					get_tree().root.content_scale_factor = Prefs.ui_scale
+				2:
+					Prefs.colourblind = not Prefs.colourblind
+			Prefs.apply()
+			hud_toast("Setting applied.", true)))
+	v.add_child(prefs_btn)
+	var diff_btn := Button.new()
+	diff_btn.text = "Difficulty…"
+	diff_btn.pressed.connect(func() -> void:
+		var opts: Array = []
+		for i in Game.DIFFICULTIES.size():
+			var d: Dictionary = Game.DIFFICULTIES[i]
+			opts.append("%s%s: %s" % ["▸ " if i == Game.difficulty else "   ", d["name"], d["blurb"]])
+		_menu(diff_btn, opts, func(id: int) -> void:
+			Game.apply_difficulty(id)
+			hud_toast("Difficulty set to %s. Starting cash reset." % Game.DIFFICULTIES[id]["name"], true)
+			_refresh_money()))
+	v.add_child(diff_btn)
 	var drill_btn := Button.new()
 	drill_btn.text = "Incident drill  (fix a broken network, +$%d)" % Drill.REWARD
 	drill_btn.pressed.connect(func() -> void:

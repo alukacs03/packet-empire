@@ -42,6 +42,7 @@ static func spawn() -> Array:
 		s["name"] = NAMES[i]
 		s["deals"] = 0
 		s["revenue"] = 0
+		s["base_aggression"] = s["aggression"]  # difficulty scales this later
 		out.append(s)
 	return out
 

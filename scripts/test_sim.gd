@@ -1426,6 +1426,28 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- difficulty and preferences ---
+	var money_pre := Game.money
+	Game.apply_difficulty(0)
+	check(Game.money == int(Game.DIFFICULTIES[0]["cash"]) and Game.fault_scale() < 1.0,
+		"difficulty: apprentice gives more cash and fewer faults")
+	var gentle := 0.0
+	for rv3 in Game.rivals:
+		gentle = maxf(gentle, float(rv3["aggression"]))
+	Game.apply_difficulty(2)
+	var harsh := 0.0
+	for rv4 in Game.rivals:
+		harsh = maxf(harsh, float(rv4["aggression"]))
+	check(harsh > gentle, "difficulty: on-call rivals bid harder")
+	check(Game.fault_scale() > 1.0, "difficulty: on-call breaks things more often")
+	Game.apply_difficulty(1)
+	Game.money = money_pre
+	check(Prefs.ok_colour() != Prefs.bad_colour(), "prefs: status colours differ")
+	Prefs.colourblind = true
+	var cb_ok := Prefs.ok_colour()
+	Prefs.colourblind = false
+	check(cb_ok != Prefs.ok_colour(), "prefs: the colourblind palette changes the good colour")
+
 	# --- syslog and clocks ---
 	var log_rack := Game.add_rack(Vector2i(16, 1))
 	var log_sw := Game.new_device("sw-8")

@@ -40,6 +40,14 @@ const TYPE_SPECS := {
 	"uplink": {"if_prefix": "port", "if_start": 1, "name_prefix": "isp"},
 	"cooling": {"if_prefix": "port", "if_start": 1, "name_prefix": "crac"},
 }
+const DIFFICULTIES := [
+	{"name": "Apprentice", "cash": 4000, "aggression": 0.75, "faults": 0.5, "cycle": 60.0,
+		"blurb": "More money, gentler competition, fewer failures, a slower clock."},
+	{"name": "Operator", "cash": 2000, "aggression": 1.0, "faults": 1.0, "cycle": 45.0,
+		"blurb": "The intended experience."},
+	{"name": "On call", "cash": 1200, "aggression": 1.2, "faults": 1.8, "cycle": 32.0,
+		"blurb": "Thin margins, hungry rivals, and things break often."},
+]
 const RACK_PRICE := 500
 var save_path := "user://save.json"
 
@@ -49,6 +57,7 @@ var racks: Array = []
 var links: Array = []
 var money := 2000
 var stage := 0
+var difficulty := 1
 var contracts_done: Array = []
 var cycle := 0
 var reputation := 50  # 0-100; feeds customer budgets
@@ -108,6 +117,23 @@ func site_name(idx: int) -> String:
 	if idx < 0 or idx >= sites.size():
 		return "a site you no longer operate"
 	return sites[idx]["name"]
+
+func _scale_rival_aggression() -> void:
+	var factor := float(DIFFICULTIES[difficulty]["aggression"])
+	for r in rivals:
+		r["aggression"] = float(r.get("base_aggression", r["aggression"])) * factor
+
+func apply_difficulty(idx: int) -> void:
+	difficulty = clampi(idx, 0, DIFFICULTIES.size() - 1)
+	var d: Dictionary = DIFFICULTIES[difficulty]
+	money = int(d["cash"])
+	if cycle_timer:
+		cycle_timer.wait_time = float(d["cycle"]) / maxf(1.0, float(speed))
+	_scale_rival_aggression()
+	money_changed.emit()
+
+func fault_scale() -> float:
+	return float(DIFFICULTIES[difficulty]["faults"])
 
 func grid_size(site := -1) -> Vector2i:
 	_ensure_sites()
@@ -377,6 +403,7 @@ func toggle_pause() -> void:
 
 func _ready() -> void:
 	rivals = Rivals.spawn()
+	_scale_rival_aggression()
 	if OS.get_environment("PACKET_TEST") == "1":
 		save_path = "user://save_test.json"  # never touch the real save from tests
 	topology_changed.connect(Sim.flush_learned_state)
@@ -914,7 +941,7 @@ func sla_tick() -> void:
 		Staff.work_cycle()
 	if cycle % 4 == 0:
 		refresh_candidates(true)  # the job market moves
-	if stage >= 2 and randf() < 0.25:
+	if stage >= 2 and randf() < 0.25 * fault_scale():
 		_field_fault()
 	var link_load := {}
 	var deal_links := {}
@@ -1257,6 +1284,7 @@ func _serialize() -> Dictionary:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
+		"difficulty": difficulty,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates,
 		"attacks": attacks, "scrubbing": scrubbing,
@@ -1468,6 +1496,7 @@ func _apply(data: Dictionary) -> void:
 	offers = data.get("offers", [])
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
+	difficulty = int(data.get("difficulty", 1))
 	acquisitions = data.get("acquisitions", [])
 	circuits = data.get("circuits", [])
 	sites = data.get("sites", [])
