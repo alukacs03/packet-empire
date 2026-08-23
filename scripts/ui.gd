@@ -45,7 +45,9 @@ var if_ip_in: LineEdit
 var if_ip_hint: Label
 var if_cable_lbl: Label
 var if_cable_btn: Button
+var if_peer_btn: Button
 
+var menu_overlay: Control
 var map_overlay: Control
 var welcome_overlay: Control
 var tutorial_panel: PanelContainer
@@ -65,6 +67,7 @@ var cli_stack: Array = []  # ssh nesting
 var cli_history: Array = []
 var cli_hist_idx := 0
 var money_lbl: Label
+var cycle_lbl: Label
 var expand_btn: Button
 var theme_res: Theme
 var mono: SystemFont
@@ -80,6 +83,7 @@ func _ready() -> void:
 	_build_contracts_overlay()
 	_build_welcome()
 	_build_map()
+	_build_menu()
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
 	Game.money_changed.connect(_refresh_tutorial)
@@ -112,7 +116,15 @@ func _refresh_money() -> void:
 	else:
 		expand_btn.visible = false
 
+var _cycle_lbl_accum := 0.0
+
 func _process(_dt: float) -> void:
+	_cycle_lbl_accum += _dt
+	if _cycle_lbl_accum > 0.5 and cycle_lbl:
+		_cycle_lbl_accum = 0.0
+		var t := Game.cycle_timer
+		if t:
+			cycle_lbl.text = "⏱ %ds" % int(ceil(t.time_left))
 	# focus watchdog: while the console is open, dropped focus/editing returns to it
 	if cli_box and cli_box.visible and not if_overlay.visible:
 		if get_viewport().gui_get_focus_owner() == null:
@@ -122,7 +134,8 @@ func _process(_dt: float) -> void:
 
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
-		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible
+		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
+		or menu_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -277,6 +290,10 @@ func _build_toolbar() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(spacer)
+	cycle_lbl = _label("", 13, Color(0.5, 0.58, 0.7))
+	cycle_lbl.add_theme_font_override("font", mono)
+	cycle_lbl.tooltip_text = "Time to the next revenue cycle: fees, bills, SLA checks"
+	h.add_child(cycle_lbl)
 	money_lbl = _label("", 17, Color(0.55, 0.95, 0.6))
 	money_lbl.add_theme_font_override("font", mono)
 	h.add_child(money_lbl)
@@ -629,6 +646,18 @@ func _build_if_overlay() -> void:
 	if_cable_lbl = _label("", 14)
 	if_cable_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cable_row.add_child(if_cable_lbl)
+	if_peer_btn = Button.new()
+	if_peer_btn.text = "Go to other end ⇄"
+	if_peer_btn.pressed.connect(func() -> void:
+		var l := Game.link_at(cur_if)
+		if l:
+			var peer := l.other(cur_if)
+			cur_dev = peer.dev
+			cur_rack = Game.rack_of(peer.dev)
+			_refresh_dev_header()
+			_refresh_ports()
+			open_iface(peer))
+	cable_row.add_child(if_peer_btn)
 	if_cable_btn = Button.new()
 	if_cable_btn.pressed.connect(_cable_action)
 	cable_row.add_child(if_cable_btn)
@@ -686,9 +715,11 @@ func _refresh_iface() -> void:
 	if peer == "":
 		if_cable_lbl.text = "Cable: not connected"
 		if_cable_btn.text = "Run cable…"
+		if_peer_btn.visible = false
 	else:
 		if_cable_lbl.text = "Cable: ⇄  " + peer
 		if_cable_btn.text = "Disconnect"
+		if_peer_btn.visible = true
 
 func _add_ip(text: String) -> void:
 	if Game.add_ip(cur_if, text):
@@ -712,6 +743,44 @@ func _cable_action() -> void:
 	_menu(if_cable_btn, labels, func(id: int) -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
+
+# ---------- system menu ----------
+
+func _build_menu() -> void:
+	menu_overlay = _overlay()
+	var v := _card(menu_overlay, 340)
+	var t := _header(v, func() -> void: menu_overlay.visible = false)
+	t.text = "Packet Empire"
+	var resume := Button.new()
+	resume.text = "Resume"
+	_accent(resume)
+	resume.pressed.connect(func() -> void: menu_overlay.visible = false)
+	v.add_child(resume)
+	var save := Button.new()
+	save.text = "Save game"
+	save.pressed.connect(func() -> void:
+		Game.save_game()
+		menu_overlay.visible = false)
+	v.add_child(save)
+	var newg := Button.new()
+	newg.text = "New game (wipes save!)"
+	newg.pressed.connect(func() -> void:
+		_menu(newg, ["Yes, start over — my datacenter will be GONE"], func(_id: int) -> void:
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
+			get_tree().reload_current_scene()))
+	v.add_child(newg)
+	var quit := Button.new()
+	quit.text = "Save & quit"
+	quit.pressed.connect(func() -> void:
+		Game.save_game()
+		get_tree().quit())
+	v.add_child(quit)
+
+func toggle_menu() -> void:
+	if menu_overlay.visible:
+		menu_overlay.visible = false
+	elif not is_open():
+		_show_overlay(menu_overlay)
 
 # ---------- topology map ----------
 
@@ -1120,6 +1189,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					_show_overlay(rack_overlay)
+		elif menu_overlay.visible:
+			menu_overlay.visible = false
 		elif map_overlay.visible:
 			map_overlay.visible = false
 		elif welcome_overlay.visible:
@@ -1129,5 +1200,5 @@ func _unhandled_input(e: InputEvent) -> void:
 		elif rack_overlay.visible:
 			close_rack()
 		else:
-			return
+			toggle_menu()
 		get_viewport().set_input_as_handled()

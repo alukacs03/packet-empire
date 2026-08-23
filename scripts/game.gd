@@ -123,16 +123,17 @@ func try_complete_contract(c: Dictionary) -> bool:
 const SLA_PERIOD := 45.0  # seconds per billing cycle
 
 var sla_status := {}  # contract id -> bool (last billing check passed)
+var cycle_timer: Timer
 
 func _ready() -> void:
 	if OS.get_environment("PACKET_TEST") == "1":
 		save_path = "user://save_test.json"  # never touch the real save from tests
 	topology_changed.connect(Sim.flush_learned_state)
-	var t := Timer.new()
-	t.wait_time = SLA_PERIOD
-	t.autostart = true
-	t.timeout.connect(sla_tick)
-	add_child(t)
+	cycle_timer = Timer.new()
+	cycle_timer.wait_time = SLA_PERIOD
+	cycle_timer.autostart = true
+	cycle_timer.timeout.connect(sla_tick)
+	add_child(cycle_timer)
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var result := Market.negotiate(offer, quote)

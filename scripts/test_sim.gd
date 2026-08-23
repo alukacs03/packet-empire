@@ -530,5 +530,11 @@ static func run() -> int:
 	fs2.exec("end")
 	check(Game.try_complete_contract(_contract("big_client")), "capstone: the big client signs")
 
+	for ifc: Net.Iface in sw_bb.ifaces:
+		if ifc.name.begins_with("Management"):
+			Game.add_ip(ifc, "10.0.0.98/24")
+	check(Market.check("managed_switch", {"vid": 30}), "market: managed-switch kind verifies (vlan 30 + addressed mgmt)")
+	check(not Market.check("managed_switch", {"vid": 777}), "market: managed-switch fails for absent vlan")
+
 	print("---- %d failures" % fails)
 	return fails

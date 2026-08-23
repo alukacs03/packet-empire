@@ -20,6 +20,9 @@ const KINDS := {
 	"public_hosting": {"base": 220, "spread": 160,
 		"brief": "We want a public web presence: host our server at %s and make it reachable FROM THE INTERNET (your upstream must be able to reach it — think BGP announcement or NAT... announcement, since it must accept inbound).",
 		"costs": "A server + working transit (uplink, BGP session, prefix announced). Premium tier."},
+	"managed_switch": {"base": 110, "spread": 90,
+		"brief": "We want a managed network segment: our own VLAN %s on one of your switches — and we insist the switch itself is properly managed (an addressed Management port). We audit.",
+		"costs": "A switchport + VLAN + OOB management on that switch. Cheap if your house is in order."},
 	"secure_host": {"base": 130, "spread": 110,
 		"brief": "Compliance demands it: our server at %s must sit behind a firewall that explicitly blocks outside access to it.",
 		"costs": "A firewall ($800) + a server. The expensive tier — quote accordingly."},
@@ -39,7 +42,7 @@ static func gen_offer() -> Dictionary:
 		"hosting", "secure_host", "public_hosting":
 			params["ip"] = "10.%d.%d.10" % [randi() % 180 + 20, randi() % 250]
 			subject = params["ip"]
-		"own_vlan":
+		"own_vlan", "managed_switch":
 			params["vid"] = randi() % 900 + 100
 			subject = str(params["vid"])
 		"dhcp_pool":
@@ -96,6 +99,21 @@ static func check(kind: String, params: Dictionary) -> bool:
 				for i: Net.Iface in d.ifaces:
 					if i.mode == "access" and i.untagged_vlan == vid and Game.link_at(i) \
 							and Game.link_at(i).other(i).dev.type == "server":
+						return true
+			return false
+		"managed_switch":
+			var vid2: int = int(params["vid"])
+			for d in Game.all_devices():
+				if d.type != "switch" or not d.vlans.has(vid2):
+					continue
+				var managed := false
+				for i: Net.Iface in d.ifaces:
+					if i.name.begins_with("Management") and not i.ips.is_empty():
+						managed = true
+				if not managed:
+					continue
+				for i: Net.Iface in d.ifaces:
+					if i.mode == "access" and i.untagged_vlan == vid2 and Game.link_at(i):
 						return true
 			return false
 		"dhcp_pool":
