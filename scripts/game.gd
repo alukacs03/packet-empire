@@ -608,7 +608,8 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
 		"params": offer["params"], "fee": fee, "brief": offer["brief"],
 		"budget": int(offer.get("budget", fee)),  # the market reference for poaching
-		"load": offer.get("load", 200), "healthy": false})
+		"load": offer.get("load", 200), "sla": int(offer.get("sla", 0)),
+		"cycles": 0, "up_cycles": 0, "healthy": false})
 	money_changed.emit()
 
 func log_event(text: String) -> void:
@@ -802,6 +803,22 @@ func sla_tick() -> void:
 				link_load[l] = link_load.get(l, 0) + int(deal.get("load", 200))
 	last_link_load = link_load
 	for deal in deals.duplicate():
+		deal["cycles"] = int(deal.get("cycles", 0)) + 1
+		if deal["healthy"]:
+			deal["up_cycles"] = int(deal.get("up_cycles", 0)) + 1
+		var sla := Market.tier(int(deal.get("sla", 0)))
+		var uptime := float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1)))
+		if float(sla["uptime"]) > 0.0 and int(deal["cycles"]) >= 4 and uptime < float(sla["uptime"]):
+			var penalty := int(float(deal["fee"]) * float(sla["penalty"]))
+			last_pl["SLA penalties"] = int(last_pl.get("SLA penalties", 0)) - penalty
+			earned -= penalty
+			reputation = maxi(0, reputation - 3)
+			if not bool(deal.get("penalised", false)):
+				log_event("SLA PENALTY: %s is at %d%% uptime against a %s contract: $%d charged back."
+					% [deal["customer"], int(uptime * 100), sla["label"], penalty])
+			deal["penalised"] = true
+		else:
+			deal["penalised"] = false
 		if not deal["healthy"]:
 			reputation = maxi(0, reputation - 3)
 			deal["degraded"] = false

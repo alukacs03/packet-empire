@@ -1671,6 +1671,12 @@ func _build_jobs_tab() -> void:
 		cv.add_child(_label("%s   ·   %s" % [offer["customer"], Market.label_for(offer["kind"])],
 			16, Color.WHITE))
 		cv.add_child(_label("Word is: %s." % offer["hint"], 13, Color(0.75, 0.7, 0.85)))
+		var otier := Market.tier(int(offer.get("sla", 0)))
+		if float(otier["uptime"]) > 0.0:
+			cv.add_child(_label("📜 Service level: %s. Miss it and they charge back %.1fx the fee."
+				% [otier["label"], float(otier["penalty"])], 13, Color(1.0, 0.8, 0.5)))
+		else:
+			cv.add_child(_label("📜 Service level: best effort.", 13, Color(0.65, 0.7, 0.75)))
 		var brief := _label(offer["brief"], 14, Color(0.78, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
@@ -1756,6 +1762,11 @@ func _build_jobs_tab() -> void:
 				spec_bits.append("%s: %s" % [k, str(deal["params"][k])])
 			if not spec_bits.is_empty():
 				detail += "   [" + ", ".join(PackedStringArray(spec_bits)) + "]"
+			var dtier := Market.tier(int(deal.get("sla", 0)))
+			if int(deal.get("cycles", 0)) > 0:
+				var up_pct := 100.0 * float(deal.get("up_cycles", 0)) / float(deal["cycles"])
+				detail += "   [%s, %d%% uptime over %d cycles]" % [dtier["label"], int(up_pct),
+					int(deal["cycles"])]
 			var missed_n: int = int(deal.get("missed", 0))
 			if missed_n >= 3:
 				detail += "   ⚠ undelivered %d cycles: they walk at 5" % missed_n

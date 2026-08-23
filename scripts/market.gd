@@ -45,6 +45,17 @@ const KIND_LABELS := {
 static func label_for(kind: String) -> String:
 	return KIND_LABELS.get(kind, kind)
 
+## Service levels a customer can buy. Higher tiers pay more and punish
+## downtime with an actual penalty rather than a vague reputation hit.
+const SLA_TIERS := [
+	{"label": "best effort", "pay": 1.0, "uptime": 0.0, "penalty": 0.0},
+	{"label": "99.9% uptime", "pay": 1.45, "uptime": 0.9, "penalty": 1.5},
+	{"label": "99.99% uptime", "pay": 2.1, "uptime": 0.97, "penalty": 3.0},
+]
+
+static func tier(idx: int) -> Dictionary:
+	return SLA_TIERS[clampi(idx, 0, SLA_TIERS.size() - 1)]
+
 static var _next_id := 0
 
 static func gen_offer() -> Dictionary:
@@ -70,7 +81,13 @@ static func gen_offer() -> Dictionary:
 		"dhcp_pool":
 			params["subnet"] = "10.%d.%d" % [randi() % 180 + 20, randi() % 250]
 			subject = params["subnet"]
-	var budget: int = spec["base"] + randi() % int(spec["spread"])
+	var sla_idx := 0
+	var roll := randi() % 100
+	if roll > 82:
+		sla_idx = 2
+	elif roll > 55:
+		sla_idx = 1
+	var budget: int = int((spec["base"] + randi() % int(spec["spread"])) * float(tier(sla_idx)["pay"]))
 	budget = int(budget * (0.6 + Game.reputation / 100.0 * 0.8))  # reputation sells
 	var hint := "they are watching every forint"
 	if budget >= spec["base"] + spec["spread"] * 2 / 3:
@@ -85,6 +102,7 @@ static func gen_offer() -> Dictionary:
 		"brief": (spec["brief"] % [subject]) if subject != "" else spec["brief"],
 		"costs": spec["costs"] + "  Expected load ~%d Mbps." % spec.get("load", 200),
 		"load": spec.get("load", 200),
+		"sla": sla_idx,
 		"params": params,
 		"budget": budget,  # hidden from the UI until they counter
 		"hint": hint,

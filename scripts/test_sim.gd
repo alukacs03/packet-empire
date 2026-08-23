@@ -1417,6 +1417,25 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- SLA tiers ---
+	Game.deals = []
+	Game.staff = []
+	Game.money = 20000
+	var sla_deal := {"id": "sla1", "customer": "Strict Zrt", "kind": "hosting",
+		"params": {"ip": "10.222.0.10"}, "fee": 200, "load": 100, "brief": "",
+		"sla": 2, "cycles": 0, "up_cycles": 0, "healthy": false}
+	Game.deals.append(sla_deal)
+	for i in 5:  # never delivered: the strict tier bites
+		Game.sla_tick()
+	check(Game.last_pl.has("SLA penalties"), "sla: a missed service level is charged back")
+	var penalised := false
+	for ev in Game.events:
+		if "SLA PENALTY" in ev:
+			penalised = true
+	check(penalised, "sla: the penalty is explained in the log")
+	check(Market.tier(2)["pay"] > Market.tier(0)["pay"], "sla: a strict tier pays more up front")
+	Game.deals = []
+
 	# --- staff ---
 	Game.staff = []
 	Game.candidates = []
