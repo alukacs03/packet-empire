@@ -1375,7 +1375,7 @@ func _build_welcome() -> void:
 	var v := _card(welcome_overlay, 620)
 	var t := _header(v, func() -> void: welcome_overlay.visible = false)
 	t.text = "Welcome to Packet Empire"
-	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire: by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n\nEverything costs money: contracts pay. Open Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
+	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire: by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n   •  Learn opens an encyclopedia, F1 lists every key\n\nEverything costs money: contracts pay, and rival companies are bidding for the same customers, so your prices have to beat the market. Later you can lease more sites, link them with WAN circuits, and buy competitors outright.\n\nOpen Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(560, 0)
 	v.add_child(body)
@@ -1617,7 +1617,10 @@ func _build_market_section() -> void:
 		cv.add_child(brief)
 		cv.add_child(_label("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
 		var est: Array = Game.market_estimate(offer)
-		if est.is_empty():
+		if Rivals.best_bidder(offer).is_empty():
+			cv.add_child(_label("📉 No competitor is chasing this one: price it properly.",
+				13, Color(0.7, 0.9, 0.65)))
+		elif est.is_empty():
 			cv.add_child(_label("📉 You have no read on what competitors charge yet.", 13, Color(0.6, 0.6, 0.7)))
 		else:
 			cv.add_child(_label("📉 Rivals would likely quote $%d to $%d for this." % [int(est[0]), int(est[1])],

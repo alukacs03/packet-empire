@@ -1299,6 +1299,12 @@ static func run() -> int:
 	Game.market_intel = 6
 	var band2: Array = Game.market_estimate(intel_offer)
 	check(int(band2[1]) - int(band2[0]) < wide, "intel: more observed bids narrow the estimate")
+	var tiny := {"id": "tiny", "kind": "own_vlan", "customer": "Kicsi Bt", "brief": "", "costs": "",
+		"params": {"vid": 12}, "budget": 45, "hint": "", "state": "open", "ttl": 5}
+	check(Rivals.best_bidder(tiny).is_empty() or int(Rivals.min_job(Rivals.best_bidder(tiny))) <= 45,
+		"market: only companies small enough to care bid on a small job")
+	var whale2 := {"capacity": 10, "deals": 0, "cash": 1000, "aggression": 0.9, "racks": [], "name": "Whale"}
+	check(Rivals.min_job(whale2) > 45, "market: a large operator ignores a tiny contract")
 
 	# --- leasing a site and delivering across it ---
 	Game.money = 300000

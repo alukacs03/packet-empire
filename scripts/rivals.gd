@@ -54,13 +54,20 @@ static func bid_for(r: Dictionary, offer: Dictionary) -> int:
 	var load_factor := 1.0 + 0.12 * float(r["deals"])
 	return int(int(offer["budget"]) * float(r["aggression"]) * load_factor)
 
-## The cheapest rival able to take the job, or {} if all are full.
+## The smallest job a company will get out of bed for: big operators do not
+## chase a two-hundred-forint VLAN, which is the niche a new shop lives in.
+static func min_job(r: Dictionary) -> int:
+	return int(r["capacity"]) * 14
+
+## The cheapest rival able and willing to take the job, or {} if none.
 static func best_bidder(offer: Dictionary) -> Dictionary:
 	var best := {}
 	var best_bid := 1 << 30
 	for r in Game.rivals:
 		if not alive(r) or int(r["deals"]) >= int(r["capacity"]):
 			continue
+		if int(offer.get("budget", 0)) < min_job(r):
+			continue  # beneath them
 		var bid := bid_for(r, offer)
 		if bid < best_bid:
 			best_bid = bid
