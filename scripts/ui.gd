@@ -1302,6 +1302,52 @@ func _refresh_ops() -> void:
 		var cl := _label(line, 12, Prefs.bad_colour() if tight else Color(0.7, 0.78, 0.85))
 		cl.add_theme_font_override("font", mono)
 		ops_box.add_child(cl)
+	ops_box.add_child(_section("ASSETS AND SPARES"))
+	var shelf: Array = []
+	for m in Game.spares:
+		if int(Game.spares[m]) > 0:
+			shelf.append("%s x%d" % [Game.MODELS[m]["label"], int(Game.spares[m])])
+	ops_box.add_child(_label("  On the shelf: %s" % (", ".join(PackedStringArray(shelf))
+		if not shelf.is_empty() else "nothing"), 13, Color(0.75, 0.8, 0.85)))
+	var spare_btn := Button.new()
+	spare_btn.text = "Buy a spare…"
+	spare_btn.pressed.connect(func() -> void:
+		var models: Array = []
+		var opts: Array = []
+		var seen_models := {}
+		for d in Game.all_devices():
+			if seen_models.has(d.model):
+				continue
+			seen_models[d.model] = true
+			models.append(d.model)
+			opts.append("%s   $%d" % [Game.MODELS[d.model]["label"],
+				int(Game.MODELS[d.model]["price"]) * 3 / 4])
+		if opts.is_empty():
+			_toast("nothing installed to keep spares for")
+			return
+		_menu(spare_btn, opts, func(id: int) -> void:
+			var err: String = Game.buy_spare(String(models[id]))
+			_refresh_ops()
+			if err != "":
+				_toast(err)))
+	ops_box.add_child(spare_btn)
+	for d in Game.all_devices():
+		if d.status == "active":
+			continue
+		var frow := HBoxContainer.new()
+		ops_box.add_child(frow)
+		var fl := _label("  %s (%s) is down, %d cycles old" % [d.name,
+			Game.MODELS[d.model]["label"], Game.device_age(d)], 13, Prefs.bad_colour())
+		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		frow.add_child(fl)
+		var swap := Button.new()
+		swap.text = "Swap from spares"
+		swap.pressed.connect(func() -> void:
+			var err: String = Game.swap_from_spares(d)
+			_refresh_ops()
+			if err != "":
+				_toast(err))
+		frow.add_child(swap)
 	ops_box.add_child(_section("MONITORS"))
 	if Game.monitors.is_empty():
 		ops_box.add_child(_label("  No checks defined: add one so you hear about failures.",
@@ -2085,6 +2131,26 @@ func _build_market_tab() -> void:
 		row.add_child(buy)
 
 func _build_log_tab() -> void:
+	contracts_box.add_child(_section("STATUS PAGE"))
+	if Game.outage_open():
+		contracts_box.add_child(_label("  A customer service is down. Saying so costs you less than being found out.",
+			13, Color(1.0, 0.8, 0.5)))
+	var post_row := HBoxContainer.new()
+	contracts_box.add_child(post_row)
+	var post_in := _mono_edit(380)
+	post_in.placeholder_text = "what is happening, in plain language"
+	post_row.add_child(post_in)
+	var post_btn := Button.new()
+	post_btn.text = "Post update"
+	post_btn.pressed.connect(func() -> void:
+		var err: String = Game.post_status(post_in.text)
+		if err != "":
+			_toast(err)
+		_refresh_contracts())
+	post_row.add_child(post_btn)
+	for p: Dictionary in Game.status_posts.slice(0, 4):
+		contracts_box.add_child(_label("  cycle %d: %s" % [int(p["cycle"]), p["text"]], 12,
+			Color(0.7, 0.8, 0.85)))
 	var open_reviews: Array = []
 	for inc: Dictionary in Game.incidents:
 		if not bool(inc.get("reviewed", false)):

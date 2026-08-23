@@ -1452,6 +1452,41 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- status page and spares ---
+	Game.status_posts = []
+	Game.spares = {}
+	Game.deals = []
+	check(not Game.outage_open(), "status: no outage to begin with")
+	Game.deals = [{"id": "down", "customer": "Dark Kft", "kind": "hosting", "params": {},
+		"fee": 100, "load": 100, "brief": "", "healthy": false, "cycles": 1, "up_cycles": 0}]
+	check(Game.outage_open(), "status: an undelivered service counts as an outage")
+	check(Game.post_status("A switch failed in the Budapest room, we are swapping it.").is_empty(),
+		"status: an update can be posted")
+	check(Game.status_posted_recently(), "status: a recent update is recognised")
+	var rep_quiet := Game.reputation
+	Game.sla_tick()
+	var loss_with_post := rep_quiet - Game.reputation
+	Game.status_posts = []
+	Game.cycle += 5
+	var rep_silent := Game.reputation
+	Game.sla_tick()
+	var loss_silent := rep_silent - Game.reputation
+	check(loss_silent > loss_with_post,
+		"status: staying quiet during an outage costs more reputation (%d vs %d)" % [loss_silent, loss_with_post])
+	Game.deals = []
+	# spares
+	var sp_rack := Game.add_rack(Vector2i(31, 1))
+	var sp_sw := Game.new_device("sw-8")
+	sp_rack.slots[0] = sp_sw
+	Game.money = 100000
+	sp_sw.startup = Game.device_config(sp_sw)
+	sp_sw.status = "offline"
+	check(not Game.swap_from_spares(sp_sw).is_empty(), "spares: nothing on the shelf, no swap")
+	check(Game.buy_spare("sw-8").is_empty(), "spares: a spare can be bought")
+	check(Game.swap_from_spares(sp_sw).is_empty() and sp_sw.status == "active",
+		"spares: a failed device is replaced from the shelf")
+	check(int(Game.spares.get("sw-8", 0)) == 0, "spares: the shelf unit was used up")
+
 	# --- scenarios ---
 	var devs_before_sc := Game.all_devices().size()
 	var isp: Dictionary = Scenarios.all()[0]

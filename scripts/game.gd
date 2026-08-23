@@ -191,6 +191,8 @@ var blueprints: Array = []  # rack layouts: {name, slots: [model|null]}
 var maintenance_until := -1  # cycle up to which planned work is excused
 var maintenance_used := 0  # windows taken this quarter: customers notice
 var incidents: Array = []  # things worth reviewing afterwards
+var status_posts: Array = []  # public incident communication
+var spares := {}  # model -> how many replacement units are on the shelf
 var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
 var scrubbing := false  # upstream scrubbing service, billed per cycle
 var insured := false  # insurance against hardware failure, billed per cycle
@@ -1146,6 +1148,55 @@ func declare_maintenance() -> String:
 		% MAINTENANCE_LENGTH)
 	return ""
 
+func outage_open() -> bool:
+	for deal in deals:
+		if not bool(deal.get("healthy", false)):
+			return true
+	return false
+
+func post_status(text: String) -> String:
+	if text.strip_edges() == "":
+		return "say something useful"
+	status_posts.push_front({"cycle": cycle, "text": text.strip_edges()})
+	if status_posts.size() > 12:
+		status_posts.pop_back()
+	log_event("STATUS PAGE: \"%s\"" % text.strip_edges())
+	return ""
+
+func status_posted_recently() -> bool:
+	for p in status_posts:
+		if cycle - int(p["cycle"]) <= 2:
+			return true
+	return false
+
+func buy_spare(model: String) -> String:
+	if not MODELS.has(model):
+		return "no such model"
+	var price := int(MODELS[model]["price"]) * 3 / 4  # a shelf unit, bought cold
+	if not try_spend(price):
+		return "a spare %s costs $%d" % [MODELS[model]["label"], price]
+	spares[model] = int(spares.get(model, 0)) + 1
+	log_event("SPARES: a %s is on the shelf." % MODELS[model]["label"])
+	return ""
+
+func swap_from_spares(dev: Net.NDevice) -> String:
+	## a failed device is replaced from the shelf, keeping its configuration
+	if dev.status == "active":
+		return "%s is running" % dev.name
+	if int(spares.get(dev.model, 0)) <= 0:
+		return "no spare %s on the shelf" % MODELS[dev.model]["label"]
+	spares[dev.model] = int(spares[dev.model]) - 1
+	dev.status = "active"
+	dev.installed_cycle = cycle
+	if not dev.startup.is_empty():
+		apply_device_config(dev, dev.startup)
+	device_log(dev, "replaced from spares")
+	log_event("SPARES: %s was swapped for a shelf unit%s." % [dev.name,
+		" and restored from its saved configuration" if not dev.startup.is_empty()
+		else ", but it had no saved configuration"])
+	topology_changed.emit()
+	return ""
+
 func record_incident(kind: String, summary: String) -> void:
 	for inc in incidents:
 		if inc["kind"] == kind and inc["summary"] == summary and not bool(inc.get("reviewed", false)):
@@ -1460,7 +1511,8 @@ func sla_tick() -> void:
 		else:
 			deal["penalised"] = false
 		if not deal["healthy"]:
-			reputation = maxi(0, reputation - 3)
+			# customers forgive an outage they were told about far more readily
+			reputation = maxi(0, reputation - (2 if status_posted_recently() else 4))
 			deal["degraded"] = false
 			deal["missed"] = int(deal.get("missed", 0)) + 1
 			var missed: int = deal["missed"]
@@ -1807,6 +1859,7 @@ func _serialize() -> Dictionary:
 		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
+		"status_posts": status_posts, "spares": spares,
 		"incidents": incidents,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
@@ -2079,6 +2132,8 @@ func _apply(data: Dictionary) -> void:
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])
+	status_posts = data.get("status_posts", [])
+	spares = data.get("spares", {})
 	attacks = data.get("attacks", [])
 	scrubbing = bool(data.get("scrubbing", false))
 	insured = bool(data.get("insured", false))
