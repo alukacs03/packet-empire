@@ -37,6 +37,7 @@ class NDevice:
 	var static_routes: Array = []  # {"prefix": "0.0.0.0", "plen": 0, "via": "10.0.0.1"}
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var stateful := false  # track flows, auto-permit return traffic
+	var startup := {}  # saved configuration ('write memory')
 	var flows := {}  # runtime: "id|src|dst" of forwarded flows
 	var bgp := {}  # {asn, neighbors: [{ip, remote_as}], networks: ["prefix/len"]}
 	var ospf := {}  # {"networks": ["prefix/len"]}: single area 0, enabled when non-empty

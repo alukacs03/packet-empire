@@ -53,6 +53,18 @@ func exec(line: String) -> String:
 			if p.has("name") and Game.rename_device(dev, p["name"]):
 				return ""
 			return "usage: /system identity set name=<name>\n"
+		"system backup save":
+			dev.startup = Game.device_config(dev)
+			return "configuration backup saved\n"
+		"system backup load":
+			if dev.startup.is_empty():
+				return "failure: no backup found\n"
+			Game.apply_device_config(dev, dev.startup)
+			return "configuration restored from backup\n"
+		"system reboot":
+			var had := not dev.startup.is_empty()
+			Game.apply_device_config(dev, dev.startup)
+			return "rebooting... %s\n" % ("restored from backup" if had else "NO backup: configuration lost")
 		"system identity print":
 			return "name: %s\n" % dev.name
 		"interface print stats":
@@ -302,6 +314,7 @@ func exec(line: String) -> String:
 	return "bad command name %s (try 'help')\n" % path.split(" ")[0]
 
 const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit",
+	"system backup save", "system backup load", "system reboot",
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
 	"interface print", "interface print stats", "interface set",

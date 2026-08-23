@@ -281,6 +281,17 @@ func _field_fault() -> void:
 				candidates.append(i)
 	if candidates.is_empty():
 		return
+	if randf() < 0.3:  # power blip: a device reboots and loses unsaved config
+		var devs := all_devices().filter(func(d): return d.type in ["switch", "router", "firewall"])
+		if not devs.is_empty():
+			var rebooted: Net.NDevice = devs[randi() % devs.size()]
+			var had_startup := not rebooted.startup.is_empty()
+			apply_device_config(rebooted, rebooted.startup)
+			stats["faults"] += 1
+			log_event("FIELD: %s rebooted after a power blip: %s" % [rebooted.name,
+				"startup-config restored it." if had_startup
+				else "it had NO saved config and came back blank. Use 'write memory'!"])
+			return
 	var victim: Net.Iface = candidates[randi() % candidates.size()]
 	victim.enabled = false
 	stats["faults"] += 1
@@ -647,6 +658,75 @@ func _serialize() -> Dictionary:
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}
 
+func device_config(d: Net.NDevice) -> Dictionary:
+	## the part of a device that is "configuration" (what write memory keeps)
+	var cfg := _ser_device(d).duplicate(true)  # deep copy: a snapshot must not alias the live device
+	cfg.erase("startup")
+	return cfg
+
+func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
+	## restore a saved configuration onto a live device (reload)
+	if cfg.is_empty():
+		d.vlans = {1: "default"} if d.type == "switch" else {}
+		d.static_routes = []
+		d.acls = []
+		d.bgp = {} if d.type != "uplink" else d.bgp
+		d.ospf = {}
+		d.services = {}
+		d.resolver = ""
+		for i: Net.Iface in d.ifaces:
+			i.ips = []
+			i.mode = "access" if d.type == "switch" and not i.name.begins_with("Management") else "routed"
+			i.untagged_vlan = 1
+			i.tagged_vlans = []
+			i.nat = ""
+			i.vrrp = {}
+			i.lag = 0
+			i.helper = ""
+			i.enabled = true
+		topology_changed.emit()
+		return
+	d.vlans = {}
+	for vid in cfg.get("vlans", {}):
+		d.vlans[int(vid)] = cfg["vlans"][vid]
+	d.static_routes = cfg.get("static_routes", []).duplicate(true)
+	d.acls = cfg.get("acls", []).duplicate(true)
+	d.stateful = cfg.get("stateful", false)
+	d.bgp = cfg.get("bgp", {}).duplicate(true)
+	d.ospf = cfg.get("ospf", {}).duplicate(true)
+	d.services = cfg.get("services", {}).duplicate(true)
+	d.resolver = cfg.get("resolver", "")
+	d.ip_forwarding = cfg.get("ip_forwarding", d.ip_forwarding)
+	var saved := {}
+	for si in cfg.get("ifaces", []):
+		saved[si["name"]] = si
+	for i: Net.Iface in d.ifaces.duplicate():
+		if not saved.has(i.name):
+			if i.parent != "" or i.name.begins_with("Vlan"):
+				d.ifaces.erase(i)  # virtual interfaces created after the save
+			continue
+	for si in cfg.get("ifaces", []):
+		var target: Net.Iface = null
+		for i: Net.Iface in d.ifaces:
+			if i.name == si["name"]:
+				target = i
+		if target == null:  # a virtual interface that existed when saved
+			target = Net.Iface.new(d, si["name"], si["mac"])
+			target.parent = si.get("parent", "")
+			target.dot1q = int(si.get("dot1q", 0))
+			d.ifaces.append(target)
+		target.ips = si["ips"].duplicate()
+		target.enabled = si["enabled"]
+		target.mtu = int(si["mtu"])
+		target.mode = si["mode"]
+		target.untagged_vlan = int(si["untagged_vlan"])
+		target.tagged_vlans = si.get("tagged_vlans", []).duplicate()
+		target.nat = si.get("nat", "")
+		target.vrrp = si.get("vrrp", {}).duplicate(true)
+		target.lag = int(si.get("lag", 0))
+		target.helper = si.get("helper", "")
+	topology_changed.emit()
+
 func _ser_device(d: Net.NDevice) -> Dictionary:
 	var ifs: Array = []
 	for i: Net.Iface in d.ifaces:
@@ -657,7 +737,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
-		"ospf": d.ospf, "ifaces": ifs}
+		"ospf": d.ospf, "startup": d.startup, "ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(save_path):
@@ -698,6 +778,7 @@ func _apply(data: Dictionary) -> void:
 		d.stateful = sd.get("stateful", false)
 		d.bgp = sd.get("bgp", {})
 		d.ospf = sd.get("ospf", {})
+		d.startup = sd.get("startup", {})
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]

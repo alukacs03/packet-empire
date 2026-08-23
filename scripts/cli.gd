@@ -104,6 +104,10 @@ class EOS extends Session:
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
+			{"m": ["priv"], "p": ["write", "memory"], "h": _write_mem},
+			{"m": ["priv"], "p": ["copy", "running-config", "startup-config"], "h": _write_mem},
+			{"m": ["priv"], "p": ["reload"], "h": _reload},
+			{"m": EP, "p": ["show", "startup-config"], "h": _show_startup},
 			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
 			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping},
 			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
@@ -802,6 +806,26 @@ class EOS extends Session:
 			var ip: String = i.ips[0] if not i.ips.is_empty() else "unassigned"
 			out += "%-11s %-18s %-8s\n" % [EOS._short(i.name), ip, "up" if i.enabled else "admin-down"]
 		return out
+
+	func _write_mem(_r: Array) -> String:
+		dev.startup = Game.device_config(dev)
+		return "Copy completed successfully.\n"
+
+	func _reload(_r: Array) -> String:
+		var had := not dev.startup.is_empty()
+		Game.apply_device_config(dev, dev.startup)
+		mode = "exec"
+		ctx_if = null
+		if had:
+			return "%s reloading... restored from startup-config.\n" % dev.name
+		return "%s reloading... NO startup-config: it came back blank. ('write memory' next time.)\n" % dev.name
+
+	func _show_startup(_r: Array) -> String:
+		if dev.startup.is_empty():
+			return "% no saved configuration ('write memory' to save the running config)\n"
+		var live := Game.device_config(dev)
+		var same: bool = JSON.stringify(live) == JSON.stringify(dev.startup)
+		return "startup-config saved.%s\n" % ("" if same else "  WARNING: running-config differs (unsaved changes)")
 
 	func _show_run(_r: Array) -> String:
 		var out := "hostname %s\n!\n" % dev.name

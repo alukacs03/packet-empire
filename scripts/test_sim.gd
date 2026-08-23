@@ -682,13 +682,13 @@ static func run() -> int:
 	Game.topology_changed.emit()
 
 	# --- field faults, redundant-gw offers, reverse DNS ---
-	Game._field_fault()
+	Game._field_fault()  # either a port fault or a power-blip reboot
+	check("FIELD" in Game.events[0], "field: a fault is logged for the operator to find")
 	var faulted: Net.Iface = null
 	for l in Game.links:
 		for ifc in [l.a, l.b]:
 			if not ifc.enabled and not ifc.name.begins_with("Management"):
 				faulted = ifc
-	check(faulted != null and "FIELD" in Game.events[0], "field: a fault takes a port down and logs it")
 	if faulted:
 		faulted.enabled = true
 		Game.topology_changed.emit()
@@ -841,6 +841,34 @@ static func run() -> int:
 	l2sw.exec("conf t")
 	check(l2sw.exec("interface Vlan40").contains("no L3 switching"), "svi: budget switches refuse SVIs")
 	check(Game.try_complete_contract(_contract("one_switch_two_nets")), "svi: collapse-the-core contract verifies")
+
+	# --- startup config: write memory / reload ---
+	var cfg_sw := Game.new_device("sw-8")
+	var r10 := Game.add_rack(Vector2i(6, 1))
+	r10.slots[0] = cfg_sw
+	var cs := CLI.new_session(cfg_sw)
+	cs.exec("en")
+	cs.exec("conf t")
+	cs.exec("vlan 77")
+	cs.exec("end")
+	check(cs.exec("show startup-config").contains("no saved"), "cfg: nothing saved yet")
+	check(cs.exec("write memory").contains("Copy completed"), "cfg: write memory saves")
+	cs.exec("conf t")
+	cs.exec("vlan 88")
+	cs.exec("end")
+	check(cs.exec("show startup-config").contains("unsaved changes"), "cfg: unsaved drift is reported")
+	check(cs.exec("reload").contains("restored"), "cfg: reload restores the startup config")
+	check(cfg_sw.vlans.has(77) and not cfg_sw.vlans.has(88),
+		"cfg: saved VLAN survived the reload, the unsaved one did not")
+	var blank_sw := Game.new_device("sw-8")
+	r10.slots[1] = blank_sw
+	var bs := CLI.new_session(blank_sw)
+	bs.exec("en")
+	bs.exec("conf t")
+	bs.exec("vlan 99")
+	bs.exec("end")
+	check(bs.exec("reload").contains("NO startup-config"), "cfg: reloading without a save warns")
+	check(not blank_sw.vlans.has(99), "cfg: unsaved config is genuinely lost on reload")
 
 	# --- router on a stick: 802.1Q subinterfaces ---
 	var ros_rtr := Game.new_device("rtr-edge")
