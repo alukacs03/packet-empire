@@ -2502,6 +2502,19 @@ func _refresh_contracts() -> void:
 			var ok: bool = r["t"].call()
 			cv.add_child(_label(("●  " if ok else "○  ") + r["d"], 14,
 				Color(0.5, 0.95, 0.6) if ok else Color(0.65, 0.6, 0.55)))
+		if String(c.get("hint", "")) != "":
+			var hint_lbl := _label("", 13, Color(0.62, 0.75, 0.85))
+			hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			hint_lbl.custom_minimum_size = Vector2(560, 0)
+			hint_lbl.visible = false
+			var hint_btn := Button.new()
+			hint_btn.text = "Stuck? Show me the commands"
+			hint_btn.pressed.connect(func() -> void:
+				hint_lbl.text = String(c["hint"])
+				hint_lbl.visible = true
+				hint_btn.visible = false)
+			cv.add_child(hint_btn)
+			cv.add_child(hint_lbl)
 		var btn := Button.new()
 		btn.text = "Check requirements & collect"
 		_accent(btn)

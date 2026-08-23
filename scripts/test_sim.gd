@@ -119,6 +119,38 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.menu_overlay.visible = false
 	ui._refresh_tutorial()
 	ui._refresh_money()
+	# the front door and the demo arc
+	var title := TitleScreen.new()
+	world.add_child(title)
+	title.show_intro()
+	title.show_slots()
+	title.show_settings()
+	title.show_new_game(true)
+	title.show_new_game(false)
+	title._build_menu()
+	check(TitleScreen._money(-35681) == "-$35,681", "title: money reads as money")
+	check(TitleScreen._money(0) == "$0", "title: zero has no stray separator")
+	var was_demo := Game.demo
+	var was_done := Game.contracts_done.duplicate()
+	Game.demo = true
+	check(Contracts.all().size() == Demo.ARC.size(),
+		"demo: the campaign stops at the end of the arc")
+	Game.contracts_done = Demo.ARC.duplicate()
+	check(Demo.complete(), "demo: finishing every arc job finishes the demo")
+	check(Demo.progress_text() == "Demo  6/6", "demo: progress counts the arc")
+	ui.check_demo_end()
+	check(ui.demo_overlay.visible, "demo: the closing card appears once the arc is done")
+	ui.demo_overlay.visible = false
+	Game.contracts_done = was_done
+	Game.demo = was_demo
+	check(Contracts.all().size() > Demo.ARC.size(), "demo: the full campaign is back outside the demo")
+	for cid in Demo.ARC:
+		var found := false
+		for c2 in Contracts.all():
+			if c2["id"] == cid:
+				found = String(c2.get("hint", "")) != ""
+		check(found, "demo: %s offers a hint when the player is stuck" % cid)
+	title.queue_free()
 	check(UILayer.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
 		"ui: port lists compress into ranges")
 	check(UILayer.compress_ports([]) == "", "ui: empty port list compresses to nothing")
