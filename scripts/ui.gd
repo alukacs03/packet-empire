@@ -393,7 +393,8 @@ func _build_dev_overlay() -> void:
 	status_opt.add_item("active")
 	status_opt.add_item("offline")
 	status_opt.item_selected.connect(func(idx: int) -> void:
-		cur_dev.status = "active" if idx == 0 else "offline")
+		cur_dev.status = "active" if idx == 0 else "offline"
+		Game.topology_changed.emit())
 	name_row.add_child(status_opt)
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)

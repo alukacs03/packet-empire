@@ -163,6 +163,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "no_spof",
+			"title": "No single point of failure",
+			"customer": "Omega Holding (pre-audit)",
+			"reward": 3200,
+			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master). A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway — 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
+			"reqs": [
+				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
+				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},
+				{"d": "The virtual gateway answers ping", "t": func() -> bool: return _vip_pings()},
+			],
+		},
+		{
 			"id": "big_client",
 			"title": "The big client",
 			"customer": "Omega Holding",
@@ -179,6 +191,45 @@ static func all() -> Array:
 	]
 
 # ---------- check helpers ----------
+
+static func _vrrp_ifaces() -> Array:
+	var out: Array = []
+	for d in Game.all_devices():
+		if d.ip_forwarding:
+			for i: Net.Iface in d.ifaces:
+				if not i.vrrp.is_empty():
+					out.append(i)
+	return out
+
+static func _vrrp_pair() -> bool:
+	var by_vip := {}
+	for i: Net.Iface in _vrrp_ifaces():
+		var key := "%s|%d" % [i.vrrp["vip"], int(i.vrrp["group"])]
+		by_vip[key] = by_vip.get(key, 0) + 1
+		if by_vip[key] >= 2:
+			return true
+	return false
+
+static func _server_gw_is_vip() -> bool:
+	var vips := {}
+	for i: Net.Iface in _vrrp_ifaces():
+		vips[i.vrrp["vip"]] = true
+	for d in Game.all_devices():
+		if d.type == "server":
+			for r in d.static_routes:
+				if vips.has(r["via"]):
+					return true
+	return false
+
+static func _vip_pings() -> bool:
+	for d in Game.all_devices():
+		if d.type != "server":
+			continue
+		for r in d.static_routes:
+			for i: Net.Iface in _vrrp_ifaces():
+				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
+					return true
+	return false
 
 static func _vlan_with_server(vid: int) -> bool:
 	for d in Game.all_devices():

@@ -456,7 +456,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		return
 	if frame["type"] == "arp":
 		if p["op"] == "req":
-			if _iface_owns_ip(iface, p["tpa"]):
+			if _iface_owns_ip(iface, p["tpa"]) or _vrrp_owns(dev, iface, p["tpa"]):
 				dev.arp[p["spa"]] = p["sha"]
 				_tx(iface, {"src": iface.mac, "dst": p["sha"], "vlan": 0, "type": "arp",
 					"pl": {"op": "rep", "spa": p["tpa"], "sha": iface.mac, "tpa": p["spa"]}})
@@ -478,7 +478,8 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 					_tx(rt2["iface"], {"src": rt2["iface"].mac, "dst": mac2, "vlan": 0,
 						"type": "ipv4", "pl": back})
 			return
-	if _has_ip(dev, p["dst_ip"]):
+	var vrrp_local := _vrrp_owns(dev, iface, p["dst_ip"])
+	if _has_ip(dev, p["dst_ip"]) or vrrp_local:
 		var l4: Dictionary = p["l4"]
 		if l4["proto"] == "icmp":
 			match l4["type"]:
@@ -538,6 +539,32 @@ static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bo
 				and Net.same_subnet(dst_ip, rule["dst"], int(rule["dplen"])):
 			return rule["action"] == "permit"
 	return true
+
+static func vrrp_master(vip: String, group: int) -> Net.NDevice:
+	## alive router with the highest priority (tie: highest real IP) wins
+	var best: Net.NDevice = null
+	var best_prio := -1
+	var best_ip := -1
+	for d in Game.all_devices():
+		if not d.ip_forwarding or d.status != "active":
+			continue
+		for i: Net.Iface in d.ifaces:
+			if not i.enabled or i.vrrp.is_empty():
+				continue
+			if i.vrrp.get("vip", "") != vip or int(i.vrrp.get("group", -1)) != group:
+				continue
+			var prio: int = int(i.vrrp.get("priority", 100))
+			var ipn := Net.ip_to_int(_first_ip(i))
+			if prio > best_prio or (prio == best_prio and ipn > best_ip):
+				best = d
+				best_prio = prio
+				best_ip = ipn
+	return best
+
+static func _vrrp_owns(dev: Net.NDevice, iface: Net.Iface, ip: String) -> bool:
+	if iface.vrrp.is_empty() or iface.vrrp.get("vip", "") != ip:
+		return false
+	return vrrp_master(ip, int(iface.vrrp.get("group", -1))) == dev
 
 static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:

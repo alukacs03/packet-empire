@@ -536,5 +536,47 @@ static func run() -> int:
 	check(Market.check("managed_switch", {"vid": 30}), "market: managed-switch kind verifies (vlan 30 + addressed mgmt)")
 	check(not Market.check("managed_switch", {"vid": 777}), "market: managed-switch fails for absent vlan")
 
+	# --- VRRP failover ---
+	var r6 := Game.add_rack(Vector2i(1, 1))
+	var vr1 := Game.new_device("rtr-edge")
+	var vr2 := Game.new_device("rtr-edge")
+	var vsw := Game.new_device("sw-8")
+	var vcl := Game.new_device("server")
+	r6.slots[0] = vr1
+	r6.slots[1] = vr2
+	r6.slots[2] = vsw
+	r6.slots[3] = vcl
+	Game.connect_ifaces(vr1.ifaces[0], vsw.ifaces[0])
+	Game.connect_ifaces(vr2.ifaces[0], vsw.ifaces[1])
+	Game.connect_ifaces(vcl.ifaces[0], vsw.ifaces[2])
+	Game.add_ip(vr1.ifaces[0], "10.40.0.2/24")
+	Game.add_ip(vr2.ifaces[0], "10.40.0.3/24")
+	Game.add_ip(vcl.ifaces[0], "10.40.0.10/24")
+	Game.add_static_route(vcl, "0.0.0.0", 0, "10.40.0.1")
+	var v1 := CLI.new_session(vr1)
+	v1.exec("en")
+	v1.exec("conf t")
+	v1.exec("int et1")
+	v1.exec("vrrp 1 ip 10.40.0.1")
+	v1.exec("vrrp 1 priority 120")
+	v1.exec("end")
+	var v2 := CLI.new_session(vr2)
+	v2.exec("en")
+	v2.exec("conf t")
+	v2.exec("int et1")
+	v2.exec("vrrp 1 ip 10.40.0.1")
+	v2.exec("end")
+	check(Sim.vrrp_master("10.40.0.1", 1) == vr1, "vrrp: higher priority wins mastership")
+	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: client pings the virtual gateway")
+	check(v1.exec("show vrrp").contains("Master"), "vrrp: show vrrp reports Master")
+	check(v2.exec("show vrrp").contains("Backup"), "vrrp: show vrrp reports Backup")
+	check(Game.try_complete_contract(_contract("no_spof")), "vrrp: no-SPOF contract verifies")
+	vr1.status = "offline"
+	Game.topology_changed.emit()
+	check(Sim.vrrp_master("10.40.0.1", 1) == vr2, "vrrp: backup takes over when master dies")
+	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: virtual IP survives the master's death")
+	vr1.status = "active"
+	Game.topology_changed.emit()
+
 	print("---- %d failures" % fails)
 	return fails

@@ -117,6 +117,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
+			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
 			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
@@ -147,6 +148,8 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
 			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
+			{"m": ["if"], "p": ["vrrp"], "h": _if_vrrp},
+			{"m": ["if"], "p": ["no", "vrrp"], "h": func(_r): ctx_if.vrrp = {}; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
@@ -382,6 +385,37 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
+
+	func _if_vrrp(r: Array) -> String:
+		if not dev.ip_forwarding:
+			return "% VRRP needs a router or firewall\n"
+		# vrrp <group> ip <vip>   |   vrrp <group> priority <n>
+		if r.size() == 3 and String(r[0]).is_valid_int():
+			if "ip".begins_with(r[1]) and String(r[2]).is_valid_ip_address():
+				ctx_if.vrrp = {"group": int(r[0]), "vip": r[2],
+					"priority": int(ctx_if.vrrp.get("priority", 100))}
+				Game.topology_changed.emit()
+				return ""
+			if "priority".begins_with(r[1]) and String(r[2]).is_valid_int():
+				if ctx_if.vrrp.is_empty():
+					return "% set the virtual IP first: vrrp <group> ip <vip>\n"
+				ctx_if.vrrp["priority"] = int(r[2])
+				Game.topology_changed.emit()
+				return ""
+		return "usage: vrrp <group> ip <vip>  |  vrrp <group> priority <1-254>\n"
+
+	func _show_vrrp(_r: Array) -> String:
+		var out := "%-11s %-6s %-16s %-9s %s\n" % ["Interface", "Group", "Virtual IP", "Priority", "State"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if i.vrrp.is_empty():
+				continue
+			any = true
+			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]))
+			out += "%-11s %-6d %-16s %-9d %s\n" % [EOS._short(i.name), int(i.vrrp["group"]),
+				i.vrrp["vip"], int(i.vrrp.get("priority", 100)),
+				"Master" if master == dev else ("Backup (master: %s)" % (master.name if master else "-"))]
+		return out if any else "  (no VRRP groups configured)\n"
 
 	func _if_nat(r: Array) -> String:
 		if dev.type == "switch":
@@ -707,6 +741,10 @@ class EOS extends Session:
 				out += "   ip address %s\n" % cidr
 			if i.nat != "":
 				out += "   ip nat %s\n" % i.nat
+			if not i.vrrp.is_empty():
+				out += "   vrrp %d ip %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
+				if int(i.vrrp.get("priority", 100)) != 100:
+					out += "   vrrp %d priority %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
 			if not i.enabled:

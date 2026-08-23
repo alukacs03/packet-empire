@@ -13,6 +13,7 @@ class Iface:
 	var untagged_vlan := 1
 	var tagged_vlans: Array = []  # trunk allowed VIDs; empty = all
 	var nat := ""  # "" | "inside" | "outside" (srcnat/masquerade toward outside)
+	var vrrp := {}  # {"group": int, "vip": String, "priority": int}
 	var tx_frames := 0  # runtime counters
 	var rx_frames := 0
 	var ips: Array = []  # CIDR strings, e.g. "10.0.0.5/24"
