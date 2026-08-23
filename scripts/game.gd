@@ -2,6 +2,7 @@ extends Node
 ## Autoload "Game": the datacenter source of truth (racks, devices,
 ## interfaces, cables, per-switch VLANs, money). NetBox-style model.
 
+signal events_changed
 signal topology_changed
 signal money_changed
 
@@ -1288,10 +1289,51 @@ func clock_tick() -> void:
 		elif randf() < 0.25:
 			d.clock_skew += (1 if randf() < 0.5 else -1)
 
+## Words that decide how loudly an event should be shouted. Matched against
+## the start of the message, which is why every log line leads with a tag.
+const SEVERE := ["SLA BREACH", "SECURITY", "WRITTEN OFF", "LOST", "PORT SECURITY",
+	"FAULT", "ATTACK", "POWER"]
+const WARNING := ["LATE", "CONGESTION", "RENEWAL", "POACH", "STAFF", "HEAT",
+	"STORM CONTROL", "DHCP snooping", "ARP inspection", "RIVAL"]
+
+static func event_severity(text: String) -> String:
+	var body := text
+	var colon := body.find(": ")
+	var head := body.substr(0, colon) if colon > 0 else body
+	for word in SEVERE:
+		if head.begins_with(word) or body.begins_with(word):
+			return "critical"
+	for word2 in WARNING:
+		if head.begins_with(word2) or body.begins_with(word2):
+			return "warning"
+	return "info"
+
+var unread_events := 0  # since the player last looked at the log
+
 func log_event(text: String) -> void:
 	events.push_front("cycle %d: %s" % [cycle, text])
-	if events.size() > 20:
+	if event_severity(text) != "info":
+		unread_events += 1
+	if events.size() > 60:
 		events.pop_back()
+	events_changed.emit()
+
+func mark_events_read() -> void:
+	unread_events = 0
+	events_changed.emit()
+
+func events_by_severity(level: String) -> Array:
+	## level: "all", "critical" or "warning" (warning includes critical, since
+	## nobody filtering for problems wants the worse ones hidden)
+	var out: Array = []
+	for e: String in events:
+		var body := String(e)
+		var at := body.find(": ")
+		var msg := body.substr(at + 2) if at > 0 else body
+		var sev := event_severity(msg)
+		if level == "all" or sev == "critical" or (level == "warning" and sev == "warning"):
+			out.append({"line": body, "severity": sev})
+	return out
 
 func _security_sweep() -> int:
 	## Customer machines (marketplace deal servers) that can reach the IP of

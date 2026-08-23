@@ -3071,6 +3071,28 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- notifications: severity, filtering and the unread count ---
+	check(Game.event_severity("SLA BREACH: something is down") == "critical",
+		"notify: a breach is serious")
+	check(Game.event_severity("LATE: they have not paid") == "warning",
+		"notify: a late payment is a warning")
+	check(Game.event_severity("CIRCUIT: ordered between two sites") == "info",
+		"notify: routine business is neither")
+	Game.events = []
+	Game.mark_events_read()
+	Game.log_event("CIRCUIT: nothing to worry about")
+	check(Game.unread_events == 0, "notify: routine events do not demand attention")
+	Game.log_event("SECURITY: someone reached the management plane")
+	Game.log_event("LATE: an invoice has slipped")
+	check(Game.unread_events == 2, "notify: problems do")
+	check(Game.events_by_severity("critical").size() == 1,
+		"notify: the serious filter shows only the serious one")
+	check(Game.events_by_severity("warning").size() == 2,
+		"notify: the problems filter keeps the serious one visible too")
+	check(Game.events_by_severity("all").size() == 3, "notify: everything means everything")
+	Game.mark_events_read()
+	check(Game.unread_events == 0, "notify: reading the log clears the count")
+
 	# --- flow accounting ---
 	Game.clear_talkers()
 	var fl_rack := Game.add_rack(Vector2i(36, 1))

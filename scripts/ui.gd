@@ -119,6 +119,7 @@ func _ready() -> void:
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
 	Game.money_changed.connect(_refresh_tutorial)
+	Game.events_changed.connect(_refresh_attention)
 	Game.topology_changed.connect(_refresh_open)
 	Game.topology_changed.connect(_refresh_money)
 	Game.money_changed.connect(_refresh_money)
@@ -141,6 +142,7 @@ func _refresh_attention() -> void:
 	for cid in Game.sla_status:
 		if not Game.sla_status[cid] and not Contracts.retired(cid):
 			n += 1
+	n += Game.unread_events
 	if n > 0:
 		contracts_btn.text = "Company (%d!)" % n
 		contracts_btn.modulate = Color(1.15, 0.95, 0.7)
@@ -2036,6 +2038,7 @@ func check_demo_end() -> void:
 # ---------- contracts ----------
 
 var contracts_tab := "Jobs"
+var log_filter := "all"
 
 func _build_contracts_overlay() -> void:
 	contracts_overlay = _overlay()
@@ -2434,18 +2437,34 @@ func _build_log_tab() -> void:
 			contracts_box.add_child(_label("  ✓ cycle %d: %s (cause: %s)" % [int(inc2["cycle"]),
 				inc2["summary"], inc2.get("cause", "")], 12, Color(0.6, 0.75, 0.65)))
 
+	Game.mark_events_read()
 	if Game.events.is_empty():
 		contracts_box.add_child(_label("Nothing has happened yet.", 13, MUTED))
 		return
 	contracts_box.add_child(_section("EVENT LOG"))
-	for ev in Game.events:
-		var col := Color(0.75, 0.8, 0.88)
-		if "SECURITY" in ev or "POACHED" in ev or "CANCELLED" in ev:
-			col = Color(0.95, 0.55, 0.45)
-		elif "OVERHEAT" in ev or "FIELD" in ev or "LOST:" in ev:
-			col = Color(0.95, 0.7, 0.4)
-		elif "ACQUISITION" in ev or "INTEGRATION" in ev or "CIRCUIT" in ev:
-			col = Color(0.6, 0.9, 0.75)
+	var filter_row := HBoxContainer.new()
+	filter_row.add_theme_constant_override("separation", 6)
+	contracts_box.add_child(filter_row)
+	for level in [["all", "Everything"], ["warning", "Problems"], ["critical", "Serious only"]]:
+		var fb := Button.new()
+		fb.text = level[1]
+		fb.toggle_mode = true
+		fb.button_pressed = log_filter == level[0]
+		fb.pressed.connect(func() -> void:
+			log_filter = String(level[0])
+			_refresh_contracts())
+		filter_row.add_child(fb)
+	var rows := Game.events_by_severity(log_filter)
+	if rows.is_empty():
+		contracts_box.add_child(_label("  Nothing at that level. That is good news.", 12, MUTED))
+	for row: Dictionary in rows:
+		var ev: String = row["line"]
+		var col := Color(0.72, 0.78, 0.86)
+		match String(row["severity"]):
+			"critical":
+				col = Prefs.bad_colour()
+			"warning":
+				col = Color(0.95, 0.75, 0.45)
 		var l := _label(ev, 12, col)
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.custom_minimum_size = Vector2(580, 0)
