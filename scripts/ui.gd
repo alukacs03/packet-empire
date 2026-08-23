@@ -26,6 +26,7 @@ var cap_box: VBoxContainer
 var cap_out: RichTextLabel
 var cap_toggle: Button
 var save_cfg_btn: Button
+var template_btn: Button
 var cli_box: VBoxContainer
 var cli_out: RichTextLabel
 var cli_in: LineEdit
@@ -647,6 +648,25 @@ func _build_dev_overlay() -> void:
 		if cap_box.visible:
 			_scroll_to_bottom.call_deferred())
 	btn_row.add_child(cap_toggle)
+	template_btn = Button.new()
+	template_btn.text = "Templates"
+	template_btn.tooltip_text = "Save this device as a standard, or apply one"
+	template_btn.pressed.connect(func() -> void:
+		var opts: Array = ["Save this device as a template…"]
+		var applicable: Array = []
+		for t: Dictionary in Game.templates:
+			if t["type"] == cur_dev.type:
+				opts.append("Apply '%s'" % t["name"])
+				applicable.append(t)
+		_menu(template_btn, opts, func(id: int) -> void:
+			if id == 0:
+				Game.save_template(cur_dev, "%s standard" % cur_dev.type)
+				hud_toast("Saved '%s standard' as a template." % cur_dev.type, true)
+			else:
+				var err: String = Game.apply_template(cur_dev, applicable[id - 1])
+				hud_toast(err if err != "" else "Template applied to %s." % cur_dev.name, err == "")
+			_refresh_ports()))
+	btn_row.add_child(template_btn)
 	save_cfg_btn = Button.new()
 	save_cfg_btn.text = "Save config"
 	save_cfg_btn.tooltip_text = "write memory: survive a reboot"

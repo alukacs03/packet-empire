@@ -1426,6 +1426,45 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- golden config templates ---
+	Game.templates = []
+	var tpl_a := Game.new_device("sw-8")
+	var tpl_b := Game.new_device("sw-8")
+	var tpl_rack := Game.add_rack(Vector2i(13, 1))
+	tpl_rack.slots[0] = tpl_a
+	tpl_rack.slots[1] = tpl_b
+	var ts := CLI.new_session(tpl_a)
+	ts.exec("en")
+	ts.exec("conf t")
+	ts.exec("vlan 200")
+	ts.exec("vlan 201")
+	ts.exec("interface range Ethernet1-4")
+	ts.exec("switchport access vlan 200")
+	ts.exec("switchport port-security")
+	ts.exec("end")
+	for i: Net.Iface in tpl_a.ifaces:
+		if i.name.begins_with("Management"):
+			Game.add_ip(i, "10.230.0.1/24")  # identity: must not travel with the template
+	check(ts.exec("copy running-config template access-standard").contains("Saved"),
+		"template: a device can be saved as a standard")
+	var tb := CLI.new_session(tpl_b)
+	tb.exec("en")
+	check(tb.exec("copy template access-standard running-config").contains("Applied"),
+		"template: it can be applied to another switch")
+	check(tpl_b.vlans.has(200) and tpl_b.vlans.has(201), "template: VLANs came across")
+	check(tpl_b.ifaces[0].untagged_vlan == 200 and tpl_b.ifaces[3].port_security,
+		"template: port profiles came across")
+	var addrs_copied := false
+	for i: Net.Iface in tpl_b.ifaces:
+		if not i.ips.is_empty():
+			addrs_copied = true
+	check(not addrs_copied, "template: addresses are identity, not policy, and stay behind")
+	check(tb.exec("show templates").contains("access-standard"), "template: templates are listed")
+	var tpl_srv := Game.new_device("srv-1")
+	tpl_rack.slots[2] = tpl_srv
+	check(not Game.apply_template(tpl_srv, Game.templates[0]).is_empty(),
+		"template: a switch template is refused on a server")
+
 	# --- monitors and history ---
 	Game.monitors = []
 	Game.history = []

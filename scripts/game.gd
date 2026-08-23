@@ -80,6 +80,7 @@ var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
+var templates: Array = []  # golden configs: {name, type, cfg}
 var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
 var history: Array = []  # per-cycle snapshot for the graphs
 var staff: Array = []  # people on the payroll
@@ -1165,7 +1166,7 @@ func _serialize() -> Dictionary:
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
-		"monitors": monitors, "history": history,
+		"monitors": monitors, "history": history, "templates": templates,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -1178,6 +1179,47 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	cfg.erase("startup")
 	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
 	return cfg
+
+func save_template(d: Net.NDevice, name: String) -> String:
+	name = name.strip_edges()
+	if name == "":
+		return "a template needs a name"
+	for t in templates:
+		if t["name"] == name:
+			templates.erase(t)
+			break
+	templates.append({"name": name, "type": d.type, "cfg": device_config(d)})
+	log_event("TEMPLATE: saved '%s' from %s." % [name, d.name])
+	return ""
+
+func apply_template(d: Net.NDevice, t: Dictionary) -> String:
+	## a golden config carries policy, not identity: VLANs, port profiles,
+	## security and services, never addresses or hostnames
+	if t["type"] != d.type:
+		return "'%s' is a %s template and %s is a %s" % [t["name"], t["type"], d.name, d.type]
+	var cfg: Dictionary = t["cfg"]
+	d.vlans = {}
+	for vid in cfg.get("vlans", {}):
+		d.vlans[int(vid)] = cfg["vlans"][vid]
+	d.acls = cfg.get("acls", []).duplicate(true)
+	d.stateful = bool(cfg.get("stateful", false))
+	var src_ifs: Array = cfg.get("ifaces", [])
+	for idx in d.ifaces.size():
+		if idx >= src_ifs.size():
+			break
+		var si: Dictionary = src_ifs[idx]
+		var target: Net.Iface = d.ifaces[idx]
+		if target.name.begins_with("Vlan") or target.parent != "":
+			continue
+		target.mode = si.get("mode", target.mode)
+		target.untagged_vlan = int(si.get("untagged_vlan", 1))
+		target.tagged_vlans = si.get("tagged_vlans", []).duplicate()
+		target.mtu = int(si.get("mtu", 1500))
+		target.port_security = bool(si.get("port_security", false))
+		target.lag = int(si.get("lag", 0))
+	topology_changed.emit()
+	log_event("TEMPLATE: applied '%s' to %s." % [t["name"], d.name])
+	return ""
 
 func save_config_version(d: Net.NDevice) -> int:
 	## keep a rollback point; returns the version number
@@ -1338,6 +1380,7 @@ func _apply(data: Dictionary) -> void:
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	market_intel = int(data.get("market_intel", 0))
+	templates = data.get("templates", [])
 	monitors = data.get("monitors", [])
 	history = data.get("history", [])
 	staff = data.get("staff", [])

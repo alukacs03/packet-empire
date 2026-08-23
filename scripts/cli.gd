@@ -108,6 +108,9 @@ class EOS extends Session:
 			{"m": ["priv"], "p": ["write", "memory"], "h": _write_mem},
 			{"m": ["priv"], "p": ["copy", "running-config", "startup-config"], "h": _write_mem},
 			{"m": ["priv"], "p": ["reload"], "h": _reload},
+			{"m": ["priv"], "p": ["copy", "running-config", "template"], "h": _save_template},
+			{"m": ["priv"], "p": ["copy", "template"], "h": _apply_template},
+			{"m": EP, "p": ["show", "templates"], "h": _show_templates},
 			{"m": EP, "p": ["show", "startup-config"], "h": _show_startup},
 			{"m": EP, "p": ["show", "config", "versions"], "h": _show_versions},
 			{"m": EP, "p": ["show", "config", "diff"], "h": _show_diff},
@@ -934,6 +937,31 @@ class EOS extends Session:
 		dev.startup = Game.device_config(dev)
 		var n := Game.save_config_version(dev)
 		return "Copy completed successfully. (saved as version %d)\n" % n
+
+	func _save_template(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: copy running-config template <name>\n"
+		var err := Game.save_template(dev, r[0])
+		return "Saved as template '%s'.\n" % r[0] if err == "" else "%% %s\n" % err
+
+	func _apply_template(r: Array) -> String:
+		if r.is_empty():
+			return "usage: copy template <name> [running-config]\n"
+		var name := String(r[0])
+		for t in Game.templates:
+			if t["name"] == name:
+				var err := Game.apply_template(dev, t)
+				return "Applied '%s'. Addresses were not touched.\n" % name if err == "" \
+					else "%% %s\n" % err
+		return "%% no template called '%s'\n" % name
+
+	func _show_templates(_r: Array) -> String:
+		if Game.templates.is_empty():
+			return "  (none: 'copy running-config template <name>' saves one)\n"
+		var out := "%-18s %s\n" % ["NAME", "FOR"]
+		for t in Game.templates:
+			out += "%-18s %s\n" % [t["name"], t["type"]]
+		return out
 
 	func _show_versions(_r: Array) -> String:
 		if dev.versions.is_empty():
