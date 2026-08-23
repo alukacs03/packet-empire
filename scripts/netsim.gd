@@ -400,6 +400,8 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	var peer: Net.Iface = l.other(iface)
 	if not peer.enabled or peer.dev.status != "active":
 		return
+	iface.tx_frames += 1
+	peer.rx_frames += 1
 	if last_trace.size() < 300:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	_cap(peer.dev, peer, frame)

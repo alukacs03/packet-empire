@@ -50,6 +50,11 @@ func exec(line: String) -> String:
 			return "usage: /system identity set name=<name>\n"
 		"system identity print":
 			return "name: %s\n" % dev.name
+		"interface print stats":
+			var out := " NAME       RX-PACKET  TX-PACKET\n"
+			for i: Net.Iface in dev.ifaces:
+				out += " %-10s %9d  %9d\n" % [i.name, i.rx_frames, i.tx_frames]
+			return out
 		"interface print":
 			var out := "Flags: X - disabled, R - running\n # NAME       MTU  MAC\n"
 			var n := 0
@@ -259,7 +264,7 @@ func exec(line: String) -> String:
 const PATHS := ["help", "export", "ping", "tool traceroute",
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
-	"interface print", "interface set",
+	"interface print", "interface print stats", "interface set",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
 	"ip address add", "ip address remove", "ip address print",
 	"ip route add", "ip route remove", "ip route print",

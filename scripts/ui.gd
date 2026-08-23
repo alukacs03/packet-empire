@@ -638,7 +638,7 @@ func close_iface() -> void:
 
 func _refresh_iface() -> void:
 	if_title.text = "%s / %s" % [cur_if.dev.name, cur_if.name]
-	if_mac.text = "MAC %s" % cur_if.mac
+	if_mac.text = "MAC %s      RX %d / TX %d frames" % [cur_if.mac, cur_if.rx_frames, cur_if.tx_frames]
 	if_enabled.set_pressed_no_signal(cur_if.enabled)
 	if_mtu.text = str(cur_if.mtu)
 	var is_switch := cur_if.dev.type == "switch"

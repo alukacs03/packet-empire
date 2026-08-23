@@ -455,5 +455,15 @@ static func run() -> int:
 	check(Market.check("public_hosting", {"ip": "10.3.0.10"}), "market: public hosting verified from the uplink side (needs the announcement back)")
 	check(not Market.check("public_hosting", {"ip": "10.0.0.1"}), "market: unreachable-from-internet host fails the check")
 
+	# --- traffic counters ---
+	var s_cnt := CLI.new_session(sw_a)
+	s_cnt.exec("en")
+	s_cnt.exec("clear counters")
+	Sim.ping(a2, "10.0.0.2")
+	check(sw_a.ifaces[0].rx_frames > 0, "counters: switch port counted rx frames")
+	check(s_cnt.exec("show interfaces counters").contains("InFrames"), "counters: EOS table renders")
+	s_cnt.exec("clear counters")
+	check(sw_a.ifaces[0].rx_frames == 0, "counters: clear counters resets")
+
 	print("---- %d failures" % fails)
 	return fails

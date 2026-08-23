@@ -103,6 +103,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
+			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
+			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
 			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
@@ -579,6 +581,18 @@ class EOS extends Session:
 				"discarding" if blocked else "forwarding"]
 		return out if any else out + "  (no switch-to-switch links)\n"
 
+	func _show_counters(_r: Array) -> String:
+		var out := "%-11s %12s %12s\n" % ["Port", "InFrames", "OutFrames"]
+		for i: Net.Iface in dev.ifaces:
+			out += "%-11s %12d %12d\n" % [EOS._short(i.name), i.rx_frames, i.tx_frames]
+		return out
+
+	func _clear_counters(_r: Array) -> String:
+		for i: Net.Iface in dev.ifaces:
+			i.tx_frames = 0
+			i.rx_frames = 0
+		return ""
+
 	func _show_lldp(_r: Array) -> String:
 		var out := "%-11s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]
 		var any := false
@@ -770,6 +784,7 @@ class Linux extends Session:
 						"UP" if i.enabled else "DOWN", i.mtu, i.mac]
 					for cidr in i.ips:
 						out += "    inet %s\n" % cidr
+					out += "    RX packets %d  TX packets %d\n" % [i.rx_frames, i.tx_frames]
 				return out
 			if t.size() == 5 and t[1] in ["add", "del"] and t[3] == "dev":
 				var ifc := _iface(t[4])
