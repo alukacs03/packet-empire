@@ -138,6 +138,11 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
 			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
+			{"m": ["config"], "p": ["logging", "host"], "h": _cfg_logging},
+			{"m": ["config"], "p": ["no", "logging", "host"], "h": _no_logging},
+			{"m": ["config"], "p": ["ntp", "server"], "h": _cfg_ntp},
+			{"m": EP, "p": ["show", "logging"], "h": _show_logging},
+			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
@@ -963,6 +968,42 @@ class EOS extends Session:
 			out += "%-18s %s\n" % [t["name"], t["type"]]
 		return out
 
+	func _no_logging(_r: Array) -> String:
+		dev.log_host = ""
+		return ""
+
+	func _cfg_logging(r: Array) -> String:
+		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
+			return "usage: logging host <ip>\n"
+		dev.log_host = r[0]
+		Game.device_log(dev, "logging destination set to %s" % r[0])
+		return ""
+
+	func _cfg_ntp(r: Array) -> String:
+		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
+			return "usage: ntp server <ip>\n"
+		dev.ntp_server = r[0]
+		return ""
+
+	func _show_logging(_r: Array) -> String:
+		var out := ""
+		if dev.services.has("syslog"):
+			var msgs: Array = dev.services["syslog"]["messages"]
+			out += "Collector: %d message(s) received\n" % msgs.size()
+			for m in msgs.slice(maxi(0, msgs.size() - 20)):
+				out += "  %s\n" % m
+			out += "--\n"
+		out += "Local buffer%s:\n" % ("" if dev.log_host == "" else " (shipping to %s)" % dev.log_host)
+		if dev.logs.is_empty():
+			out += "  (empty)\n"
+		for l in dev.logs.slice(maxi(0, dev.logs.size() - 15)):
+			out += "  %s\n" % l
+		return out
+
+	func _show_clock(_r: Array) -> String:
+		var sync := "synchronised to %s" % dev.ntp_server if dev.ntp_server != "" else "free running"
+		return "cycle %d (device believes %d, %s)\n" % [Game.cycle, Game.cycle + dev.clock_skew, sync]
+
 	func _show_versions(_r: Array) -> String:
 		if dev.versions.is_empty():
 			return "  (no saved versions: 'write memory' keeps one)\n"
@@ -1092,7 +1133,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1124,7 +1165,30 @@ class Linux extends Session:
 					"plen": int(t[4]), "gw": t[5] if t.size() > 5 else "",
 					"dns": t[6] if t.size() > 6 else "", "leases": {}}
 				Game.topology_changed.emit()
-				return "dhcpd: serving %s–%s/%s on %s\n" % [t[2], t[3], t[4], t[1]]
+				return "dhcpd: serving %s-%s/%s on %s\n" % [t[2], t[3], t[4], t[1]]
+			"syslogd":
+				dev.services["syslog"] = dev.services.get("syslog", {"messages": []})
+				return "syslogd: collecting logs on this host\n"
+			"logging":
+				if t.size() == 2 and (t[1].is_valid_ip_address() or Net.is_v6(t[1])):
+					dev.log_host = t[1]
+					return ""
+				return "usage: logging <collector-ip>\n"
+			"ntpd":
+				if t.size() == 2 and (t[1].is_valid_ip_address() or Net.is_v6(t[1])):
+					dev.ntp_server = t[1]
+					return "ntpd: syncing to %s\n" % t[1]
+				return "usage: ntpd <server-ip>\n"
+			"logs":
+				var out := ""
+				if dev.services.has("syslog"):
+					var msgs: Array = dev.services["syslog"]["messages"]
+					out += "collector: %d message(s)\n" % msgs.size()
+					for m in msgs.slice(maxi(0, msgs.size() - 20)):
+						out += "  %s\n" % m
+				for l in dev.logs.slice(maxi(0, dev.logs.size() - 15)):
+					out += "  %s\n" % l
+				return out if out != "" else "(no logs)\n"
 			"dns":
 				if t.size() == 4 and t[1] == "add" and String(t[3]).is_valid_ip_address():
 					if not dev.services.has("dns"):
@@ -1266,7 +1330,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

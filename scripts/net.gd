@@ -43,6 +43,10 @@ class NDevice:
 	var startup := {}  # saved configuration ('write memory')
 	var versions: Array = []  # [{cycle, cfg}] history for diff and rollback
 	var acquired_from := ""  # inherited with a company you bought
+	var log_host := ""  # syslog collector
+	var ntp_server := ""  # clock source
+	var clock_skew := 0  # cycles of drift when the clock is unsynchronised
+	var logs: Array = []  # local log buffer
 	var flows := {}  # runtime: "id|src|dst" of forwarded flows
 	var bgp := {}  # {asn, neighbors: [{ip, remote_as}], networks: ["prefix/len"]}
 	var ospf := {}  # {"networks": ["prefix/len"]}: single area 0, enabled when non-empty

@@ -665,6 +665,35 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 		"cycles": 0, "up_cycles": 0, "healthy": false})
 	money_changed.emit()
 
+func device_log(dev: Net.NDevice, text: String) -> void:
+	## a device records an event locally, and ships it to a collector if it has
+	## one and can reach it. An unsynchronised clock stamps it wrongly, which
+	## is exactly how correlating an incident goes wrong in real life.
+	var stamp := cycle + dev.clock_skew
+	var line := "[cycle %d] %s: %s" % [stamp, dev.name, text]
+	dev.logs.append(line)
+	if dev.logs.size() > 40:
+		dev.logs.pop_front()
+	if dev.log_host == "":
+		return
+	var collector := Sim._ip_owner(dev.log_host)
+	if collector == null or not collector.services.has("syslog"):
+		return
+	if not Sim.ping(dev, dev.log_host)["ok"]:
+		return  # logs that cannot reach the collector are simply lost
+	var box: Array = collector.services["syslog"]["messages"]
+	box.append(line)
+	if box.size() > 200:
+		box.pop_front()
+
+func clock_tick() -> void:
+	## clocks drift unless disciplined by a reachable NTP server
+	for d in all_devices():
+		if d.ntp_server != "" and Sim.ping(d, d.ntp_server)["ok"]:
+			d.clock_skew = 0
+		elif randf() < 0.25:
+			d.clock_skew += (1 if randf() < 0.5 else -1)
+
 func log_event(text: String) -> void:
 	events.push_front("cycle %d: %s" % [cycle, text])
 	if events.size() > 20:
@@ -774,6 +803,7 @@ func _field_fault() -> void:
 			var rebooted: Net.NDevice = devs[randi() % devs.size()]
 			var had_startup := not rebooted.startup.is_empty()
 			apply_device_config(rebooted, rebooted.startup)
+			device_log(rebooted, "system restarted after a power event")
 			stats["faults"] += 1
 			log_event("FIELD: %s rebooted after a power blip: %s" % [rebooted.name,
 				"startup-config restored it." if had_startup
@@ -781,6 +811,7 @@ func _field_fault() -> void:
 			return
 	var victim: Net.Iface = candidates[randi() % candidates.size()]
 	victim.enabled = false
+	device_log(victim.dev, "%s changed state to down (link fault)" % victim.name)
 	stats["faults"] += 1
 	log_event("FIELD: link fault on %s %s: port went down. Find it (Map, lldp, counters) and re-enable it!"
 		% [victim.dev.name, victim.name])
@@ -875,6 +906,7 @@ func sla_tick() -> void:
 		last_pl["scrubbing"] = -SCRUB_FEE
 		earned -= SCRUB_FEE
 	_run_monitors()
+	clock_tick()
 	if not staff.is_empty():
 		var wages := Staff.payroll()
 		last_pl["salaries"] = -wages
@@ -1415,7 +1447,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "startup": d.startup, "versions": d.versions,
-		"acquired_from": d.acquired_from, "ifaces": ifs}
+		"acquired_from": d.acquired_from, "log_host": d.log_host, "ntp_server": d.ntp_server,
+		"ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(save_path):
@@ -1475,6 +1508,8 @@ func _apply(data: Dictionary) -> void:
 		d.startup = sd.get("startup", {})
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
+		d.log_host = sd.get("log_host", "")
+		d.ntp_server = sd.get("ntp_server", "")
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]

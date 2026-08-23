@@ -1426,6 +1426,40 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- syslog and clocks ---
+	var log_rack := Game.add_rack(Vector2i(16, 1))
+	var log_sw := Game.new_device("sw-8")
+	var log_srv := Game.new_device("srv-1")
+	log_rack.slots[0] = log_sw
+	log_rack.slots[1] = log_srv
+	Game.connect_ifaces(log_srv.ifaces[0], log_sw.ifaces[0])
+	Game.add_ip(log_srv.ifaces[0], "10.26.0.5/24")
+	for i: Net.Iface in log_sw.ifaces:
+		if i.name.begins_with("Management"):
+			Game.connect_ifaces(i, log_sw.ifaces[6])  # management patched into the same LAN
+			Game.add_ip(i, "10.26.0.2/24")
+	var log_cli := CLI.new_session(log_srv)
+	check(log_cli.exec("syslogd").contains("collecting"), "syslog: a server can collect logs")
+	var sw_cli := CLI.new_session(log_sw)
+	sw_cli.exec("en")
+	sw_cli.exec("conf t")
+	check(sw_cli.exec("logging host 10.26.0.5").is_empty(), "syslog: a device can ship to a collector")
+	sw_cli.exec("end")
+	Game.device_log(log_sw, "test message from the switch")
+	var collected: Array = log_srv.services["syslog"]["messages"]
+	check(collected.size() >= 1, "syslog: the collector received it")
+	check(sw_cli.exec("show logging").contains("test message"), "syslog: show logging displays the buffer")
+	check(log_cli.exec("logs").contains("test message"), "syslog: the server can read what it collected")
+	# clocks: without NTP they drift, with it they do not
+	log_sw.clock_skew = 7
+	check(sw_cli.exec("show clock").contains("free running"), "ntp: an unsynchronised clock is reported")
+	sw_cli.exec("conf t")
+	sw_cli.exec("ntp server 10.26.0.5")
+	sw_cli.exec("end")
+	Game.clock_tick()
+	check(log_sw.clock_skew == 0, "ntp: a reachable server disciplines the clock")
+	check(sw_cli.exec("show clock").contains("synchronised"), "ntp: sync is reported")
+
 	# --- spine and leaf fabric with ECMP ---
 	var fab_rack := Game.add_rack(Vector2i(15, 1))
 	var spine_a := Game.new_device("rtr-edge")

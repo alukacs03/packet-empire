@@ -605,6 +605,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		elif in_if.secure_mac != frame["src"]:
 			in_if.violations += 1
 			in_if.enabled = false
+			Game.device_log(dev, "port-security violation on %s: saw %s" % [in_if.name, frame["src"]])
 			Game.log_event("PORT SECURITY: %s %s saw %s instead of %s and shut down."
 				% [dev.name, in_if.name, frame["src"], in_if.secure_mac])
 			Game.topology_changed.emit()
