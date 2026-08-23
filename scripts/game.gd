@@ -1102,6 +1102,9 @@ func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	topology_changed.emit()
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
+	var blocked := can_accept_offer(offer)
+	if blocked != "":
+		return "blocked:" + blocked
 	var result := Market.negotiate(offer, quote)
 	# rivals bid first: a customer with somewhere else to go does not simply
 	# walk away, they take their business to whoever is cheaper
@@ -1394,6 +1397,7 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 		"term": 14 + randi() % 10,  # how long before it comes up for renewal
 		"budget": int(offer.get("budget", fee)),  # the market reference for poaching
 		"ctype": offer.get("ctype", "enterprise"), "loyalty": float(offer.get("loyalty", 0.6)),
+		"public": bool(offer.get("public", false)),
 		"load": offer.get("load", 200), "sla": int(offer.get("sla", 0)),
 		"cycles": 0, "up_cycles": 0, "healthy": false})
 	money_changed.emit()
@@ -1689,6 +1693,46 @@ func _attack_tick() -> void:
 		"mbps": 800 + randi() % 4000, "cycles_left": 3 + randi() % 4})
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
+
+# ---------- IPv4 scarcity ----------
+
+const IPV4_BLOCK := 8  # a /29: eight addresses, six of them usable in practice
+const IPV4_BASE_PRICE := 900
+var ipv4_blocks := 1  # what your first upstream gave you
+
+func ipv4_total() -> int:
+	return ipv4_blocks * IPV4_BLOCK
+
+func ipv4_used() -> int:
+	## every customer who insisted on an address of their own
+	var used := 0
+	for d in deals:
+		if bool(d.get("public", false)):
+			used += 1
+	return used
+
+func ipv4_free() -> int:
+	return maxi(0, ipv4_total() - ipv4_used())
+
+func ipv4_price() -> int:
+	## the market for addresses only goes one way
+	return int(round(float(IPV4_BASE_PRICE) * pow(1.6, float(ipv4_blocks - 1))))
+
+func buy_ipv4_block() -> String:
+	var price := ipv4_price()
+	if not try_spend(price):
+		return "a /29 now costs $%d and you do not have it" % price
+	ipv4_blocks += 1
+	log_event("ADDRESSES: bought a /29 for $%d. You now hold %d addresses."
+		% [price, ipv4_total()])
+	topology_changed.emit()
+	return ""
+
+func can_accept_offer(offer: Dictionary) -> String:
+	## why you cannot take this one, or "" if you can
+	if bool(offer.get("public", false)) and ipv4_free() <= 0:
+		return "they need a public address of their own and you have none left"
+	return ""
 
 # ---------- playbooks: write it once, run it everywhere ----------
 
@@ -2625,6 +2669,7 @@ func _serialize() -> Dictionary:
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
+		"ipv4_blocks": ipv4_blocks,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
@@ -2914,6 +2959,7 @@ func _apply(data: Dictionary) -> void:
 	transit_samples = data.get("transit_samples", [])
 	ixp = data.get("ixp", {})
 	playbooks = data.get("playbooks", [])
+	ipv4_blocks = int(data.get("ipv4_blocks", 1))
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])

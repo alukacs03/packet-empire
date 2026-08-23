@@ -3143,6 +3143,38 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- IPv4 scarcity ---
+	var v4_deals := Game.deals.duplicate()
+	var v4_blocks := Game.ipv4_blocks
+	var v4_money := Game.money
+	Game.deals = []
+	Game.ipv4_blocks = 1
+	check(Game.ipv4_total() == Game.IPV4_BLOCK, "addresses: a /29 is eight of them")
+	check(Game.ipv4_free() == Game.ipv4_total(), "addresses: none are spoken for yet")
+	for v4_i in Game.IPV4_BLOCK:
+		Game.deals.append({"id": "v4-%d" % v4_i, "customer": "C%d" % v4_i, "public": true,
+			"params": {}, "fee": 10, "healthy": true, "kind": "hosting"})
+	check(Game.ipv4_free() == 0, "addresses: eight public customers use the whole block")
+	var v4_offer := {"public": true, "customer": "Needs One Kft", "budget": 500,
+		"kind": "public_hosting", "params": {}, "state": "open"}
+	check(Game.can_accept_offer(v4_offer) != "",
+		"addresses: an offer needing one is refused when there are none left")
+	check(Game.respond_offer(v4_offer, 100).begins_with("blocked:"),
+		"addresses: and quoting for it is blocked rather than silently failing")
+	var v4_shared := {"public": false, "customer": "Happy Behind NAT Bt", "budget": 500,
+		"kind": "hosting", "params": {}, "state": "open"}
+	check(Game.can_accept_offer(v4_shared) == "",
+		"addresses: a customer who does not need one can still be served")
+	var v4_first := Game.ipv4_price()
+	Game.money = 1000000
+	check(Game.buy_ipv4_block() == "", "addresses: another block can be bought")
+	check(Game.ipv4_price() > v4_first, "addresses: and the next one costs more, as it does")
+	check(Game.ipv4_free() > 0, "addresses: which frees the offer up again")
+	check(Game.can_accept_offer(v4_offer) == "", "addresses: so it can be taken")
+	Game.deals = v4_deals
+	Game.ipv4_blocks = v4_blocks
+	Game.money = v4_money
+
 	# --- playbooks ---
 	Game.playbooks = []
 	check(Game.save_playbook("", ["enable"]) != "", "playbook: it needs a name")

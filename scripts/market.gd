@@ -124,6 +124,9 @@ static func gen_offer() -> Dictionary:
 		"params": params,
 		"budget": budget,  # hidden from the UI until they counter
 		"hint": hint,
+		# some customers insist on an address of their own; the rest can sit
+		# behind shared translation, which costs you nothing but an explanation
+		"public": kind == "public_hosting" or (ctype in ["isp", "public"] and randi() % 3 == 0),
 		"state": "open",  # open | counter
 		"ttl": 5,  # offers expire after this many revenue cycles
 	}

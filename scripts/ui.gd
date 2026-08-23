@@ -2257,6 +2257,20 @@ func _build_business_tab() -> void:
 			row.add_child(chase)
 	if Game.invoices.size() > 8:
 		contracts_box.add_child(_label("  ...and %d more." % (Game.invoices.size() - 8), 12, MUTED))
+	contracts_box.add_child(_section("ADDRESS SPACE"))
+	contracts_box.add_child(_wrap(
+		"You hold %d public IPv4 addresses and %d are spoken for. Customers who do not insist on one of their own sit behind shared translation and cost you nothing."
+		% [Game.ipv4_total(), Game.ipv4_used()], 13,
+		Prefs.bad_colour() if Game.ipv4_free() <= 0 else Color(0.75, 0.82, 0.9), 560))
+	var ip_btn := Button.new()
+	ip_btn.text = "Buy another /29  ($%d)" % Game.ipv4_price()
+	ip_btn.tooltip_text = "Eight more addresses. The price goes up every time, because it does."
+	ip_btn.pressed.connect(func() -> void:
+		var err := Game.buy_ipv4_block()
+		if err != "":
+			_toast(err)
+		_refresh_contracts())
+	contracts_box.add_child(ip_btn)
 	contracts_box.add_child(_section("TRANSIT AND PEERING"))
 	var billed := Game.transit_billed_mbps()
 	contracts_box.add_child(_wrap(
@@ -2676,6 +2690,11 @@ func _build_jobs_tab() -> void:
 			cv.add_child(_label("📜 Service level: best effort.", 13, Color(0.65, 0.7, 0.75)))
 		cv.add_child(_wrap(offer["brief"], 14, Color(0.78, 0.8, 0.88)))
 		cv.add_child(_wrap("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
+		if bool(offer.get("public", false)):
+			var blocked := Game.can_accept_offer(offer)
+			cv.add_child(_wrap("🌐 They need a public IPv4 address of their own.%s"
+				% ("" if blocked == "" else "  You have none free: buy a /29 or let this one go."),
+				13, Prefs.bad_colour() if blocked != "" else Color(0.7, 0.8, 0.9)))
 		var est: Array = Game.market_estimate(offer)
 		if Rivals.best_bidder(offer).is_empty():
 			cv.add_child(_wrap("📉 No competitor is chasing this one: price it properly.",
@@ -2721,7 +2740,9 @@ func _build_jobs_tab() -> void:
 					return
 				var res: String = Game.respond_offer(offer, int(quote.text.strip_edges()))
 				_refresh_contracts()
-				if res == "rejected":
+				if res.begins_with("blocked:"):
+					_toast(res.trim_prefix("blocked:"))
+				elif res == "rejected":
 					_toast("%s: \"That's robbery. We're going elsewhere.\"" % offer["customer"])
 				elif res == "accepted":
 					_toast("%s signed at $%s/cycle. Now deliver it!" % [offer["customer"], quote.text.strip_edges()]))
