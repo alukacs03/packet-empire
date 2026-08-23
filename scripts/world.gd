@@ -17,6 +17,11 @@ func _ready() -> void:
 	Game.topology_changed.connect(queue_redraw)
 
 func _process(_dt: float) -> void:
+	if ui.is_open():
+		if hover:
+			hover.highlighted = false
+			hover = null
+		return
 	var r := Game.rack_at(Iso.world_to_tile(get_global_mouse_position()))
 	var v: RackVisual = r.visual if r else null
 	if v != hover:
