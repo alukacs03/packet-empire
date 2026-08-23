@@ -1,14 +1,21 @@
 extends Node
-## Autoload "Game": owns all racks, devices and links.
+## Autoload "Game": the datacenter source of truth (racks, devices,
+## interfaces, cables, VLANs). NetBox-style: config lives on interfaces.
 
 signal topology_changed
 
-const PORTS := {"switch": 8, "server": 1}
-const PREFIX := {"switch": "sw", "server": "srv"}
+# per-type spec: interface naming + count. New device type = new entry.
+const DEVICE_SPECS := {
+	"switch": {"if_prefix": "swp", "if_start": 1, "ports": 8, "name_prefix": "sw"},
+	"server": {"if_prefix": "eth", "if_start": 0, "ports": 1, "name_prefix": "srv"},
+}
 
 var racks: Array = []
 var links: Array = []
-var _counter := {"switch": 0, "server": 0, "rack": 0}
+var vlans := {1: "default"}  # vid -> name
+var _counter := {"switch": 0, "server": 0, "rack": 0, "mac": 0}
+
+# ---------- racks ----------
 
 func add_rack(tile: Vector2i) -> Net.Rack:
 	_counter["rack"] += 1
@@ -22,9 +29,25 @@ func rack_at(tile: Vector2i) -> Net.Rack:
 			return r
 	return null
 
+func rack_of(dev: Net.NDevice) -> Net.Rack:
+	for r in racks:
+		if dev in r.slots:
+			return r
+	return null
+
+# ---------- devices ----------
+
 func new_device(type: String) -> Net.NDevice:
+	var spec: Dictionary = DEVICE_SPECS[type]
 	_counter[type] += 1
-	return Net.NDevice.new(type, PREFIX[type] + str(_counter[type]), PORTS[type])
+	var d := Net.NDevice.new(type, spec["name_prefix"] + str(_counter[type]))
+	for i in spec["ports"]:
+		d.ifaces.append(Net.Iface.new(d, spec["if_prefix"] + str(spec["if_start"] + i), _new_mac()))
+	return d
+
+func _new_mac() -> String:
+	_counter["mac"] += 1
+	return "02:50:45:00:%02X:%02X" % [_counter["mac"] / 256, _counter["mac"] % 256]
 
 func all_devices() -> Array:
 	var out: Array = []
@@ -45,44 +68,68 @@ func rename_device(dev: Net.NDevice, new_name: String) -> bool:
 	topology_changed.emit()
 	return true
 
-func rack_of(dev: Net.NDevice) -> Net.Rack:
-	for r in racks:
-		if dev in r.slots:
-			return r
-	return null
+# ---------- cables ----------
 
-func link_at(dev: Net.NDevice, i: int) -> Net.Link:
+func link_at(i: Net.Iface) -> Net.Link:
 	for l in links:
-		if (l.a == dev and l.ai == i) or (l.b == dev and l.bi == i):
+		if l.a == i or l.b == i:
 			return l
 	return null
 
-func peer_label(dev: Net.NDevice, i: int) -> String:
-	var l := link_at(dev, i)
+func peer_label(i: Net.Iface) -> String:
+	var l := link_at(i)
 	if l == null:
 		return ""
-	var pd: Net.NDevice = l.b if l.a == dev else l.a
-	var pi: int = l.bi if l.a == dev else l.ai
-	return "%s port %d" % [pd.name, pi + 1]
+	var p := l.other(i)
+	return "%s %s" % [p.dev.name, p.name]
 
-func connect_ports(a: Net.NDevice, ai: int, b: Net.NDevice, bi: int) -> void:
-	links.append(Net.Link.new(a, ai, b, bi))
+func connect_ifaces(a: Net.Iface, b: Net.Iface) -> void:
+	links.append(Net.Link.new(a, b))
 	topology_changed.emit()
 
-func disconnect_port(dev: Net.NDevice, i: int) -> void:
-	var l := link_at(dev, i)
+func disconnect_iface(i: Net.Iface) -> void:
+	var l := link_at(i)
 	if l:
 		links.erase(l)
 		topology_changed.emit()
 
-func free_ports(exclude: Net.NDevice) -> Array:
-	# Every unconnected [device, port_index] in the datacenter, except exclude's.
+func free_ifaces(exclude: Net.NDevice) -> Array:
 	var out: Array = []
-	for r in racks:
-		for d in r.slots:
-			if d == null or d == exclude:
-				continue
-			for i in d.nports:
-				if link_at(d, i) == null:
-					out.append([d, i])
+	for d in all_devices():
+		if d == exclude:
+			continue
+		for i in d.ifaces:
+			if link_at(i) == null:
+				out.append(i)
 	return out
+
+# ---------- IPAM ----------
+
+func add_vlan(vid: int, name: String) -> bool:
+	if vid < 1 or vid > 4094 or vlans.has(vid) or name.strip_edges() == "":
+		return false
+	vlans[vid] = name.strip_edges()
+	topology_changed.emit()
+	return true
+
+func remove_vlan(vid: int) -> void:
+	if vid == 1:
+		return  # default VLAN stays
+	vlans.erase(vid)
+	for d in all_devices():
+		for i in d.ifaces:
+			if i.untagged_vlan == vid:
+				i.untagged_vlan = 1
+	topology_changed.emit()
+
+func add_ip(i: Net.Iface, cidr: String) -> bool:
+	cidr = cidr.strip_edges()
+	if not Net.valid_cidr(cidr) or cidr in i.ips:
+		return false
+	i.ips.append(cidr)
+	topology_changed.emit()
+	return true
+
+func remove_ip(i: Net.Iface, cidr: String) -> void:
+	i.ips.erase(cidr)
+	topology_changed.emit()

@@ -62,8 +62,8 @@ func _place_rack(tile: Vector2i) -> void:
 func _draw() -> void:
 	# overhead cable trays between racks that have at least one link
 	for l in Game.links:
-		var ra := Game.rack_of(l.a)
-		var rb := Game.rack_of(l.b)
+		var ra := Game.rack_of(l.a.dev)
+		var rb := Game.rack_of(l.b.dev)
 		if ra == null or rb == null or ra == rb:
 			continue
 		var p0: Vector2 = ra.visual.top_anchor()

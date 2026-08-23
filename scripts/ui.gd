@@ -1,21 +1,24 @@
 class_name UILayer
 extends CanvasLayer
-## All UI: toolbar, full-screen rack view, full-screen device view with
-## faceplate + docked CLI.
+## All UI: toolbar, rack view, device view (faceplate + console),
+## interface editor, VLAN manager.
 
 const ACCENT := Color(0.3, 0.75, 0.85)
 const BG := Color(0.07, 0.08, 0.11, 0.97)
 const PANEL := Color(0.11, 0.13, 0.17)
 const DIM := Color(0.02, 0.02, 0.04, 0.72)
+const MUTED := Color(0.55, 0.6, 0.7)
 
 var mode_btns := {}
 var rack_overlay: Control
 var rack_title: Label
 var slot_box: VBoxContainer
+
 var dev_overlay: Control
 var dev_title: Label
 var name_edit: LineEdit
 var name_hint: Label
+var status_opt: OptionButton
 var port_row: HBoxContainer
 var conn_list: VBoxContainer
 var cli_box: VBoxContainer
@@ -24,8 +27,29 @@ var cli_in: LineEdit
 var cli_prompt: Label
 var cli_toggle: Button
 
+var if_overlay: Control
+var if_title: Label
+var if_mac: Label
+var if_enabled: CheckButton
+var if_mtu: LineEdit
+var if_mode: OptionButton
+var if_vlan: OptionButton
+var if_vlan_row: HBoxContainer
+var if_trunk_note: Label
+var if_ip_box: VBoxContainer
+var if_ip_in: LineEdit
+var if_ip_hint: Label
+var if_cable_lbl: Label
+var if_cable_btn: Button
+
+var vlan_overlay: Control
+var vlan_box: VBoxContainer
+var vlan_vid_in: LineEdit
+var vlan_name_in: LineEdit
+
 var cur_rack: Net.Rack
 var cur_dev: Net.NDevice
+var cur_if: Net.Iface
 var theme_res: Theme
 var mono: SystemFont
 
@@ -36,24 +60,28 @@ func _ready() -> void:
 	_build_toolbar()
 	_build_rack_overlay()
 	_build_dev_overlay()
+	_build_if_overlay()
+	_build_vlan_overlay()
 	Game.topology_changed.connect(_refresh_open)
 
 func _process(_dt: float) -> void:
 	# focus watchdog: while the console is open, dropped focus returns to it
-	if cli_box and cli_box.visible and get_viewport().gui_get_focus_owner() == null:
+	if cli_box and cli_box.visible and not if_overlay.visible \
+			and get_viewport().gui_get_focus_owner() == null:
 		cli_in.grab_focus()
 
 func is_open() -> bool:
-	return rack_overlay.visible or dev_overlay.visible
+	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
+		or vlan_overlay.visible
 
-# ---------- theme ----------
+# ---------- theme / widget helpers ----------
 
 func _make_theme() -> Theme:
 	var t := Theme.new()
 	var n := _sb(Color(0.15, 0.17, 0.22), Color(0.25, 0.28, 0.36))
 	var h := _sb(Color(0.19, 0.22, 0.29), ACCENT * Color(1, 1, 1, 0.6))
 	var p := _sb(Color(0.1, 0.22, 0.27), ACCENT)
-	for cls in ["Button"]:
+	for cls in ["Button", "OptionButton"]:
 		t.set_stylebox("normal", cls, n)
 		t.set_stylebox("hover", cls, h)
 		t.set_stylebox("pressed", cls, p)
@@ -79,6 +107,12 @@ func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
 	return l
+
+func _mono_edit(width := 200.0) -> LineEdit:
+	var e := LineEdit.new()
+	e.custom_minimum_size = Vector2(width, 0)
+	e.add_theme_font_override("font", mono)
+	return e
 
 func _overlay() -> Control:
 	var o := Control.new()
@@ -119,6 +153,16 @@ func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	box.add_child(HSeparator.new())
 	return title
 
+func _menu(at: Control, items: Array, on_pick: Callable) -> void:
+	var m := PopupMenu.new()
+	m.add_theme_font_override("font", mono)
+	for it in items:
+		m.add_item(it)
+	add_child(m)
+	m.id_pressed.connect(on_pick)
+	m.popup_hide.connect(m.queue_free)
+	m.popup(Rect2i(Vector2i(at.get_screen_position() + Vector2(0, at.size.y + 4)), Vector2i.ZERO))
+
 # ---------- toolbar ----------
 
 func _build_toolbar() -> void:
@@ -136,6 +180,10 @@ func _build_toolbar() -> void:
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
+	var vb := Button.new()
+	vb.text = "VLANs"
+	vb.pressed.connect(open_vlans)
+	h.add_child(vb)
 	update_mode(0)
 
 func update_mode(m: int) -> void:
@@ -148,8 +196,7 @@ func _build_rack_overlay() -> void:
 	rack_overlay = _overlay()
 	var v := _card(rack_overlay, 560)
 	rack_title = _header(v, close_rack)
-	v.add_child(_label("Click a device to open it, or an empty slot to install hardware.",
-		13, Color(0.55, 0.6, 0.7)))
+	v.add_child(_label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED))
 	slot_box = VBoxContainer.new()
 	slot_box.add_theme_constant_override("separation", 4)
 	v.add_child(slot_box)
@@ -176,10 +223,10 @@ func _refresh_slots() -> void:
 		var dev: Net.NDevice = cur_rack.slots[i]
 		if dev:
 			var up := 0
-			for pi in dev.nports:
-				if Game.link_at(dev, pi):
+			for pi in dev.ifaces:
+				if Game.link_at(pi):
 					up += 1
-			b.text = " U%-2d  %-6s %-8s %d/%d ports up" % [i + 1, dev.name, dev.type, up, dev.nports]
+			b.text = " U%-2d  %-8s %-8s %d/%d links" % [i + 1, dev.name, dev.type, up, dev.ifaces.size()]
 			b.add_theme_color_override("font_color",
 				Color(0.4, 0.9, 0.95) if dev.type == "switch" else Color(0.6, 0.75, 1.0))
 			b.pressed.connect(func() -> void: open_dev(dev))
@@ -199,21 +246,26 @@ func _pick_new_device(slot: int, at: Control) -> void:
 
 func _build_dev_overlay() -> void:
 	dev_overlay = _overlay()
-	var v := _card(dev_overlay, 720)
+	var v := _card(dev_overlay, 760)
 	dev_title = _header(v, close_dev)
 
 	var name_row := HBoxContainer.new()
 	v.add_child(name_row)
-	name_row.add_child(_label("Hostname:  ", 14, Color(0.55, 0.6, 0.7)))
-	name_edit = LineEdit.new()
-	name_edit.custom_minimum_size = Vector2(220, 0)
-	name_edit.add_theme_font_override("font", mono)
+	name_row.add_child(_label("Hostname:  ", 14, MUTED))
+	name_edit = _mono_edit(220)
 	name_edit.text_submitted.connect(_rename_dev)
 	name_row.add_child(name_edit)
+	name_row.add_child(_label("   Status:  ", 14, MUTED))
+	status_opt = OptionButton.new()
+	status_opt.add_item("active")
+	status_opt.add_item("offline")
+	status_opt.item_selected.connect(func(idx: int) -> void:
+		cur_dev.status = "active" if idx == 0 else "offline")
+	name_row.add_child(status_opt)
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)
 
-	v.add_child(_label("FRONT PANEL", 12, Color(0.5, 0.55, 0.65)))
+	v.add_child(_label("FRONT PANEL — click a port to configure it", 12, MUTED))
 	var plate := PanelContainer.new()
 	plate.add_theme_stylebox_override("panel", _sb(Color(0.14, 0.15, 0.18), Color(0.35, 0.38, 0.45), 8, 14))
 	v.add_child(plate)
@@ -262,9 +314,14 @@ func open_dev(d: Net.NDevice) -> void:
 	_refresh_ports()
 	dev_overlay.visible = true
 
+func close_dev() -> void:
+	dev_overlay.visible = false
+	cur_dev = null
+
 func _refresh_dev_header() -> void:
 	dev_title.text = "%s  /  %s — %s" % [Game.rack_of(cur_dev).name, cur_dev.name, cur_dev.type]
 	name_edit.text = cur_dev.name
+	status_opt.select(0 if cur_dev.status == "active" else 1)
 	name_hint.text = ""
 
 func _rename_dev(new_name: String) -> void:
@@ -273,71 +330,253 @@ func _rename_dev(new_name: String) -> void:
 		if cli_box.visible:
 			cli_prompt.text = cur_dev.name + "> "
 	else:
-		name_hint.text = "  invalid or taken (letters, digits, _, no spaces)"
+		name_hint.text = "  invalid or taken"
 		name_edit.text = cur_dev.name
-
-func close_dev() -> void:
-	dev_overlay.visible = false
-	cur_dev = null
 
 func _refresh_ports() -> void:
 	for c in port_row.get_children():
 		c.queue_free()
 	for c in conn_list.get_children():
 		c.queue_free()
-	for i in cur_dev.nports:
-		var connected := Game.link_at(cur_dev, i) != null
+	for i: Net.Iface in cur_dev.ifaces:
+		var connected := Game.link_at(i) != null
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(54, 54)
-		b.text = str(i + 1)
+		b.custom_minimum_size = Vector2(64, 54)
+		b.text = i.name
 		b.add_theme_font_override("font", mono)
-		if connected:
+		b.add_theme_font_size_override("font_size", 12)
+		if not i.enabled:
+			b.add_theme_stylebox_override("normal", _sb(Color(0.25, 0.1, 0.1), Color(0.6, 0.3, 0.3), 6))
+			b.tooltip_text = "Disabled"
+		elif connected:
 			b.add_theme_stylebox_override("normal", _sb(Color(0.08, 0.25, 0.14), Color(0.35, 0.95, 0.5), 6))
 			b.add_theme_color_override("font_color", Color(0.5, 1.0, 0.6))
-			b.tooltip_text = "Connected to " + Game.peer_label(cur_dev, i)
-			b.pressed.connect(_pick_disconnect.bind(i, b))
+			b.tooltip_text = "Connected to " + Game.peer_label(i)
 		else:
-			b.tooltip_text = "Free port — click to run a cable"
-			b.pressed.connect(_pick_cable_target.bind(i, b))
+			b.tooltip_text = "Free port"
+		b.pressed.connect(open_iface.bind(i))
 		port_row.add_child(b)
 		if connected:
-			conn_list.add_child(_label("  port %d  ⇄  %s" % [i + 1, Game.peer_label(cur_dev, i)],
+			var extra := ""
+			if not i.ips.is_empty():
+				extra = "   [%s]" % ", ".join(i.ips)
+			elif i.mode == "access":
+				extra = "   vlan %d" % i.untagged_vlan
+			conn_list.add_child(_label("  %s  ⇄  %s%s" % [i.name, Game.peer_label(i), extra],
 				14, Color(0.55, 0.85, 0.65)))
 	if conn_list.get_child_count() == 0:
 		conn_list.add_child(_label("  no cables connected", 14, Color(0.45, 0.5, 0.6)))
 
-func _pick_disconnect(i: int, at: Control) -> void:
-	_menu(at, ["Disconnect cable  (⇄ %s)" % Game.peer_label(cur_dev, i)], func(_id: int) -> void:
-		Game.disconnect_port(cur_dev, i))
+# ---------- interface editor ----------
 
-func _pick_cable_target(i: int, at: Control) -> void:
-	var targets := Game.free_ports(cur_dev)
-	if targets.is_empty():
-		_menu(at, ["(no free ports anywhere else)"], func(_id: int) -> void: pass)
-		return
-	var labels: Array = []
-	for t in targets:
-		labels.append("%s   %-6s port %d" % [Game.rack_of(t[0]).name, t[0].name, t[1] + 1])
-	_menu(at, labels, func(id: int) -> void:
-		Game.connect_ports(cur_dev, i, targets[id][0], targets[id][1]))
+func _build_if_overlay() -> void:
+	if_overlay = _overlay()
+	var v := _card(if_overlay, 520)
+	if_title = _header(v, close_iface)
 
-func _refresh_open() -> void:
+	if_mac = _label("", 13, MUTED)
+	if_mac.add_theme_font_override("font", mono)
+	v.add_child(if_mac)
+
+	var row1 := HBoxContainer.new()
+	v.add_child(row1)
+	if_enabled = CheckButton.new()
+	if_enabled.text = "Enabled"
+	if_enabled.toggled.connect(func(on: bool) -> void:
+		cur_if.enabled = on
+		Game.topology_changed.emit())
+	row1.add_child(if_enabled)
+	row1.add_child(_label("   MTU: ", 14, MUTED))
+	if_mtu = _mono_edit(90)
+	if_mtu.text_submitted.connect(func(t: String) -> void:
+		if t.is_valid_int() and int(t) >= 576 and int(t) <= 9216:
+			cur_if.mtu = int(t)
+		if_mtu.text = str(cur_if.mtu))
+	row1.add_child(if_mtu)
+
+	var row2 := HBoxContainer.new()
+	v.add_child(row2)
+	row2.add_child(_label("Mode: ", 14, MUTED))
+	if_mode = OptionButton.new()
+	if_mode.add_item("access")
+	if_mode.add_item("trunk")
+	if_mode.item_selected.connect(func(idx: int) -> void:
+		cur_if.mode = "access" if idx == 0 else "trunk"
+		_refresh_iface())
+	row2.add_child(if_mode)
+	if_vlan_row = HBoxContainer.new()
+	row2.add_child(if_vlan_row)
+	if_vlan_row.add_child(_label("   VLAN: ", 14, MUTED))
+	if_vlan = OptionButton.new()
+	if_vlan.item_selected.connect(func(idx: int) -> void:
+		cur_if.untagged_vlan = if_vlan.get_item_id(idx))
+	if_vlan_row.add_child(if_vlan)
+	if_trunk_note = _label("   carries all VLANs (tagged)", 13, MUTED)
+	row2.add_child(if_trunk_note)
+
+	v.add_child(HSeparator.new())
+	v.add_child(_label("IP ADDRESSES", 12, MUTED))
+	if_ip_box = VBoxContainer.new()
+	v.add_child(if_ip_box)
+	var ip_row := HBoxContainer.new()
+	v.add_child(ip_row)
+	if_ip_in = _mono_edit(200)
+	if_ip_in.placeholder_text = "10.0.0.5/24"
+	if_ip_in.text_submitted.connect(_add_ip)
+	ip_row.add_child(if_ip_in)
+	var add_btn := Button.new()
+	add_btn.text = "Add IP"
+	add_btn.pressed.connect(func() -> void: _add_ip(if_ip_in.text))
+	ip_row.add_child(add_btn)
+	if_ip_hint = _label("", 13, Color(0.9, 0.5, 0.45))
+	ip_row.add_child(if_ip_hint)
+
+	v.add_child(HSeparator.new())
+	var cable_row := HBoxContainer.new()
+	v.add_child(cable_row)
+	if_cable_lbl = _label("", 14)
+	if_cable_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cable_row.add_child(if_cable_lbl)
+	if_cable_btn = Button.new()
+	if_cable_btn.pressed.connect(_cable_action)
+	cable_row.add_child(if_cable_btn)
+
+func open_iface(i: Net.Iface) -> void:
+	cur_if = i
+	_refresh_iface()
+	if_overlay.visible = true
+
+func close_iface() -> void:
+	if_overlay.visible = false
+	cur_if = null
 	if dev_overlay.visible:
 		_refresh_ports()
-	if rack_overlay.visible:
+
+func _refresh_iface() -> void:
+	if_title.text = "%s / %s" % [cur_if.dev.name, cur_if.name]
+	if_mac.text = "MAC %s" % cur_if.mac
+	if_enabled.set_pressed_no_signal(cur_if.enabled)
+	if_mtu.text = str(cur_if.mtu)
+	if_mode.select(0 if cur_if.mode == "access" else 1)
+	if_vlan_row.visible = cur_if.mode == "access"
+	if_trunk_note.visible = cur_if.mode == "trunk"
+	if_vlan.clear()
+	for vid in Game.vlans:
+		if_vlan.add_item("%d (%s)" % [vid, Game.vlans[vid]], vid)
+		if vid == cur_if.untagged_vlan:
+			if_vlan.select(if_vlan.item_count - 1)
+	for c in if_ip_box.get_children():
+		c.queue_free()
+	for cidr in cur_if.ips:
+		var row := HBoxContainer.new()
+		var l := _label("  " + cidr, 14, Color(0.7, 0.9, 0.75))
+		l.add_theme_font_override("font", mono)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var x := Button.new()
+		x.text = "remove"
+		x.pressed.connect(func() -> void:
+			Game.remove_ip(cur_if, cidr)
+			_refresh_iface())
+		row.add_child(x)
+		if_ip_box.add_child(row)
+	if cur_if.ips.is_empty():
+		if_ip_box.add_child(_label("  none", 13, Color(0.45, 0.5, 0.6)))
+	if_ip_hint.text = ""
+	var peer := Game.peer_label(cur_if)
+	if peer == "":
+		if_cable_lbl.text = "Cable: not connected"
+		if_cable_btn.text = "Run cable…"
+	else:
+		if_cable_lbl.text = "Cable: ⇄  " + peer
+		if_cable_btn.text = "Disconnect"
+
+func _add_ip(text: String) -> void:
+	if Game.add_ip(cur_if, text):
+		if_ip_in.clear()
+		_refresh_iface()
+	else:
+		if_ip_hint.text = " invalid CIDR or duplicate"
+
+func _cable_action() -> void:
+	if Game.link_at(cur_if):
+		Game.disconnect_iface(cur_if)
+		_refresh_iface()
+		return
+	var targets := Game.free_ifaces(cur_if.dev)
+	if targets.is_empty():
+		_menu(if_cable_btn, ["(no free ports anywhere else)"], func(_id: int) -> void: pass)
+		return
+	var labels: Array = []
+	for t: Net.Iface in targets:
+		labels.append("%-4s %-8s %s" % [Game.rack_of(t.dev).name, t.dev.name, t.name])
+	_menu(if_cable_btn, labels, func(id: int) -> void:
+		Game.connect_ifaces(cur_if, targets[id])
+		_refresh_iface())
+
+# ---------- VLAN manager ----------
+
+func _build_vlan_overlay() -> void:
+	vlan_overlay = _overlay()
+	var v := _card(vlan_overlay, 460)
+	var t := _header(v, close_vlans)
+	t.text = "VLANs"
+	vlan_box = VBoxContainer.new()
+	v.add_child(vlan_box)
+	var row := HBoxContainer.new()
+	v.add_child(row)
+	vlan_vid_in = _mono_edit(70)
+	vlan_vid_in.placeholder_text = "VID"
+	row.add_child(vlan_vid_in)
+	vlan_name_in = _mono_edit(180)
+	vlan_name_in.placeholder_text = "name"
+	row.add_child(vlan_name_in)
+	var add := Button.new()
+	add.text = "Add VLAN"
+	add.pressed.connect(func() -> void:
+		if vlan_vid_in.text.is_valid_int() \
+				and Game.add_vlan(int(vlan_vid_in.text), vlan_name_in.text):
+			vlan_vid_in.clear()
+			vlan_name_in.clear()
+			_refresh_vlans())
+	row.add_child(add)
+
+func open_vlans() -> void:
+	_refresh_vlans()
+	vlan_overlay.visible = true
+
+func close_vlans() -> void:
+	vlan_overlay.visible = false
+
+func _refresh_vlans() -> void:
+	for c in vlan_box.get_children():
+		c.queue_free()
+	var vids := Game.vlans.keys()
+	vids.sort()
+	for vid in vids:
+		var row := HBoxContainer.new()
+		var l := _label("  %-6d %s" % [vid, Game.vlans[vid]], 14)
+		l.add_theme_font_override("font", mono)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		if vid != 1:
+			var x := Button.new()
+			x.text = "remove"
+			x.pressed.connect(func() -> void:
+				Game.remove_vlan(vid)
+				_refresh_vlans())
+			row.add_child(x)
+		vlan_box.add_child(row)
+
+# ---------- refresh / CLI ----------
+
+func _refresh_open() -> void:
+	if if_overlay.visible and cur_if:
+		_refresh_iface()
+	if dev_overlay.visible and cur_dev:
+		_refresh_ports()
+	if rack_overlay.visible and cur_rack:
 		_refresh_slots()
-
-func _menu(at: Control, items: Array, on_pick: Callable) -> void:
-	var m := PopupMenu.new()
-	m.add_theme_font_override("font", mono)
-	for it in items:
-		m.add_item(it)
-	add_child(m)
-	m.id_pressed.connect(on_pick)
-	m.popup_hide.connect(m.queue_free)
-	m.popup(Rect2i(Vector2i(at.get_screen_position() + Vector2(0, at.size.y + 4)), Vector2i.ZERO))
-
-# ---------- CLI ----------
 
 func _toggle_cli() -> void:
 	cli_box.visible = not cli_box.visible
@@ -360,26 +599,38 @@ func _cli_submit(cmd: String) -> void:
 		"":
 			pass
 		"help":
-			out = "Commands: help, show ports, show version\n"
+			out = "Commands: help, show interfaces, show version\n"
 		"show version":
-			out = "%s — PacketOS 0.1 (%s, %d ports)\n" % [cur_dev.name, cur_dev.type, cur_dev.nports]
-		"show ports":
-			for i in cur_dev.nports:
-				var peer := Game.peer_label(cur_dev, i)
-				out += "port %-2d  %-4s  %s\n" % [i + 1, "up" if peer else "down", peer if peer else "-"]
+			out = "%s — PacketOS 0.1 (%s, %d interfaces)\n" % [cur_dev.name, cur_dev.type, cur_dev.ifaces.size()]
+		"show interfaces", "show int":
+			out = "%-6s %-5s %-6s %-18s %-20s %s\n" % ["name", "state", "mode", "addresses", "mac", "peer"]
+			for i: Net.Iface in cur_dev.ifaces:
+				var peer := Game.peer_label(i)
+				var state := "down"
+				if not i.enabled:
+					state = "admin"
+				elif peer != "":
+					state = "up"
+				var mode_s := ("vl%d" % i.untagged_vlan) if i.mode == "access" else "trunk"
+				var addrs := ",".join(i.ips) if not i.ips.is_empty() else "-"
+				out += "%-6s %-5s %-6s %-18s %-20s %s\n" % [i.name, state, mode_s, addrs, i.mac, peer if peer else "-"]
 		_:
 			out = "%% Unknown command. Full networking CLI arrives with the packet sim.\n"
 	cli_out.append_text(out)
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
-		if dev_overlay.visible:
+		if if_overlay.visible:
+			close_iface()
+		elif dev_overlay.visible:
 			if cli_box.visible:
 				_toggle_cli()
 			else:
 				close_dev()
 				if cur_rack:
 					rack_overlay.visible = true
+		elif vlan_overlay.visible:
+			close_vlans()
 		elif rack_overlay.visible:
 			close_rack()
 		else:
