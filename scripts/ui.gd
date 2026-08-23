@@ -138,10 +138,10 @@ func _refresh_attention() -> void:
 		if not Game.sla_status[cid] and not Contracts.retired(cid):
 			n += 1
 	if n > 0:
-		contracts_btn.text = "Contracts (%d!)" % n
+		contracts_btn.text = "Company (%d!)" % n
 		contracts_btn.modulate = Color(1.15, 0.95, 0.7)
 	else:
-		contracts_btn.text = "Contracts"
+		contracts_btn.text = "Company"
 		contracts_btn.modulate = Color.WHITE
 
 func hud_toast(text: String, good := false) -> void:
@@ -185,22 +185,24 @@ func _refresh_money() -> void:
 				else "★ %s  ·  $%d to %s" % [Game.rank(), int(nr[1]), nr[0]]
 	var power := ""
 	if Game.stage >= 1:
-		power = "   ⚡%dW / ❄%dW" % [Game.power_draw(), Game.cooling_capacity()]
+		power = "  ⚡%d/❄%d" % [Game.power_draw(), Game.cooling_capacity()]
 		if Game.overheating():
-			power += "  🔥 OVERHEATING"
+			power += " 🔥"
 	var debt_s := ("  (debt $%d)" % Game.debt) if Game.debt > 0 else ""
-	money_lbl.text = "  $%d%s   ♦%d%s" % [Game.money, debt_s, Game.reputation, power]
+	money_lbl.text = "$%d%s  ♦%d%s" % [Game.money, debt_s, Game.reputation, power]
+	money_lbl.tooltip_text = "Cash%s · reputation %d · power and cooling" % [
+		"" if Game.debt == 0 else " (debt $%d)" % Game.debt, Game.reputation]
 	money_lbl.tooltip_text = "Money · Reputation (drives customer budgets) · Power/Cooling"
 	money_lbl.add_theme_color_override("font_color",
 		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
 	if site_btn:
-		site_btn.text = "Site: %s" % Game.site_name(Game.current_site)
+		site_btn.text = Game.site_name(Game.current_site)
 		site_btn.visible = Game.site_count() > 1
 	if Game.current_site != 0:
 		expand_btn.visible = false  # acquired floors come as they are
 	elif Game.stage < Game.STAGES.size() - 1:
 		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
-		expand_btn.text = "Expand: %s ($%d)" % [nxt["name"], nxt["price"]]
+		expand_btn.text = "Expand ($%d)" % int(nxt["price"])
 		expand_btn.tooltip_text = nxt["blurb"]
 		expand_btn.visible = true
 	else:
@@ -410,7 +412,7 @@ func _build_toolbar() -> void:
 	logo.add_theme_font_override("font", mono)
 	h.add_child(logo)
 	h.add_child(VSeparator.new())
-	for m in [["Select (Q)", 0], ["Place rack (R)", 1]]:
+	for m in [["Select", 0], ["+ Rack", 1]]:
 		var b := Button.new()
 		b.text = m[0]
 		b.toggle_mode = true
@@ -419,10 +421,12 @@ func _build_toolbar() -> void:
 		mode_btns[m[1]] = b
 	var learnb := Button.new()
 	learnb.text = "Learn"
+	learnb.tooltip_text = "Networkopedia: every concept the game teaches"
 	learnb.pressed.connect(open_pedia)
 	h.add_child(learnb)
 	site_btn = Button.new()
 	site_btn.tooltip_text = "Switch between the floors you operate"
+	site_btn.custom_minimum_size = Vector2(120, 0)
 	site_btn.pressed.connect(func() -> void:
 		var names: Array = []
 		for i in Game.site_count():
@@ -433,15 +437,18 @@ func _build_toolbar() -> void:
 			_refresh_money()))
 	h.add_child(site_btn)
 	var opsb := Button.new()
-	opsb.text = "Ops (O)"
+	opsb.text = "Ops"
+	opsb.tooltip_text = "Operations dashboard (O)"
 	opsb.pressed.connect(toggle_ops)
 	h.add_child(opsb)
 	var mapb := Button.new()
-	mapb.text = "Map (M)"
+	mapb.text = "Map"
+	mapb.tooltip_text = "Logical topology (M)"
 	mapb.pressed.connect(toggle_map)
 	h.add_child(mapb)
 	contracts_btn = Button.new()
-	contracts_btn.text = "Contracts"
+	contracts_btn.text = "Company"
+	contracts_btn.tooltip_text = "Jobs, business, market and log"
 	_accent(contracts_btn)
 	contracts_btn.pressed.connect(open_contracts)
 	h.add_child(contracts_btn)
@@ -453,7 +460,9 @@ func _build_toolbar() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(spacer)
-	objective_lbl = _label("", 13, Color(0.65, 0.8, 0.9))
+	objective_lbl = _label("", 12, Color(0.65, 0.8, 0.9))
+	objective_lbl.custom_minimum_size = Vector2(210, 0)
+	objective_lbl.clip_text = true
 	objective_lbl.tooltip_text = "Current campaign objective: details in Contracts"
 	h.add_child(objective_lbl)
 	for spec in [["⏸", 0, "Pause (Space)"], ["▶", 1, "Normal speed (1)"],
@@ -469,11 +478,12 @@ func _build_toolbar() -> void:
 	cycle_lbl.add_theme_font_override("font", mono)
 	cycle_lbl.tooltip_text = "Time to the next revenue cycle: fees, bills, SLA checks"
 	h.add_child(cycle_lbl)
-	money_lbl = _label("", 17, Color(0.55, 0.95, 0.6))
+	money_lbl = _label("", 15, Color(0.55, 0.95, 0.6))
 	money_lbl.add_theme_font_override("font", mono)
 	h.add_child(money_lbl)
 	var save_btn := Button.new()
-	save_btn.text = "Save"
+	save_btn.text = "💾"
+	save_btn.tooltip_text = "Save the game"
 	save_btn.pressed.connect(func() -> void: Game.save_game())
 	h.add_child(save_btn)
 	update_mode(0)
