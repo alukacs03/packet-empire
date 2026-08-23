@@ -1744,6 +1744,12 @@ func _build_business_tab() -> void:
 		contracts_box.add_child(_label("  ⚡ %s under attack (%s), %d cycle(s) to go: %s"
 			% [a["target"], a["customer"], int(a["cycles_left"]), state], 13,
 			Color(0.95, 0.6, 0.45) if not (Game.scrubbing or blackholed) else Color(0.85, 0.85, 0.6)))
+	contracts_box.add_child(_section("ACHIEVEMENTS  (%d of %d)" % [Game.achievements.size(),
+		Game.ACHIEVEMENTS.size()]))
+	for a: Dictionary in Game.ACHIEVEMENTS:
+		var got: bool = a["id"] in Game.achievements
+		contracts_box.add_child(_label("  %s  %-26s %s" % ["★" if got else "☆", a["name"], a["how"]],
+			12, Prefs.ok_colour() if got else Color(0.55, 0.58, 0.66)))
 	contracts_box.add_child(_section("HISTORY"))
 	if Game.history.size() < 2:
 		contracts_box.add_child(_label("  Charts appear once a few revenue cycles have run.",
@@ -1920,8 +1926,11 @@ func _build_jobs_tab() -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 6)
 		card.add_child(cv)
-		cv.add_child(_label("%s   ·   %s" % [offer["customer"], Market.label_for(offer["kind"])],
-			16, Color.WHITE))
+		var ct2: Dictionary = Market.TYPES.get(offer.get("ctype", "enterprise"), {})
+		cv.add_child(_label("%s   ·   %s   ·   %s" % [offer["customer"],
+			Market.label_for(offer["kind"]), ct2.get("label", "")], 16, Color.WHITE))
+		if ct2.has("note"):
+			cv.add_child(_label(ct2["note"], 13, Color(0.7, 0.72, 0.8)))
 		cv.add_child(_label("Word is: %s." % offer["hint"], 13, Color(0.75, 0.7, 0.85)))
 		var otier := Market.tier(int(offer.get("sla", 0)))
 		if float(otier["uptime"]) > 0.0:

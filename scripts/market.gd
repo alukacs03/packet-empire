@@ -7,6 +7,19 @@ const NAMES := ["Vertex", "Kiskacsa", "Nimbus", "Turul", "BlueFin", "Paprika",
 	"Northwind", "Csillag", "Ironclad", "Tisza", "Lumen", "Rakoczi", "Obsidian", "Puli"]
 const SUFFIX := ["Kft", "Zrt", "Ltd", "GmbH", "Bt", "Nyrt", "e.V.", "s.r.o."]
 
+## Customers are not interchangeable. Type shapes what they pay, how long
+## they stay, how hard they push on price and what they demand of you.
+const TYPES := {
+	"startup": {"label": "startup", "pay": 0.75, "loyalty": 0.3, "sla_bias": -1,
+		"note": "Cheap and impatient, but they grow fast if they survive."},
+	"enterprise": {"label": "enterprise", "pay": 1.35, "loyalty": 0.85, "sla_bias": 1,
+		"note": "Negotiates hard, then stays for years and expects paperwork."},
+	"public": {"label": "public body", "pay": 1.15, "loyalty": 0.9, "sla_bias": 1,
+		"note": "Slow, procedural and demanding about isolation and records."},
+	"reseller": {"label": "reseller", "pay": 0.8, "loyalty": 0.5, "sla_bias": 0,
+		"note": "Thin margins in exchange for volume: they bring more work."},
+}
+
 # kind -> {base budget, spread, blurb template, cost guidance}
 const KINDS := {
 	"hosting": {"load": 300, "base": 60, "spread": 60,
@@ -81,13 +94,16 @@ static func gen_offer() -> Dictionary:
 		"dhcp_pool":
 			params["subnet"] = "10.%d.%d" % [randi() % 180 + 20, randi() % 250]
 			subject = params["subnet"]
+	var ctype: String = TYPES.keys()[randi() % TYPES.size()]
+	var ct: Dictionary = TYPES[ctype]
 	var sla_idx := 0
-	var roll := randi() % 100
+	var roll := randi() % 100 + int(ct["sla_bias"]) * 18
 	if roll > 82:
 		sla_idx = 2
 	elif roll > 55:
 		sla_idx = 1
-	var budget: int = int((spec["base"] + randi() % int(spec["spread"])) * float(tier(sla_idx)["pay"]))
+	var budget: int = int((spec["base"] + randi() % int(spec["spread"]))
+		* float(tier(sla_idx)["pay"]) * float(ct["pay"]))
 	budget = int(budget * (0.6 + Game.reputation / 100.0 * 0.8))  # reputation sells
 	var hint := "they are watching every forint"
 	if budget >= spec["base"] + spec["spread"] * 2 / 3:
@@ -99,10 +115,12 @@ static func gen_offer() -> Dictionary:
 		"id": "mkt_%d" % _next_id,
 		"kind": kind,
 		"customer": "%s %s" % [NAMES[randi() % NAMES.size()], SUFFIX[randi() % SUFFIX.size()]],
+		"loyalty": float(ct["loyalty"]),
 		"brief": (spec["brief"] % [subject]) if subject != "" else spec["brief"],
 		"costs": spec["costs"] + "  Expected load ~%d Mbps." % spec.get("load", 200),
 		"load": spec.get("load", 200),
 		"sla": sla_idx,
+		"ctype": ctype,
 		"params": params,
 		"budget": budget,  # hidden from the UI until they counter
 		"hint": hint,

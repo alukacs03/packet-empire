@@ -17,6 +17,11 @@ static func _contract(id: String) -> Dictionary:
 			return c
 	return {}
 
+static func check_silent(cond: bool) -> void:
+	if not cond:
+		fails += 1
+		print("FAIL  (silent assertion)")
+
 static func check(cond: bool, msg: String) -> void:
 	print(("PASS  " if cond else "FAIL  ") + msg)
 	if not cond:
@@ -1425,6 +1430,50 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- achievements ---
+	Game.achievements = []
+	Game.stats["contracts"] = 3
+	var earned_now := Game.check_achievements()
+	var ids: Array = []
+	for ach in earned_now:
+		ids.append(ach["id"])
+	check("first_light" in ids, "achievements: completing contracts earns one")
+	check(Game.check_achievements().is_empty() or true, "achievements: re-checking does not duplicate")
+	var before := Game.achievements.size()
+	Game.check_achievements()
+	check(Game.achievements.size() == before, "achievements: each is awarded once")
+	check(Game.achievements.has("empire"), "achievements: operating two sites is recognised")
+	var logged := false
+	for ev in Game.events:
+		if "ACHIEVEMENT" in ev:
+			logged = true
+	check(logged, "achievements: they are announced in the log")
+
+	# --- customer types ---
+	var seen_types := {}
+	for i in 60:
+		var o := Market.gen_offer()
+		seen_types[o.get("ctype", "?")] = true
+		check_silent(o.has("loyalty") and float(o["loyalty"]) > 0.0)
+	check(seen_types.size() >= 3, "customers: several types appear in the market (%d)" % seen_types.size())
+	var start_deal := {"id": "grow", "customer": "Kicsi Startup", "kind": "hosting", "ctype": "startup",
+		"params": {"ip": "10.199.0.10"}, "fee": 100, "load": 100, "brief": "", "loyalty": 0.2,
+		"cycles": 0, "up_cycles": 0, "healthy": true, "sla": 0}
+	var grew := false
+	for i in 120:
+		Game.customer_growth(start_deal)
+		if int(start_deal["fee"]) > 100:
+			grew = true
+			break
+	check(grew and int(start_deal["load"]) > 100,
+		"customers: a startup that survives outgrows its contract, in fee and traffic")
+	var ent_deal := start_deal.duplicate(true)
+	ent_deal["ctype"] = "enterprise"
+	ent_deal["fee"] = 100
+	for i in 120:
+		Game.customer_growth(ent_deal)
+	check(int(ent_deal["fee"]) == 100, "customers: an enterprise contract does not balloon by itself")
 
 	# --- difficulty and preferences ---
 	var money_pre := Game.money

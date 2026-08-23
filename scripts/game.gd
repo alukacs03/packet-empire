@@ -63,6 +63,90 @@ var cycle := 0
 var reputation := 50  # 0-100; feeds customer budgets
 var debt := 0  # bank loan principal
 var stats := {"earned": 0, "incidents": 0, "faults": 0, "contracts": 0, "deals": 0}
+var achievements: Array = []  # ids already earned
+
+const ACHIEVEMENTS := [
+	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
+	{"id": "segmented", "name": "Good fences", "how": "Run at least three VLANs on one switch."},
+	{"id": "on_the_internet", "name": "On the internet", "how": "Establish a BGP session with an upstream."},
+	{"id": "no_spof", "name": "No single point of failure", "how": "Run a VRRP group with two members."},
+	{"id": "empire", "name": "Two roofs", "how": "Operate two or more sites."},
+	{"id": "acquirer", "name": "Acquirer", "how": "Buy a competitor."},
+	{"id": "disciplined", "name": "Disciplined", "how": "Have every device's configuration saved at once."},
+	{"id": "employer", "name": "Employer", "how": "Put three people on the payroll."},
+	{"id": "steady", "name": "Steady hands", "how": "Reach cycle 50 with reputation at 80 or better."},
+	{"id": "fabric", "name": "Fabric builder", "how": "Give a router two equal-cost paths to a destination."},
+]
+
+func _achievement_met(id: String) -> bool:
+	match id:
+		"first_light":
+			return int(stats.get("contracts", 0)) >= 1
+		"segmented":
+			for d in all_devices():
+				if d.type == "switch" and d.vlans.size() >= 3:
+					return true
+			return false
+		"on_the_internet":
+			for d in all_devices():
+				for nb in d.bgp.get("neighbors", []):
+					if Sim.bgp_established(d, nb):
+						return true
+			return false
+		"no_spof":
+			var vips := {}
+			for d in all_devices():
+				for i: Net.Iface in d.ifaces:
+					if not i.vrrp.is_empty():
+						var k := "%s|%d" % [i.vrrp["vip"], int(i.vrrp["group"])]
+						vips[k] = int(vips.get(k, 0)) + 1
+						if int(vips[k]) >= 2:
+							return true
+			return false
+		"empire":
+			return site_count() >= 2
+		"acquirer":
+			for r in rivals:
+				if not Rivals.alive(r) and not r.has("merged_into"):
+					return true
+			return false
+		"disciplined":
+			var any := false
+			for d in all_devices():
+				if d.type in ["server", "uplink", "cooling"]:
+					continue
+				any = true
+				if config_dirty(d):
+					return false
+			return any
+		"employer":
+			return staff.size() >= 3
+		"steady":
+			return cycle >= 50 and reputation >= 80
+		"fabric":
+			for d in all_devices():
+				if not d.ip_forwarding:
+					continue
+				for other in all_devices():
+					for i: Net.Iface in other.ifaces:
+						for cidr: String in i.ips:
+							if other == d:
+								continue
+							if Sim._route_paths(d, cidr.split("/")[0]).size() >= 2:
+								return true
+			return false
+	return false
+
+func check_achievements() -> Array:
+	var newly: Array = []
+	for a in ACHIEVEMENTS:
+		if a["id"] in achievements:
+			continue
+		if _achievement_met(a["id"]):
+			achievements.append(a["id"])
+			newly.append(a)
+			log_event("ACHIEVEMENT: %s (%s)" % [a["name"], a["how"]])
+	return newly
 
 const LOAN_TRANCHE := 1000
 const LOAN_MAX := 10000
@@ -688,6 +772,7 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
 		"params": offer["params"], "fee": fee, "brief": offer["brief"],
 		"budget": int(offer.get("budget", fee)),  # the market reference for poaching
+		"ctype": offer.get("ctype", "enterprise"), "loyalty": float(offer.get("loyalty", 0.6)),
 		"load": offer.get("load", 200), "sla": int(offer.get("sla", 0)),
 		"cycles": 0, "up_cycles": 0, "healthy": false})
 	money_changed.emit()
@@ -759,6 +844,15 @@ func _security_sweep() -> int:
 				break
 	return cost
 
+func customer_growth(deal: Dictionary) -> void:
+	## a startup that survives outgrows its contract, in fee and in traffic
+	if deal.get("ctype", "") != "startup" or randf() >= 0.06:
+		return
+	deal["fee"] = int(int(deal["fee"]) * 1.25)
+	deal["load"] = int(int(deal.get("load", 200)) * 1.4)
+	log_event("GROWTH: %s is scaling up: their fee rises to $%d and their traffic with it."
+		% [deal["customer"], int(deal["fee"])])
+
 func _attack_tick() -> void:
 	## volumetric attacks: they eat bandwidth on the path to the victim until
 	## they are absorbed, blackholed, or simply burn out
@@ -809,6 +903,8 @@ func _maybe_poach() -> void:
 	# only an over-market price is worth switching for, and loyalty protects you
 	if their_price >= int(deal["fee"]) * 0.85 or reputation >= 70:
 		return
+	if randf() < float(deal.get("loyalty", 0.6)):
+		return  # this customer values the relationship more than the discount
 	deals.erase(deal)
 	rival["deals"] = int(rival["deals"]) + 1
 	reputation = maxi(0, reputation - 4)
@@ -934,6 +1030,7 @@ func sla_tick() -> void:
 		earned -= SCRUB_FEE
 	_run_monitors()
 	clock_tick()
+	check_achievements()
 	if not staff.is_empty():
 		var wages := Staff.payroll()
 		last_pl["salaries"] = -wages
@@ -959,6 +1056,8 @@ func sla_tick() -> void:
 	last_link_load = link_load
 	for deal in deals.duplicate():
 		deal["cycles"] = int(deal.get("cycles", 0)) + 1
+		if deal["healthy"]:
+			customer_growth(deal)
 		if deal["healthy"]:
 			deal["up_cycles"] = int(deal.get("up_cycles", 0)) + 1
 		var sla := Market.tier(int(deal.get("sla", 0)))
@@ -1284,7 +1383,7 @@ func _serialize() -> Dictionary:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
-		"difficulty": difficulty,
+		"difficulty": difficulty, "achievements": achievements,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates,
 		"attacks": attacks, "scrubbing": scrubbing,
@@ -1497,6 +1596,7 @@ func _apply(data: Dictionary) -> void:
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
 	difficulty = int(data.get("difficulty", 1))
+	achievements = data.get("achievements", [])
 	acquisitions = data.get("acquisitions", [])
 	circuits = data.get("circuits", [])
 	sites = data.get("sites", [])
