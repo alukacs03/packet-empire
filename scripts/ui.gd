@@ -56,6 +56,8 @@ var cur_rack: Net.Rack
 var cur_dev: Net.NDevice
 var cur_if: Net.Iface
 var cli_session: CLI.Session
+var cli_history: Array = []
+var cli_hist_idx := 0
 var money_lbl: Label
 var expand_btn: Button
 var theme_res: Theme
@@ -748,6 +750,21 @@ func open_contracts() -> void:
 func close_contracts() -> void:
 	contracts_overlay.visible = false
 
+func _chip(text: String, col: Color) -> Control:
+	var pc := PanelContainer.new()
+	pc.add_theme_stylebox_override("panel", _sb(Color(col, 0.18), Color(col, 0.75), 4, 4))
+	pc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var l := _label(text, 10, col.lightened(0.3))
+	pc.add_child(l)
+	return pc
+
+func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col: Color) -> HBoxContainer:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 8)
+	h.add_child(_chip(chip_text, chip_col))
+	h.add_child(_label(text, size, col))
+	return h
+
 func _build_market_section() -> void:
 	if not Game.offers.is_empty():
 		contracts_box.add_child(_section("INCOMING OFFERS — QUOTE A PRICE PER REVENUE CYCLE"))
@@ -816,10 +833,12 @@ func _build_market_section() -> void:
 		contracts_box.add_child(_section("ACTIVE DEALS"))
 		for deal: Dictionary in Game.deals:
 			var ok: bool = deal["healthy"]
-			contracts_box.add_child(_label(
-				"%s  %s — %s   $%d/cycle" % ["●" if ok else "○", deal["customer"],
-					deal["kind"], int(deal["fee"])] + ("" if ok else "   (NOT DELIVERED — not paying)"),
-				14, Color(0.5, 0.95, 0.6) if ok else Color(0.95, 0.6, 0.45)))
+			contracts_box.add_child(_chip_row(
+				"PAYING" if ok else "DOWN",
+				Color(0.4, 0.85, 0.5) if ok else Color(0.95, 0.45, 0.35),
+				"%s — %s   $%d/cycle%s" % [deal["customer"], deal["kind"], int(deal["fee"]),
+					"" if ok else "   (not delivered — not paying)"],
+				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
 
 var _toast_lbl: Label
 
@@ -842,10 +861,12 @@ func _refresh_contracts() -> void:
 			var healthy: bool = Game.sla_status.get(c["id"], true)
 			var mrr: int = int(c["reward"]) / 10
 			if healthy:
-				contracts_box.add_child(_label("✓  %s — %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
-					14, Color(0.45, 0.8, 0.5)))
+				contracts_box.add_child(_chip_row("DONE", Color(0.4, 0.85, 0.5),
+					"%s — %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
+					14, Color(0.55, 0.8, 0.6)))
 			else:
-				contracts_box.add_child(_label("⚠  %s — %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
+				contracts_box.add_child(_chip_row("BREACH", Color(0.95, 0.45, 0.35),
+					"%s — %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
 					14, Color(0.95, 0.55, 0.4)))
 			continue
 		if found_active:
@@ -892,6 +913,8 @@ func _toggle_cli() -> void:
 	if cli_box.visible:
 		cli_toggle.text = "Close console  ▤"
 		cli_session = CLI.new_session(cur_dev)
+		cli_history.clear()
+		cli_hist_idx = 0
 		cli_prompt.text = cli_session.prompt() + " "
 		cli_out.clear()
 		cli_out.append_text(cli_session.banner())
@@ -907,6 +930,20 @@ func _cli_key(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
 		cli_in.accept_event()
 		_toggle_cli()
+		return
+	if e is InputEventKey and e.pressed and e.keycode == KEY_UP:
+		cli_in.accept_event()
+		if cli_history.is_empty():
+			return
+		cli_hist_idx = maxi(0, cli_hist_idx - 1)
+		cli_in.text = cli_history[cli_hist_idx]
+		cli_in.caret_column = cli_in.text.length()
+		return
+	if e is InputEventKey and e.pressed and e.keycode == KEY_DOWN:
+		cli_in.accept_event()
+		cli_hist_idx = mini(cli_history.size(), cli_hist_idx + 1)
+		cli_in.text = "" if cli_hist_idx == cli_history.size() else cli_history[cli_hist_idx]
+		cli_in.caret_column = cli_in.text.length()
 		return
 	if e is InputEventKey and e.pressed and e.keycode == KEY_TAB:
 		cli_in.accept_event()
@@ -931,6 +968,9 @@ func _cli_key(e: InputEvent) -> void:
 func _cli_submit(cmd: String) -> void:
 	cli_in.clear()
 	cli_in.call_deferred("grab_focus")
+	if cmd.strip_edges() != "":
+		cli_history.append(cmd)
+		cli_hist_idx = cli_history.size()
 	if cmd.strip_edges() == "clear":
 		cli_out.clear()
 		return

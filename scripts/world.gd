@@ -106,17 +106,24 @@ static func _tray(p0: Vector2, p1: Vector2, t: float) -> Vector2:
 	return p0.lerp(mid, t).lerp(mid.lerp(p1, t), t)
 
 func _draw() -> void:
-	# overhead cable trays between racks that have at least one link
+	# overhead cable trays; parallel links between the same racks fan out
+	var pair_seen := {}
 	for l in Game.links:
 		var ra := Game.rack_of(l.a.dev)
 		var rb := Game.rack_of(l.b.dev)
 		if ra == null or rb == null or ra == rb:
 			continue
+		var key := "%s|%s" % [mini(ra.tile.x * 100 + ra.tile.y, rb.tile.x * 100 + rb.tile.y),
+			maxi(ra.tile.x * 100 + ra.tile.y, rb.tile.x * 100 + rb.tile.y)]
+		var idx: int = pair_seen.get(key, 0)
+		pair_seen[key] = idx + 1
 		var p0: Vector2 = ra.visual.top_anchor()
 		var p1: Vector2 = rb.visual.top_anchor()
+		var perp := (p1 - p0).normalized().orthogonal() * (idx * 7.0)
 		var pts := PackedVector2Array()
 		for i in 17:
-			pts.append(_tray(p0, p1, i / 16.0))
+			pts.append(_tray(p0 + perp, p1 + perp, i / 16.0))
+		draw_polyline(pts, Color(0, 0, 0, 0.25), 3.5)  # shadow line
 		draw_polyline(pts, Color(1.0, 0.62, 0.2, 0.9), 2.0)
 	# packets in flight
 	const DUR := 0.3
