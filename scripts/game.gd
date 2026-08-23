@@ -1625,6 +1625,61 @@ func _attack_tick() -> void:
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
 
+# ---------- route hijacks and RPKI ----------
+
+var hijacks: Array = []  # [{prefix, plen, by, cycles_left}]
+
+func announced_prefixes() -> Array:
+	var out: Array = []
+	for d in all_devices():
+		for net in d.bgp.get("networks", []):
+			if String(net) != "0.0.0.0/0":
+				out.append({"cidr": String(net), "dev": d})
+	return out
+
+func roa_registered(dev: Net.NDevice, cidr: String) -> bool:
+	return cidr in dev.bgp.get("roa", [])
+
+func upstream_validates(dev: Net.NDevice) -> bool:
+	## at least one session where we asked the upstream to check origins
+	for nb in dev.bgp.get("neighbors", []):
+		if bool(nb.get("rpki", false)):
+			return true
+	return false
+
+func hijack_protected(entry: Dictionary) -> bool:
+	## a signed prefix is only protected when somebody upstream is checking
+	var d: Net.NDevice = entry["dev"]
+	return roa_registered(d, String(entry["cidr"])) and upstream_validates(d)
+
+func hijack_on(ip: String) -> Dictionary:
+	for h in hijacks:
+		if Net.same_net(ip, String(h["prefix"]), int(h["plen"])):
+			return h
+	return {}
+
+func hijack_tick() -> void:
+	for h in hijacks.duplicate():
+		h["cycles_left"] = int(h["cycles_left"]) - 1
+		if int(h["cycles_left"]) <= 0:
+			hijacks.erase(h)
+			log_event("SECURITY: the bogus announcement of %s/%d has been withdrawn."
+				% [h["prefix"], int(h["plen"])])
+	var mine := announced_prefixes()
+	if mine.is_empty() or not hijacks.is_empty() or randf() > 0.05:
+		return
+	var entry: Dictionary = mine[randi() % mine.size()]
+	var parts := String(entry["cidr"]).split("/")
+	var culprit := "AS%d" % (64600 + randi() % 300)
+	if hijack_protected(entry):
+		log_event("SECURITY: %s announced %s and was rejected: your ROA says it is not theirs."
+			% [culprit, entry["cidr"]])
+		return
+	hijacks.append({"prefix": parts[0], "plen": int(parts[1]), "by": culprit,
+		"cycles_left": 2 + randi() % 4})
+	log_event("SECURITY: %s is announcing %s. Traffic for it is going to them, not you. Sign the prefix with a ROA and ask an upstream to validate."
+		% [culprit, entry["cidr"]])
+
 func attack_on(ip: String) -> Dictionary:
 	for a in attacks:
 		if a["target"] == ip:
@@ -1751,6 +1806,7 @@ func sla_tick() -> void:
 	if not sandbox and not drill_active:
 		power_tick()
 		carrier_tick()
+		hijack_tick()
 	if drill_active:
 		return  # the economy pauses while you run a drill
 	if sandbox:
@@ -1842,6 +1898,13 @@ func sla_tick() -> void:
 	var deal_links := {}
 	for deal in deals:
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
+		if deal["healthy"] and not hijack_on(String(deal["params"].get("ip", ""))).is_empty():
+			# the service is fine; the internet is simply sending its traffic
+			# somewhere else, which the customer experiences as an outage
+			deal["healthy"] = false
+			deal["hijacked"] = true
+		else:
+			deal["hijacked"] = false
 		if deal["healthy"]:
 			var used := _deal_path_links(deal)
 			deal_links[deal["id"]] = used
@@ -2282,7 +2345,7 @@ func _serialize() -> Dictionary:
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
-		"carrier_outage": carrier_outage,
+		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
@@ -2567,6 +2630,7 @@ func _apply(data: Dictionary) -> void:
 	feed_out_until = data.get("feed_out_until", {})
 	invoices = data.get("invoices", [])
 	carrier_outage = data.get("carrier_outage", {})
+	hijacks = data.get("hijacks", [])
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])

@@ -181,6 +181,7 @@ class EOS extends Session:
 			{"m": ["ospf"], "p": ["no", "network"], "h": _ospf_no_network},
 			{"m": ["router"], "p": ["neighbor"], "h": _bgp_neighbor},
 			{"m": ["router"], "p": ["no", "neighbor"], "h": _bgp_no_neighbor},
+			{"m": ["router"], "p": ["roa"], "h": _bgp_roa},
 			{"m": ["router"], "p": ["network"], "h": _bgp_network},
 			{"m": ["router"], "p": ["no", "network"], "h": _bgp_no_network},
 			{"m": ["vlan"], "p": ["name"], "h": func(r): return _vlan_name(r)},
@@ -1099,6 +1100,15 @@ class EOS extends Session:
 			nb["local_pref"] = int(r[2])  # higher wins: which upstream WE use
 			Game.topology_changed.emit()
 			return ""
+		if r.size() == 2 and String(r[1]) == "rpki":
+			nb["rpki"] = true  # ask this upstream to check origins against ROAs
+			Game.topology_changed.emit()
+			return ""
+		if r.size() == 3 and String(r[0]).is_valid_ip_address() and String(r[1]) == "no" \
+				and String(r[2]) == "rpki":
+			nb["rpki"] = false
+			Game.topology_changed.emit()
+			return ""
 		if r.size() == 3 and String(r[1]) == "prepend" and String(r[2]).is_valid_int():
 			nb["prepend"] = clampi(int(r[2]), 0, 10)  # longer path: how THEY reach us
 			Game.topology_changed.emit()
@@ -1112,6 +1122,20 @@ class EOS extends Session:
 			Game.topology_changed.emit()
 			return ""
 		return "usage: neighbor <ip> remote-as <asn> | local-preference <n> | prepend <n> | prefix-list in|out <cidr>[,...]\n"
+
+	func _bgp_roa(r: Array) -> String:
+		## roa <cidr>: sign a prefix as ours, so an upstream can reject anyone
+		## else announcing it
+		if r.size() != 1 or not String(r[0]).contains("/"):
+			return "usage: roa <prefix/len>\n"
+		if String(r[0]) not in dev.bgp.get("networks", []):
+			return "%% announce %s first; signing a prefix you do not originate is meaningless\n" % r[0]
+		if not dev.bgp.has("roa"):
+			dev.bgp["roa"] = []
+		if String(r[0]) not in dev.bgp["roa"]:
+			dev.bgp["roa"].append(String(r[0]))
+		Game.topology_changed.emit()
+		return ""
 
 	func _find_nb(ip: String) -> Dictionary:
 		for nb in dev.bgp.get("neighbors", []):
@@ -1161,10 +1185,17 @@ class EOS extends Session:
 				policy.append("in: %s" % ",".join(PackedStringArray(nb["prefix_in"])))
 			if not nb.get("prefix_out", []).is_empty():
 				policy.append("out: %s" % ",".join(PackedStringArray(nb["prefix_out"])))
+			if bool(nb.get("rpki", false)):
+				policy.append("rpki validating")
 			if not policy.is_empty():
 				out += "                 policy: %s\n" % "   ".join(PackedStringArray(policy))
 		if not dev.bgp["networks"].is_empty():
 			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
+		var roas: Array = dev.bgp.get("roa", [])
+		out += "Signed (ROA): %s\n" % (", ".join(PackedStringArray(roas)) if not roas.is_empty()
+			else "nothing: an unsigned prefix cannot be defended")
+		for h in Game.hijacks:
+			out += "HIJACK: %s/%d is being announced by %s\n" % [h["prefix"], int(h["plen"]), h["by"]]
 		return out
 
 	func _cfg_ssid(r: Array) -> String:

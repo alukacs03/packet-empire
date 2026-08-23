@@ -3129,6 +3129,32 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- route hijacks and RPKI ---
+	Game.hijacks = []
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	mh_cli.exec("network 203.0.113.0/24")
+	check(mh_cli.exec("roa 198.51.100.0/24").contains("announce"),
+		"rpki: signing a prefix you do not originate is refused")
+	var hj_entry := {"cidr": "203.0.113.0/24", "dev": mh_edge}
+	check(not Game.hijack_protected(hj_entry), "rpki: an unsigned prefix cannot be defended")
+	check(mh_cli.exec("roa 203.0.113.0/24").is_empty(), "rpki: your own prefix can be signed")
+	check(not Game.hijack_protected(hj_entry),
+		"rpki: a signature is worthless until somebody upstream checks it")
+	check(mh_cli.exec("neighbor 100.70.0.1 rpki").is_empty(),
+		"rpki: an upstream can be asked to validate")
+	mh_cli.exec("end")
+	check(Game.hijack_protected(hj_entry),
+		"rpki: signed prefix plus a validating upstream is protection")
+	# an active hijack takes the customer off the internet even though nothing broke
+	Game.hijacks = [{"prefix": "203.0.113.0", "plen": 24, "by": "AS64666", "cycles_left": 2}]
+	check(not Game.hijack_on("203.0.113.9").is_empty(),
+		"rpki: an address inside a hijacked prefix is affected")
+	check(Game.hijack_on("8.8.8.8").is_empty(), "rpki: one outside it is not")
+	check(mh_cli.exec("show ip bgp summary").contains("HIJACK"),
+		"rpki: the session summary reports it")
+	Game.hijacks = []
+
 	# --- MTU, jumbo frames and the mismatch that only breaks big packets ---
 	var mt_rack := Game.add_rack(Vector2i(40, 1))
 	var mt_sw := Game.new_device("sw-8")
