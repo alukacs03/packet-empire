@@ -1282,5 +1282,75 @@ static func run() -> int:
 	Rivals.tick()
 	check(Rivals.has_site(growth_r), "market: a flush rival buys premises of its own")
 
+	# --- full save/load roundtrip over the modern state ---
+	Game.save_game()
+	var snap_sites := Game.site_count()
+	var snap_circuits := Game.circuits.size()
+	var snap_rivals := Game.rivals.size()
+	var snap_acq := Game.acquisitions.size()
+	var snap_devices := Game.all_devices().size()
+	var snap_money := Game.money
+	var snap_stage := Game.stage
+	var snap_rank := Game.rank()
+	var acquired_names: Array = []
+	var startup_saved: Array = []
+	var secured: Array = []
+	var subifaces: Array = []
+	for d in Game.all_devices():
+		if d.acquired_from != "":
+			acquired_names.append(d.name)
+		if not d.startup.is_empty():
+			startup_saved.append(d.name)
+		for i: Net.Iface in d.ifaces:
+			if i.port_security:
+				secured.append("%s|%s" % [d.name, i.name])
+			if i.parent != "":
+				subifaces.append("%s|%s|%d" % [d.name, i.name, i.dot1q])
+	Game.money = 1
+	Game.stage = 0
+	Game.sites = []
+	Game.circuits = []
+	Game.rivals = []
+	Game.acquisitions = []
+	check(Game.load_game(), "save2: the modern save loads")
+	check(Game.money == snap_money and Game.stage == snap_stage, "save2: money and stage restored")
+	check(Game.site_count() == snap_sites, "save2: every site restored")
+	check(Game.circuits.size() == snap_circuits, "save2: WAN circuits restored")
+	check(Game.rivals.size() == snap_rivals, "save2: rival companies restored")
+	check(Game.acquisitions.size() == snap_acq, "save2: integration jobs restored")
+	check(Game.all_devices().size() == snap_devices, "save2: device count restored")
+	check(Game.rank() == snap_rank, "save2: career rank is stable across a reload")
+	var acq_after: Array = []
+	var startup_after: Array = []
+	var secured_after: Array = []
+	var sub_after: Array = []
+	for d in Game.all_devices():
+		if d.acquired_from != "":
+			acq_after.append(d.name)
+		if not d.startup.is_empty():
+			startup_after.append(d.name)
+		for i: Net.Iface in d.ifaces:
+			if i.port_security:
+				secured_after.append("%s|%s" % [d.name, i.name])
+			if i.parent != "":
+				sub_after.append("%s|%s|%d" % [d.name, i.name, i.dot1q])
+	acquired_names.sort()
+	acq_after.sort()
+	startup_saved.sort()
+	startup_after.sort()
+	secured.sort()
+	secured_after.sort()
+	subifaces.sort()
+	sub_after.sort()
+	check(acq_after == acquired_names, "save2: acquired-from provenance restored")
+	check(startup_after == startup_saved, "save2: startup configs restored")
+	check(secured_after == secured, "save2: port security restored")
+	check(sub_after == subifaces, "save2: 802.1Q subinterfaces restored")
+	var racks_per_site: Array = []
+	for i in Game.site_count():
+		racks_per_site.append(Game.racks_on(i).size())
+	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
+		"save2: every rack landed back on a site")
+
 	print("---- %d failures" % fails)
 	return fails
