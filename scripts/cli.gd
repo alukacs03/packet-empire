@@ -99,6 +99,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
+			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
@@ -500,6 +501,17 @@ class EOS extends Session:
 			return "  (no frames captured — generate some traffic)\n"
 		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
 
+	func _show_lldp(_r: Array) -> String:
+		var out := "%-11s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			var l := Game.link_at(i)
+			if l:
+				any = true
+				var peer := l.other(i)
+				out += "%-11s %-14s %s\n" % [EOS._short(i.name), peer.dev.name, EOS._short(peer.name)]
+		return out if any else "  (no neighbors detected)\n"
+
 	func _show_arp(_r: Array) -> String:
 		if dev.arp.is_empty():
 			return "  (empty)\n"
@@ -578,7 +590,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -637,6 +649,17 @@ class Linux extends Session:
 				dev.resolver = t[1]
 				Game.topology_changed.emit()
 				return ""
+			"arp":
+				return _ip(["neigh"])
+			"lldp":
+				var out := "%-8s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]
+				var any := false
+				for i: Net.Iface in dev.ifaces:
+					var l := Game.link_at(i)
+					if l:
+						any = true
+						out += "%-8s %-14s %s\n" % [i.name, l.other(i).dev.name, l.other(i).name]
+				return out if any else "(no neighbors detected)\n"
 			"tcpdump":
 				if dev.capture.is_empty():
 					return "tcpdump: 0 packets captured (generate some traffic)\n"
@@ -681,6 +704,13 @@ class Linux extends Session:
 				Game.topology_changed.emit()
 				return ""
 			return "usage: ip link set <if> up|down\n"
+		if String(t[0]).begins_with("n"):  # ip neigh
+			if dev.arp.is_empty():
+				return "(empty — no ARP entries yet)\n"
+			var out := ""
+			for ip in dev.arp:
+				out += "%s dev %s lladdr %s REACHABLE\n" % [ip, dev.ifaces[0].name, dev.arp[ip]]
+			return out
 		if String(t[0]).begins_with("r"):  # ip route
 			if t.size() == 1:
 				var out := ""
@@ -720,10 +750,10 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "clear", "help"]
+				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "clear", "help"]
 			1:
 				if toks[0] == "ip":
-					opts = ["addr", "link", "route"]
+					opts = ["addr", "link", "route", "neigh"]
 			2:
 				if toks[0] == "ip" and String(toks[1]).begins_with("a"):
 					opts = ["add", "del"]

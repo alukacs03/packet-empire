@@ -333,5 +333,15 @@ static func run() -> int:
 	check(not Game.overheating(), "heat: cooling restored")
 	check(Game.try_complete_contract(Contracts.all()[9]), "heat: feeling-the-heat contract verifies")
 
+	# --- discovery/diagnostic commands ---
+	var es2 := CLI.new_session(edge)
+	check(es2.exec("sh lldp neighbors").contains(upl.name), "cli: EOS lldp lists the uplink neighbor")
+	var wls := CLI.new_session(web)
+	Sim.ping(web, "10.3.0.1")
+	check(wls.exec("ip neigh").contains("10.3.0.1"), "cli: Linux ip neigh shows the gateway ARP entry")
+	check(wls.exec("lldp").contains(edge.name), "cli: Linux lldp sees the router")
+	var rs2 := CLI.new_session(mkt_sw)
+	check("bridge host" in rs2.exec("help"), "cli: ROS help lists bridge host print")
+
 	print("---- %d failures" % fails)
 	return fails

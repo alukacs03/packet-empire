@@ -125,6 +125,23 @@ func exec(line: String) -> String:
 				for cidr in i.ips:
 					out += " %-18s %s\n" % [cidr, i.name]
 			return out
+		"ip arp print":
+			if dev.arp.is_empty():
+				return "(empty)\n"
+			var out := " ADDRESS         MAC-ADDRESS\n"
+			for ip in dev.arp:
+				out += " %-15s %s\n" % [ip, dev.arp[ip]]
+			return out
+		"interface bridge host print":
+			if dev.type != "switch":
+				return "no bridge on this device\n"
+			var out := " VID  MAC-ADDRESS        ON-INTERFACE\n"
+			var vids := dev.mac_table.keys()
+			vids.sort()
+			for vid in vids:
+				for mac in dev.mac_table[vid]:
+					out += " %-4d %-18s %s\n" % [vid, mac, dev.mac_table[vid][mac].name]
+			return out if vids else " (empty — send some traffic first)\n"
 		"ip route add":
 			var dst: String = p.get("dst-address", "0.0.0.0/0")
 			if p.has("gateway") and Net.valid_cidr(dst):
@@ -189,6 +206,7 @@ func exec(line: String) -> String:
 	return "bad command name %s (try 'help')\n" % path.split(" ")[0]
 
 const PATHS := ["help", "export", "ping", "tool traceroute",
+	"ip arp print", "interface bridge host print",
 	"system identity set", "system identity print",
 	"interface print", "interface set",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
