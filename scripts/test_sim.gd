@@ -3129,6 +3129,43 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- playbooks ---
+	Game.playbooks = []
+	check(Game.save_playbook("", ["enable"]) != "", "playbook: it needs a name")
+	check(Game.save_playbook("empty", ["", "# just a comment"]) != "",
+		"playbook: and at least one real command")
+	var pb_rack := Game.add_rack(Vector2i(46, 1))
+	var pb_a := Game.new_device("sw-8")
+	var pb_b := Game.new_device("sw-8")
+	pb_rack.slots[0] = pb_a
+	pb_rack.slots[1] = pb_b
+	check(Game.save_playbook("mgmt-baseline", [
+		"enable", "configure terminal", "ip igmp snooping",
+		"snmp-server community monitoring", "end"]) == "",
+		"playbook: a real one saves")
+	check(Game.playbooks.size() == 1, "playbook: and is kept")
+	Game.save_playbook("mgmt-baseline", ["enable"])
+	check(Game.playbooks.size() == 1, "playbook: saving the same name replaces rather than duplicates")
+	Game.save_playbook("mgmt-baseline", [
+		"enable", "configure terminal", "ip igmp snooping",
+		"snmp-server community monitoring", "end"])
+	var pb_res := Game.run_playbook(Game.playbooks[0], [pb_a, pb_b])
+	check(int(pb_res["ran"]) == 2 and int(pb_res["failed"]) == 0,
+		"playbook: it runs cleanly on both switches")
+	check(pb_a.igmp_snooping and pb_b.igmp_snooping,
+		"playbook: and the change actually landed on both")
+	check(pb_a.snmp == "monitoring" and pb_b.snmp == "monitoring",
+		"playbook: every command in it, not just the first")
+	# a playbook aimed at the wrong kind of device reports the failure honestly
+	var pb_srv := Game.new_device("srv-1")
+	pb_rack.slots[2] = pb_srv
+	var pb_bad := Game.run_playbook(Game.playbooks[0], [pb_srv])
+	check(int(pb_bad["failed"]) == 1 and not pb_bad["log"].is_empty(),
+		"playbook: running switch commands on a server is reported, not swallowed")
+	check(Game.playbook_targets("switch").size() >= 2, "playbook: targets can be filtered by type")
+	Game.delete_playbook("mgmt-baseline")
+	check(Game.playbooks.is_empty(), "playbook: and deleted")
+
 	# --- IPv6 autoconfiguration ---
 	check(Net.eui64("52:54:00:12:34:56") == "5054:00ff:fe12:3456",
 		"slaac: EUI-64 flips the universal bit and pushes fffe into the middle")

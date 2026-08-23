@@ -1449,6 +1449,67 @@ func _refresh_ops() -> void:
 			if err != "":
 				_toast(err))
 		frow.add_child(swap)
+	ops_box.add_child(_section("PLAYBOOKS"))
+	if Game.playbooks.is_empty():
+		ops_box.add_child(_wrap("  Nothing saved yet. A playbook is a list of console commands you can run on many devices at once: the same thing you would type, typed for you.",
+			12, MUTED, 780))
+	for pb: Dictionary in Game.playbooks:
+		var prow := HBoxContainer.new()
+		prow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(prow)
+		var pl := _label("  %-22s %d command(s)" % [pb["name"], pb["lines"].size()], 12,
+			Color(0.75, 0.82, 0.9))
+		pl.add_theme_font_override("font", mono)
+		pl.tooltip_text = "\n".join(PackedStringArray(pb["lines"]))
+		pl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		prow.add_child(pl)
+		var run_btn := Button.new()
+		run_btn.text = "Run on…"
+		run_btn.pressed.connect(func() -> void:
+			var opts: Array = []
+			var filters: Array = []
+			for f in ["all", "switch", "router", "server", "firewall"]:
+				var n := Game.playbook_targets(f).size()
+				if n == 0:
+					continue
+				opts.append("every %s (%d device%s)" % [f if f != "all" else "device", n,
+					"" if n == 1 else "s"])
+				filters.append(f)
+			_menu(run_btn, opts, func(id: int) -> void:
+				var res := Game.run_playbook(pb, Game.playbook_targets(String(filters[id])))
+				hud_toast("Ran '%s' on %d device(s), %d with errors." % [pb["name"],
+					int(res["ran"]), int(res["failed"])], int(res["failed"]) == 0)
+				_refresh_ops()))
+		prow.add_child(run_btn)
+		var del_btn := Button.new()
+		del_btn.text = "Delete"
+		del_btn.pressed.connect(func() -> void:
+			Game.delete_playbook(String(pb["name"]))
+			_refresh_ops())
+		prow.add_child(del_btn)
+	var pb_name := _mono_edit(180)
+	pb_name.placeholder_text = "playbook name"
+	var pb_body := TextEdit.new()
+	pb_body.custom_minimum_size = Vector2(560, 90)
+	pb_body.placeholder_text = "one command per line, exactly as you would type it at a console"
+	pb_body.add_theme_font_override("font", mono)
+	pb_body.add_theme_font_size_override("font_size", 12)
+	var pb_row := HBoxContainer.new()
+	pb_row.add_theme_constant_override("separation", 8)
+	ops_box.add_child(pb_row)
+	pb_row.add_child(pb_name)
+	var pb_save := Button.new()
+	pb_save.text = "Save playbook"
+	pb_save.pressed.connect(func() -> void:
+		var err := Game.save_playbook(pb_name.text, Array(pb_body.text.split("\n")))
+		if err != "":
+			_toast(err)
+		else:
+			pb_name.clear()
+			pb_body.text = ""
+		_refresh_ops())
+	pb_row.add_child(pb_save)
+	ops_box.add_child(pb_body)
 	var certs_due := Game.expiring_certs()
 	if not certs_due.is_empty():
 		ops_box.add_child(_section("CERTIFICATES"))

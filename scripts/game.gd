@@ -1690,6 +1690,67 @@ func _attack_tick() -> void:
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
 
+# ---------- playbooks: write it once, run it everywhere ----------
+
+var playbooks: Array = []  # [{name, lines: [String]}]
+
+func save_playbook(name: String, lines: Array) -> String:
+	name = name.strip_edges()
+	if name == "":
+		return "a playbook needs a name"
+	var clean: Array = []
+	for l in lines:
+		var line := String(l).strip_edges()
+		if line != "" and not line.begins_with("#"):
+			clean.append(line)
+	if clean.is_empty():
+		return "a playbook needs at least one command"
+	for pb in playbooks:
+		if String(pb["name"]) == name:
+			pb["lines"] = clean
+			log_event("PLAYBOOK: '%s' updated (%d commands)." % [name, clean.size()])
+			return ""
+	playbooks.append({"name": name, "lines": clean})
+	log_event("PLAYBOOK: '%s' saved (%d commands)." % [name, clean.size()])
+	return ""
+
+func delete_playbook(name: String) -> void:
+	for pb in playbooks.duplicate():
+		if String(pb["name"]) == name:
+			playbooks.erase(pb)
+
+func playbook_targets(filter: String) -> Array:
+	## "switch", "router", "server", "all", or a substring of the device name
+	var out: Array = []
+	for d in all_devices():
+		if filter == "all" or d.type == filter or (filter != "" and filter in d.name):
+			out.append(d)
+	return out
+
+func run_playbook(pb: Dictionary, targets: Array) -> Dictionary:
+	## Runs every line on every target through a real CLI session, so a
+	## playbook can do exactly what a person at a console can do and no more.
+	## -> {ran, failed, log: [String]}
+	var ran := 0
+	var failed := 0
+	var trail: Array = []
+	for d: Net.NDevice in targets:
+		var session := CLI.new_session(d)
+		var bad := 0
+		for line: String in pb["lines"]:
+			var out := String(session.exec(line))
+			# a real console answers an unusable command with a % or an error
+			if out.begins_with("%") or out.begins_with("usage:") or "nvalid" in out \
+					or out.contains("not known") or out.begins_with("ssh:"):
+				bad += 1
+				trail.append("%s: %s -> %s" % [d.name, line, out.strip_edges()])
+		ran += 1
+		if bad > 0:
+			failed += 1
+	log_event("PLAYBOOK: ran '%s' on %d device(s), %d with errors." % [pb["name"], ran, failed])
+	topology_changed.emit()
+	return {"ran": ran, "failed": failed, "log": trail}
+
 # ---------- certificates ----------
 
 const CERT_LIFE := 24  # cycles a freshly issued certificate is good for
@@ -2563,7 +2624,7 @@ func _serialize() -> Dictionary:
 		"company_name": company_name, "demo": demo,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
-		"transit_samples": transit_samples, "ixp": ixp,
+		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
@@ -2852,6 +2913,7 @@ func _apply(data: Dictionary) -> void:
 	hijacks = data.get("hijacks", [])
 	transit_samples = data.get("transit_samples", [])
 	ixp = data.get("ixp", {})
+	playbooks = data.get("playbooks", [])
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])
