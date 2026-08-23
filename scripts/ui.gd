@@ -1410,6 +1410,7 @@ func _refresh_contracts() -> void:
 	_build_market_section()
 	contracts_box.add_child(_section("CAMPAIGN"))
 	var found_active := false
+	var active_shown := 0
 	for c in Contracts.all():
 		var done: bool = c["id"] in Game.contracts_done
 		if done:
@@ -1433,9 +1434,10 @@ func _refresh_contracts() -> void:
 					contracts_box.add_child(_label("      %s  %s" % ["●" if rq_ok else "○", rq["d"]],
 						12, Color(0.5, 0.8, 0.55) if rq_ok else Color(0.95, 0.6, 0.45)))
 			continue
-		if found_active:
-			contracts_box.add_child(_label("🔒  (more contracts after the current one)", 13, Color(0.45, 0.5, 0.6)))
+		if active_shown >= 3:
+			contracts_box.add_child(_label("🔒  more jobs unlock as you finish these", 13, Color(0.45, 0.5, 0.6)))
 			break
+		active_shown += 1
 		found_active = true
 		var card := PanelContainer.new()
 		card.add_theme_stylebox_override("panel", _sb(Color(0.09, 0.12, 0.16), ACCENT * Color(1, 1, 1, 0.5), 8, 14))
