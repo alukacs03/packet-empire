@@ -21,10 +21,59 @@ func _ready() -> void:
 	ui = UILayer.new()
 	add_child(ui)
 	Game.topology_changed.connect(queue_redraw)
+	if OS.get_environment("PACKET_SHOT") != "":
+		_shoot_all.call_deferred()
+		return
 	if Game.load_game():
 		rebuild_racks()
 	else:
 		ui.show_welcome()
+
+func _shoot_all() -> void:
+	## PACKET_SHOT=<dir>: photograph every screen, then quit
+	var dir := OS.get_environment("PACKET_SHOT")
+	SimTests.demo_world()
+	rebuild_racks()
+	var r: Net.Rack = Game.racks[0]
+	var dev: Net.NDevice = null
+	var sw: Net.NDevice = null
+	for d in Game.all_devices():
+		if d.type == "server" and dev == null:
+			dev = d
+		if d.type == "switch" and sw == null:
+			sw = d
+	var shots: Array = [
+		["floor", func() -> void: pass],
+		["rack", func() -> void: ui.open_rack(r)],
+		["device", func() -> void: ui.open_dev(sw)],
+		["console", func() -> void:
+			ui._toggle_cli()
+			ui._cli_submit("show interfaces")],
+		["iface", func() -> void: ui.open_iface(sw.ifaces[0])],
+		["contracts", func() -> void:
+			ui.close_iface()
+			ui.close_dev()
+			ui.close_rack()
+			ui.open_contracts()],
+		["map", func() -> void:
+			ui.close_contracts()
+			ui.toggle_map()],
+		["pedia", func() -> void:
+			ui.toggle_map()
+			ui.open_pedia()],
+		["help", func() -> void:
+			ui.pedia_overlay.visible = false
+			ui.toggle_help()],
+	]
+	for shot in shots:
+		shot[1].call()
+		for _f in 16:  # let fades and layout settle
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var img := get_viewport().get_texture().get_image()
+		img.save_png("%s/%s.png" % [dir, shot[0]])
+		print("shot: ", shot[0])
+	get_tree().quit()
 
 func rebuild_racks() -> void:
 	for child in get_children():

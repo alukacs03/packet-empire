@@ -214,12 +214,39 @@ func _accent(b: Button) -> Button:
 	b.add_theme_color_override("font_color", Color(0.8, 0.97, 1.0))
 	return b
 
+static func compress_ports(names: Array) -> String:
+	## Et1,Et2,Et3,Et7 -> "Et1-3,Et7" (what real switch output looks like)
+	if names.is_empty():
+		return ""
+	var short: Array = []
+	for n in names:
+		short.append(String(n).replace("Ethernet", "Et").replace("Management", "Ma"))
+	var out: Array = []
+	var run_start := -1
+	var run_prev := -1
+	var run_pfx := ""
+	for n in short + [""]:
+		var digits := String(n).lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+		var pfx := String(n).trim_suffix(digits)
+		var num := int(digits) if digits.is_valid_int() else -999
+		if pfx == run_pfx and num == run_prev + 1:
+			run_prev = num
+			continue
+		if run_start >= 0:
+			out.append("%s%d" % [run_pfx, run_start] if run_start == run_prev
+				else "%s%d-%d" % [run_pfx, run_start, run_prev])
+		run_pfx = pfx
+		run_start = num
+		run_prev = num
+	return ",".join(PackedStringArray(out))
+
 func _section(text: String) -> Label:
 	return _label(text, 11, Color(0.5, 0.58, 0.72))
 
 func _show_overlay(o: Control) -> void:
 	o.modulate.a = 0.0
 	o.visible = true
+	_fit_cards.call_deferred()
 	create_tween().tween_property(o, "modulate:a", 1.0, 0.13)
 
 func _mono_edit(width := 200.0) -> LineEdit:
@@ -241,18 +268,42 @@ func _overlay() -> Control:
 	add_child(o)
 	return o
 
+var _card_scrolls: Array = []  # ScrollContainers to fit to the viewport
+
 func _card(parent: Control, min_w: float) -> VBoxContainer:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	parent.add_child(center)
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(min_w, 0)
 	panel.add_theme_stylebox_override("panel", _sb(BG, Color(0.32, 0.38, 0.5), 12, 20))
 	center.add_child(panel)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(min_w, 0)
+	panel.add_child(scroll)
+	_card_scrolls.append(scroll)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 10)
-	panel.add_child(v)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(v)
 	return v
+
+func _scroll_to_bottom() -> void:
+	_fit_cards()
+	for scroll: ScrollContainer in _card_scrolls:
+		if scroll.is_visible_in_tree():
+			scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
+
+func _fit_cards() -> void:
+	## keep every card inside the window; content beyond that scrolls
+	var vp := get_viewport().get_visible_rect().size
+	for scroll: ScrollContainer in _card_scrolls:
+		if scroll.get_child_count() == 0:
+			continue
+		var content: Control = scroll.get_child(0)
+		var need := content.get_combined_minimum_size()
+		scroll.custom_minimum_size = Vector2(
+			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 120.0),
+			minf(need.y, vp.y - 160.0))
 
 func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	var h := HBoxContainer.new()
@@ -506,7 +557,9 @@ func _build_dev_overlay() -> void:
 	cap_toggle.tooltip_text = "Live capture (tcpdump) of this device"
 	cap_toggle.pressed.connect(func() -> void:
 		cap_box.visible = not cap_box.visible
-		_refresh_capture())
+		_refresh_capture()
+		if cap_box.visible:
+			_scroll_to_bottom.call_deferred())
 	btn_row.add_child(cap_toggle)
 	var uninstall := Button.new()
 	uninstall.text = "Uninstall (50% refund)"
@@ -633,7 +686,7 @@ func _refresh_vlans() -> void:
 		for i: Net.Iface in cur_dev.ifaces:
 			if i.mode == "access" and i.untagged_vlan == vid:
 				ports.append(i.name)
-		var l := _label("  %-6d %-14s %s" % [vid, cur_dev.vlans[vid], ", ".join(ports)],
+		var l := _label("  %-6d %-14s %s" % [vid, cur_dev.vlans[vid], compress_ports(ports)],
 			14, Color(0.7, 0.8, 0.9))
 		l.add_theme_font_override("font", mono)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1389,6 +1442,7 @@ func _refresh_capture() -> void:
 
 func _refresh_open() -> void:
 	_refresh_capture()
+	_fit_cards.call_deferred()
 	if if_overlay.visible and cur_if:
 		_refresh_iface()
 	if dev_overlay.visible and cur_dev:
@@ -1408,6 +1462,7 @@ func _toggle_cli() -> void:
 		cli_out.clear()
 		cli_out.append_text(cli_session.banner())
 		cli_in.call_deferred("grab_focus")
+		_scroll_to_bottom.call_deferred()
 	else:
 		cli_toggle.text = "Open console  ▤"
 		cli_out.clear()

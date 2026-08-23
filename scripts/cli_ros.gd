@@ -140,7 +140,7 @@ func exec(line: String) -> String:
 				for i: Net.Iface in dev.ifaces:
 					if i.mode == "trunk" or (i.mode == "access" and i.untagged_vlan == vid):
 						ports.append(i.name)
-				out += " %-9d %-11s %s\n" % [vid, dev.vlans[vid], ",".join(PackedStringArray(ports))]
+				out += " %-9d %-11s %s\n" % [vid, dev.vlans[vid], UILayer.compress_ports(ports)]
 			return out
 		"ip address add":
 			if dev.type == "switch":

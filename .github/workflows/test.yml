@@ -16,8 +16,4 @@ jobs:
       - name: Import project
         run: ./godot --headless --path . --import || true
       - name: Run suite
-        run: |
-          set -o pipefail
-          PACKET_TEST=1 ./godot --headless --path . --quit-after 600 2>&1 | tee out.log
-          ! grep -q "SCRIPT ERROR" out.log
-          grep -q -- "---- 0 failures" out.log
+        run: GODOT=./godot ./run_tests.sh

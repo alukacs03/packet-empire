@@ -59,19 +59,34 @@ class TopoMap extends Control:
 
 	func _draw() -> void:
 		_nodes.clear()
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.05, 0.08, 0.9))
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.05, 0.08, 0.97))
 		var title_c := Color(0.5, 0.85, 0.95)
-		draw_string(_mono, Vector2(30, 40), "LOGICAL TOPOLOGY", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, title_c)
-		draw_string(_mono, Vector2(30, 62), "click a device to open it · M or Esc to close",
+		draw_string(_mono, Vector2(30, 100), "LOGICAL TOPOLOGY", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, title_c)
+		draw_string(_mono, Vector2(30, 122), "click a device to open it · M or Esc to close",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.55, 0.65))
-		# layout racks on their floor grid
-		for r in Game.racks:
-			var origin := Vector2(40 + r.tile.x * 250, 95 + r.tile.y * 260)
+		# pack rack boxes into a grid that fills the window, floor order preserved
+		const COL_W := 250.0
+		const TOP := 145.0
+		var cols: int = maxi(1, int((size.x - 60.0) / COL_W))
+		var racks := Game.racks.duplicate()
+		racks.sort_custom(func(x, y): return x.tile.x + x.tile.y * 100 < y.tile.x + y.tile.y * 100)
+		var row_h := 0.0
+		var col_i := 0
+		var row_y := TOP
+		for r in racks:
 			var filled: Array = []
 			for d in r.slots:
 				if d:
 					filled.append(d)
-			var box := Rect2(origin, Vector2(215, 34 + filled.size() * 40 + 8))
+			var box_h := 34 + filled.size() * 40 + 8
+			if col_i >= cols:
+				col_i = 0
+				row_y += row_h + 24
+				row_h = 0.0
+			var origin := Vector2(30 + col_i * COL_W, row_y)
+			col_i += 1
+			row_h = maxf(row_h, box_h)
+			var box := Rect2(origin, Vector2(215, box_h))
 			draw_rect(box, Color(0.09, 0.1, 0.14))
 			draw_rect(box, Color(0.3, 0.34, 0.44), false, 1.0)
 			draw_string(_mono, origin + Vector2(10, 22), "▤ " + r.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.75, 0.8, 0.9))

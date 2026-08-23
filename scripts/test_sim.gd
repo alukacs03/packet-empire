@@ -22,6 +22,41 @@ static func check(cond: bool, msg: String) -> void:
 	if not cond:
 		fails += 1
 
+static func demo_world() -> void:
+	## a small, pretty datacenter for screenshots
+	Game.racks = []
+	Game.links = []
+	Game.money = 4200
+	Game.contracts_done = ["rackup", "first_ping"]
+	var r1 := Game.add_rack(Vector2i(0, 0))
+	var r2 := Game.add_rack(Vector2i(2, 1))
+	var sw := Game.new_device("sw-24")
+	var rtr := Game.new_device("rtr-edge")
+	var srv1 := Game.new_device("srv-1")
+	var srv2 := Game.new_device("srv-2")
+	var fw := Game.new_device("fw-1")
+	r1.slots[7] = sw
+	r1.slots[6] = srv1
+	r1.slots[5] = srv2
+	r2.slots[7] = rtr
+	r2.slots[6] = fw
+	Game.connect_ifaces(srv1.ifaces[0], sw.ifaces[0])
+	Game.connect_ifaces(srv2.ifaces[0], sw.ifaces[1])
+	Game.connect_ifaces(rtr.ifaces[0], sw.ifaces[4])
+	Game.connect_ifaces(fw.ifaces[0], sw.ifaces[5])
+	Game.add_vlan(sw, 10, "alfa")
+	Game.add_vlan(sw, 20, "beta")
+	sw.ifaces[1].untagged_vlan = 20
+	Game.add_ip(srv1.ifaces[0], "10.0.0.1/24")
+	Game.add_ip(srv2.ifaces[0], "10.0.0.2/24")
+	Game.add_ip(rtr.ifaces[0], "10.0.0.254/24")
+	Game.offers = [Market.gen_offer()]
+	Game.deals = [{"id": "d1", "customer": "Balaton Zrt", "kind": "hosting",
+		"params": {"ip": "10.0.0.1"}, "fee": 120, "load": 300,
+		"brief": "Host our application server at 10.0.0.1/24.", "healthy": true}]
+	Sim.ping(srv1, "10.0.0.2")
+	Game.topology_changed.emit()
+
 static func ui_smoke(world: Node2D) -> int:
 	## Exercise every overlay so UI-only runtime errors surface in CI output.
 	print("---- ui smoke ----")
@@ -58,6 +93,9 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.menu_overlay.visible = false
 	ui._refresh_tutorial()
 	ui._refresh_money()
+	check(UILayer.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
+		"ui: port lists compress into ranges")
+	check(UILayer.compress_ports([]) == "", "ui: empty port list compresses to nothing")
 	print("PASS  ui: all overlays opened and refreshed without script errors")
 	check(true, "ui: smoke complete")
 	return fails
@@ -133,7 +171,8 @@ static func run() -> int:
 	s.exec("switchport access vlan 30")
 	check(sw.vlans.has(30) and sw.ifaces[3].untagged_vlan == 30, "EOS: access vlan auto-creates vlan 30")
 	s.exec("end")
-	check(s.exec("sh vlan").contains("30"), "EOS: 'sh vlan' lists vlan 30")
+	var vlan_out: String = s.exec("sh vlan")
+	check(vlan_out.contains("30"), "EOS: 'sh vlan' lists vlan 30 (got: %s)" % vlan_out.replace("\n", " | "))
 	check(s.exec("sh run").begins_with("hostname"), "EOS: show running-config renders")
 	check(s.exec("s").begins_with("% Ambiguous"), "EOS: bare 's' is ambiguous (ssh vs show)")
 	check(s.exec("sh").begins_with("% Incomplete"), "EOS: 'sh' alone is an incomplete command")
