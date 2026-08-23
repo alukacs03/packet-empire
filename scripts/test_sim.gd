@@ -97,6 +97,20 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.toggle_map()
 	ui.toggle_map()
 	ui.toggle_ops()
+	for ops_entry in UILayer.OPS_TABS:
+		ui.ops_tab = String(ops_entry[0])
+		ui._refresh_ops()
+	var ops_shown := 0
+	var ops_hidden := 0
+	for ops_child in ui.ops_box.get_children():
+		if ops_child.visible:
+			ops_shown += 1
+		else:
+			ops_hidden += 1
+	check(ops_shown > 0 and ops_hidden > 0,
+		"ops: a tab shows its own sections and hides the others")
+	ui.ops_tab = "Capacity"
+	ui._refresh_ops()
 	ui.toggle_ops()
 	ui.toggle_search()
 	ui.search_input.text = "sw"

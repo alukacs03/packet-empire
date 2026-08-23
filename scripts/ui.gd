@@ -1282,17 +1282,64 @@ func _device_alerts(d: Net.NDevice) -> Array:
 			break
 	return out
 
+## Which sections belong on which tab. Everything is still built in one pass;
+## the tab only decides what stays visible, which keeps the section code as a
+## plain sequence rather than a nest of conditionals.
+const OPS_TABS := [
+	["Capacity", ["CAPACITY", "POWER", "AIRFLOW"]],
+	["Traffic", ["TOP TALKERS", "MONITORS"]],
+	["Hardware", ["ASSETS AND SPARES", "DEVICES"]],
+	["Automation", ["PLAYBOOKS", "CERTIFICATES"]],
+]
+var ops_tab := "Capacity"
+var ops_tab_btns := {}
+
 func _build_ops() -> void:
 	ops_overlay = _overlay()
 	var v := _card(ops_overlay, 820)
 	ops_title = _header(v, func() -> void: ops_overlay.visible = false)
 	ops_title.text = "Operations"
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 6)
+	v.add_child(tabs)
+	for entry in OPS_TABS:
+		var tb := Button.new()
+		tb.text = String(entry[0])
+		tb.toggle_mode = true
+		tb.pressed.connect(func() -> void:
+			ops_tab = String(entry[0])
+			_refresh_ops())
+		tabs.add_child(tb)
+		ops_tab_btns[String(entry[0])] = tb
 	ops_box = VBoxContainer.new()
 	ops_box.add_theme_constant_override("separation", 3)
 	v.add_child(ops_box)
 
+func _ops_sections_for_tab() -> Array:
+	for entry in OPS_TABS:
+		if String(entry[0]) == ops_tab:
+			return entry[1]
+	return []
+
+func _apply_ops_tab() -> void:
+	## walk what was just built and hide the sections this tab does not own
+	var wanted: Array = _ops_sections_for_tab()
+	var all_titles: Array = []
+	for entry in OPS_TABS:
+		for t in entry[1]:
+			all_titles.append(String(t))
+	var current := ""
+	for child in ops_box.get_children():
+		if child is Label and String(child.text) in all_titles:
+			current = String(child.text)
+		if current != "":
+			child.visible = current in wanted
+	for name in ops_tab_btns:
+		ops_tab_btns[name].button_pressed = name == ops_tab
+
 func _refresh_ops() -> void:
 	for c in ops_box.get_children():
+		ops_box.remove_child(c)
 		c.queue_free()
 	var devs := Game.all_devices()
 	devs.sort_custom(func(x, y): return _device_alerts(x).size() > _device_alerts(y).size())
@@ -1619,6 +1666,7 @@ func _refresh_ops() -> void:
 			cur_rack = rk2
 			open_dev(d))
 		ops_box.add_child(b)
+	_apply_ops_tab()
 
 func _capacity_advice() -> String:
 	## one sentence, and only when there is something worth saying
