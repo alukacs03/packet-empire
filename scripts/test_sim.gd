@@ -3071,6 +3071,61 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- BFD: noticing that the far end died ---
+	var bf_rack := Game.add_rack(Vector2i(38, 1))
+	var bf_r1 := Game.new_device("rtr-edge")
+	var bf_r2 := Game.new_device("rtr-edge")
+	var bf_host := Game.new_device("srv-1")
+	var bf_far := Game.new_device("srv-1")
+	bf_rack.slots[0] = bf_r1
+	bf_rack.slots[1] = bf_r2
+	bf_rack.slots[2] = bf_host
+	bf_rack.slots[3] = bf_far
+	Game.connect_ifaces(bf_host.ifaces[0], bf_r1.ifaces[0])
+	Game.connect_ifaces(bf_r1.ifaces[1], bf_r2.ifaces[1])
+	Game.connect_ifaces(bf_far.ifaces[0], bf_r2.ifaces[0])
+	Game.add_ip(bf_host.ifaces[0], "10.210.1.10/24")
+	Game.add_ip(bf_r1.ifaces[0], "10.210.1.1/24")
+	Game.add_ip(bf_r1.ifaces[1], "10.210.9.1/30")
+	Game.add_ip(bf_r2.ifaces[1], "10.210.9.2/30")
+	Game.add_ip(bf_r2.ifaces[0], "10.210.2.1/24")
+	Game.add_ip(bf_far.ifaces[0], "10.210.2.10/24")
+	bf_r1.static_routes.append({"prefix": "10.210.2.0", "plen": 24, "via": "10.210.9.2"})
+	bf_r2.static_routes.append({"prefix": "10.210.1.0", "plen": 24, "via": "10.210.9.1"})
+	CLI.new_session(bf_host).exec("ip route add default via 10.210.1.1")
+	CLI.new_session(bf_far).exec("ip route add default via 10.210.2.1")
+	Sim.flush_learned_state()
+	check(Sim.ping(bf_host, "10.210.2.10")["ok"], "bfd: the path works to begin with")
+	# the far end of the transit link dies; the local port is still up
+	bf_r2.ifaces[1].enabled = false
+	Sim.flush_learned_state()
+	check(Sim.route_via(bf_r1, "10.210.2.10") != "",
+		"bfd: without a session the route survives its own dead next hop")
+	var bf_cli1 := CLI.new_session(bf_r1)
+	bf_cli1.exec("enable")
+	bf_cli1.exec("configure terminal")
+	bf_cli1.exec("interface Ethernet2")
+	check(bf_cli1.exec("bfd").is_empty(), "bfd: a session can be configured")
+	bf_cli1.exec("end")
+	Sim.flush_learned_state()
+	check(Sim.route_via(bf_r1, "10.210.2.10") != "",
+		"bfd: one-sided BFD is no BFD, and detects nothing")
+	var bf_cli2 := CLI.new_session(bf_r2)
+	bf_cli2.exec("enable")
+	bf_cli2.exec("configure terminal")
+	bf_cli2.exec("interface Ethernet2")
+	bf_cli2.exec("bfd")
+	bf_cli2.exec("end")
+	Sim.flush_learned_state()
+	check(Sim.route_via(bf_r1, "10.210.2.10") == "",
+		"bfd: with both ends watching, the dead path is withdrawn")
+	check(Sim.bfd_session(bf_r1.ifaces[1]) == "down", "bfd: the session reports itself down")
+	check(bf_cli1.exec("show bfd").contains("down"), "bfd: show bfd reports it")
+	bf_r2.ifaces[1].enabled = true
+	Sim.flush_learned_state()
+	check(Sim.bfd_session(bf_r1.ifaces[1]) == "up", "bfd: and comes back up with the link")
+	check(Sim.ping(bf_host, "10.210.2.10")["ok"], "bfd: traffic flows again")
+
 	# --- RSTP, bridge priority and MST ---
 	var ms_rack := Game.add_rack(Vector2i(37, 1))
 	var ms_a := Game.new_device("sw-8")

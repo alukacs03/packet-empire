@@ -24,6 +24,7 @@ class Iface:
 	var storm_limit := 0  # broadcast frames allowed per operation, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation
 	var vm := ""  # a virtual machine's NIC, hosted on this server
+	var bfd := false  # watch the far end, and withdraw the route when it dies
 	var mlag := 0  # member of a bundle shared with the peer switch
 	var mlag_peerlink := false  # the link that keeps the two switches in step
 	var dhcp_trusted := false  # a port allowed to carry DHCP server replies

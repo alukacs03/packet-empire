@@ -213,7 +213,7 @@ static func _owns_ip_anywhere(dev: Net.NDevice, ip: String) -> bool:
 
 static func _connected_iface(dev: Net.NDevice, ip: String, vrf := "") -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled or i.vrf != vrf:
+		if not i.enabled or i.vrf != vrf or bfd_down(i):
 			continue
 		for cidr: String in i.ips:
 			var parts := cidr.split("/")
@@ -619,12 +619,42 @@ static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		out.append(cand)
 	return out
 
+static func route_via(dev: Net.NDevice, dst_ip: String) -> String:
+	## the next hop this router would use, or "" if it has no usable path
+	var rt := _route_lookup(dev, dst_ip, "%s|probe" % dst_ip)
+	return String(rt.get("next_hop", "")) if not rt.is_empty() else ""
+
+static func bfd_down(i: Net.Iface) -> bool:
+	## A router only knows its own port is up. Without something watching the
+	## far end, a failure out there leaves the route in place and the traffic
+	## goes into a hole. BFD is what notices.
+	if not i.bfd:
+		return false
+	var l := Game.link_at(i)
+	if l == null:
+		return true
+	var far: Net.Iface = l.b if l.a == i else l.a
+	if not far.bfd:
+		return false  # a session needs both ends; one-sided BFD detects nothing
+	return not far.enabled or far.dev.status != "active"
+
+static func bfd_session(i: Net.Iface) -> String:
+	if not i.bfd:
+		return "down"
+	var l := Game.link_at(i)
+	if l == null:
+		return "admin down"
+	var far: Net.Iface = l.b if l.a == i else l.a
+	if not far.bfd:
+		return "no peer"
+	return "down" if (not far.enabled or far.dev.status != "active") else "up"
+
 static func _all_routes(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 	## every candidate path in one routing table, with the prefix length used
 	var out: Array = []
 	var want_v6 := Net.is_v6(dst_ip)
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled or i.vrf != vrf:
+		if not i.enabled or i.vrf != vrf or bfd_down(i):
 			continue
 		for cidr: String in i.ips:
 			if Net.is_v6(cidr) != want_v6:

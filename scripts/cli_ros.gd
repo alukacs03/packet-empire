@@ -76,6 +76,15 @@ func exec(line: String) -> String:
 			for trow in trows.slice(0, 15):
 				tout += "%-38s %10d\n" % [trow[0], trow[1]]
 			return tout
+		"routing bfd print":
+			var bout := "%-12s %-10s\n" % ["INTERFACE", "SESSION"]
+			var bany := false
+			for bi: Net.Iface in dev.ifaces:
+				if not bi.bfd:
+					continue
+				bany = true
+				bout += "%-12s %-10s\n" % [bi.name, Sim.bfd_session(bi)]
+			return bout if bany else "no bfd sessions\n"
 		"snmp print":
 			return "enabled: %s\ncommunity: %s\n" % ["yes" if dev.snmp != "" else "no",
 				dev.snmp if dev.snmp != "" else "-"]
@@ -108,12 +117,15 @@ func exec(line: String) -> String:
 			return out
 		"interface set":
 			if args.is_empty() or _iface(args[0]) == null:
-				return "usage: /interface set <name> disabled=yes|no mtu=N pvid=N mode=access|trunk\n"
+				return "usage: /interface set <name> disabled=yes|no mtu=N pvid=N mode=access|trunk bfd=yes|no\n"
 			var i := _iface(args[0])
 			if p.has("disabled"):
 				i.enabled = p["disabled"] != "yes"
 			if p.has("mtu") and String(p["mtu"]).is_valid_int():
 				i.mtu = clampi(int(p["mtu"]), 576, 9216)
+			if p.has("bfd"):
+				i.bfd = String(p["bfd"]) == "yes"
+				Game.topology_changed.emit()
 			if p.has("pvid") and String(p["pvid"]).is_valid_int():
 				if dev.type != "switch":
 					return "pvid is for switch ports\n"
@@ -358,7 +370,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"system backup save", "system backup load", "system reboot",
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
-	"snmp set", "snmp print", "ip traffic-flow print",
+	"snmp set", "snmp print", "ip traffic-flow print", "routing bfd print",
 	"interface print", "interface print stats", "interface set",
 	"interface bonding add", "interface bonding print",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",

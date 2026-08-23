@@ -141,6 +141,9 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
 			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
 			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
+			{"m": ["if"], "p": ["bfd"], "h": func(_r): return _bfd(true)},
+			{"m": ["if"], "p": ["no", "bfd"], "h": func(_r): return _bfd(false)},
+			{"m": EP, "p": ["show", "bfd"], "h": _show_bfd},
 			{"m": ["config"], "p": ["spanning-tree", "mode"], "h": _stp_mode},
 			{"m": ["config"], "p": ["spanning-tree", "priority"], "h": _stp_priority},
 			{"m": ["config"], "p": ["spanning-tree", "mst"], "h": _stp_mst},
@@ -1274,6 +1277,23 @@ class EOS extends Session:
 		if dev.capture.is_empty():
 			return "  (no frames captured: generate some traffic)\n"
 		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
+
+	func _bfd(on: bool) -> String:
+		for i: Net.Iface in ctx_ifs:
+			i.bfd = on
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_bfd(_r: Array) -> String:
+		var out := "%-12s %-10s %s\n" % ["Interface", "Session", "Peer"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if not i.bfd:
+				continue
+			any = true
+			out += "%-12s %-10s %s\n" % [EOS._short(i.name), Sim.bfd_session(i),
+				Game.peer_label(i) if Game.peer_label(i) != "" else "-"]
+		return out if any else "no BFD sessions configured\n"
 
 	func _stp_mode(r: Array) -> String:
 		if dev.type != "switch":

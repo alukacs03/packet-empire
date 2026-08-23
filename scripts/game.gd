@@ -2434,6 +2434,7 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.vrrp = si.get("vrrp", {}).duplicate(true)
 		target.lag = int(si.get("lag", 0))
 		target.mlag = int(si.get("mlag", 0))
+		target.bfd = bool(si.get("bfd", false))
 		target.mlag_peerlink = bool(si.get("mlag_peerlink", false))
 		target.helper = si.get("helper", "")
 	topology_changed.emit()
@@ -2444,7 +2445,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
-			"mlag": i.mlag, "mlag_peerlink": i.mlag_peerlink,
+			"mlag": i.mlag, "mlag_peerlink": i.mlag_peerlink, "bfd": i.bfd,
 			"parent": i.parent, "dot1q": i.dot1q,
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
@@ -2582,6 +2583,7 @@ func _apply(data: Dictionary) -> void:
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
 			i.mlag = int(si.get("mlag", 0))
+			i.bfd = bool(si.get("bfd", false))
 			i.mlag_peerlink = bool(si.get("mlag_peerlink", false))
 			i.helper = si.get("helper", "")
 			i.vrf = si.get("vrf", "")
