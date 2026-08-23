@@ -76,6 +76,7 @@ var cli_hist_idx := 0
 var money_lbl: Label
 var cycle_lbl: Label
 var contracts_btn: Button
+var objective_lbl: Label
 var expand_btn: Button
 var theme_res: Theme
 var mono: SystemFont
@@ -125,6 +126,13 @@ func _refresh_attention() -> void:
 
 func _refresh_money() -> void:
 	_refresh_attention()
+	if objective_lbl:
+		var next_c := ""
+		for c in Contracts.all():
+			if c["id"] not in Game.contracts_done:
+				next_c = c["title"]
+				break
+		objective_lbl.text = ("▸ " + next_c) if next_c != "" else "▸ campaign complete"
 	var power := ""
 	if Game.stage >= 1:
 		power = "   ⚡%dW / ❄%dW" % [Game.power_draw(), Game.cooling_capacity()]
@@ -321,6 +329,9 @@ func _build_toolbar() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(spacer)
+	objective_lbl = _label("", 13, Color(0.65, 0.8, 0.9))
+	objective_lbl.tooltip_text = "Current campaign objective: details in Contracts"
+	h.add_child(objective_lbl)
 	cycle_lbl = _label("", 13, Color(0.5, 0.58, 0.7))
 	cycle_lbl.add_theme_font_override("font", mono)
 	cycle_lbl.tooltip_text = "Time to the next revenue cycle: fees, bills, SLA checks"
@@ -1070,6 +1081,9 @@ func _build_market_section() -> void:
 			Game.repay()
 			_refresh_contracts())
 		bank.add_child(repay)
+	var delta := Game.last_cycle_delta
+	contracts_box.add_child(_label("last cycle: %s$%d net" % ["+" if delta >= 0 else "-", absi(delta)],
+		13, Color(0.55, 0.9, 0.6) if delta >= 0 else Color(0.95, 0.6, 0.45)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	if not Game.events.is_empty():
 		contracts_box.add_child(_section("EVENT LOG"))

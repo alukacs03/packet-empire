@@ -157,6 +157,7 @@ const SLA_PERIOD := 45.0  # seconds per billing cycle
 
 var sla_status := {}  # contract id -> bool (last billing check passed)
 var last_link_load := {}  # Link -> Mbps, from the latest cycle
+var last_cycle_delta := 0
 var cycle_timer: Timer
 
 func _ready() -> void:
@@ -345,6 +346,7 @@ func sla_tick() -> void:
 			offers.erase(offer)
 	if offers.size() < 2 and contracts_done.size() >= 2 and randf() < 0.7:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
+	last_cycle_delta = earned
 	if earned > 0:
 		stats["earned"] += earned
 	if earned != 0:

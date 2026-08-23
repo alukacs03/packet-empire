@@ -3,8 +3,9 @@ class_name Market
 ## negotiation, and live sim-verified delivery checks for accepted deals.
 
 const NAMES := ["Vertex", "Kiskacsa", "Nimbus", "Turul", "BlueFin", "Paprika",
-	"Quantum", "Hollo", "Solaris", "Duna", "Astra", "Fecske"]
-const SUFFIX := ["Kft", "Zrt", "Ltd", "GmbH", "Bt"]
+	"Quantum", "Hollo", "Solaris", "Duna", "Astra", "Fecske", "Balaton", "Mokus",
+	"Northwind", "Csillag", "Ironclad", "Tisza", "Lumen", "Rakoczi", "Obsidian", "Puli"]
+const SUFFIX := ["Kft", "Zrt", "Ltd", "GmbH", "Bt", "Nyrt", "e.V.", "s.r.o."]
 
 # kind -> {base budget, spread, blurb template, cost guidance}
 const KINDS := {
