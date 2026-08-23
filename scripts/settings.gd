@@ -9,6 +9,7 @@ signal changed
 var ui_scale := 1.0
 var fullscreen := false
 var colourblind := false
+var sound := true
 
 func _ready() -> void:
 	load_prefs()
@@ -23,17 +24,19 @@ func load_prefs() -> void:
 	ui_scale = float(data.get("ui_scale", 1.0))
 	fullscreen = bool(data.get("fullscreen", false))
 	colourblind = bool(data.get("colourblind", false))
+	sound = bool(data.get("sound", true))
 
 func save_prefs() -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
-			"colourblind": colourblind}))
+			"colourblind": colourblind, "sound": sound}))
 
 func apply() -> void:
 	if DisplayServer.get_name() != "headless":
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen
 			else DisplayServer.WINDOW_MODE_WINDOWED)
+	Sfx.muted = not sound
 	save_prefs()
 	changed.emit()
 

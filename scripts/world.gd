@@ -22,6 +22,8 @@ func _ready() -> void:
 	ui = UILayer.new()
 	add_child(ui)
 	add_child(Techs.new())
+	Sfx.install(self)
+	Sfx.muted = not Prefs.sound
 	get_tree().root.content_scale_factor = Prefs.ui_scale
 	Game.topology_changed.connect(queue_redraw)
 	if OS.get_environment("PACKET_SHOT") != "":

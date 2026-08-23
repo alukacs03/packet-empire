@@ -681,6 +681,7 @@ func try_complete_contract(c: Dictionary) -> bool:
 		if not r["t"].call():
 			return false
 	contracts_done.append(c["id"])
+	Sfx.play("good")
 	if Contracts.SUPERSEDES.has(c["id"]):
 		sla_status[Contracts.SUPERSEDES[c["id"]]] = true  # retire immediately, no stale breach
 	stats["contracts"] += 1
@@ -1743,6 +1744,7 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	if not can_link(a, b):
 		return false  # different sites need a leased circuit first
 	links.append(Net.Link.new(a, b))
+	Sfx.play("cable")
 	topology_changed.emit()
 	return true
 

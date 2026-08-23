@@ -128,6 +128,7 @@ func _menu_button(text: String, sub: String, primary: bool) -> Button:
 	b.add_theme_stylebox_override("pressed", _sb(base.darkened(0.15), ACCENT, 8, 12))
 	b.add_theme_stylebox_override("focus", _sb(base.lightened(0.06), ACCENT, 8, 12))
 	b.add_theme_color_override("font_color", Color(0.9, 0.94, 1.0))
+	b.pressed.connect(func() -> void: Sfx.play("click"))
 	return b
 
 func _build_menu() -> void:
@@ -273,6 +274,14 @@ func show_settings() -> void:
 		Prefs.fullscreen = on
 		Prefs.apply())
 	panel_box.add_child(fs)
+	var snd := CheckButton.new()
+	snd.text = "Sound"
+	snd.button_pressed = Prefs.sound
+	snd.toggled.connect(func(on: bool) -> void:
+		Prefs.sound = on
+		Prefs.apply()
+		Sfx.play("click"))
+	panel_box.add_child(snd)
 	var cb := CheckButton.new()
 	cb.text = "Colourblind-friendly status colours"
 	cb.button_pressed = Prefs.colourblind

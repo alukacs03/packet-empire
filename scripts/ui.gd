@@ -126,6 +126,7 @@ func _ready() -> void:
 	_refresh_money()
 
 func _money_flash() -> void:
+	Sfx.play("money")
 	money_lbl.modulate = Color(1.6, 1.6, 1.2)
 	create_tween().tween_property(money_lbl, "modulate", Color.WHITE, 0.5)
 
@@ -148,6 +149,7 @@ func _refresh_attention() -> void:
 
 func hud_toast(text: String, good := false) -> void:
 	## a short message on the HUD, for actions that would otherwise fail silently
+	Sfx.play("good" if good else "bad")
 	if hud_msg == null:
 		hud_msg = _label("", 15, Color(1.0, 0.8, 0.5))
 		hud_msg.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -306,6 +308,7 @@ func _section(text: String) -> Label:
 	return _label(text, 11, Color(0.5, 0.58, 0.72))
 
 func _show_overlay(o: Control) -> void:
+	Sfx.play("open")
 	o.modulate.a = 0.0
 	o.visible = true
 	_fit_cards.call_deferred()
@@ -1564,6 +1567,7 @@ func _build_menu() -> void:
 			"Fullscreen: %s" % ("on" if Prefs.fullscreen else "off"),
 			"Interface scale: %d%%" % int(Prefs.ui_scale * 100),
 			"Colourblind-friendly status colours: %s" % ("on" if Prefs.colourblind else "off"),
+			"Sound: %s" % ("on" if Prefs.sound else "off"),
 		], func(id: int) -> void:
 			match id:
 				0:
@@ -1575,6 +1579,8 @@ func _build_menu() -> void:
 					get_tree().root.content_scale_factor = Prefs.ui_scale
 				2:
 					Prefs.colourblind = not Prefs.colourblind
+				3:
+					Prefs.sound = not Prefs.sound
 			Prefs.apply()
 			hud_toast("Setting applied.", true)))
 	v.add_child(prefs_btn)

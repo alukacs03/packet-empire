@@ -171,6 +171,15 @@ static func ui_smoke(world: Node2D) -> int:
 		"demo: a new game starts from nothing")
 	check(Game.company_name == "Test Co" and Game.demo, "demo: the new game keeps its name")
 	Game._apply(saved_state)
+	Sfx.install(world)
+	check(Sfx._bank.has("good") and Sfx._bank["good"] is AudioStreamWAV,
+		"sfx: cues are generated at startup, not shipped as files")
+	check(Sfx._bank["good"].data.size() > 1000, "sfx: a cue has actual samples in it")
+	Sfx.play("good")
+	Sfx.muted = true
+	Sfx.play("bad")  # muted: must not raise
+	Sfx.muted = false
+	Sfx.play("no-such-cue")  # unknown: must not raise
 	var crew := Techs.new()
 	world.add_child(crew)
 	check(crew.people.size() >= 2, "floor: the room is never empty of people")
