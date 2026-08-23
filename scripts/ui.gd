@@ -52,6 +52,7 @@ var if_cable_lbl: Label
 var if_cable_btn: Button
 var if_peer_btn: Button
 
+var help_overlay: Control
 var pedia_overlay: Control
 var pedia_body: RichTextLabel
 var menu_overlay: Control
@@ -93,6 +94,7 @@ func _ready() -> void:
 	_build_welcome()
 	_build_map()
 	_build_menu()
+	_build_help()
 	_build_pedia()
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
@@ -170,7 +172,7 @@ func _process(_dt: float) -> void:
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
-		or menu_overlay.visible or pedia_overlay.visible
+		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -347,6 +349,7 @@ func _build_toolbar() -> void:
 	var hint := _label("Q select   ·   R place rack   ·   right-drag pan   ·   scroll zoom   ·   Esc back", 12, Color(0.45, 0.5, 0.62))
 	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	hint.position = Vector2(20, -30)
+	hint.text = "Q select  ·  R place rack  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
 	hint.theme = theme_res
 	add_child(hint)
 
@@ -888,6 +891,52 @@ func _build_pedia() -> void:
 func open_pedia() -> void:
 	_show_overlay(pedia_overlay)
 
+# ---------- keyboard help ----------
+
+func _build_help() -> void:
+	help_overlay = _overlay()
+	var v := _card(help_overlay, 620)
+	var t := _header(v, func() -> void: help_overlay.visible = false)
+	t.text = "Keys and controls"
+	var rows := [
+		["FLOOR", ""],
+		["Q / R", "select mode / place-rack mode"],
+		["M", "logical topology map"],
+		["F1", "this help"],
+		["Esc", "system menu (save, new game, incident drill, quit)"],
+		["right / middle drag", "pan the floor"],
+		["scroll wheel", "zoom toward the cursor"],
+		["VIEWS", ""],
+		["click rack", "open the rack cabinet"],
+		["click device", "open its front panel"],
+		["click port", "interface editor (addresses, VLAN, cabling)"],
+		["Esc", "back one level"],
+		["CONSOLE", ""],
+		["Tab", "complete the command or list candidates"],
+		["?", "show what is possible at this point"],
+		["Up / Down", "command history"],
+		["clear", "wipe the screen"],
+		["ssh <ip>", "jump into another device's CLI (exit returns)"],
+		["Esc", "close the console"],
+	]
+	for row in rows:
+		if row[1] == "":
+			v.add_child(_section(row[0]))
+			continue
+		var h := HBoxContainer.new()
+		var k := _label(row[0], 14, Color(0.6, 0.9, 1.0))
+		k.add_theme_font_override("font", mono)
+		k.custom_minimum_size = Vector2(180, 0)
+		h.add_child(k)
+		h.add_child(_label(row[1], 14, Color(0.78, 0.82, 0.9)))
+		v.add_child(h)
+
+func toggle_help() -> void:
+	if help_overlay.visible:
+		help_overlay.visible = false
+	else:
+		_show_overlay(help_overlay)
+
 # ---------- system menu ----------
 
 func _build_menu() -> void:
@@ -957,6 +1006,7 @@ func _show_drill_banner() -> void:
 	for c in drill_box.get_children():
 		c.queue_free()
 	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
+	drill_box.add_child(_label(Drill.scenario, 13, Color(0.9, 0.85, 0.8)))
 	drill_box.add_child(_label("Something is broken. Restore connectivity between:", 13, Color(0.85, 0.8, 0.78)))
 	for pair in Drill.targets:
 		var a := Sim._ip_owner(pair[0])
@@ -1249,6 +1299,9 @@ func _build_market_section() -> void:
 				spec_bits.append("%s: %s" % [k, str(deal["params"][k])])
 			if not spec_bits.is_empty():
 				detail += "   [" + ", ".join(PackedStringArray(spec_bits)) + "]"
+			var missed_n: int = int(deal.get("missed", 0))
+			if missed_n >= 3:
+				detail += "   ⚠ undelivered %d cycles: they walk at 5" % missed_n
 			if detail != "":
 				var dl := _label("      " + detail, 12,
 					Color(0.6, 0.66, 0.76) if ok else Color(0.8, 0.68, 0.6))
@@ -1452,6 +1505,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					_show_overlay(rack_overlay)
+		elif help_overlay.visible:
+			help_overlay.visible = false
 		elif pedia_overlay.visible:
 			pedia_overlay.visible = false
 		elif menu_overlay.visible:

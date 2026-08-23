@@ -50,6 +50,8 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.close_contracts()
 	ui.toggle_map()
 	ui.toggle_map()
+	ui.toggle_help()
+	ui.toggle_help()
 	ui.open_pedia()
 	ui.pedia_overlay.visible = false
 	ui.toggle_menu()
@@ -812,11 +814,27 @@ static func run() -> int:
 	check(Game.try_complete_contract(_contract("bandwidth_crunch")), "capacity: bandwidth-crunch contract verifies")
 	Game.deals.erase(cap_deal)
 
+	# --- undelivered deals cancel ---
+	var ghost := {"id": "ghost", "customer": "NoShow Kft", "kind": "hosting",
+		"params": {"ip": "10.222.222.10"}, "fee": 50, "brief": "", "load": 100, "healthy": false}
+	Game.deals.append(ghost)
+	for i in 4:
+		Game.sla_tick()
+	check(ghost in Game.deals and int(ghost["missed"]) == 4, "deal: undelivered deal accrues missed cycles")
+	Game.sla_tick()
+	check(not (ghost in Game.deals), "deal: five undelivered cycles cancels the deal")
+	var cancelled := false
+	for ev in Game.events:
+		if "CANCELLED" in ev:
+			cancelled = true
+	check(cancelled, "deal: cancellation is logged")
+
 	# --- incident drills ---
 	var pre_devs := Game.all_devices().size()
 	var pre_money := Game.money
 	Drill.start(3, 42)
-	check(Game.drill_active and Drill.faults.size() == 3, "drill: starts with three hidden faults")
+	check(Game.drill_active and Drill.faults.size() >= 2, "drill: starts with hidden faults")
+	check(Drill.scenario != "" and not Drill.targets.is_empty(), "drill: scenario named with targets")
 	check(not Drill.solved(), "drill: the generated network is actually broken")
 	var pre_cycle := Game.cycle
 	Game.sla_tick()
@@ -824,10 +842,16 @@ static func run() -> int:
 	Drill.cheat_fix()
 	check(Drill.solved(), "drill: reverting the faults restores all pings")
 	var revealed: Array = Drill.finish(true)
-	check(not Game.drill_active and revealed.size() == 3, "drill: finish reveals the fault list")
+	check(not Game.drill_active and revealed.size() >= 2, "drill: finish reveals the fault list")
 	check(Game.all_devices().size() == pre_devs, "drill: the real datacenter came back intact")
 	check(Game.money == pre_money + Drill.REWARD, "drill: passing pays the bonus")
 	check(Drill.finish(false).is_empty(), "drill: finishing with no drill running is a no-op")
+	for sc_seed in [1, 2, 3, 4, 5, 6]:  # every scenario must be solvable from its faults
+		Drill.start(3, sc_seed)
+		Drill.cheat_fix()
+		var ok_sc: bool = Drill.solved()
+		Drill.finish(false)
+		check(ok_sc, "drill: scenario (seed %d) is solvable after reverting faults" % sc_seed)
 	Drill.start(2, 7)
 	var during := Game.all_devices().size()
 	Drill.finish(false)  # the quit path: abandon restores before saving

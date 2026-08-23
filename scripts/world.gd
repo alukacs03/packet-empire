@@ -71,6 +71,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				mode = Mode.PLACE_RACK
 			KEY_M:
 				ui.toggle_map()
+			KEY_F1:
+				ui.toggle_help()
 			KEY_ESCAPE:
 				mode = Mode.SELECT
 	elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:

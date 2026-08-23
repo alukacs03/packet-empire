@@ -11,17 +11,97 @@ static var faults: Array = []  # descriptions, revealed on abandon
 static var _cast := {}  # role -> device/iface built by _build
 static var targets: Array = []  # [[ip_a, ip_b], ...] pairs that must ping
 
+static var scenario := ""
+
 static func start(n_breaks := 3, rng_seed := -1) -> void:
 	_snap = Game.snapshot()
 	Game.drill_active = true
 	Game.racks = []
 	Game.links = []
-	_build()
+	var rng := RandomNumberGenerator.new()
+	if rng_seed >= 0:
+		rng.seed = rng_seed
+	else:
+		rng.randomize()
+	match rng.randi() % 3:
+		0:
+			_build()
+		1:
+			_build_tenants()
+		_:
+			_build_core()
 	_break(n_breaks, rng_seed)
 	Game.topology_changed.emit()
 
+static func _build_tenants() -> void:
+	## two tenants in VLANs 10/20 stretched over a trunk between two switches
+	scenario = "Two tenants, two switches: VLAN 10 must span the trunk."
+	var r1 := Game.add_rack(Vector2i(0, 0))
+	var r2 := Game.add_rack(Vector2i(1, 0))
+	var sw1 := Game.new_device("sw-8")
+	var sw2 := Game.new_device("sw-8")
+	var a := Game.new_device("srv-1")
+	var b := Game.new_device("srv-1")
+	var beta := Game.new_device("srv-1")
+	r1.slots[0] = sw1
+	r1.slots[1] = a
+	r2.slots[0] = sw2
+	r2.slots[1] = b
+	r2.slots[2] = beta
+	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
+	Game.connect_ifaces(b.ifaces[0], sw2.ifaces[0])
+	Game.connect_ifaces(beta.ifaces[0], sw2.ifaces[1])
+	Game.connect_ifaces(sw1.ifaces[3], sw2.ifaces[3])
+	for sw in [sw1, sw2]:
+		Game.add_vlan(sw, 10, "alfa")
+		Game.add_vlan(sw, 20, "beta")
+		sw.ifaces[3].mode = "trunk"
+	sw1.ifaces[0].untagged_vlan = 10
+	sw2.ifaces[0].untagged_vlan = 10
+	sw2.ifaces[1].untagged_vlan = 20
+	Game.add_ip(a.ifaces[0], "10.71.0.10/24")
+	Game.add_ip(b.ifaces[0], "10.71.0.20/24")
+	Game.add_ip(beta.ifaces[0], "10.71.0.30/24")
+	targets = [["10.71.0.10", "10.71.0.20"]]
+	_cast = {"sw1": sw1, "sw2": sw2, "a": a, "b": b,
+		"trunk": sw1.ifaces[3], "access_a": sw1.ifaces[0], "access_vlan": 10}
+
+static func _build_core() -> void:
+	## three subnets behind two routers joined by a transit link
+	scenario = "Routed core: three subnets, two routers, static routes."
+	var r1 := Game.add_rack(Vector2i(0, 0))
+	var r2 := Game.add_rack(Vector2i(1, 0))
+	var rt1 := Game.new_device("rtr-lite")
+	var rt2 := Game.new_device("rtr-lite")
+	var sw1 := Game.new_device("sw-8")
+	var a := Game.new_device("srv-1")
+	var b := Game.new_device("srv-1")
+	r1.slots[0] = rt1
+	r1.slots[1] = sw1
+	r1.slots[2] = a
+	r2.slots[0] = rt2
+	r2.slots[1] = b
+	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
+	Game.connect_ifaces(rt1.ifaces[0], sw1.ifaces[1])
+	Game.connect_ifaces(rt1.ifaces[1], rt2.ifaces[1])
+	Game.connect_ifaces(b.ifaces[0], rt2.ifaces[0])
+	Game.add_ip(a.ifaces[0], "10.72.1.10/24")
+	Game.add_ip(rt1.ifaces[0], "10.72.1.1/24")
+	Game.add_ip(rt1.ifaces[1], "10.72.9.1/30")
+	Game.add_ip(rt2.ifaces[1], "10.72.9.2/30")
+	Game.add_ip(rt2.ifaces[0], "10.72.2.1/24")
+	Game.add_ip(b.ifaces[0], "10.72.2.10/24")
+	Game.add_static_route(a, "0.0.0.0", 0, "10.72.1.1")
+	Game.add_static_route(b, "0.0.0.0", 0, "10.72.2.1")
+	Game.add_static_route(rt1, "10.72.2.0", 24, "10.72.9.2")
+	Game.add_static_route(rt2, "10.72.1.0", 24, "10.72.9.1")
+	targets = [["10.72.1.10", "10.72.2.10"]]
+	_cast = {"sw1": sw1, "a": a, "b": b, "rtr": rt1, "rtr2": rt2,
+		"access_a": sw1.ifaces[0], "route_dev": rt1}
+
 static func _build() -> void:
 	## two switched segments joined by a trunk, plus a routed second subnet
+	scenario = "Flat LAN plus a routed subnet behind the gateway."
 	var r1 := Game.add_rack(Vector2i(0, 0))
 	var r2 := Game.add_rack(Vector2i(1, 0))
 	var sw1 := Game.new_device("sw-8")
@@ -74,30 +154,37 @@ static func _break(n: int, rng_seed: int) -> void:
 		func() -> void:
 			port.enabled = false
 			_undo.append(func() -> void: port.enabled = true)])
-	var vict_sw: Net.NDevice = _cast["sw1"]
-	var acc: Net.Iface = _cast["access_a"]
-	pool.append(["%s %s was moved to a wrong VLAN" % [vict_sw.name, acc.name],
-		func() -> void:
-			Game.add_vlan(vict_sw, 99, "wrong")
-			acc.untagged_vlan = 99
-			_undo.append(func() -> void: acc.untagged_vlan = 1)])
-	var gw_srv: Net.NDevice = _cast["b"]
-	pool.append(["%s lost its default route" % gw_srv.name,
-		func() -> void:
-			var old: Array = gw_srv.static_routes.duplicate(true)
-			gw_srv.static_routes = []
-			_undo.append(func() -> void: gw_srv.static_routes = old)])
-	var trunk_if: Net.Iface = _cast["trunk"]
-	pool.append(["the inter-switch trunk was pruned to the wrong VLAN list",
-		func() -> void:
-			trunk_if.tagged_vlans = [42]
-			_undo.append(func() -> void: trunk_if.tagged_vlans = [])])
-	var ip_srv: Net.NDevice = _cast["a"]
-	pool.append(["%s was readdressed into the wrong subnet" % ip_srv.name,
-		func() -> void:
-			var old_ips: Array = ip_srv.ifaces[0].ips.duplicate()
-			ip_srv.ifaces[0].ips = ["10.77.1.10/24"]
-			_undo.append(func() -> void: ip_srv.ifaces[0].ips = old_ips)])
+	if _cast.has("sw1") and _cast.has("access_a"):
+		var vict_sw: Net.NDevice = _cast["sw1"]
+		var acc: Net.Iface = _cast["access_a"]
+		var good_vlan: int = int(_cast.get("access_vlan", 1))
+		pool.append(["%s %s was moved to a wrong VLAN" % [vict_sw.name, acc.name],
+			func() -> void:
+				Game.add_vlan(vict_sw, 99, "wrong")
+				acc.untagged_vlan = 99
+				_undo.append(func() -> void: acc.untagged_vlan = good_vlan)])
+	for role in ["b", "route_dev"]:
+		if _cast.has(role):
+			var gw_srv: Net.NDevice = _cast[role]
+			if not gw_srv.static_routes.is_empty():
+				pool.append(["%s lost a route it needs" % gw_srv.name,
+					func() -> void:
+						var old: Array = gw_srv.static_routes.duplicate(true)
+						gw_srv.static_routes = []
+						_undo.append(func() -> void: gw_srv.static_routes = old)])
+	if _cast.has("trunk"):
+		var trunk_if: Net.Iface = _cast["trunk"]
+		pool.append(["the inter-switch trunk was pruned to the wrong VLAN list",
+			func() -> void:
+				trunk_if.tagged_vlans = [42]
+				_undo.append(func() -> void: trunk_if.tagged_vlans = [])])
+	if _cast.has("a"):
+		var ip_srv: Net.NDevice = _cast["a"]
+		pool.append(["%s was readdressed into the wrong subnet" % ip_srv.name,
+			func() -> void:
+				var old_ips: Array = ip_srv.ifaces[0].ips.duplicate()
+				ip_srv.ifaces[0].ips = ["10.77.1.10/24"]
+				_undo.append(func() -> void: ip_srv.ifaces[0].ips = old_ips)])
 	# apply n distinct faults
 	var order := range(pool.size())
 	for i in order.size():

@@ -324,11 +324,22 @@ func sla_tick() -> void:
 			for l in used:
 				link_load[l] = link_load.get(l, 0) + int(deal.get("load", 200))
 	last_link_load = link_load
-	for deal in deals:
+	for deal in deals.duplicate():
 		if not deal["healthy"]:
 			reputation = maxi(0, reputation - 3)
 			deal["degraded"] = false
+			deal["missed"] = int(deal.get("missed", 0)) + 1
+			var missed: int = deal["missed"]
+			if missed == 3:
+				log_event("%s is losing patience: deliver their service or they walk in 2 cycles."
+					% deal["customer"])
+			elif missed >= 5:
+				deals.erase(deal)
+				reputation = maxi(0, reputation - 10)
+				log_event("CANCELLED: %s gave up waiting and took their business elsewhere."
+					% deal["customer"])
 			continue
+		deal["missed"] = 0
 		var congested := false
 		for l in deal_links.get(deal["id"], []):
 			if link_load[l] > link_capacity(l):
