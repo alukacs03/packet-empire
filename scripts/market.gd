@@ -20,6 +20,9 @@ const KINDS := {
 	"public_hosting": {"base": 220, "spread": 160,
 		"brief": "We want a public web presence: host our server at %s and make it reachable FROM THE INTERNET (your upstream must be able to reach it — think BGP announcement or NAT... announcement, since it must accept inbound).",
 		"costs": "A server + working transit (uplink, BGP session, prefix announced). Premium tier."},
+	"redundant_gw": {"base": 260, "spread": 180,
+		"brief": "After last month's outage we demand a redundant gateway: virtual IP %s served by TWO routers (VRRP), and our server must use it as its default gateway.",
+		"costs": "Two routers + VRRP config. Expensive to build, princely to rent."},
 	"managed_switch": {"base": 110, "spread": 90,
 		"brief": "We want a managed network segment: our own VLAN %s on one of your switches — and we insist the switch itself is properly managed (an addressed Management port). We audit.",
 		"costs": "A switchport + VLAN + OOB management on that switch. Cheap if your house is in order."},
@@ -34,6 +37,8 @@ static func gen_offer() -> Dictionary:
 	var kinds: Array = KINDS.keys()
 	if not _has_uplink():
 		kinds.erase("public_hosting")  # nobody asks before you have transit
+	if Game.stage < 1:
+		kinds.erase("redundant_gw")  # colo customers aren't that fancy
 	var kind: String = kinds[randi() % kinds.size()]
 	var spec: Dictionary = KINDS[kind]
 	var params := {}
@@ -42,6 +47,9 @@ static func gen_offer() -> Dictionary:
 		"hosting", "secure_host", "public_hosting":
 			params["ip"] = "10.%d.%d.10" % [randi() % 180 + 20, randi() % 250]
 			subject = params["ip"]
+		"redundant_gw":
+			params["vip"] = "10.%d.%d.1" % [randi() % 180 + 20, randi() % 250]
+			subject = params["vip"]
 		"own_vlan", "managed_switch":
 			params["vid"] = randi() % 900 + 100
 			subject = str(params["vid"])
@@ -100,6 +108,22 @@ static func check(kind: String, params: Dictionary) -> bool:
 					if i.mode == "access" and i.untagged_vlan == vid and Game.link_at(i) \
 							and Game.link_at(i).other(i).dev.type == "server":
 						return true
+			return false
+		"redundant_gw":
+			var vip: String = params["vip"]
+			var members := 0
+			for d in Game.all_devices():
+				if d.ip_forwarding:
+					for i: Net.Iface in d.ifaces:
+						if i.vrrp.get("vip", "") == vip:
+							members += 1
+			if members < 2:
+				return false
+			for d in Game.all_devices():
+				if d.type == "server":
+					for r in d.static_routes:
+						if r["via"] == vip and Sim.ping(d, vip)["ok"]:
+							return true
 			return false
 		"managed_switch":
 			var vid2: int = int(params["vid"])

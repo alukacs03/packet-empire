@@ -195,6 +195,21 @@ func _security_sweep() -> int:
 				break
 	return cost
 
+func _field_fault() -> void:
+	## the on-call life: a random in-use port develops a fault
+	var candidates: Array = []
+	for l in links:
+		for i in [l.a, l.b]:
+			if i.enabled and not i.name.begins_with("Management"):
+				candidates.append(i)
+	if candidates.is_empty():
+		return
+	var victim: Net.Iface = candidates[randi() % candidates.size()]
+	victim.enabled = false
+	log_event("FIELD: link fault on %s %s — port went down. Find it (Map, lldp, counters) and re-enable it!"
+		% [victim.dev.name, victim.name])
+	topology_changed.emit()
+
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees — but only while
 	## their requirements still hold. Break the network, lose the revenue.
@@ -232,6 +247,8 @@ func sla_tick() -> void:
 				d.status = "offline"
 				topology_changed.emit()
 				break
+	if stage >= 2 and randf() < 0.25:
+		_field_fault()
 	for deal in deals:
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
 		if deal["healthy"]:

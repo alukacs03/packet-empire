@@ -815,7 +815,12 @@ class Linux extends Session:
 				return "usage: dns add <name> <ip> | dns list\n"
 			"nslookup":
 				if t.size() != 2:
-					return "usage: nslookup <name>\n"
+					return "usage: nslookup <name|ip>\n"
+				if String(t[1]).is_valid_ip_address():
+					var nm := Sim.reverse_lookup(dev, t[1])
+					if nm == "":
+						return "** server can't find %s (no PTR)\n" % t[1]
+					return "%s   name = %s\n" % [t[1], nm]
 				var addr := Sim.resolve(dev, t[1])
 				if addr == "":
 					return "** server can't find %s (resolver: %s)\n" % [t[1], dev.resolver if dev.resolver else "none set"]

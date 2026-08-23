@@ -96,6 +96,18 @@ static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			if i.mac == p["mac"]:
 				_dhcp_offer = p
 
+static func reverse_lookup(dev: Net.NDevice, ip: String) -> String:
+	## PTR-style: ask the resolver which name maps to this address
+	if dev.resolver == "":
+		return ""
+	_dns_id += 1
+	_dns_results = []
+	_send_ip(dev, dev.resolver, 64, {"proto": "dns", "q": ip, "id": _dns_id})
+	for r in _dns_results:
+		if r["id"] == _dns_id and r["q"] == ip:
+			return r["answer"]
+	return ""
+
 static func resolve(dev: Net.NDevice, name: String) -> String:
 	## DNS lookup via the device's configured resolver. Returns "" on failure.
 	if name.is_valid_ip_address():
@@ -491,6 +503,11 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			var recs: Dictionary = dev.services.get("dns", {}).get("records", {})
 			if recs.has(l4["q"]):
 				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"], "answer": recs[l4["q"]], "id": l4["id"]})
+			elif String(l4["q"]).is_valid_ip_address():
+				for nm in recs:  # synthesized PTR from A records
+					if recs[nm] == l4["q"]:
+						_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"], "answer": nm, "id": l4["id"]})
+						break
 		elif l4["proto"] == "dns-resp":
 			_dns_results.append(l4)
 	elif dev.ip_forwarding:

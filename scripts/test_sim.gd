@@ -579,5 +579,21 @@ static func run() -> int:
 	vr1.status = "active"
 	Game.topology_changed.emit()
 
+	# --- field faults, redundant-gw offers, reverse DNS ---
+	Game._field_fault()
+	var faulted: Net.Iface = null
+	for l in Game.links:
+		for ifc in [l.a, l.b]:
+			if not ifc.enabled and not ifc.name.begins_with("Management"):
+				faulted = ifc
+	check(faulted != null and "FIELD" in Game.events[0], "field: a fault takes a port down and logs it")
+	if faulted:
+		faulted.enabled = true
+		Game.topology_changed.emit()
+	check(Market.check("redundant_gw", {"vip": "10.40.0.1"}), "market: redundant-gw kind verifies the VRRP setup")
+	check(not Market.check("redundant_gw", {"vip": "10.99.99.1"}), "market: redundant-gw fails for absent vip")
+	check(cls_.exec("nslookup 10.2.0.10").contains("www.delta.hu"), "dns: reverse lookup finds the name")
+	check(cls_.exec("nslookup 10.2.0.77").contains("no PTR"), "dns: reverse lookup fails cleanly")
+
 	print("---- %d failures" % fails)
 	return fails
