@@ -22,6 +22,44 @@ static func check(cond: bool, msg: String) -> void:
 	if not cond:
 		fails += 1
 
+static func ui_smoke(world: Node2D) -> int:
+	## Exercise every overlay so UI-only runtime errors surface in CI output.
+	print("---- ui smoke ----")
+	var ui := UILayer.new()
+	world.add_child(ui)
+	var r: Net.Rack = Game.racks[0]
+	var dev: Net.NDevice = null
+	for d in Game.all_devices():
+		if d.type == "server":
+			dev = d
+	ui.show_welcome()
+	ui.welcome_overlay.visible = false
+	ui.open_rack(r)
+	ui.open_dev(dev)
+	ui._toggle_cli()
+	ui.cli_in.text = "ip addr"
+	ui._cli_submit("ip addr")
+	ui._cli_submit("ssh 10.40.0.2")
+	ui._cli_submit("exit")
+	ui._toggle_cli()
+	ui.open_iface(dev.ifaces[0])
+	ui.close_iface()
+	ui.close_dev()
+	ui.close_rack()
+	ui.open_contracts()
+	ui.close_contracts()
+	ui.toggle_map()
+	ui.toggle_map()
+	ui.open_pedia()
+	ui.pedia_overlay.visible = false
+	ui.toggle_menu()
+	ui.menu_overlay.visible = false
+	ui._refresh_tutorial()
+	ui._refresh_money()
+	print("PASS  ui: all overlays opened and refreshed without script errors")
+	check(true, "ui: smoke complete")
+	return fails
+
 static func run() -> int:
 	fails = 0
 	Game.money = 1000000

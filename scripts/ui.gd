@@ -37,6 +37,7 @@ var if_mac: Label
 var if_enabled: CheckButton
 var if_mtu: LineEdit
 var if_nat: OptionButton
+var if_vrrp_lbl: Label
 var if_nat_row: HBoxContainer
 var if_mode: OptionButton
 var if_vlan: OptionButton
@@ -640,6 +641,9 @@ func _build_if_overlay() -> void:
 	if_mac = _label("", 13, MUTED)
 	if_mac.add_theme_font_override("font", mono)
 	v.add_child(if_mac)
+	if_vrrp_lbl = _label("", 13, Color(0.7, 0.85, 0.75))
+	if_vrrp_lbl.add_theme_font_override("font", mono)
+	v.add_child(if_vrrp_lbl)
 
 	var row1 := HBoxContainer.new()
 	v.add_child(row1)
@@ -800,6 +804,13 @@ func _refresh_iface() -> void:
 	if cur_if.ips.is_empty():
 		if_ip_box.add_child(_label("  none", 13, Color(0.45, 0.5, 0.6)))
 	if_ip_hint.text = ""
+	if cur_if.vrrp.is_empty():
+		if_vrrp_lbl.text = ""
+	else:
+		var master := Sim.vrrp_master(cur_if.vrrp["vip"], int(cur_if.vrrp["group"]))
+		if_vrrp_lbl.text = "VRRP group %d  vip %s  prio %d  (%s)" % [int(cur_if.vrrp["group"]),
+			cur_if.vrrp["vip"], int(cur_if.vrrp.get("priority", 100)),
+			"Master" if master == cur_if.dev else "Backup"]
 	var peer := Game.peer_label(cur_if)
 	if peer == "":
 		if_cable_lbl.text = "Cable: not connected"

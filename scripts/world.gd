@@ -14,6 +14,8 @@ var ui: UILayer
 func _ready() -> void:
 	if OS.get_environment("PACKET_TEST") == "1":
 		var fails: int = SimTests.run()
+		if fails == 0:
+			fails = SimTests.ui_smoke(self)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
 	ui = UILayer.new()
