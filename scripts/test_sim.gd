@@ -155,5 +155,19 @@ static func run() -> int:
 	check(not Game.try_complete_contract(cs[0]), "contracts: no double collection")
 	check(Game.money == money0 + 900, "contracts: rewards paid once")
 
+	# --- SLA recurring revenue ---
+	var m1 := Game.money
+	Game.sla_tick()
+	check(Game.money == m1 + 40 + 50, "sla: healthy contracts pay recurring fees")
+	var a3 := _dev_named(a.name)
+	a3.ifaces[0].enabled = false
+	Game.topology_changed.emit()
+	var m2 := Game.money
+	Game.sla_tick()
+	check(Game.money < m2 + 90, "sla: broken network stops (part of) the revenue")
+	check(Game.sla_status.values().has(false), "sla: breach is flagged for the UI")
+	a3.ifaces[0].enabled = true
+	Game.topology_changed.emit()
+
 	print("---- %d failures" % fails)
 	return fails

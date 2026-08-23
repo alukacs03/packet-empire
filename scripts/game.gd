@@ -41,8 +41,36 @@ func try_complete_contract(c: Dictionary) -> bool:
 	money_changed.emit()
 	return true
 
+const SLA_PERIOD := 45.0  # seconds per billing cycle
+
+var sla_status := {}  # contract id -> bool (last billing check passed)
+
 func _ready() -> void:
 	topology_changed.connect(Sim.flush_learned_state)
+	var t := Timer.new()
+	t.wait_time = SLA_PERIOD
+	t.autostart = true
+	t.timeout.connect(sla_tick)
+	add_child(t)
+
+func sla_tick() -> void:
+	## Completed contracts pay recurring service fees — but only while
+	## their requirements still hold. Break the network, lose the revenue.
+	var earned := 0
+	for c in Contracts.all():
+		if c["id"] not in contracts_done:
+			continue
+		var ok := true
+		for r in c["reqs"]:
+			if not r["t"].call():
+				ok = false
+				break
+		sla_status[c["id"]] = ok
+		if ok:
+			earned += int(c["reward"]) / 10
+	if earned > 0:
+		money += earned
+		money_changed.emit()
 
 # ---------- money ----------
 

@@ -681,8 +681,14 @@ func _refresh_contracts() -> void:
 	for c in Contracts.all():
 		var done: bool = c["id"] in Game.contracts_done
 		if done:
-			contracts_box.add_child(_label("✓  %s — %s  (+$%d)" % [c["title"], c["customer"], c["reward"]],
-				14, Color(0.45, 0.8, 0.5)))
+			var healthy: bool = Game.sla_status.get(c["id"], true)
+			var mrr: int = int(c["reward"]) / 10
+			if healthy:
+				contracts_box.add_child(_label("✓  %s — %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
+					14, Color(0.45, 0.8, 0.5)))
+			else:
+				contracts_box.add_child(_label("⚠  %s — %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
+					14, Color(0.95, 0.55, 0.4)))
 			continue
 		if found_active:
 			contracts_box.add_child(_label("🔒  (more contracts after the current one)", 13, Color(0.45, 0.5, 0.6)))
