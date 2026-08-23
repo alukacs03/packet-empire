@@ -1616,6 +1616,12 @@ func _build_market_section() -> void:
 		brief.custom_minimum_size = Vector2(560, 0)
 		cv.add_child(brief)
 		cv.add_child(_label("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
+		var est: Array = Game.market_estimate(offer)
+		if est.is_empty():
+			cv.add_child(_label("📉 You have no read on what competitors charge yet.", 13, Color(0.6, 0.6, 0.7)))
+		else:
+			cv.add_child(_label("📉 Rivals would likely quote $%d to $%d for this." % [int(est[0]), int(est[1])],
+				13, Color(0.7, 0.85, 0.6)))
 		cv.add_child(_label("Offer expires in %d cycle(s)." % int(offer["ttl"]), 12, MUTED))
 		if offer["state"] == "counter":
 			cv.add_child(_label("They countered: \"Best we can do is $%d per cycle.\"" % int(offer["budget"]),

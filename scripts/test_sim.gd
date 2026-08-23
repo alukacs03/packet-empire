@@ -1282,6 +1282,24 @@ static func run() -> int:
 	Rivals.tick()
 	check(Rivals.has_site(growth_r), "market: a flush rival buys premises of its own")
 
+	# --- market intelligence ---
+	Game.rivals = Rivals.spawn()
+	Game.market_intel = 0
+	var intel_offer := {"id": "mi", "kind": "hosting", "customer": "IntelCo", "brief": "", "costs": "",
+		"params": {"ip": "10.9.9.11"}, "budget": 100, "hint": "", "state": "open", "ttl": 5}
+	check(Game.market_estimate(intel_offer).is_empty(), "intel: you start blind to market prices")
+	Game.offers.append(intel_offer)
+	var intel_res: String = Game.respond_offer(intel_offer, 130)  # over market: a rival takes it
+	check(intel_res == "undercut" and Game.market_intel == 1, "intel: losing a bid teaches you something")
+	var band: Array = Game.market_estimate(intel_offer)
+	check(band.size() == 2, "intel: an estimate band appears once you have seen a bid")
+	if band.size() == 2:
+		check(int(band[0]) < int(band[1]), "intel: the band has width")
+	var wide := int(band[1]) - int(band[0])
+	Game.market_intel = 6
+	var band2: Array = Game.market_estimate(intel_offer)
+	check(int(band2[1]) - int(band2[0]) < wide, "intel: more observed bids narrow the estimate")
+
 	# --- leasing a site and delivering across it ---
 	Game.money = 300000
 	var sites_pre := Game.site_count()

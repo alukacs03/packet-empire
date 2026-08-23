@@ -79,6 +79,7 @@ func repay() -> bool:
 var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
+var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
 var acquisitions: Array = []  # integration jobs from companies you bought
 var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
@@ -359,18 +360,19 @@ func _ready() -> void:
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var result := Market.negotiate(offer, quote)
-	if result != "rejected":
-		# a rival can still undercut an otherwise acceptable quote
-		var rival := Rivals.best_bidder(offer)
-		if not rival.is_empty():
-			var bid: int = Rivals.bid_for(rival, offer)
-			if quote > bid:
-				offers.erase(offer)
-				rival["deals"] = int(rival["deals"]) + 1
-				rival["revenue"] = int(rival["revenue"]) + bid
-				log_event("LOST: %s went to %s, who quoted $%d against your $%d."
-					% [offer["customer"], rival["name"], bid, quote])
-				return "undercut"
+	# rivals bid first: a customer with somewhere else to go does not simply
+	# walk away, they take their business to whoever is cheaper
+	var rival := Rivals.best_bidder(offer)
+	if not rival.is_empty():
+		var bid: int = Rivals.bid_for(rival, offer)
+		if bid <= int(offer["budget"]) and quote > bid:
+			offers.erase(offer)
+			rival["deals"] = int(rival["deals"]) + 1
+			rival["revenue"] = int(rival["revenue"]) + bid
+			market_intel += 1
+			log_event("LOST: %s went to %s, who quoted $%d against your $%d. (You now know the market better.)"
+				% [offer["customer"], rival["name"], bid, quote])
+			return "undercut"
 	match result:
 		"accepted":
 			_offer_to_deal(offer, quote)
@@ -379,6 +381,19 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 		"rejected":
 			offers.erase(offer)
 	return result
+
+func market_estimate(offer: Dictionary) -> Array:
+	## what rivals would likely charge: [low, high], or [] while you are blind
+	if market_intel < 1:
+		return []
+	var rival := Rivals.best_bidder(offer)
+	if rival.is_empty():
+		return []
+	var bid: float = float(Rivals.bid_for(rival, offer))
+	var spread: float = clampf(0.35 - 0.04 * float(market_intel), 0.06, 0.35)
+	if reputation >= 70:
+		spread *= 0.75  # people talk to a supplier they trust
+	return [int(bid * (1.0 - spread)), int(bid * (1.0 + spread))]
 
 func buy_rival(r: Dictionary) -> String:
 	## acquire a competitor: their book of business and their hardware
@@ -1017,6 +1032,7 @@ func _serialize() -> Dictionary:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
+		"market_intel": market_intel,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -1128,6 +1144,7 @@ func _apply(data: Dictionary) -> void:
 	sites = data.get("sites", [])
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
+	market_intel = int(data.get("market_intel", 0))
 	rivals = data.get("rivals", [])
 	if rivals.is_empty():
 		rivals = Rivals.spawn()
