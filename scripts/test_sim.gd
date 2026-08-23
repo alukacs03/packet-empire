@@ -1417,6 +1417,51 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- staff ---
+	Game.staff = []
+	Game.candidates = []
+	Game.money = 50000
+	Game.refresh_candidates(true)
+	check(Game.candidates.size() == 3, "staff: a hiring market is generated")
+	var cand: Dictionary = Game.candidates[0]
+	check(Game.hire(cand).is_empty() and Game.staff.size() == 1, "staff: a candidate can be hired")
+	check(Staff.payroll() == int(cand["salary"]), "staff: payroll reflects the hire")
+	var m_before := Game.money
+	Game.sla_tick()
+	check(Game.last_pl.has("salaries"), "staff: salaries appear in the cycle P&L")
+	# a NOC team restores links that are down
+	var st_sw := Game.new_device("sw-8")
+	var st_srv := Game.new_device("srv-1")
+	var st_rack := Game.add_rack(Vector2i(11, 1))
+	st_rack.slots[0] = st_sw
+	st_rack.slots[1] = st_srv
+	Game.connect_ifaces(st_srv.ifaces[0], st_sw.ifaces[0])
+	Game.staff = [{"name": "Teszt Elek", "role": "noc", "skill": 5, "salary": 100, "morale": 70}]
+	st_sw.ifaces[0].enabled = false
+	var restored := false
+	for i in 12:
+		Staff.work_cycle()
+		if st_sw.ifaces[0].enabled:
+			restored = true
+			break
+	check(restored, "staff: the NOC restores a tripped port without the player")
+	# an engineer keeps configurations saved
+	Game.staff = [{"name": "Konfig Klara", "role": "engineer", "skill": 5, "salary": 400, "morale": 70}]
+	var dirty_before := 0
+	for d in Game.all_devices():
+		if Game.config_dirty(d):
+			dirty_before += 1
+	for i in 6:
+		Staff.work_cycle()
+	var dirty_after := 0
+	for d in Game.all_devices():
+		if Game.config_dirty(d):
+			dirty_after += 1
+	check(dirty_before > 0 and dirty_after < dirty_before,
+		"staff: an engineer works through unsaved configurations (%d -> %d)" % [dirty_before, dirty_after])
+	Game.fire(Game.staff[0])
+	check(Game.staff.is_empty(), "staff: people can be let go")
+
 	# --- config versions, diff and rollback ---
 	var ver_sw := Game.new_device("sw-8")
 	var ver_rack := Game.add_rack(Vector2i(10, 1))

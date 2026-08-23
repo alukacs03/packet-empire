@@ -80,6 +80,8 @@ var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
+var staff: Array = []  # people on the payroll
+var candidates: Array = []  # the current hiring market
 var acquisitions: Array = []  # integration jobs from companies you bought
 var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
@@ -402,6 +404,32 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 		"rejected":
 			offers.erase(offer)
 	return result
+
+func refresh_candidates(force := false) -> void:
+	if not candidates.is_empty() and not force:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	candidates = []
+	for i in 3:
+		candidates.append(Staff.make_candidate(rng))
+
+func hire(candidate: Dictionary) -> String:
+	if money < int(candidate["salary"]):
+		return "you cannot cover even one cycle of their salary"
+	candidates.erase(candidate)
+	candidate["hired_cycle"] = cycle
+	staff.append(candidate)
+	log_event("HIRED: %s as %s at $%d/cycle." % [candidate["name"], Staff.label(candidate),
+		int(candidate["salary"])])
+	money_changed.emit()
+	return ""
+
+func fire(member: Dictionary) -> void:
+	staff.erase(member)
+	reputation = maxi(0, reputation - 1)
+	log_event("LET GO: %s has left the company." % member["name"])
+	money_changed.emit()
 
 func market_estimate(offer: Dictionary) -> Array:
 	## what rivals would likely charge: [low, high], or [] while you are blind
@@ -754,6 +782,13 @@ func sla_tick() -> void:
 				break
 	Rivals.tick()
 	_maybe_poach()
+	if not staff.is_empty():
+		var wages := Staff.payroll()
+		last_pl["salaries"] = -wages
+		earned -= wages
+		Staff.work_cycle()
+	if cycle % 4 == 0:
+		refresh_candidates(true)  # the job market moves
 	if stage >= 2 and randf() < 0.25:
 		_field_fault()
 	var link_load := {}
@@ -1053,7 +1088,7 @@ func _serialize() -> Dictionary:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
-		"market_intel": market_intel,
+		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -1064,6 +1099,7 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	## the part of a device that is "configuration" (what write memory keeps)
 	var cfg := _ser_device(d).duplicate(true)  # deep copy: a snapshot must not alias the live device
 	cfg.erase("startup")
+	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
 	return cfg
 
 func save_config_version(d: Net.NDevice) -> int:
@@ -1225,6 +1261,8 @@ func _apply(data: Dictionary) -> void:
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	market_intel = int(data.get("market_intel", 0))
+	staff = data.get("staff", [])
+	candidates = data.get("candidates", [])
 	rivals = data.get("rivals", [])
 	if rivals.is_empty():
 		rivals = Rivals.spawn()

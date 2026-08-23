@@ -1501,6 +1501,41 @@ func _build_business_tab() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("STAFF"))
+	if Game.staff.is_empty():
+		contracts_box.add_child(_label("  Nobody on the payroll: every fault is yours to fix.",
+			13, Color(0.7, 0.7, 0.75)))
+	for m: Dictionary in Game.staff.duplicate():
+		var srow := HBoxContainer.new()
+		contracts_box.add_child(srow)
+		var sl := _label("  %-18s %-18s skill %d   $%d/cycle" % [m["name"], Staff.label(m),
+			int(m["skill"]), int(m["salary"])], 13, Color(0.78, 0.85, 0.8))
+		sl.tooltip_text = Staff.ROLES[m["role"]]["blurb"]
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		srow.add_child(sl)
+		var fire_btn := Button.new()
+		fire_btn.text = "Let go"
+		fire_btn.pressed.connect(func() -> void:
+			Game.fire(m)
+			_refresh_contracts())
+		srow.add_child(fire_btn)
+	Game.refresh_candidates()
+	var hire_btn := Button.new()
+	hire_btn.text = "Hire someone…   (payroll $%d/cycle)" % Staff.payroll()
+	hire_btn.pressed.connect(func() -> void:
+		var opts: Array = []
+		for c: Dictionary in Game.candidates:
+			opts.append("%-18s %-18s skill %d   asking $%d/cycle" % [c["name"], Staff.label(c),
+				int(c["skill"]), int(c["salary"])])
+		if opts.is_empty():
+			_toast("no candidates right now: the market refreshes every few cycles")
+			return
+		_menu(hire_btn, opts, func(id: int) -> void:
+			var err: String = Game.hire(Game.candidates[id])
+			_refresh_contracts()
+			if err != "":
+				_toast(err)))
+	contracts_box.add_child(hire_btn)
 	contracts_box.add_child(_section("SITES"))
 	for i in Game.site_count():
 		var rent := int(Game.sites[i].get("rent", 0))
