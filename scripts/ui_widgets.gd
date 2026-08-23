@@ -268,7 +268,8 @@ class RackSlot extends Control:
 		# mini port squares, lit when linked
 		var n := 0
 		for i: Net.Iface in dev.ifaces:
-			if i.name == "lo" or i.name.begins_with("Vlan") or i.parent != "":
+			if i.name == "lo" or i.name.begins_with("Vlan") or i.name.begins_with("Tunnel") \
+					or i.parent != "":
 				continue
 			var px := inner.position.x + inner.size.x - 26 - n * 13
 			if px < inner.position.x + 190:
@@ -308,7 +309,8 @@ class Faceplate extends Control:
 		_mono = UIW.mono_font()
 		_ports = []
 		for i: Net.Iface in d.ifaces:
-			if i.name != "lo" and not i.name.begins_with("Vlan") and i.parent == "":
+			if i.name != "lo" and not i.name.begins_with("Vlan") \
+					and not i.name.begins_with("Tunnel") and i.parent == "":
 				_ports.append(i)
 		var cols := ceili(_ports.size() / 2.0) if _ports.size() > 6 else _ports.size()
 		cols = maxi(cols, 1)

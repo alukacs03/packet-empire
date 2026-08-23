@@ -196,6 +196,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "qos", "priority-queueing"], "h": func(_r): return _qos(false)},
 			{"m": EP, "p": ["show", "qos"], "h": _show_qos},
 			{"m": ["if"], "p": ["encapsulation", "dot1q"], "h": _if_encap},
+			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
+			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
+			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
@@ -436,6 +439,15 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: interface <name>\n"
 		var want := String(r[0]).to_lower()
+		if want.begins_with("tu") and want.lstrip("abcdefghijklmnopqrstuvwxyz").is_valid_int():
+			if not dev.ip_forwarding:
+				return "% tunnels need a router or firewall\n"
+			var tnum := int(want.lstrip("abcdefghijklmnopqrstuvwxyz"))
+			var tif := Game.add_tunnel(dev, tnum)
+			if tif == null:
+				return "% could not create the tunnel\n"
+			_select_ifaces([tif])
+			return ""
 		if "." in want:  # 802.1Q subinterface, e.g. Ethernet1.10 or et1.10
 			var bits := want.split(".")
 			if bits.size() == 2 and String(bits[1]).is_valid_int():
@@ -640,6 +652,35 @@ class EOS extends Session:
 			for cidr in ctx_if.ips.duplicate():
 				Game.remove_ip(ctx_if, cidr)
 		return ""
+
+	func _tunnel_src(r: Array) -> String:
+		if not ctx_if.name.begins_with("Tunnel"):
+			return "% that is not a tunnel interface\n"
+		if r.size() != 1:
+			return "usage: tunnel source <local-ip>\n"
+		ctx_if.tunnel_src = r[0]
+		Game.topology_changed.emit()
+		return ""
+
+	func _tunnel_dst(r: Array) -> String:
+		if not ctx_if.name.begins_with("Tunnel"):
+			return "% that is not a tunnel interface\n"
+		if r.size() != 1:
+			return "usage: tunnel destination <remote-ip>\n"
+		ctx_if.tunnel_dst = r[0]
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_tunnels(_r: Array) -> String:
+		var out := "%-10s %-18s %-18s %s\n" % ["Tunnel", "Source", "Destination", "State"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if not i.name.begins_with("Tunnel"):
+				continue
+			any = true
+			out += "%-10s %-18s %-18s %s\n" % [i.name, i.tunnel_src, i.tunnel_dst,
+				"up" if Sim.tunnel_up(i) else "down (underlay unreachable or no peer)"]
+		return out if any else "  (no tunnels: 'interface Tunnel1' creates one)\n"
 
 	func _if_encap(r: Array) -> String:
 		if ctx_if.parent == "":
@@ -1179,6 +1220,8 @@ class EOS extends Session:
 			out += "interface %s\n" % i.name
 			if i.parent != "":
 				out += "   encapsulation dot1q %d\n" % i.dot1q
+			if i.tunnel_src != "":
+				out += "   tunnel source %s\n   tunnel destination %s\n" % [i.tunnel_src, i.tunnel_dst]
 			if i.mode == "trunk":
 				out += "   switchport mode trunk\n"
 				if not i.tagged_vlans.is_empty():

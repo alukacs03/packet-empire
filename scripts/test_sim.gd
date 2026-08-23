@@ -1436,6 +1436,69 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- tunnels over an untrusted path ---
+	var tun_rack := Game.add_rack(Vector2i(20, 1))
+	var t_left := Game.new_device("rtr-edge")
+	var t_right := Game.new_device("rtr-edge")
+	var t_mid := Game.new_device("rtr-edge")   # stands in for the internet in between
+	var t_a := Game.new_device("srv-1")
+	var t_b := Game.new_device("srv-1")
+	tun_rack.slots[0] = t_left
+	tun_rack.slots[1] = t_right
+	tun_rack.slots[2] = t_mid
+	tun_rack.slots[3] = t_a
+	tun_rack.slots[4] = t_b
+	Game.connect_ifaces(t_left.ifaces[0], t_mid.ifaces[0])
+	Game.connect_ifaces(t_right.ifaces[0], t_mid.ifaces[1])
+	Game.add_ip(t_left.ifaces[0], "203.0.113.1/30")
+	Game.add_ip(t_mid.ifaces[0], "203.0.113.2/30")
+	Game.add_ip(t_mid.ifaces[1], "203.0.113.5/30")
+	Game.add_ip(t_right.ifaces[0], "203.0.113.6/30")
+	Game.add_static_route(t_left, "203.0.113.4", 30, "203.0.113.2")
+	Game.add_static_route(t_right, "203.0.113.0", 30, "203.0.113.5")
+	# private networks behind each end
+	Game.connect_ifaces(t_a.ifaces[0], t_left.ifaces[1])
+	Game.connect_ifaces(t_b.ifaces[0], t_right.ifaces[1])
+	Game.add_ip(t_left.ifaces[1], "192.168.30.1/24")
+	Game.add_ip(t_a.ifaces[0], "192.168.30.10/24")
+	Game.add_ip(t_right.ifaces[1], "192.168.31.1/24")
+	Game.add_ip(t_b.ifaces[0], "192.168.31.10/24")
+	Game.add_static_route(t_a, "0.0.0.0", 0, "192.168.30.1")
+	Game.add_static_route(t_b, "0.0.0.0", 0, "192.168.31.1")
+	check(Sim.ping(t_left, "203.0.113.6")["ok"], "tunnel: the underlay between endpoints works")
+	check(not Sim.ping(t_a, "192.168.31.10")["ok"], "tunnel: private networks cannot reach each other yet")
+	var tl := CLI.new_session(t_left)
+	tl.exec("en")
+	tl.exec("conf t")
+	check(tl.exec("interface Tunnel1").is_empty(), "tunnel: a tunnel interface can be created")
+	tl.exec("tunnel source 203.0.113.1")
+	tl.exec("tunnel destination 203.0.113.6")
+	tl.exec("ip address 10.255.0.1/30")
+	tl.exec("exit")  # back to config mode for a routing statement
+	check(tl.exec("ip route 192.168.31.0/24 10.255.0.2").is_empty(), "tunnel: a route can point down it")
+	tl.exec("end")
+	var tun_r := CLI.new_session(t_right)
+	tun_r.exec("en")
+	tun_r.exec("conf t")
+	tun_r.exec("interface Tunnel1")
+	tun_r.exec("tunnel source 203.0.113.6")
+	tun_r.exec("tunnel destination 203.0.113.1")
+	tun_r.exec("ip address 10.255.0.2/30")
+	tun_r.exec("exit")
+	tun_r.exec("ip route 192.168.30.0/24 10.255.0.1")
+	tun_r.exec("end")
+	check(tl.exec("show tunnels").contains("up"), "tunnel: it comes up over a working underlay")
+	check(Sim.ping(t_a, "192.168.31.10")["ok"] and Sim.ping(t_b, "192.168.30.10")["ok"],
+		"tunnel: the private networks now reach each other through it")
+	# break the underlay: the tunnel goes with it
+	t_mid.status = "offline"
+	Game.topology_changed.emit()
+	check(not Sim.ping(t_a, "192.168.31.10")["ok"], "tunnel: it fails when the path underneath fails")
+	check(tl.exec("show tunnels").contains("down"), "tunnel: and reports itself down")
+	t_mid.status = "active"
+	Game.topology_changed.emit()
+	check(Sim.ping(t_a, "192.168.31.10")["ok"], "tunnel: it recovers with the underlay")
+
 	# --- QoS under congestion ---
 	Game.deals = []
 	var qos_rack := Game.add_rack(Vector2i(19, 1))

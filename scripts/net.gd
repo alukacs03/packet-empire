@@ -18,6 +18,8 @@ class Iface:
 	var helper := ""  # DHCP relay target (ip helper-address)
 	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var qos := false  # when congested, serve traffic in service-level order
+	var tunnel_src := ""  # tunnel interfaces ride the underlay between two endpoints
+	var tunnel_dst := ""
 	var port_security := false  # sticky-MAC lockdown on an access port
 	var secure_mac := ""  # the MAC this port is locked to
 	var violations := 0

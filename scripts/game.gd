@@ -344,6 +344,20 @@ func overheating() -> bool:
 func is_l3_switch(dev: Net.NDevice) -> bool:
 	return dev.type == "switch" and bool(MODELS.get(dev.model, {}).get("l3", false))
 
+func add_tunnel(dev: Net.NDevice, num: int) -> Net.Iface:
+	## a virtual point-to-point interface that rides whatever path exists
+	if not dev.ip_forwarding:
+		return null
+	var name := "Tunnel%d" % num
+	for i: Net.Iface in dev.ifaces:
+		if i.name == name:
+			return i
+	var t := Net.Iface.new(dev, name, _new_mac())
+	t.mode = "routed"
+	dev.ifaces.append(t)
+	topology_changed.emit()
+	return t
+
 func add_subiface(dev: Net.NDevice, parent_name: String, vid: int) -> Net.Iface:
 	## 802.1Q subinterface: router-on-a-stick
 	if not dev.ip_forwarding or vid < 1 or vid > 4094:
@@ -1330,7 +1344,7 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 			continue
 		for i in d.ifaces:
 			if link_at(i) == null and i.name != "lo" and not i.name.begins_with("Vlan") \
-					and i.parent == "":
+					and not i.name.begins_with("Tunnel") and i.parent == "":
 				out.append(i)
 	return out
 
@@ -1636,6 +1650,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
 			"parent": i.parent, "dot1q": i.dot1q,
+			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
@@ -1727,6 +1742,8 @@ func _apply(data: Dictionary) -> void:
 			i.qos = bool(si.get("qos", false))
 			i.port_security = si.get("port_security", false)
 			i.secure_mac = si.get("secure_mac", "")
+			i.tunnel_src = si.get("tunnel_src", "")
+			i.tunnel_dst = si.get("tunnel_dst", "")
 			i.parent = si.get("parent", "")
 			i.dot1q = int(si.get("dot1q", 0))
 			i.ips = si["ips"]

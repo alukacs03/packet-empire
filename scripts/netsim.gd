@@ -24,23 +24,36 @@ static var _dhcp_offer := {}
 
 static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dictionary:
 	## -> {ok: bool, from: String (replier), detail: String}
+	## Re-entrant: a ping can happen inside another one (a tunnel checking its
+	## underlay while carrying traffic), so the outer results are preserved.
+	var outer_results := _echo_results
+	var outer_trace := last_trace
 	_echo_id += 1
 	_echo_results = []
 	if _depth == 0:
 		last_trace = []
 	if _has_ip(dev, dst_ip):
+		_echo_results = outer_results
 		return {"ok": true, "from": dst_ip, "detail": ""}  # loopback: our own address
-	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": _echo_id}, vrf)
+	var my_id := _echo_id
+	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": my_id}, vrf)
+	var result := {"ok": false, "from": "", "detail": "timeout"}
 	if err != "":
-		return {"ok": false, "from": "", "detail": err}
-	for r in _echo_results:
-		if r["id"] != _echo_id:
-			continue
-		if r["type"] == "reply":
-			return {"ok": true, "from": r["from"], "detail": ""}
-		if r["type"] == "ttl-exceeded":
-			return {"ok": false, "from": r["from"], "detail": "ttl-exceeded"}
-	return {"ok": false, "from": "", "detail": "timeout"}
+		result = {"ok": false, "from": "", "detail": err}
+	else:
+		for r in _echo_results:
+			if r["id"] != my_id:
+				continue
+			if r["type"] == "reply":
+				result = {"ok": true, "from": r["from"], "detail": ""}
+				break
+			if r["type"] == "ttl-exceeded":
+				result = {"ok": false, "from": r["from"], "detail": "ttl-exceeded"}
+				break
+	_echo_results = outer_results
+	if _depth > 0:
+		last_trace = outer_trace  # a nested probe does not rewrite the animation
+	return result
 
 static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Array:
 	## -> array of hop strings ("10.0.0.1" or "*"), last is dst on success
@@ -493,6 +506,9 @@ static func _neigh_key(iface: Net.Iface, ip: String) -> String:
 
 static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> String:
 	## ARP for IPv4, Neighbor Discovery for IPv6: same job, different name
+	if iface.name.begins_with("Tunnel"):
+		var peer := tunnel_peer(iface)
+		return peer.mac if peer != null else ""  # point to point: the far end is the only neighbour
 	var key := _neigh_key(iface, ip)
 	if dev.arp.has(key):
 		return dev.arp[key]
@@ -525,6 +541,9 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if iface.name.begins_with("Vlan"):
 		_svi_tx(iface.dev, iface, frame)
 		return
+	if iface.name.begins_with("Tunnel"):
+		_tunnel_tx(iface, frame)
+		return
 	if iface.parent != "":  # 802.1Q subinterface: tag and leave via the parent
 		for p_if: Net.Iface in iface.dev.ifaces:
 			if p_if.name == iface.parent:
@@ -550,6 +569,47 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		_switch_rx(peer.dev, peer, frame)
 	else:
 		_host_rx(peer.dev, _logical_rx_iface(peer, frame), frame)
+	_depth -= 1
+
+static func tunnel_peer(t: Net.Iface) -> Net.Iface:
+	## the far end: a tunnel whose endpoints mirror ours
+	if t.tunnel_src == "" or t.tunnel_dst == "":
+		return null
+	for d in Game.all_devices():
+		for other: Net.Iface in d.ifaces:
+			if other == t or not other.name.begins_with("Tunnel"):
+				continue
+			if Net.addr_eq(other.tunnel_src, t.tunnel_dst) \
+					and Net.addr_eq(other.tunnel_dst, t.tunnel_src):
+				return other
+	return null
+
+static func tunnel_up(t: Net.Iface) -> bool:
+	## the tunnel is only up while the underlay can carry it
+	var peer := tunnel_peer(t)
+	if peer == null or not t.enabled or not peer.enabled:
+		return false
+	if t.dev.status != "active" or peer.dev.status != "active":
+		return false
+	return ping(t.dev, t.tunnel_dst)["ok"]
+
+static func _tunnel_tx(t: Net.Iface, frame: Dictionary) -> void:
+	## encapsulate: the inner frame is delivered to the far end if the
+	## underlay between the two endpoints is working
+	if _depth > MAX_DEPTH:
+		return
+	var peer := tunnel_peer(t)
+	if peer == null:
+		return
+	if not ping(t.dev, t.tunnel_dst)["ok"]:
+		return  # the path is down, and so is the tunnel
+	t.tx_frames += 1
+	peer.rx_frames += 1
+	var inner := frame.duplicate(true)
+	inner["dst"] = peer.mac  # point to point: no neighbour discovery needed
+	_cap(peer.dev, peer, inner)
+	_depth += 1
+	_host_rx(peer.dev, peer, inner)
 	_depth -= 1
 
 static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void:
