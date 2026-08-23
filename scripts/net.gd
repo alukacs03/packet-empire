@@ -16,6 +16,7 @@ class Iface:
 	var vrrp := {}  # {"group": int, "vip": String, "priority": int}
 	var lag := 0  # port-channel group id; 0 = standalone
 	var helper := ""  # DHCP relay target (ip helper-address)
+	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var port_security := false  # sticky-MAC lockdown on an access port
 	var secure_mac := ""  # the MAC this port is locked to
 	var violations := 0
@@ -37,7 +38,8 @@ class NDevice:
 	var ifaces: Array = []
 	var vlans := {}  # vid -> name; per-device VLAN database (switches)
 	var ip_forwarding := false  # routers forward, hosts don't
-	var static_routes: Array = []  # {"prefix": "0.0.0.0", "plen": 0, "via": "10.0.0.1"}
+	var static_routes: Array = []  # {"prefix", "plen", "via", optional "vrf"}
+	var vrfs: Array = []  # named routing tables on this device
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var stateful := false  # track flows, auto-permit return traffic
 	var startup := {}  # saved configuration ('write memory')

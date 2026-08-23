@@ -148,6 +148,9 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
+			{"m": ["config"], "p": ["ip", "vrf"], "h": _cfg_vrf},
+			{"m": ["if"], "p": ["ip", "vrf", "forwarding"], "h": _if_vrf},
+			{"m": EP, "p": ["show", "ip", "vrf"], "h": _show_vrf},
 			{"m": ["config"], "p": ["firewall", "stateful"], "h": func(_r): return _set_stateful(true)},
 			{"m": ["config"], "p": ["no", "firewall", "stateful"], "h": func(_r): return _set_stateful(false)},
 			{"m": ["config"], "p": ["acl", "permit"], "h": _cfg_acl.bind("permit")},
@@ -786,14 +789,47 @@ class EOS extends Session:
 			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
 		return out
 
+	func _cfg_vrf(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: ip vrf <name>\n"
+		if Game.add_vrf(dev, r[0]):
+			return ""
+		return "% could not create that table (routers only, and names are unique)\n"
+
+	func _if_vrf(r: Array) -> String:
+		if ctx_ifs.size() > 1:
+			return _range_only("a routing table")
+		if r.size() != 1:
+			return "usage: ip vrf forwarding <name>\n"
+		if Game.set_iface_vrf(ctx_if, r[0]):
+			return "Interface moved to table '%s'. Its addresses were cleared.\n" % r[0]
+		return "%% no table called '%s'\n" % r[0]
+
+	func _show_vrf(_r: Array) -> String:
+		if dev.vrfs.is_empty():
+			return "  (only the global table)\n"
+		var out := "%-14s %s\n" % ["TABLE", "INTERFACES"]
+		for name in dev.vrfs:
+			var members: Array = []
+			for i: Net.Iface in dev.ifaces:
+				if i.vrf == name:
+					members.append(EOS._short(i.name))
+			out += "%-14s %s\n" % [name, ", ".join(PackedStringArray(members))]
+		return out
+
 	func _cfg_ip_route(r: Array) -> String:
 		if not dev.ip_forwarding:
 			return "% static routing needs a router\n"
+		# ip route <prefix/len> <next-hop> [vrf <name>]
+		var vrf := ""
+		if r.size() == 4 and String(r[2]) == "vrf":
+			vrf = String(r[3])
+			r = [r[0], r[1]]
 		if r.size() == 2 and Net.valid_cidr(r[0]):
 			var parts := String(r[0]).split("/")
-			if Game.add_static_route(dev, parts[0], int(parts[1]), r[1]):
+			if Game.add_static_route(dev, parts[0], int(parts[1]), r[1], vrf):
 				return ""
-		return "usage: ip route <prefix/len> <next-hop>\n"
+		return "usage: ip route <prefix/len> <next-hop> [vrf <name>]\n"
 
 	func _cfg_no_ip_route(r: Array) -> String:
 		if r.size() >= 1 and Net.valid_cidr(r[0]):
@@ -903,7 +939,8 @@ class EOS extends Session:
 		for i: Net.Iface in dev.ifaces:
 			for cidr: String in i.ips:
 				var parts := cidr.split("/")
-				out += "C  %s/%s is directly connected, %s\n" % [parts[0], parts[1], EOS._short(i.name)]
+				out += "C  %s/%s is directly connected, %s%s\n" % [parts[0], parts[1],
+					EOS._short(i.name), "" if i.vrf == "" else "   [vrf %s]" % i.vrf]
 		for r in dev.static_routes:
 			out += "S  %s/%d [1/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		for r in Sim._bgp_learned(dev):

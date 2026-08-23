@@ -1431,6 +1431,44 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- VRFs: two tenants on the same addresses ---
+	var vrf_rack := Game.add_rack(Vector2i(17, 1))
+	var vrf_rtr := Game.new_device("rtr-edge")
+	var ten_a := Game.new_device("srv-1")
+	var ten_b := Game.new_device("srv-1")
+	vrf_rack.slots[0] = vrf_rtr
+	vrf_rack.slots[1] = ten_a
+	vrf_rack.slots[2] = ten_b
+	Game.connect_ifaces(ten_a.ifaces[0], vrf_rtr.ifaces[0])
+	Game.connect_ifaces(ten_b.ifaces[0], vrf_rtr.ifaces[1])
+	var vs2 := CLI.new_session(vrf_rtr)
+	vs2.exec("en")
+	vs2.exec("conf t")
+	check(vs2.exec("ip vrf alfa").is_empty(), "vrf: a routing table can be created")
+	vs2.exec("ip vrf beta")
+	vs2.exec("interface Ethernet1")
+	check(vs2.exec("ip vrf forwarding alfa").contains("moved"), "vrf: an interface joins a table")
+	vs2.exec("ip address 10.0.0.1/24")
+	vs2.exec("interface Ethernet2")
+	vs2.exec("ip vrf forwarding beta")
+	vs2.exec("ip address 10.0.0.1/24")  # the same address again, legitimately
+	vs2.exec("end")
+	Game.add_ip(ten_a.ifaces[0], "10.0.0.50/24")
+	Game.add_ip(ten_b.ifaces[0], "10.0.0.50/24")  # both tenants use the same address
+	check(vs2.exec("show ip vrf").contains("alfa"), "vrf: tables are listed with their interfaces")
+	check(Sim.ping(vrf_rtr, "10.0.0.50", 64, "alfa")["ok"], "vrf: the router reaches tenant A in its table")
+	check(Sim.ping(vrf_rtr, "10.0.0.50", 64, "beta")["ok"], "vrf: and tenant B in theirs")
+	var overlap := 0
+	for d in [ten_a, ten_b]:
+		for i: Net.Iface in d.ifaces:
+			if "10.0.0.50/24" in i.ips:
+				overlap += 1
+	check(overlap == 2, "vrf: two customers legitimately share an address")
+	check(Sim._route_paths(vrf_rtr, "10.0.0.50", "alfa").size() == 1,
+		"vrf: each table has exactly its own path")
+	check(Sim._route_paths(vrf_rtr, "10.0.0.50", "").is_empty(),
+		"vrf: the global table knows nothing about tenant addresses")
+
 	# --- achievements ---
 	Game.achievements = []
 	Game.stats["contracts"] = 3

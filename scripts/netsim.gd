@@ -22,7 +22,7 @@ static var _dhcp_offer := {}
 
 # ---------- public operations ----------
 
-static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64) -> Dictionary:
+static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dictionary:
 	## -> {ok: bool, from: String (replier), detail: String}
 	_echo_id += 1
 	_echo_results = []
@@ -30,7 +30,7 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64) -> Dictionary:
 		last_trace = []
 	if _has_ip(dev, dst_ip):
 		return {"ok": true, "from": dst_ip, "detail": ""}  # loopback: our own address
-	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": _echo_id})
+	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": _echo_id}, vrf)
 	if err != "":
 		return {"ok": false, "from": "", "detail": err}
 	for r in _echo_results:
@@ -189,9 +189,9 @@ static func _owns_ip_anywhere(dev: Net.NDevice, ip: String) -> bool:
 				return true
 	return false
 
-static func _connected_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
+static func _connected_iface(dev: Net.NDevice, ip: String, vrf := "") -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled:
+		if not i.enabled or i.vrf != vrf:
 			continue
 		for cidr: String in i.ips:
 			var parts := cidr.split("/")
@@ -365,10 +365,10 @@ static func _stp_ensure() -> void:
 
 # ---------- IP stack (hosts & routers) ----------
 
-static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary) -> String:
+static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary, vrf := "") -> String:
 	if dev.status != "active":
 		return "device is offline"
-	var rt := _route_lookup(dev, dst_ip, "%s|%s|%s" % [dst_ip, str(l4.get("id", 0)), dev.name])
+	var rt := _route_lookup(dev, dst_ip, "%s|%s|%s" % [dst_ip, str(l4.get("id", 0)), dev.name], vrf)
 	if rt.is_empty():
 		return "no route to host"
 	if rt.get("next_hop", "") == "null0":
@@ -382,24 +382,26 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary)
 		"pl": {"src_ip": src_ip, "dst_ip": dst_ip, "ttl": ttl, "l4": l4}})
 	return ""
 
-static func _route_lookup(dev: Net.NDevice, dst_ip: String, flow_key := "") -> Dictionary:
+static func _route_lookup(dev: Net.NDevice, dst_ip: String, flow_key := "", vrf := "") -> Dictionary:
 	## picks one path; with several of equal length the flow is hashed across
 	## them, which is what makes a spine-leaf fabric use all its uplinks
-	var paths := _route_paths(dev, dst_ip)
+	var paths := _route_paths(dev, dst_ip, vrf)
 	if paths.is_empty():
 		return {}
 	if paths.size() == 1 or flow_key == "":
 		return paths[0]
 	return paths[hash(flow_key) % paths.size()]
 
-static func _route_paths(dev: Net.NDevice, dst_ip: String) -> Array:
-	var best := _route_lookup_single(dev, dst_ip)
-	if best.is_empty():
+static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
+	var cands := _all_routes(dev, dst_ip, vrf)
+	var best_len := -1
+	for c in cands:
+		best_len = maxi(best_len, int(c["plen"]))
+	if best_len < 0:
 		return []
-	var best_len: int = int(best.get("plen", -1))
 	var out: Array = []
 	var seen := {}
-	for cand in _all_routes(dev, dst_ip):
+	for cand in cands:
 		if int(cand["plen"]) != best_len:
 			continue
 		var key := "%s|%s" % [str(cand["next_hop"]), str(cand["iface"])]
@@ -407,14 +409,14 @@ static func _route_paths(dev: Net.NDevice, dst_ip: String) -> Array:
 			continue
 		seen[key] = true
 		out.append(cand)
-	return out if not out.is_empty() else [best]
+	return out
 
-static func _all_routes(dev: Net.NDevice, dst_ip: String) -> Array:
-	## every candidate path, with the prefix length that produced it
+static func _all_routes(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
+	## every candidate path in one routing table, with the prefix length used
 	var out: Array = []
 	var want_v6 := Net.is_v6(dst_ip)
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled:
+		if not i.enabled or i.vrf != vrf:
 			continue
 		for cidr: String in i.ips:
 			if Net.is_v6(cidr) != want_v6:
@@ -423,14 +425,14 @@ static func _all_routes(dev: Net.NDevice, dst_ip: String) -> Array:
 			if Net.same_net(dst_ip, parts[0], int(parts[1])):
 				out.append({"iface": i, "next_hop": dst_ip, "plen": int(parts[1])})
 	for r in dev.static_routes + _bgp_learned(dev) + _ospf_learned(dev):
-		if Net.is_v6(String(r["prefix"])) != want_v6:
+		if Net.is_v6(String(r["prefix"])) != want_v6 or String(r.get("vrf", "")) != vrf:
 			continue
 		if not Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
 			continue
 		if String(r["via"]) == "null0":
 			out.append({"iface": null, "next_hop": "null0", "plen": int(r["plen"])})
 			continue
-		var via_if := _connected_iface(dev, String(r["via"]))
+		var via_if := _connected_iface(dev, String(r["via"]), vrf)
 		if via_if:
 			out.append({"iface": via_if, "next_hop": r["via"], "plen": int(r["plen"])})
 	return out
@@ -483,9 +485,15 @@ static func _route_lookup_single(dev: Net.NDevice, dst_ip: String) -> Dictionary
 				best = {"iface": out, "next_hop": r["via"], "plen": best_len}
 	return best
 
+static func _neigh_key(iface: Net.Iface, ip: String) -> String:
+	## neighbour caches are per routing table: two tenants may legitimately
+	## use the same address, and they are not the same neighbour
+	var base := Net.v6_compress(ip) if Net.is_v6(ip) else ip
+	return base if iface.vrf == "" else "%s|%s" % [iface.vrf, base]
+
 static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> String:
 	## ARP for IPv4, Neighbor Discovery for IPv6: same job, different name
-	var key := Net.v6_compress(ip) if Net.is_v6(ip) else ip
+	var key := _neigh_key(iface, ip)
 	if dev.arp.has(key):
 		return dev.arp[key]
 	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0,
@@ -663,7 +671,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		_dhcp_rx(dev, iface, frame)
 		return
 	if frame["type"] == "arp" or frame["type"] == "ndp":
-		var nkey := Net.v6_compress(p["spa"]) if Net.is_v6(String(p["spa"])) else String(p["spa"])
+		var nkey := _neigh_key(iface, String(p["spa"]))
 		if p["op"] == "req":
 			if _iface_owns_ip(iface, p["tpa"]) or _vrrp_owns(dev, iface, p["tpa"]):
 				dev.arp[nkey] = p["sha"]
@@ -693,7 +701,8 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		if l4["proto"] == "icmp":
 			match l4["type"]:
 				"echo":
-					_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "reply", "id": l4["id"]})
+					_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "reply", "id": l4["id"]},
+						iface.vrf)
 				"reply", "ttl-exceeded":
 					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"]})
 		elif l4["proto"] == "dns":
@@ -738,10 +747,11 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		if dev.stateful:
 			dev.flows["%s|%s|%s" % [str(p["l4"].get("id", 0)), p["src_ip"], p["dst_ip"]]] = true
 		if p["ttl"] <= 1:
-			_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)})
+			_send_ip(dev, p["src_ip"], 64,
+				{"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)}, iface.vrf)
 			return
 		var rt := _route_lookup(dev, p["dst_ip"],
-			"%s|%s|%s" % [p["src_ip"], p["dst_ip"], str(p["l4"].get("id", 0))])
+			"%s|%s|%s" % [p["src_ip"], p["dst_ip"], str(p["l4"].get("id", 0))], iface.vrf)
 		if rt.is_empty() or rt.get("next_hop", "") == "null0":
 			return  # no route, or deliberately discarded
 		var out: Net.Iface = rt["iface"]

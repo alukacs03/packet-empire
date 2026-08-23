@@ -88,9 +88,11 @@ func _achievement_met(id: String) -> bool:
 					return true
 			return false
 		"on_the_internet":
+			# passive: a configured session towards a device that speaks BGP
 			for d in all_devices():
 				for nb in d.bgp.get("neighbors", []):
-					if Sim.bgp_established(d, nb):
+					var peer := Sim._ip_owner(nb["ip"])
+					if peer != null and not peer.bgp.is_empty():
 						return true
 			return false
 		"no_spof":
@@ -124,16 +126,20 @@ func _achievement_met(id: String) -> bool:
 		"steady":
 			return cycle >= 50 and reputation >= 80
 		"fabric":
+			# passive check: the same prefix learned through two next hops.
+			# (deliberately does not probe the network, because evaluating an
+			# achievement must never change the thing it is measuring)
 			for d in all_devices():
 				if not d.ip_forwarding:
 					continue
-				for other in all_devices():
-					for i: Net.Iface in other.ifaces:
-						for cidr: String in i.ips:
-							if other == d:
-								continue
-							if Sim._route_paths(d, cidr.split("/")[0]).size() >= 2:
-								return true
+				var vias := {}
+				for r in Sim._ospf_learned(d):
+					var key := "%s/%d" % [r["prefix"], int(r["plen"])]
+					if not vias.has(key):
+						vias[key] = {}
+					vias[key][r["via"]] = true
+					if vias[key].size() >= 2:
+						return true
 			return false
 	return false
 
@@ -1323,7 +1329,22 @@ func remove_ip(i: Net.Iface, cidr: String) -> void:
 	i.ips.erase(cidr)
 	topology_changed.emit()
 
-func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String) -> bool:
+func add_vrf(dev: Net.NDevice, name: String) -> bool:
+	if not dev.ip_forwarding or name.strip_edges() == "" or name in dev.vrfs:
+		return false
+	dev.vrfs.append(name.strip_edges())
+	topology_changed.emit()
+	return true
+
+func set_iface_vrf(i: Net.Iface, name: String) -> bool:
+	if name != "" and name not in i.dev.vrfs:
+		return false
+	i.vrf = name
+	i.ips = []  # moving an interface between tables clears its addresses, as it does in real life
+	topology_changed.emit()
+	return true
+
+func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String, vrf := "") -> bool:
 	var v6 := Net.is_v6(prefix)
 	var max_len := 128 if v6 else 32
 	var blackhole := via.to_lower() in ["null0", "blackhole", "discard"]
@@ -1341,14 +1362,14 @@ func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String) 
 		return false
 	if blackhole:
 		via = "null0"
-	remove_static_route(dev, prefix, plen)
-	dev.static_routes.append({"prefix": prefix, "plen": plen, "via": via})
+	remove_static_route(dev, prefix, plen, vrf)
+	dev.static_routes.append({"prefix": prefix, "plen": plen, "via": via, "vrf": vrf})
 	topology_changed.emit()
 	return true
 
-func remove_static_route(dev: Net.NDevice, prefix: String, plen: int) -> void:
+func remove_static_route(dev: Net.NDevice, prefix: String, plen: int, vrf := "") -> void:
 	for r in dev.static_routes.duplicate():
-		if r["prefix"] == prefix and int(r["plen"]) == plen:
+		if r["prefix"] == prefix and int(r["plen"]) == plen and String(r.get("vrf", "")) == vrf:
 			dev.static_routes.erase(r)
 	topology_changed.emit()
 
@@ -1569,11 +1590,12 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
 			"parent": i.parent, "dot1q": i.dot1q,
-			"port_security": i.port_security, "secure_mac": i.secure_mac, "ips": i.ips})
+			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf,
+			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
-		"ospf": d.ospf, "startup": d.startup, "versions": d.versions,
+		"ospf": d.ospf, "vrfs": d.vrfs, "startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "log_host": d.log_host, "ntp_server": d.ntp_server,
 		"ifaces": ifs}
 
@@ -1634,6 +1656,7 @@ func _apply(data: Dictionary) -> void:
 		d.stateful = sd.get("stateful", false)
 		d.bgp = sd.get("bgp", {})
 		d.ospf = sd.get("ospf", {})
+		d.vrfs = sd.get("vrfs", [])
 		d.startup = sd.get("startup", {})
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
@@ -1654,6 +1677,7 @@ func _apply(data: Dictionary) -> void:
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
 			i.helper = si.get("helper", "")
+			i.vrf = si.get("vrf", "")
 			i.port_security = si.get("port_security", false)
 			i.secure_mac = si.get("secure_mac", "")
 			i.parent = si.get("parent", "")
