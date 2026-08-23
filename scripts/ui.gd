@@ -762,7 +762,9 @@ func close_iface() -> void:
 
 func _refresh_iface() -> void:
 	if_title.text = "%s / %s" % [cur_if.dev.name, cur_if.name]
-	if_mac.text = "MAC %s      RX %d / TX %d frames" % [cur_if.mac, cur_if.rx_frames, cur_if.tx_frames]
+	var spd := Game.iface_speed(cur_if)
+	if_mac.text = "MAC %s      %s      RX %d / TX %d frames" % [cur_if.mac,
+		("%d Gbit" % (spd / 1000)) if spd >= 1000 else ("%d Mbit" % spd), cur_if.rx_frames, cur_if.tx_frames]
 	if_enabled.set_pressed_no_signal(cur_if.enabled)
 	if_mtu.text = str(cur_if.mtu)
 	var is_switch := cur_if.dev.type == "switch"
@@ -1137,9 +1139,17 @@ func _build_market_section() -> void:
 		contracts_box.add_child(_section("ACTIVE DEALS"))
 		for deal: Dictionary in Game.deals:
 			var ok: bool = deal["healthy"]
+			var chip_txt := "PAYING"
+			var chip_col := Color(0.4, 0.85, 0.5)
+			if not ok:
+				chip_txt = "DOWN"
+				chip_col = Color(0.95, 0.45, 0.35)
+			elif deal.get("degraded", false):
+				chip_txt = "SLOW"
+				chip_col = Color(0.95, 0.75, 0.4)
 			contracts_box.add_child(_chip_row(
-				"PAYING" if ok else "DOWN",
-				Color(0.4, 0.85, 0.5) if ok else Color(0.95, 0.45, 0.35),
+				chip_txt,
+				chip_col,
 				"%s: %s   $%d/cycle%s" % [deal["customer"], deal["kind"], int(deal["fee"]),
 					"" if ok else "   (not delivered: not paying)"],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))

@@ -596,7 +596,7 @@ class EOS extends Session:
 		return "PacketOS EOS 0.3\nHardware: %s (%s), %d interfaces\n" % [dev.name, dev.type, dev.ifaces.size()]
 
 	func _show_interfaces(_r: Array) -> String:
-		var out := "%-11s %-6s %-8s %-18s %-18s %s\n" % ["Interface", "Status", "Mode", "Addresses", "MAC", "Peer"]
+		var out := "%-11s %-6s %-7s %-8s %-18s %s\n" % ["Interface", "Status", "Speed", "Mode", "Addresses", "Peer"]
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.peer_label(i)
 			var status := "disabled" if not i.enabled else ("up" if peer != "" else "notconnect")
@@ -604,7 +604,9 @@ class EOS extends Session:
 			if i.mode == "access":
 				mode_s = "access(%d)" % i.untagged_vlan
 			var addrs := ",".join(i.ips) if not i.ips.is_empty() else "-"
-			out += "%-11s %-6s %-8s %-18s %-18s %s\n" % [EOS._short(i.name), status, mode_s, addrs, i.mac, peer if peer else "-"]
+			out += "%-11s %-6s %-7s %-8s %-18s %s\n" % [EOS._short(i.name), status,
+				("%dG" % (Game.iface_speed(i) / 1000)) if Game.iface_speed(i) >= 1000 else "%dM" % Game.iface_speed(i),
+				mode_s, addrs, peer if peer else "-"]
 		return out
 
 	func _show_vlan(_r: Array) -> String:

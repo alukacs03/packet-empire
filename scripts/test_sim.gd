@@ -647,5 +647,28 @@ static func run() -> int:
 		cycles += 1
 	check(cycles < 40, "walkthrough: expansion affordable within %d cycles" % cycles)
 
+	# --- capacity planning ---
+	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
+	check(Game.iface_speed(mkt_sw.ifaces[0]) == 1000, "capacity: PacketTik port is 1G")
+	Game.stage = 1  # no random field faults during deterministic capacity checks
+	Game.racks.append(r6)  # the walkthrough reset dropped the VRRP rack; bring it back
+	Game.connect_ifaces(vr1.ifaces[0], vsw.ifaces[0])
+	Game.connect_ifaces(vr2.ifaces[0], vsw.ifaces[1])
+	Game.connect_ifaces(vcl.ifaces[0], vsw.ifaces[2])
+	for l in Game.links:
+		l.a.enabled = true
+		l.b.enabled = true
+	Game.topology_changed.emit()
+	var cap_deal := {"id": "cap1", "customer": "LoadCo", "kind": "hosting",
+		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 1500, "healthy": false}
+	Game.deals.append(cap_deal)
+	Game.sla_tick()
+	check(cap_deal["healthy"] and cap_deal.get("degraded", false),
+		"capacity: 1500 Mbps through 1G access link degrades the deal")
+	cap_deal["load"] = 200
+	Game.sla_tick()
+	check(not cap_deal.get("degraded", true), "capacity: modest load fits, deal recovers")
+	Game.deals.erase(cap_deal)
+
 	print("---- %d failures" % fails)
 	return fails

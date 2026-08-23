@@ -7,16 +7,16 @@ signal money_changed
 
 # Hardware catalog: fictional vendors, real tiers. New model = new entry.
 const MODELS := {
-	"sw-lite": {"tier": 0, "type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
-	"sw-8": {"tier": 1, "type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
-	"sw-24": {"tier": 2, "type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
-	"srv-1": {"tier": 0, "type": "server", "ports": 1, "label": "Dill R110", "price": 400},
-	"srv-2": {"tier": 1, "type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
-	"rtr-lite": {"tier": 0, "type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
-	"rtr-edge": {"tier": 2, "type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
-	"fw-1": {"tier": 1, "type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
-	"isp-uplink": {"tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
-	"crac-1": {"tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
+	"sw-lite": {"speed": 1000, "tier": 0, "type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
+	"sw-8": {"speed": 1000, "tier": 1, "type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
+	"sw-24": {"speed": 10000, "tier": 2, "type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
+	"srv-1": {"speed": 1000, "tier": 0, "type": "server", "ports": 1, "label": "Dill R110", "price": 400},
+	"srv-2": {"speed": 10000, "tier": 1, "type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
+	"rtr-lite": {"speed": 1000, "tier": 0, "type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
+	"rtr-edge": {"speed": 10000, "tier": 2, "type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
+	"fw-1": {"speed": 1000, "tier": 1, "type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
+	"isp-uplink": {"speed": 1000, "tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
+	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
 	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100}
@@ -103,6 +103,15 @@ func cooling_capacity() -> int:
 func overheating() -> bool:
 	return stage >= 1 and power_draw() > cooling_capacity()
 
+func iface_speed(i: Net.Iface) -> int:
+	## Mbps; management ports are 100M service ports
+	if i.name.begins_with("Management") or i.name == "lo":
+		return 100
+	return int(MODELS[i.dev.model].get("speed", 1000))
+
+func link_capacity(l: Net.Link) -> int:
+	return mini(iface_speed(l.a), iface_speed(l.b))
+
 func power_draw() -> int:
 	var w := 0
 	for d in all_devices():
@@ -159,7 +168,8 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	offers.erase(offer)
 	stats["deals"] += 1
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
-		"params": offer["params"], "fee": fee, "brief": offer["brief"], "healthy": false})
+		"params": offer["params"], "fee": fee, "brief": offer["brief"],
+		"load": offer.get("load", 200), "healthy": false})
 	money_changed.emit()
 
 func log_event(text: String) -> void:
@@ -216,6 +226,27 @@ func _field_fault() -> void:
 		% [victim.dev.name, victim.name])
 	topology_changed.emit()
 
+func _deal_path_links(deal: Dictionary) -> Array:
+	## where this customer's traffic actually flows: the sim path from their
+	## server toward its default gateway (good-enough stand-in for its uplink)
+	var ip: String = deal["params"].get("ip", "")
+	var srv := Contracts._owner(ip) if ip != "" else null
+	if srv == null:
+		return []
+	var gw := ""
+	for r in srv.static_routes:
+		if int(r["plen"]) == 0:
+			gw = r["via"]
+	if gw == "":
+		return []
+	Sim.ping(srv, gw)
+	var seen := {}
+	for hop in Sim.last_trace:
+		var l := link_at(hop["a"])
+		if l:
+			seen[l] = true
+	return seen.keys()
+
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees: but only while
 	## their requirements still hold. Break the network, lose the revenue.
@@ -255,13 +286,30 @@ func sla_tick() -> void:
 				break
 	if stage >= 2 and randf() < 0.25:
 		_field_fault()
+	var link_load := {}
+	var deal_links := {}
 	for deal in deals:
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
 		if deal["healthy"]:
-			earned += int(deal["fee"])
-			reputation = mini(100, reputation + 1)
-		else:
+			var used := _deal_path_links(deal)
+			deal_links[deal["id"]] = used
+			for l in used:
+				link_load[l] = link_load.get(l, 0) + int(deal.get("load", 200))
+	for deal in deals:
+		if not deal["healthy"]:
 			reputation = maxi(0, reputation - 3)
+			deal["degraded"] = false
+			continue
+		var congested := false
+		for l in deal_links.get(deal["id"], []):
+			if link_load[l] > link_capacity(l):
+				congested = true
+		if congested and not deal.get("degraded", false):
+			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
+				% deal["customer"])
+		deal["degraded"] = congested
+		earned += int(deal["fee"]) / (2 if congested else 1)
+		reputation = mini(100, reputation + 1)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
 			offers.erase(offer)  # defensive: drop malformed offers
