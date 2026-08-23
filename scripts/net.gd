@@ -41,6 +41,7 @@ class NDevice:
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var stateful := false  # track flows, auto-permit return traffic
 	var startup := {}  # saved configuration ('write memory')
+	var acquired_from := ""  # inherited with a company you bought
 	var flows := {}  # runtime: "id|src|dst" of forwarded flows
 	var bgp := {}  # {asn, neighbors: [{ip, remote_as}], networks: ["prefix/len"]}
 	var ospf := {}  # {"networks": ["prefix/len"]}: single area 0, enabled when non-empty

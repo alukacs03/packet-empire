@@ -54,6 +54,9 @@ var if_cable_lbl: Label
 var if_cable_btn: Button
 var if_peer_btn: Button
 
+var ops_overlay: Control
+var ops_title: Label
+var ops_box: VBoxContainer
 var help_overlay: Control
 var pedia_overlay: Control
 var pedia_body: RichTextLabel
@@ -97,6 +100,7 @@ func _ready() -> void:
 	_build_map()
 	_build_menu()
 	_build_help()
+	_build_ops()
 	_build_pedia()
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
@@ -179,7 +183,8 @@ func _process(_dt: float) -> void:
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
-		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible
+		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible \
+		or ops_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -372,6 +377,10 @@ func _build_toolbar() -> void:
 	learnb.text = "Learn"
 	learnb.pressed.connect(open_pedia)
 	h.add_child(learnb)
+	var opsb := Button.new()
+	opsb.text = "Ops (O)"
+	opsb.pressed.connect(toggle_ops)
+	h.add_child(opsb)
 	var mapb := Button.new()
 	mapb.text = "Map (M)"
 	mapb.pressed.connect(toggle_map)
@@ -407,7 +416,7 @@ func _build_toolbar() -> void:
 	var hint := _label("Q select   ·   R place rack   ·   right-drag pan   ·   scroll zoom   ·   Esc back", 12, Color(0.45, 0.5, 0.62))
 	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	hint.position = Vector2(20, -30)
-	hint.text = "Q select  ·  R place rack  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
+	hint.text = "Q select  ·  R place rack  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
 	hint.theme = theme_res
 	add_child(hint)
 
@@ -1007,6 +1016,97 @@ func _build_pedia() -> void:
 func open_pedia() -> void:
 	_show_overlay(pedia_overlay)
 
+# ---------- ops dashboard ----------
+
+func _device_alerts(d: Net.NDevice) -> Array:
+	var out: Array = []
+	if d.status != "active":
+		out.append("OFFLINE")
+	var down := 0
+	for i: Net.Iface in d.ifaces:
+		if not i.enabled and Game.link_at(i):
+			down += 1
+		if i.violations > 0 and not i.enabled:
+			out.append("port-security shutdown")
+	if down > 0:
+		out.append("%d cabled port(s) down" % down)
+	if Game.config_dirty(d):
+		out.append("unsaved config")
+	for l in Game.links:
+		if (l.a.dev == d or l.b.dev == d) and int(Game.last_link_load.get(l, 0)) > Game.link_capacity(l):
+			out.append("congested link")
+			break
+	return out
+
+func _build_ops() -> void:
+	ops_overlay = _overlay()
+	var v := _card(ops_overlay, 820)
+	ops_title = _header(v, func() -> void: ops_overlay.visible = false)
+	ops_title.text = "Operations"
+	ops_box = VBoxContainer.new()
+	ops_box.add_theme_constant_override("separation", 3)
+	v.add_child(ops_box)
+
+func _refresh_ops() -> void:
+	for c in ops_box.get_children():
+		c.queue_free()
+	var devs := Game.all_devices()
+	devs.sort_custom(func(x, y): return _device_alerts(x).size() > _device_alerts(y).size())
+	var alerting := 0
+	var links_down := 0
+	for l in Game.links:
+		if not l.a.enabled or not l.b.enabled:
+			links_down += 1
+	for d: Net.NDevice in devs:
+		if not _device_alerts(d).is_empty():
+			alerting += 1
+	ops_title.text = "Operations   ·   %d devices   ·   %d cables (%d down)   ·   %d needing attention" % [
+		devs.size(), Game.links.size(), links_down, alerting]
+	if devs.is_empty():
+		ops_box.add_child(_label("  Nothing installed yet.", 14, MUTED))
+		return
+	var head := _label("  %-9s %-22s %-9s %-7s %-20s %s" % ["DEVICE", "MODEL", "STATUS", "LINKS", "ADDRESSES", "ALERTS"],
+		12, Color(0.5, 0.58, 0.72))
+	head.add_theme_font_override("font", mono)
+	ops_box.add_child(head)
+	for d: Net.NDevice in devs:
+		var up := 0
+		var total := 0
+		for i: Net.Iface in d.ifaces:
+			if i.name == "lo" or i.name.begins_with("Vlan") or i.parent != "":
+				continue
+			total += 1
+			if i.enabled and Game.link_at(i):
+				up += 1
+		var addrs: Array = []
+		for i: Net.Iface in d.ifaces:
+			for cidr: String in i.ips:
+				if addrs.size() < 2:
+					addrs.append(cidr)
+		var alerts := _device_alerts(d)
+		var b := Button.new()
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.add_theme_font_override("font", mono)
+		b.add_theme_font_size_override("font_size", 12)
+		b.text = "  %-9s %-22s %-9s %-7s %-20s %s" % [d.name, Game.MODELS[d.model]["label"],
+			d.status, "%d/%d" % [up, total],
+			", ".join(PackedStringArray(addrs)) if not addrs.is_empty() else "-",
+			", ".join(PackedStringArray(alerts))]
+		b.add_theme_color_override("font_color",
+			Color(0.95, 0.6, 0.45) if not alerts.is_empty() else Color(0.7, 0.8, 0.75))
+		b.pressed.connect(func() -> void:
+			ops_overlay.visible = false
+			cur_rack = Game.rack_of(d)
+			open_dev(d))
+		ops_box.add_child(b)
+
+func toggle_ops() -> void:
+	if ops_overlay.visible:
+		ops_overlay.visible = false
+	elif not is_open():
+		_refresh_ops()
+		_show_overlay(ops_overlay)
+
 # ---------- keyboard help ----------
 
 func _build_help() -> void:
@@ -1017,6 +1117,7 @@ func _build_help() -> void:
 	var rows := [
 		["FLOOR", ""],
 		["Q / R", "select mode / place-rack mode"],
+		["O", "operations dashboard (device health)"],
 		["M", "logical topology map"],
 		["F1", "this help"],
 		["Esc", "system menu (save, new game, incident drill, quit)"],
@@ -1329,6 +1430,61 @@ func _build_market_section() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("THE COMPETITION"))
+	for r: Dictionary in Game.rivals:
+		if not Rivals.alive(r):
+			contracts_box.add_child(_label("  %s: acquired by you" % r["name"], 13, Color(0.5, 0.8, 0.6)))
+			continue
+		var price := Rivals.asking_price(r)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(row)
+		var l := _label("  %-16s %d customers · %d racks · asking $%d" % [r["name"],
+			int(r["deals"]), Rivals.racks_needed(r), price], 13, Color(0.8, 0.78, 0.7))
+		l.add_theme_font_override("font", mono)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(l)
+		var buy := Button.new()
+		buy.text = "Acquire $%d" % price
+		buy.disabled = Game.money < price
+		buy.pressed.connect(func() -> void:
+			var err: String = Game.buy_rival(r)
+			_refresh_contracts()
+			if err != "":
+				_toast(err)
+			else:
+				get_parent().rebuild_racks())
+		row.add_child(buy)
+	for a: Dictionary in Game.acquisitions:
+		if bool(a.get("done", false)):
+			contracts_box.add_child(_chip_row("MERGED", Color(0.4, 0.85, 0.5),
+				"%s is integrated into your network" % a["rival"], 13, Color(0.55, 0.8, 0.6)))
+			continue
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sb(Color(0.1, 0.12, 0.1), Color(0.5, 0.8, 0.5, 0.5), 8, 14))
+		contracts_box.add_child(card)
+		var cv := VBoxContainer.new()
+		card.add_child(cv)
+		cv.add_child(_label("INTEGRATION: %s" % a["rival"], 16, Color.WHITE))
+		var brief := _label(("You own their kit, but it still runs their way: subnet %s.0/24 on VLAN %d, "
+			+ "cabled only to itself. Merge it into your network without breaking their customers, "
+			+ "then save the configs.") % [a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
+		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brief.custom_minimum_size = Vector2(560, 0)
+		cv.add_child(brief)
+		for req in Game.integration_status(a):
+			var ok: bool = req["ok"]
+			var txt: String = ("●  " if ok else "○  ") + String(req["d"])
+			if not ok and String(req.get("detail", "")) != "":
+				txt += "   (%s)" % req["detail"]
+			cv.add_child(_label(txt, 13, Color(0.5, 0.95, 0.6) if ok else Color(0.7, 0.65, 0.6)))
+		var btn := Button.new()
+		btn.text = "Check integration & collect $1500"
+		_accent(btn)
+		btn.pressed.connect(func() -> void:
+			Game.try_complete_integration(a)
+			_refresh_contracts())
+		cv.add_child(btn)
 	if not Game.events.is_empty():
 		contracts_box.add_child(_section("EVENT LOG"))
 		for ev in Game.events.slice(0, 4):
@@ -1639,6 +1795,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					_show_overlay(rack_overlay)
+		elif ops_overlay.visible:
+			ops_overlay.visible = false
 		elif help_overlay.visible:
 			help_overlay.visible = false
 		elif pedia_overlay.visible:

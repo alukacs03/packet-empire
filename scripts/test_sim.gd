@@ -85,6 +85,8 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.close_contracts()
 	ui.toggle_map()
 	ui.toggle_map()
+	ui.toggle_ops()
+	ui.toggle_ops()
 	ui.toggle_help()
 	ui.toggle_help()
 	ui.open_pedia()
@@ -377,6 +379,18 @@ static func run() -> int:
 	# --- marketplace negotiation & delivery ---
 	var off := {"id": "t1", "kind": "hosting", "customer": "TestCo", "brief": "", "costs": "",
 		"params": {"ip": "10.9.9.10"}, "budget": 100, "hint": "", "state": "open", "ttl": 5}
+	# with rivals in the market, an over-market quote loses the customer to them
+	var off_r := off.duplicate(true)
+	Game.offers.append(off_r)
+	check(Game.respond_offer(off_r, 120) == "undercut" and not (off_r in Game.offers),
+		"market: a rival undercuts an over-market quote and takes the job")
+	var poached_by_rival := false
+	for ev in Game.events:
+		if "LOST:" in ev:
+			poached_by_rival = true
+	check(poached_by_rival, "market: losing a bid is reported with the rival's price")
+	var saved_rivals := Game.rivals
+	Game.rivals = []  # a market with no competition: pure customer negotiation
 	Game.offers.append(off)
 	check(Game.respond_offer(off, 200) == "rejected" and not (off in Game.offers),
 		"market: greedy quote is rejected, customer walks")
@@ -402,6 +416,12 @@ static func run() -> int:
 	Game.offers.append(off3)
 	check(Game.respond_offer(off3, 90) == "accepted" and Game.deals.size() == 2,
 		"market: fair quote accepted directly")
+	Game.rivals = saved_rivals
+	var off4 := off.duplicate(true)
+	off4["state"] = "open"
+	Game.offers.append(off4)
+	check(Game.respond_offer(off4, 70) == "accepted",
+		"market: pricing under the rivals wins the job even with competition")
 
 	# --- security sweep: exposed management plane ---
 	Game.incidents_seen.clear()
@@ -1103,6 +1123,84 @@ static func run() -> int:
 	Game.stats["earned"] = 200000
 	check(Game.rank() == "Packet Emperor", "rank: a rich empire tops out")
 	check(Game.next_rank().is_empty(), "rank: nothing left above the top")
+
+	# --- acquisitions and integration ---
+	Game.racks = []
+	Game.links = []
+	Game.deals = []
+	Game.offers = []
+	Game.acquisitions = []
+	Game.stage = 2
+	Game.money = 200000
+	Game.rivals = Rivals.spawn()
+	var mine_rack := Game.add_rack(Vector2i(0, 0))
+	var my_sw := Game.new_device("sw-8")
+	var my_srv := Game.new_device("srv-1")
+	mine_rack.slots[0] = my_sw
+	mine_rack.slots[1] = my_srv
+	Game.connect_ifaces(my_srv.ifaces[0], my_sw.ifaces[0])
+	Game.add_ip(my_srv.ifaces[0], "10.0.0.1/24")  # the address their kit also uses
+	var target: Dictionary = Game.rivals[0]
+	target["deals"] = 2
+	var racks_before := Game.racks.size()
+	var cash_before_acq := Game.money
+	check(Game.buy_rival(target).is_empty(), "acq: a rich operator can buy a rival")
+	check(Game.money < cash_before_acq, "acq: the acquisition costs money")
+	check(Game.racks.size() == racks_before + Rivals.racks_needed(target), "acq: their racks arrive on your floor")
+	check(not Rivals.alive(target), "acq: the rival is off the market")
+	var inherited := 0
+	var acquired_devs := 0
+	for d in Game.all_devices():
+		if d.acquired_from == target["name"]:
+			acquired_devs += 1
+	for deal in Game.deals:
+		if bool(deal.get("acquired", false)):
+			inherited += 1
+	check(acquired_devs >= 3 and inherited == 2, "acq: their hardware and contracts transfer")
+	check(Game.acquisitions.size() == 1, "acq: an integration job is created")
+	var integ0: Array = Game.integration_status(Game.acquisitions[0])
+	check(not bool(integ0[0]["ok"]), "integration: their network starts unconnected to yours")
+	check(not bool(integ0[1]["ok"]), "integration: the address clash is detected")
+	check(not Game.try_complete_integration(Game.acquisitions[0]), "integration: cannot collect while broken")
+	# do the actual migration work: re-address their hosts, cable the networks, save
+	var their_sw: Net.NDevice = null
+	var their_hosts: Array = []
+	for d in Game.all_devices():
+		if d.acquired_from != target["name"]:
+			continue
+		if d.type == "switch":
+			their_sw = d
+		elif d.type == "server":
+			their_hosts.append(d)
+	var n_host := 50
+	for h: Net.NDevice in their_hosts:
+		for cidr in h.ifaces[0].ips.duplicate():
+			Game.remove_ip(h.ifaces[0], cidr)
+		Game.add_ip(h.ifaces[0], "10.0.0.%d/24" % n_host)
+		n_host += 1
+	Game.acquisitions[0]["hosts"] = ["10.0.0.50", "10.0.0.51"]
+	for i: Net.Iface in their_sw.ifaces:
+		if i.untagged_vlan != 1 and i.mode == "access":
+			i.untagged_vlan = 1  # fold their VLAN into yours
+	var free_mine: Net.Iface = null
+	var free_theirs: Net.Iface = null
+	for i: Net.Iface in my_sw.ifaces:
+		if Game.link_at(i) == null and not i.name.begins_with("Management"):
+			free_mine = i
+			break
+	for i: Net.Iface in their_sw.ifaces:
+		if Game.link_at(i) == null and not i.name.begins_with("Management"):
+			free_theirs = i
+			break
+	Game.connect_ifaces(free_mine, free_theirs)
+	for d in Game.all_devices():
+		if d.acquired_from == target["name"]:
+			d.startup = Game.device_config(d)
+	var integ1: Array = Game.integration_status(Game.acquisitions[0])
+	for req in integ1:
+		check(bool(req["ok"]), "integration: '%s' satisfied after the migration" % req["d"])
+	check(Game.try_complete_integration(Game.acquisitions[0]), "integration: the merge pays out")
+	check(not Game.try_complete_integration(Game.acquisitions[0]), "integration: it only pays once")
 
 	print("---- %d failures" % fails)
 	return fails

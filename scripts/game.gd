@@ -76,6 +76,8 @@ func repay() -> bool:
 	return true
 var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
+var rivals: Array = []  # AI competitors
+var acquisitions: Array = []  # integration jobs from companies you bought
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
@@ -237,6 +239,7 @@ var last_pl := {}  # line item -> amount, from the latest cycle
 var cycle_timer: Timer
 
 func _ready() -> void:
+	rivals = Rivals.spawn()
 	if OS.get_environment("PACKET_TEST") == "1":
 		save_path = "user://save_test.json"  # never touch the real save from tests
 	topology_changed.connect(Sim.flush_learned_state)
@@ -248,6 +251,18 @@ func _ready() -> void:
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var result := Market.negotiate(offer, quote)
+	if result != "rejected":
+		# a rival can still undercut an otherwise acceptable quote
+		var rival := Rivals.best_bidder(offer)
+		if not rival.is_empty():
+			var bid: int = Rivals.bid_for(rival, offer)
+			if quote > bid:
+				offers.erase(offer)
+				rival["deals"] = int(rival["deals"]) + 1
+				rival["revenue"] = int(rival["revenue"]) + bid
+				log_event("LOST: %s went to %s, who quoted $%d against your $%d."
+					% [offer["customer"], rival["name"], bid, quote])
+				return "undercut"
 	match result:
 		"accepted":
 			_offer_to_deal(offer, quote)
@@ -256,6 +271,144 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 		"rejected":
 			offers.erase(offer)
 	return result
+
+func buy_rival(r: Dictionary) -> String:
+	## acquire a competitor: their book of business and their hardware
+	if not Rivals.alive(r):
+		return "already yours"
+	var price := Rivals.asking_price(r)
+	if money < price:
+		return "you cannot afford %s ($%d)" % [r["name"], price]
+	var free_tiles := _free_tiles()
+	if free_tiles.size() < Rivals.racks_needed(r):
+		return "no floor space: %s needs %d free tiles, you have %d (expand first)" % [
+			r["name"], Rivals.racks_needed(r), free_tiles.size()]
+	money -= price
+	r["bought"] = true
+	var idx := 0
+	var host_ips: Array = []
+	var their_net: String = r.get("net", "10.0.0")
+	var their_vlan: int = int(r.get("vlan", 1))
+	for rack_models in r["racks"]:
+		var rack := add_rack(free_tiles[idx])
+		idx += 1
+		var slot := 0
+		var rack_switch: Net.NDevice = null
+		for model in rack_models:
+			var dev := new_device(model)
+			dev.acquired_from = r["name"]
+			rack.slots[slot] = dev
+			slot += 1
+			# wire and address it exactly as they ran it: their vlan, their subnet
+			if dev.type == "switch":
+				rack_switch = dev
+				if their_vlan != 1:
+					add_vlan(dev, their_vlan, "%s-core" % String(r["name"]).split(" ")[0].to_lower())
+					for i: Net.Iface in dev.ifaces:
+						if i.mode == "access":
+							i.untagged_vlan = their_vlan
+			elif rack_switch != null:
+				var free_port: Net.Iface = null
+				for i: Net.Iface in rack_switch.ifaces:
+					if link_at(i) == null and not i.name.begins_with("Management"):
+						free_port = i
+						break
+				if free_port and not dev.ifaces.is_empty():
+					connect_ifaces(dev.ifaces[0], free_port)
+				if dev.type == "server":
+					# low host numbers: exactly the addresses a player is likely
+					# to have used already, which is the point of the exercise
+					var ip := "%s.%d" % [their_net, 1 + host_ips.size()]
+					add_ip(dev.ifaces[0], ip + "/24")
+					host_ips.append(ip)
+				elif dev.type in ["router", "firewall"]:
+					add_ip(dev.ifaces[0], "%s.254/24" % their_net)
+		if rack_switch:
+			rack_switch.startup = device_config(rack_switch)  # their gear was saved
+	acquisitions.append({"rival": r["name"], "net": their_net, "vlan": their_vlan,
+		"hosts": host_ips, "done": false})
+	for i in int(r["deals"]):  # inherited customers, hosted on their kit
+		var served: String = host_ips[i % host_ips.size()] if not host_ips.is_empty() else ""
+		deals.append({"id": "acq_%s_%d" % [r["name"], i], "customer": "%s customer %d" % [r["name"], i + 1],
+			"kind": "hosting", "params": {"ip": served}, "fee": 90, "load": 150,
+			"brief": "Inherited from %s: their server at %s must stay reachable." % [r["name"], served],
+			"healthy": true, "acquired": true})
+	reputation = mini(100, reputation + 5)
+	log_event("ACQUISITION: you bought %s for $%d, taking their %d racks and %d contracts."
+		% [r["name"], price, Rivals.racks_needed(r), int(r["deals"])])
+	money_changed.emit()
+	topology_changed.emit()
+	return ""
+
+func integration_status(a: Dictionary) -> Array:
+	## live checks for a post-acquisition integration job
+	var name: String = a["rival"]
+	var theirs: Array = []
+	var yours: Array = []
+	for d in all_devices():
+		if d.acquired_from == name:
+			theirs.append(d)
+		elif d.acquired_from == "":
+			yours.append(d)
+	var linked := false
+	for l in links:
+		var a_theirs: bool = l.a.dev.acquired_from == name
+		var b_theirs: bool = l.b.dev.acquired_from == name
+		if a_theirs != b_theirs:
+			linked = true
+			break
+	var reachable := false
+	for td in theirs:
+		if td.type != "server":
+			continue
+		for ip in a["hosts"]:
+			for yd in yours:
+				if yd.type == "server" and Sim.ping(yd, ip)["ok"]:
+					reachable = true
+	var duplicates: Array = []
+	var seen := {}
+	for d in all_devices():
+		for i: Net.Iface in d.ifaces:
+			for cidr: String in i.ips:
+				var ip: String = cidr.split("/")[0]
+				if seen.has(ip) and seen[ip] != d:
+					duplicates.append(ip)
+				seen[ip] = d
+	var unsaved := 0
+	for td in theirs:
+		if config_dirty(td):
+			unsaved += 1
+	return [
+		{"d": "Their network is cabled to yours", "ok": linked},
+		{"d": "No duplicate addresses across the merged estate", "ok": duplicates.is_empty(),
+			"detail": "" if duplicates.is_empty() else "clashing: " + ", ".join(PackedStringArray(duplicates))},
+		{"d": "Inherited customers reachable from your side", "ok": reachable},
+		{"d": "Their gear has its configuration saved", "ok": unsaved == 0},
+	]
+
+func try_complete_integration(a: Dictionary) -> bool:
+	if bool(a.get("done", false)):
+		return false
+	for req in integration_status(a):
+		if not bool(req["ok"]):
+			return false
+	a["done"] = true
+	var bonus := 1500
+	money += bonus
+	reputation = mini(100, reputation + 5)
+	stats["earned"] = int(stats.get("earned", 0)) + bonus
+	log_event("INTEGRATION complete: %s is now part of your network (+$%d)." % [a["rival"], bonus])
+	money_changed.emit()
+	return true
+
+func _free_tiles() -> Array:
+	var out: Array = []
+	var g := grid_size()
+	for y in g.y:
+		for x in g.x:
+			if rack_at(Vector2i(x, y)) == null:
+				out.append(Vector2i(x, y))
+	return out
 
 func accept_counter(offer: Dictionary) -> void:
 	_offer_to_deal(offer, int(offer["budget"]))
@@ -268,6 +421,7 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	stats["deals"] += 1
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
 		"params": offer["params"], "fee": fee, "brief": offer["brief"],
+		"budget": int(offer.get("budget", fee)),  # the market reference for poaching
 		"load": offer.get("load", 200), "healthy": false})
 	money_changed.emit()
 
@@ -308,6 +462,28 @@ func _security_sweep() -> int:
 			if incidents_seen.has(key):
 				break
 	return cost
+
+func _maybe_poach() -> void:
+	## an overpriced contract with a mediocre reputation is a target
+	if deals.is_empty() or randf() > 0.2:
+		return
+	var deal: Dictionary = deals[randi() % deals.size()]
+	if bool(deal.get("acquired", false)) or not bool(deal.get("healthy", false)):
+		return  # rivals poach working business, not services you already broke
+	if not deal.has("budget"):
+		return  # no market reference for this contract
+	var rival := Rivals.best_bidder({"budget": int(deal["budget"])})
+	if rival.is_empty():
+		return
+	var their_price := Rivals.bid_for(rival, {"budget": int(deal["budget"])})
+	# only an over-market price is worth switching for, and loyalty protects you
+	if their_price >= int(deal["fee"]) * 0.85 or reputation >= 70:
+		return
+	deals.erase(deal)
+	rival["deals"] = int(rival["deals"]) + 1
+	reputation = maxi(0, reputation - 4)
+	log_event("POACHED: %s left for %s, who offered the same service for $%d instead of your $%d."
+		% [deal["customer"], rival["name"], their_price, int(deal["fee"])])
 
 func _field_fault() -> void:
 	## the on-call life: a random in-use port develops a fault
@@ -410,6 +586,8 @@ func sla_tick() -> void:
 				d.status = "offline"
 				topology_changed.emit()
 				break
+	Rivals.tick()
+	_maybe_poach()
 	if stage >= 2 and randf() < 0.25:
 		_field_fault()
 	var link_load := {}
@@ -703,7 +881,8 @@ func _serialize() -> Dictionary:
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
-		"reputation": reputation, "debt": debt, "stats": stats,
+		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
+		"acquisitions": acquisitions,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}
@@ -788,7 +967,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
-		"ospf": d.ospf, "startup": d.startup, "ifaces": ifs}
+		"ospf": d.ospf, "startup": d.startup, "acquired_from": d.acquired_from, "ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(save_path):
@@ -808,6 +987,10 @@ func _apply(data: Dictionary) -> void:
 	offers = data.get("offers", [])
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
+	acquisitions = data.get("acquisitions", [])
+	rivals = data.get("rivals", [])
+	if rivals.is_empty():
+		rivals = Rivals.spawn()
 	debt = int(data.get("debt", 0))
 	for k in data.get("stats", {}):
 		stats[k] = int(data["stats"][k])
@@ -830,6 +1013,7 @@ func _apply(data: Dictionary) -> void:
 		d.bgp = sd.get("bgp", {})
 		d.ospf = sd.get("ospf", {})
 		d.startup = sd.get("startup", {})
+		d.acquired_from = sd.get("acquired_from", "")
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]

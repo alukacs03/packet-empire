@@ -64,6 +64,9 @@ func _shoot_all() -> void:
 		["help", func() -> void:
 			ui.pedia_overlay.visible = false
 			ui.toggle_help()],
+		["ops", func() -> void:
+			ui.help_overlay.visible = false
+			ui.toggle_ops()],
 	]
 	for shot in shots:
 		shot[1].call()
@@ -120,6 +123,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				mode = Mode.PLACE_RACK
 			KEY_M:
 				ui.toggle_map()
+			KEY_O:
+				ui.toggle_ops()
 			KEY_F1:
 				ui.toggle_help()
 			KEY_ESCAPE:
@@ -156,7 +161,7 @@ func play_trace(trace: Array) -> void:
 	for hop in trace:
 		var ra := Game.rack_of(hop["a"].dev)
 		var rb := Game.rack_of(hop["b"].dev)
-		if ra == null or rb == null or ra == rb or ra.visual == null:
+		if ra == null or rb == null or ra == rb or ra.visual == null or rb.visual == null:
 			continue
 		_anims.append({"p0": ra.visual.top_anchor(), "p1": rb.visual.top_anchor(),
 			"t0": idx * 0.12,
@@ -175,7 +180,7 @@ func _draw() -> void:
 	for l in Game.links:
 		var ra := Game.rack_of(l.a.dev)
 		var rb := Game.rack_of(l.b.dev)
-		if ra == null or rb == null or ra == rb:
+		if ra == null or rb == null or ra == rb or ra.visual == null or rb.visual == null:
 			continue
 		var key := "%s|%s" % [mini(ra.tile.x * 100 + ra.tile.y, rb.tile.x * 100 + rb.tile.y),
 			maxi(ra.tile.x * 100 + ra.tile.y, rb.tile.x * 100 + rb.tile.y)]
