@@ -298,6 +298,17 @@ func add_rack(tile: Vector2i) -> Net.Rack:
 	racks.append(r)
 	return r
 
+func sell_rack(r: Net.Rack) -> bool:
+	for d in r.slots:
+		if d != null:
+			return false
+	racks.erase(r)
+	if r.visual:
+		r.visual.queue_free()
+	_refund(RACK_PRICE / 2)
+	topology_changed.emit()
+	return true
+
 func rack_at(tile: Vector2i) -> Net.Rack:
 	for r in racks:
 		if r.tile == tile:
@@ -573,9 +584,19 @@ func load_game() -> bool:
 		var b := _find_iface(by_name[ld[2]], ld[3])
 		if a and b:
 			links.append(Net.Link.new(a, b))
+	while stage < STAGES.size() - 1 and _rack_outside_grid():
+		stage += 1  # grandfather old saves placed on the bigger legacy floor
+		log_event("Legacy floor grandfathered: you keep the %s you already built on." % STAGES[stage]["name"])
 	money_changed.emit()
 	topology_changed.emit()
 	return true
+
+func _rack_outside_grid() -> bool:
+	var g := grid_size()
+	for r in racks:
+		if r.tile.x >= g.x or r.tile.y >= g.y:
+			return true
+	return false
 
 func _find_iface(dev: Net.NDevice, ifname: String) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:

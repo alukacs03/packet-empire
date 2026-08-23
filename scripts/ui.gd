@@ -73,6 +73,7 @@ var cli_history: Array = []
 var cli_hist_idx := 0
 var money_lbl: Label
 var cycle_lbl: Label
+var contracts_btn: Button
 var expand_btn: Button
 var theme_res: Theme
 var mono: SystemFont
@@ -103,7 +104,25 @@ func _money_flash() -> void:
 	money_lbl.modulate = Color(1.6, 1.6, 1.2)
 	create_tween().tween_property(money_lbl, "modulate", Color.WHITE, 0.5)
 
+func _refresh_attention() -> void:
+	if contracts_btn == null:
+		return
+	var n := Game.offers.size()
+	for deal in Game.deals:
+		if not deal["healthy"]:
+			n += 1
+	for cid in Game.sla_status:
+		if not Game.sla_status[cid]:
+			n += 1
+	if n > 0:
+		contracts_btn.text = "Contracts (%d!)" % n
+		contracts_btn.modulate = Color(1.15, 0.95, 0.7)
+	else:
+		contracts_btn.text = "Contracts"
+		contracts_btn.modulate = Color.WHITE
+
 func _refresh_money() -> void:
+	_refresh_attention()
 	var power := ""
 	if Game.stage >= 1:
 		power = "   ⚡%dW / ❄%dW" % [Game.power_draw(), Game.cooling_capacity()]
@@ -287,11 +306,11 @@ func _build_toolbar() -> void:
 	mapb.text = "Map (M)"
 	mapb.pressed.connect(toggle_map)
 	h.add_child(mapb)
-	var cb := Button.new()
-	cb.text = "Contracts"
-	_accent(cb)
-	cb.pressed.connect(open_contracts)
-	h.add_child(cb)
+	contracts_btn = Button.new()
+	contracts_btn.text = "Contracts"
+	_accent(contracts_btn)
+	contracts_btn.pressed.connect(open_contracts)
+	h.add_child(contracts_btn)
 	expand_btn = Button.new()
 	expand_btn.pressed.connect(func() -> void:
 		if Game.expand():
@@ -328,7 +347,18 @@ func _build_rack_overlay() -> void:
 	rack_overlay = _overlay()
 	var v := _card(rack_overlay, 560)
 	rack_title = _header(v, close_rack)
-	v.add_child(_label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED))
+	var info_row := HBoxContainer.new()
+	v.add_child(info_row)
+	var info := _label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED)
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_row.add_child(info)
+	var sell := Button.new()
+	sell.text = "Sell rack ($%d)" % (Game.RACK_PRICE / 2)
+	sell.tooltip_text = "Only empty racks can be sold"
+	sell.pressed.connect(func() -> void:
+		if Game.sell_rack(cur_rack):
+			close_rack())
+	info_row.add_child(sell)
 	var cabinet := PanelContainer.new()
 	var cab_sb := _sb(Color(0.08, 0.09, 0.12), Color(0.38, 0.42, 0.5), 4, 6)
 	cab_sb.border_width_top = 8
@@ -1203,6 +1233,15 @@ func _cli_key(e: InputEvent) -> void:
 		cli_hist_idx = mini(cli_history.size(), cli_hist_idx + 1)
 		cli_in.text = "" if cli_hist_idx == cli_history.size() else cli_history[cli_hist_idx]
 		cli_in.caret_column = cli_in.text.length()
+		return
+	if e is InputEventKey and e.pressed and e.unicode == 63:  # '?'
+		cli_in.accept_event()
+		var cands0 := cli_session.complete(cli_in.text)
+		if cands0.is_empty():
+			cli_out.append_text("%s %s?\n  <no completions here>\n" % [cli_session.prompt(), cli_in.text])
+		else:
+			cli_out.append_text("%s %s?\n  %s\n" % [cli_session.prompt(), cli_in.text,
+				"  ".join(PackedStringArray(cands0))])
 		return
 	if e is InputEventKey and e.pressed and e.keycode == KEY_TAB:
 		cli_in.accept_event()

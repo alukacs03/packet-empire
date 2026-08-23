@@ -595,5 +595,19 @@ static func run() -> int:
 	check(cls_.exec("nslookup 10.2.0.10").contains("www.delta.hu"), "dns: reverse lookup finds the name")
 	check(cls_.exec("nslookup 10.2.0.77").contains("no PTR"), "dns: reverse lookup fails cleanly")
 
+	# --- rack selling ---
+	var r_sell := Game.add_rack(Vector2i(2, 1))
+	var m_sell := Game.money
+	check(Game.sell_rack(r_sell) and Game.money == m_sell + Game.RACK_PRICE / 2, "rack: empty rack sells for half")
+	check(not Game.sell_rack(Game.racks[0]), "rack: occupied rack refuses to sell")
+
+	# --- grandfathering ---
+	Game.add_rack(Vector2i(8, 8))
+	Game.stage = 0
+	check(Game._rack_outside_grid(), "legacy: racks outside a 3x3 colo are detected")
+	Game.save_game()
+	Game.load_game()
+	check(not Game._rack_outside_grid(), "legacy: load grandfathers the stage until racks fit")
+
 	print("---- %d failures" % fails)
 	return fails
