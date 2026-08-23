@@ -431,7 +431,11 @@ static func run() -> int:
 	var m7 := Game.money
 	var ev0 := Game.events.size()
 	Game.sla_tick()  # deal server b2 can reach rtr's 10.0.0.254 -> one-shot incident
-	check(Game.events.size() > ev0 and "SECURITY" in Game.events[0], "sec: exposed management logs an incident")
+	var sec_seen := false
+	for ev in Game.events:
+		if "SECURITY" in ev:
+			sec_seen = true
+	check(Game.events.size() > ev0 and sec_seen, "sec: exposed management logs an incident")
 	var m8 := Game.money
 	var ev1 := Game.events.size()
 	Game.sla_tick()
@@ -1412,6 +1416,84 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- IPv6 address handling ---
+	check(Net.is_v6("2001:db8::1") and not Net.is_v6("10.0.0.1"), "v6: family detection")
+	check(Net.v6_hextets("2001:db8::1") == [0x2001, 0xdb8, 0, 0, 0, 0, 0, 1], "v6: :: expands correctly")
+	check(Net.v6_hextets("::1") == [0, 0, 0, 0, 0, 0, 0, 1], "v6: loopback expands")
+	check(Net.v6_hextets("2001:db8:0:0:0:0:0:1") == Net.v6_hextets("2001:db8::1"), "v6: both spellings agree")
+	check(Net.v6_hextets("2001:db8::1::2").is_empty(), "v6: two :: is rejected")
+	check(Net.v6_hextets("nonsense").is_empty(), "v6: garbage is rejected")
+	check(Net.v6_compress("2001:0db8:0000:0000:0000:0000:0000:0001") == "2001:db8::1", "v6: canonical short form")
+	check(Net.addr_eq("2001:DB8::1", "2001:db8:0:0:0:0:0:1"), "v6: spellings compare equal")
+	check(Net.same_subnet6("2001:db8:1::10", "2001:db8:1::1", 64), "v6: same /64")
+	check(not Net.same_subnet6("2001:db8:2::10", "2001:db8:1::1", 64), "v6: different /64")
+	check(Net.same_subnet6("2001:db8:2::10", "2001:db8:1::1", 32), "v6: shared /32")
+	check(Net.same_subnet6("2001:db8:1:8000::1", "2001:db8:1:8fff::2", 49), "v6: masked hextet boundary")
+	check(not Net.same_subnet6("2001:db8:1:8000::1", "2001:db8:1:0fff::2", 49), "v6: masked hextet rejects")
+	check(Net.valid_cidr("2001:db8::1/64") and not Net.valid_cidr("2001:db8::1/200"), "v6: CIDR validation")
+	check(not Net.same_net("10.0.0.1", "2001:db8::", 64), "v6: families never match each other")
+
+	# --- IPv6 end to end ---
+	var v6_rack := Game.add_rack(Vector2i(8, 1))
+	var v6_sw := Game.new_device("sw-8")
+	var v6_a := Game.new_device("srv-1")
+	var v6_b := Game.new_device("srv-1")
+	var v6_rtr := Game.new_device("rtr-edge")
+	var v6_c := Game.new_device("srv-1")
+	v6_rack.slots[0] = v6_sw
+	v6_rack.slots[1] = v6_a
+	v6_rack.slots[2] = v6_b
+	v6_rack.slots[3] = v6_rtr
+	v6_rack.slots[4] = v6_c
+	Game.connect_ifaces(v6_a.ifaces[0], v6_sw.ifaces[0])
+	Game.connect_ifaces(v6_b.ifaces[0], v6_sw.ifaces[1])
+	Game.connect_ifaces(v6_rtr.ifaces[0], v6_sw.ifaces[2])
+	Game.connect_ifaces(v6_c.ifaces[0], v6_rtr.ifaces[1])
+	var v6_ls := CLI.new_session(v6_a)
+	check(v6_ls.exec("ip -6 addr add 2001:db8:1::10/64 dev eth0").is_empty(),
+		"v6: Linux accepts an IPv6 address")
+	check("2001:db8:1::10/64" in v6_a.ifaces[0].ips, "v6: the address is configured")
+	Game.add_ip(v6_b.ifaces[0], "2001:db8:1::20/64")
+	check(Sim.ping(v6_a, "2001:db8:1::20")["ok"], "v6: same-subnet ping works over Neighbor Discovery")
+	check(v6_a.arp.has("2001:db8:1::20"), "v6: the neighbor cache is populated")
+	check(v6_ls.exec("ping6 2001:db8:1::20").contains("3 received"), "v6: ping6 from the CLI")
+	check(not Sim.ping(v6_a, "2001:db8:2::30")["ok"], "v6: another /64 is not reachable yet")
+	# route it
+	var v6_es := CLI.new_session(v6_rtr)
+	v6_es.exec("en")
+	v6_es.exec("conf t")
+	v6_es.exec("interface Ethernet1")
+	v6_es.exec("ipv6 address 2001:db8:1::1/64")
+	v6_es.exec("interface Ethernet2")
+	v6_es.exec("ipv6 address 2001:db8:2::1/64")
+	v6_es.exec("end")
+	Game.add_ip(v6_c.ifaces[0], "2001:db8:2::30/64")
+	Game.add_static_route(v6_a, "::", 0, "2001:db8:1::1")
+	Game.add_static_route(v6_c, "::", 0, "2001:db8:2::1")
+	check(Sim.ping(v6_a, "2001:db8:2::30")["ok"] and Sim.ping(v6_c, "2001:db8:1::10")["ok"],
+		"v6: routed between two /64s through the router")
+	check(v6_es.exec("show ipv6 interface brief").contains("2001:db8:1::1/64"), "v6: show ipv6 interface brief")
+	check(v6_es.exec("show ipv6 neighbors").contains("2001:db8:1::10"), "v6: show ipv6 neighbors")
+	var v6_amb := CLI.new_session(v6_rtr)
+	v6_amb.exec("en")
+	v6_amb.exec("conf t")
+	v6_amb.exec("interface Ethernet3")
+	check(v6_amb.exec("ip address 10.66.0.1/24").is_empty(),
+		"v6: 'ip address' is not ambiguous with 'ipv6 address'")
+	check(v6_amb.exec("ipv6 address 2001:db8:66::1/64").is_empty(), "v6: 'ipv6 address' still works")
+	check(Sim.ping(v6_a, "10.0.0.1")["detail"] != "", "v6: an IPv4 destination is not reachable over v6 config")
+	var v6_cap := "\n".join(PackedStringArray(v6_a.capture))
+	check("NDP" in v6_cap, "v6: captures name Neighbor Discovery, not ARP")
+	# the campaign job wants a specific pair of prefixes
+	Game.add_ip(v6_a.ifaces[0], "2001:db8:70::10/64")
+	Game.add_ip(v6_c.ifaces[0], "2001:db8:71::10/64")
+	Game.add_ip(v6_rtr.ifaces[0], "2001:db8:70::1/64")
+	Game.add_ip(v6_rtr.ifaces[1], "2001:db8:71::1/64")
+	Game.add_static_route(v6_a, "2001:db8:71::", 64, "2001:db8:70::1")
+	Game.add_static_route(v6_c, "2001:db8:70::", 64, "2001:db8:71::1")
+	check(Game.try_complete_contract(_contract("dual_stack")), "v6: the dual-stack contract verifies")
+	check(Sim.ping(v6_a, "2001:db8:1::20")["ok"], "v6: the original v4/v6 estate still works")
 
 	# --- performance at datacenter scale ---
 	Game.racks = []

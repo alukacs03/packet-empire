@@ -243,6 +243,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "dual_stack",
+			"title": "The address shortage",
+			"customer": "Hollo Media",
+			"reward": 3000,
+			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (interface config: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>' or the port editor). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
+			"reqs": [
+				{"d": "Servers hold 2001:db8:70::10 and 2001:db8:71::10", "t": func() -> bool: return _owner("2001:db8:70::10") != null and _owner("2001:db8:71::10") != null},
+				{"d": "A router has a leg in each v6 prefix", "t": func() -> bool: return _v6_router() != null},
+				{"d": "They reach each other over IPv6", "t": func() -> bool: return _ping("2001:db8:70::10", "2001:db8:71::10", true) and _ping("2001:db8:71::10", "2001:db8:70::10", true)},
+			],
+		},
+		{
 			"id": "big_client",
 			"title": "The big client",
 			"customer": "Omega Holding",
@@ -492,8 +504,21 @@ static func _owner(ip: String) -> Net.NDevice:
 	for d in Game.all_devices():
 		for i: Net.Iface in d.ifaces:
 			for cidr: String in i.ips:
-				if cidr.split("/")[0] == ip:
+				if Net.addr_eq(cidr.split("/")[0], ip):
 					return d
+	return null
+
+static func _v6_router() -> Net.NDevice:
+	for d in Game.all_devices():
+		if not d.ip_forwarding:
+			continue
+		var prefixes := {}
+		for i: Net.Iface in d.ifaces:
+			for cidr: String in i.ips:
+				if Net.is_v6(cidr):
+					prefixes[Net.v6_compress(cidr.split("/")[0]).substr(0, 12)] = true
+		if prefixes.size() >= 2:
+			return d
 	return null
 
 static func _ping(from_ip: String, to_ip: String, expect_ok: bool) -> bool:

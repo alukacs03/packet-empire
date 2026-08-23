@@ -178,7 +178,7 @@ static func _ip_owner(ip: String) -> Net.NDevice:
 	for d in Game.all_devices():
 		for i: Net.Iface in d.ifaces:
 			for cidr: String in i.ips:
-				if cidr.split("/")[0] == ip:
+				if Net.addr_eq(cidr.split("/")[0], ip):
 					return d
 	return null
 
@@ -365,7 +365,7 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary)
 	if rt.is_empty():
 		return "no route to host"
 	var out: Net.Iface = rt["iface"]
-	var src_ip := _first_ip(out)
+	var src_ip := _first_ip(out, Net.is_v6(dst_ip))
 	var mac := _arp_resolve(dev, out, rt["next_hop"])
 	if mac == "":
 		return "host unreachable (no ARP reply for %s)" % rt["next_hop"]
@@ -376,32 +376,41 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary)
 static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 	var best := {}
 	var best_len := -1
+	var want_v6 := Net.is_v6(dst_ip)
 	for i: Net.Iface in dev.ifaces:
 		if not i.enabled:
 			continue
 		for cidr: String in i.ips:
+			if Net.is_v6(cidr) != want_v6:
+				continue
 			var parts := cidr.split("/")
 			var plen := int(parts[1])
-			if plen > best_len and Net.same_subnet(dst_ip, parts[0], plen):
+			if plen > best_len and Net.same_net(dst_ip, parts[0], plen):
 				best_len = plen
 				best = {"iface": i, "next_hop": dst_ip}
 	for r in dev.static_routes:
-		if int(r["plen"]) > best_len and Net.same_subnet(dst_ip, r["prefix"], int(r["plen"])):
+		if Net.is_v6(String(r["prefix"])) != want_v6:
+			continue
+		if int(r["plen"]) > best_len and Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
 			var via_rt := {}
 			var via_len := -1
 			for i: Net.Iface in dev.ifaces:
 				if not i.enabled:
 					continue
 				for cidr: String in i.ips:
+					if Net.is_v6(cidr) != Net.is_v6(String(r["via"])):
+						continue
 					var parts := cidr.split("/")
-					if int(parts[1]) > via_len and Net.same_subnet(r["via"], parts[0], int(parts[1])):
+					if int(parts[1]) > via_len and Net.same_net(r["via"], parts[0], int(parts[1])):
 						via_len = int(parts[1])
 						via_rt = {"iface": i, "next_hop": r["via"]}
 			if not via_rt.is_empty():
 				best_len = int(r["plen"])
 				best = via_rt
 	for r in _bgp_learned(dev) + _ospf_learned(dev):
-		if int(r["plen"]) > best_len and Net.same_subnet(dst_ip, r["prefix"], int(r["plen"])):
+		if Net.is_v6(String(r["prefix"])) != want_v6:
+			continue
+		if int(r["plen"]) > best_len and Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
 			var out := _connected_iface(dev, r["via"])
 			if out:
 				best_len = int(r["plen"])
@@ -409,20 +418,26 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 	return best
 
 static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> String:
-	if dev.arp.has(ip):
-		return dev.arp[ip]
-	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0, "type": "arp",
-		"pl": {"op": "req", "spa": _first_ip(iface), "sha": iface.mac, "tpa": ip}})
-	return dev.arp.get(ip, "")
+	## ARP for IPv4, Neighbor Discovery for IPv6: same job, different name
+	var key := Net.v6_compress(ip) if Net.is_v6(ip) else ip
+	if dev.arp.has(key):
+		return dev.arp[key]
+	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0,
+		"type": "ndp" if Net.is_v6(ip) else "arp",
+		"pl": {"op": "req", "spa": _first_ip(iface, Net.is_v6(ip)), "sha": iface.mac, "tpa": ip}})
+	return dev.arp.get(key, "")
 
-static func _first_ip(iface: Net.Iface) -> String:
-	return iface.ips[0].split("/")[0] if not iface.ips.is_empty() else "0.0.0.0"
+static func _first_ip(iface: Net.Iface, v6 := false) -> String:
+	for cidr: String in iface.ips:
+		if Net.is_v6(cidr) == v6:
+			return cidr.split("/")[0]
+	return "::" if v6 else "0.0.0.0"
 
 static func _has_ip(dev: Net.NDevice, ip: String) -> bool:
 	for i: Net.Iface in dev.ifaces:
 		if i.enabled:
 			for cidr: String in i.ips:
-				if cidr.split("/")[0] == ip:
+				if Net.addr_eq(cidr.split("/")[0], ip):
 					return true
 	return false
 
@@ -580,14 +595,15 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 	if frame["type"] == "dhcp":
 		_dhcp_rx(dev, iface, frame)
 		return
-	if frame["type"] == "arp":
+	if frame["type"] == "arp" or frame["type"] == "ndp":
+		var nkey := Net.v6_compress(p["spa"]) if Net.is_v6(String(p["spa"])) else String(p["spa"])
 		if p["op"] == "req":
 			if _iface_owns_ip(iface, p["tpa"]) or _vrrp_owns(dev, iface, p["tpa"]):
-				dev.arp[p["spa"]] = p["sha"]
-				_tx(iface, {"src": iface.mac, "dst": p["sha"], "vlan": 0, "type": "arp",
+				dev.arp[nkey] = p["sha"]
+				_tx(iface, {"src": iface.mac, "dst": p["sha"], "vlan": 0, "type": frame["type"],
 					"pl": {"op": "rep", "spa": p["tpa"], "sha": iface.mac, "tpa": p["spa"]}})
 		else:
-			dev.arp[p["spa"]] = p["sha"]
+			dev.arp[nkey] = p["sha"]
 		return
 	# ipv4
 	if dev.ip_forwarding and _has_ip(dev, p["dst_ip"]):
@@ -673,30 +689,27 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4", "pl": fwd})
 
 static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
+	## tcpdump-style one-liner for the device's capture ring
 	var p: Dictionary = frame["pl"]
-	var desc: String
-	if frame["type"] == "dhcp":
-		_dhcp_rx(dev, iface, frame)
-		return
-	if frame["type"] == "arp":
-		if p["op"] == "req":
-			desc = "ARP who-has %s tell %s" % [p["tpa"], p["spa"]]
-		else:
-			desc = "ARP reply %s is-at %s" % [p["spa"], p["sha"]]
-	else:
-		desc = "IP %s > %s %s %s ttl %d" % [p["src_ip"], p["dst_ip"],
-			String(p["l4"]["proto"]).to_upper(), str(p["l4"].get("type", p["l4"].get("q", ""))), p["ttl"]]
+	var desc := ""
+	match frame["type"]:
+		"dhcp":
+			desc = "DHCP %s %s" % [p["op"], p.get("mac", "")]
+		"arp":
+			desc = ("ARP who-has %s tell %s" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
+				else ("ARP reply %s is-at %s" % [p["spa"], p["sha"]])
+		"ndp":
+			desc = ("NDP solicit %s from %s" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
+				else ("NDP advert %s is-at %s" % [p["spa"], p["sha"]])
+		_:
+			var l4: Dictionary = p.get("l4", {})
+			desc = "%s %s > %s %s %s ttl %d" % ["IP6" if Net.is_v6(String(p["src_ip"])) else "IP",
+				p["src_ip"], p["dst_ip"], String(l4.get("proto", "?")).to_upper(),
+				str(l4.get("type", l4.get("q", ""))), int(p["ttl"])]
 	var vl := (" [vlan %d]" % frame["vlan"]) if frame["vlan"] != 0 else ""
 	dev.capture.append("%-10s %s%s" % [iface.name, desc, vl])
 	if dev.capture.size() > 50:
 		dev.capture.pop_front()
-
-static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bool:
-	for rule in dev.acls:  # first match wins; default permit
-		if Net.same_subnet(src_ip, rule["src"], int(rule["splen"])) \
-				and Net.same_subnet(dst_ip, rule["dst"], int(rule["dplen"])):
-			return rule["action"] == "permit"
-	return true
 
 static func vrrp_master(vip: String, group: int) -> Net.NDevice:
 	## alive router with the highest priority (tie: highest real IP) wins
@@ -730,8 +743,15 @@ static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 			return i
 	return null
 
+static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bool:
+	for rule in dev.acls:  # first match wins; default permit
+		if Net.same_subnet(src_ip, rule["src"], int(rule["splen"])) \
+				and Net.same_subnet(dst_ip, rule["dst"], int(rule["dplen"])):
+			return rule["action"] == "permit"
+	return true
+
 static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 	for cidr: String in iface.ips:
-		if cidr.split("/")[0] == ip:
+		if Net.addr_eq(cidr.split("/")[0], ip):
 			return true
 	return false

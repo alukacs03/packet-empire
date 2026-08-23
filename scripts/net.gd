@@ -77,6 +77,133 @@ class Rack:
 		tile = t
 		slots.resize(SLOTS)
 
+# ---------- IPv6 ----------
+# Addresses are kept as strings and compared hextet-wise, which covers every
+# prefix length the game teaches (/128 down to /16 boundaries and anything in
+# between via a masked hextet).
+
+static func is_v6(addr: String) -> bool:
+	return ":" in addr
+
+static func v6_hextets(addr: String) -> Array:
+	## expand an address (with or without ::) into 8 integers, [] if invalid
+	var a := addr.strip_edges().to_lower()
+	if a == "":
+		return []
+	var head: Array = []
+	var tail: Array = []
+	if "::" in a:
+		var halves := a.split("::", true, 1)
+		if "::" in halves[1]:
+			return []  # only one :: is legal
+		for g in halves[0].split(":", false):
+			head.append(g)
+		for g in halves[1].split(":", false):
+			tail.append(g)
+		if head.size() + tail.size() > 8:
+			return []
+	else:
+		for g in a.split(":", false):
+			head.append(g)
+		if head.size() != 8:
+			return []
+	var out: Array = []
+	for g in head:
+		var v := _hex16(g)
+		if v < 0:
+			return []
+		out.append(v)
+	while out.size() + tail.size() < 8:
+		out.append(0)
+	for g in tail:
+		var v := _hex16(g)
+		if v < 0:
+			return []
+		out.append(v)
+	return out if out.size() == 8 else []
+
+static func _hex16(group: String) -> int:
+	if group == "" or group.length() > 4:
+		return -1
+	var v := 0
+	for ch in group:
+		var d := "0123456789abcdef".find(ch)
+		if d < 0:
+			return -1
+		v = v * 16 + d
+	return v
+
+static func v6_compress(addr: String) -> String:
+	## canonical short form, so two spellings of one address compare equal
+	var h := v6_hextets(addr)
+	if h.is_empty():
+		return addr
+	var best_start := -1
+	var best_len := 0
+	var i := 0
+	while i < 8:
+		if int(h[i]) != 0:
+			i += 1
+			continue
+		var j := i
+		while j < 8 and int(h[j]) == 0:
+			j += 1
+		if j - i > best_len and j - i > 1:
+			best_start = i
+			best_len = j - i
+		i = j
+	var parts: Array = []
+	i = 0
+	while i < 8:
+		if i == best_start:
+			parts.append("")
+			i += best_len
+			continue
+		parts.append("%x" % int(h[i]))
+		i += 1
+	var out := ":".join(PackedStringArray(parts))
+	if best_start == 0:
+		out = ":" + out
+	if best_start >= 0 and best_start + best_len == 8:
+		out += ":"
+	return out
+
+static func same_subnet6(a: String, b: String, plen: int) -> bool:
+	var ha := v6_hextets(a)
+	var hb := v6_hextets(b)
+	if ha.is_empty() or hb.is_empty():
+		return false
+	if plen <= 0:
+		return true
+	var full := plen / 16
+	for k in mini(full, 8):
+		if int(ha[k]) != int(hb[k]):
+			return false
+	var rem := plen % 16
+	if rem > 0 and full < 8:
+		var mask := ((0xFFFF << (16 - rem)) & 0xFFFF)
+		if (int(ha[full]) & mask) != (int(hb[full]) & mask):
+			return false
+	return true
+
+static func valid_cidr6(s: String) -> bool:
+	var parts := s.split("/")
+	if parts.size() != 2 or not parts[1].is_valid_int():
+		return false
+	var plen := int(parts[1])
+	return not v6_hextets(parts[0]).is_empty() and plen >= 0 and plen <= 128
+
+## family-aware helpers used by the simulation
+static func same_net(addr: String, net: String, plen: int) -> bool:
+	if is_v6(addr) != is_v6(net):
+		return false
+	return same_subnet6(addr, net, plen) if is_v6(addr) else same_subnet(addr, net, plen)
+
+static func addr_eq(a: String, b: String) -> bool:
+	if is_v6(a) != is_v6(b):
+		return false
+	return v6_compress(a) == v6_compress(b) if is_v6(a) else a == b
+
 static func ip_to_int(ip: String) -> int:
 	var v := 0
 	for p in ip.split("."):
@@ -99,6 +226,8 @@ static func same_subnet(ip: String, net_ip: String, plen: int) -> bool:
 	return (ip_to_int(ip) & mask) == (ip_to_int(net_ip) & mask)
 
 static func valid_cidr(s: String) -> bool:
+	if is_v6(s):
+		return valid_cidr6(s)
 	var parts := s.split("/")
 	if parts.size() != 2 or not parts[1].is_valid_int():
 		return false

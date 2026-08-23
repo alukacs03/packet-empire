@@ -157,6 +157,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
+			{"m": ["if"], "p": ["ipv6", "address"], "h": _if_ip},
+			{"m": EP, "p": ["show", "ipv6", "interface", "brief"], "h": _show_v6_brief},
+			{"m": EP, "p": ["show", "ipv6", "neighbors"], "h": _show_neighbors},
 			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
 			{"m": ["if"], "p": ["vrrp"], "h": _if_vrrp},
 			{"m": ["if"], "p": ["channel-group"], "h": _if_lag},
@@ -203,6 +206,21 @@ class EOS extends Session:
 				if okc:
 					return "% Incomplete command\n"
 			return "% Invalid input\n"
+		# an exactly typed keyword beats one that merely starts the same way,
+		# so "ip address" is not ambiguous with "ipv6 address"
+		var best_exact := -1
+		for c in full:
+			var exact := 0
+			for k in mini(toks.size(), c["p"].size()):
+				if String(c["p"][k]) == toks[k]:
+					exact += 1
+			best_exact = maxi(best_exact, exact)
+		full = full.filter(func(c):
+			var exact := 0
+			for k in mini(toks.size(), c["p"].size()):
+				if String(c["p"][k]) == toks[k]:
+					exact += 1
+			return exact == best_exact)
 		var best_len := 0
 		for c in full:
 			best_len = maxi(best_len, c["p"].size())
@@ -221,6 +239,9 @@ class EOS extends Session:
 			for k in toks.size():
 				if not String(c["p"][k]).begins_with(toks[k]):
 					pref = false
+					break
+				if String(cmd["p"][k]) == toks[k] and String(c["p"][k]) != toks[k]:
+					pref = false  # we typed that keyword exactly; this one is not it
 					break
 			if not pref:
 				continue
@@ -824,6 +845,25 @@ class EOS extends Session:
 			out += "O  %s/%d [110/%d] via %s\n" % [r["prefix"], int(r["plen"]), 10, r["via"]]
 		return out if out else "  (no routes: configure ip addresses)\n"
 
+	func _show_v6_brief(_r: Array) -> String:
+		var out := "%-11s %-30s %-8s\n" % ["Interface", "IPv6 Address", "Status"]
+		for i: Net.Iface in dev.ifaces:
+			var v6 := "unassigned"
+			for cidr: String in i.ips:
+				if Net.is_v6(cidr):
+					v6 = cidr
+			out += "%-11s %-30s %-8s\n" % [EOS._short(i.name), v6, "up" if i.enabled else "admin-down"]
+		return out
+
+	func _show_neighbors(_r: Array) -> String:
+		var out := "%-30s %s\n" % ["IPv6 Address", "Link Layer"]
+		var any := false
+		for ip in dev.arp:
+			if Net.is_v6(String(ip)):
+				any = true
+				out += "%-30s %s\n" % [ip, dev.arp[ip]]
+		return out if any else "  (no neighbors discovered yet)\n"
+
 	func _show_ip_brief(_r: Array) -> String:
 		var out := "%-11s %-18s %-8s\n" % ["Interface", "IP Address", "Status"]
 		for i: Net.Iface in dev.ifaces:
@@ -930,12 +970,15 @@ class Linux extends Session:
 				if t.size() == 1:
 					return dev.name + "\n"
 				return "" if Game.rename_device(dev, t[1]) else "hostname: invalid or duplicate name\n"
-			"ping":
-				return CLI.fmt_ping(dev, t[1]) if t.size() == 2 else "usage: ping <ip>\n"
+			"ping", "ping6":
+				return CLI.fmt_ping(dev, t[1]) if t.size() == 2 else "usage: ping <ip|name>\n"
 			"traceroute":
 				return CLI.fmt_traceroute(dev, t[1]) if t.size() == 2 else "usage: traceroute <ip>\n"
 			"ip":
-				return _ip(t.slice(1))
+				var args6 := t.slice(1)
+				if not args6.is_empty() and String(args6[0]) in ["-6", "-4"]:
+					args6 = args6.slice(1)  # family flags are accepted and ignored
+				return _ip(args6)
 			"dhclient":
 				if t.size() != 2:
 					return "usage: dhclient <iface>\n"
@@ -1096,7 +1139,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

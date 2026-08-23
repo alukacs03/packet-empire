@@ -154,6 +154,21 @@ func exec(line: String) -> String:
 						ports.append(i.name)
 				out += " %-9d %-11s %s\n" % [vid, dev.vlans[vid], UILayer.compress_ports(ports)]
 			return out
+		"ipv6 address add":
+			if dev.type == "switch":
+				return "failure: this switch has no L3 support\n"
+			if p.has("address") and p.has("interface") and _iface(p["interface"]):
+				if Game.add_ip(_iface(p["interface"]), p["address"]):
+					return ""
+				return "failure: invalid or duplicate address\n"
+			return "usage: /ipv6 address add address=<2001:db8::1/64> interface=<name>\n"
+		"ipv6 address print":
+			var out := " ADDRESS                        INTERFACE\n"
+			for i: Net.Iface in dev.ifaces:
+				for cidr in i.ips:
+					if Net.is_v6(cidr):
+						out += " %-30s %s\n" % [cidr, i.name]
+			return out
 		"ip address add":
 			if dev.type == "switch":
 				return "failure: this switch has no L3 support\n"
@@ -321,6 +336,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"interface bonding add", "interface bonding print",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
 	"ip address add", "ip address remove", "ip address print",
+	"ipv6 address add", "ipv6 address print",
 	"ip route add", "ip route remove", "ip route print",
 	"ip firewall nat add", "ip firewall nat print",
 	"routing bgp set", "routing bgp peer add", "routing bgp network add", "routing bgp print",
