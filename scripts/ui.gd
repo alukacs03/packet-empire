@@ -1341,6 +1341,20 @@ func _refresh_ops() -> void:
 	var advice := _capacity_advice()
 	if advice != "":
 		ops_box.add_child(_wrap("  " + advice, 13, Color(1.0, 0.82, 0.5), 780))
+	var talkers := Game.top_talkers(6)
+	if not talkers.is_empty():
+		ops_box.add_child(_section("TOP TALKERS"))
+		for row: Dictionary in talkers:
+			var tl := _label("  %-40s %8d packets" % [row["pair"], int(row["packets"])],
+				12, Color(0.72, 0.78, 0.86))
+			tl.add_theme_font_override("font", mono)
+			ops_box.add_child(tl)
+		var clear_btn := Button.new()
+		clear_btn.text = "Reset the counters"
+		clear_btn.pressed.connect(func() -> void:
+			Game.clear_talkers()
+			_refresh_ops())
+		ops_box.add_child(clear_btn)
 	ops_box.add_child(_section("POWER"))
 	for si2 in Game.site_count():
 		if si2 == 0 and Game.stage < 1:

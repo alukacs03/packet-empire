@@ -202,6 +202,10 @@ class EOS extends Session:
 				"h": func(r): return _snmp(r[0] if r.size() > 0 else "")},
 			{"m": ["config"], "p": ["no", "snmp-server"], "h": func(_r): return _snmp("")},
 			{"m": EP, "p": ["show", "snmp"], "h": _show_snmp},
+			{"m": EP, "p": ["show", "flows"], "h": _show_flows},
+			{"m": ["config"], "p": ["clear", "flows"], "h": func(_r):
+				dev.talkers.clear()
+				return ""},
 			{"m": ["config"], "p": ["ip", "igmp", "snooping"], "h": func(_r): return _igmp(true)},
 			{"m": ["config"], "p": ["no", "ip", "igmp", "snooping"], "h": func(_r): return _igmp(false)},
 			{"m": EP, "p": ["show", "ip", "igmp", "snooping"], "h": _show_igmp},
@@ -660,6 +664,20 @@ class EOS extends Session:
 			out += "%-6d %-12s %s\n" % [i.mlag, "%s %s" % [EOS._short(i.name),
 				"up" if Game.link_at(i) != null and i.enabled else "down"],
 				("%s %s" % [EOS._short(far.name), "up" if Game.link_at(far) != null and far.enabled else "down"]) if far != null else "missing"]
+		return out
+
+	func _show_flows(_r: Array) -> String:
+		if not dev.ip_forwarding:
+			return "% flow accounting is a routing feature\n"
+		if dev.talkers.is_empty():
+			return "no flows recorded yet\n"
+		var rows: Array = []
+		for key in dev.talkers:
+			rows.append([String(key), int(dev.talkers[key])])
+		rows.sort_custom(func(x, y): return int(x[1]) > int(y[1]))
+		var out := "%-38s %10s\n" % ["SOURCE > DESTINATION", "PACKETS"]
+		for row in rows.slice(0, 15):
+			out += "%-38s %10d\n" % [row[0], row[1]]
 		return out
 
 	func _show_snmp(_r: Array) -> String:
@@ -1553,7 +1571,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1649,6 +1667,17 @@ class Linux extends Session:
 				dev.snmp = String(t[1])
 				Game.topology_changed.emit()
 				return "snmp agent listening, community %s\n" % t[1]
+			"flows":
+				if dev.talkers.is_empty():
+					return "no flows recorded (this host does not forward traffic)\n"
+				var frows: Array = []
+				for fk in dev.talkers:
+					frows.append([String(fk), int(dev.talkers[fk])])
+				frows.sort_custom(func(x, y): return int(x[1]) > int(y[1]))
+				var fout := "%-38s %10s\n" % ["SOURCE > DESTINATION", "PACKETS"]
+				for frow in frows.slice(0, 15):
+					fout += "%-38s %10d\n" % [frow[0], frow[1]]
+				return fout
 			"snmpwalk":
 				if t.size() < 3:
 					return "usage: snmpwalk <address> <community>\n"
@@ -1900,7 +1929,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

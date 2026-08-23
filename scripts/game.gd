@@ -604,6 +604,23 @@ func collect_invoices() -> int:
 		last_pl["collections"] = int(last_pl.get("collections", 0)) + collected
 	return collected
 
+func top_talkers(limit := 8) -> Array:
+	## the busiest source and destination pairs across every router, newest
+	## counters first. Answers "what is filling that link" without guessing.
+	var merged := {}
+	for d in all_devices():
+		for key in d.talkers:
+			merged[key] = int(merged.get(key, 0)) + int(d.talkers[key])
+	var rows: Array = []
+	for key in merged:
+		rows.append({"pair": key, "packets": int(merged[key])})
+	rows.sort_custom(func(x, y): return int(x["packets"]) > int(y["packets"]))
+	return rows.slice(0, limit)
+
+func clear_talkers() -> void:
+	for d in all_devices():
+		d.talkers.clear()
+
 func receivables() -> int:
 	var total := 0
 	for inv in invoices:

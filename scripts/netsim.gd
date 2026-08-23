@@ -1195,6 +1195,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		var mac := _arp_resolve(dev, out, rt["next_hop"])
 		if mac == "":
 			return
+		# netflow-style accounting: who is actually pushing traffic through here
+		var talk_key := "%s>%s" % [p["src_ip"], p["dst_ip"]]
+		dev.talkers[talk_key] = int(dev.talkers.get(talk_key, 0)) + 1
 		var fwd := p.duplicate(true)
 		fwd["ttl"] -= 1
 		if out.nat == "outside":

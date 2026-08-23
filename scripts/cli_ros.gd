@@ -65,6 +65,17 @@ func exec(line: String) -> String:
 				Game.topology_changed.emit()
 				return ""
 			return "usage: /snmp set enabled=yes community=<name>\n"
+		"ip traffic-flow print":
+			if dev.talkers.is_empty():
+				return "no flows recorded yet\n"
+			var trows: Array = []
+			for tk in dev.talkers:
+				trows.append([String(tk), int(dev.talkers[tk])])
+			trows.sort_custom(func(x, y): return int(x[1]) > int(y[1]))
+			var tout := "%-38s %10s\n" % ["SRC > DST", "PACKETS"]
+			for trow in trows.slice(0, 15):
+				tout += "%-38s %10d\n" % [trow[0], trow[1]]
+			return tout
 		"snmp print":
 			return "enabled: %s\ncommunity: %s\n" % ["yes" if dev.snmp != "" else "no",
 				dev.snmp if dev.snmp != "" else "-"]
@@ -347,7 +358,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"system backup save", "system backup load", "system reboot",
 	"ip arp print", "interface bridge host print", "interface bridge port print",
 	"system identity set", "system identity print",
-	"snmp set", "snmp print",
+	"snmp set", "snmp print", "ip traffic-flow print",
 	"interface print", "interface print stats", "interface set",
 	"interface bonding add", "interface bonding print",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",

@@ -3071,6 +3071,37 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- flow accounting ---
+	Game.clear_talkers()
+	var fl_rack := Game.add_rack(Vector2i(36, 1))
+	var fl_rtr := Game.new_device("rtr-lite")
+	var fl_a := Game.new_device("srv-1")
+	var fl_b := Game.new_device("srv-1")
+	fl_rack.slots[0] = fl_rtr
+	fl_rack.slots[1] = fl_a
+	fl_rack.slots[2] = fl_b
+	Game.connect_ifaces(fl_a.ifaces[0], fl_rtr.ifaces[0])
+	Game.connect_ifaces(fl_b.ifaces[0], fl_rtr.ifaces[1])
+	Game.add_ip(fl_rtr.ifaces[0], "10.190.1.1/24")
+	Game.add_ip(fl_rtr.ifaces[1], "10.190.2.1/24")
+	Game.add_ip(fl_a.ifaces[0], "10.190.1.10/24")
+	Game.add_ip(fl_b.ifaces[0], "10.190.2.10/24")
+	CLI.new_session(fl_a).exec("ip route add default via 10.190.1.1")
+	CLI.new_session(fl_b).exec("ip route add default via 10.190.2.1")
+	Sim.flush_learned_state()
+	check(Sim.ping(fl_a, "10.190.2.10")["ok"], "flows: the two subnets route")
+	var fl_top := Game.top_talkers()
+	check(not fl_top.is_empty(), "flows: forwarded traffic is accounted for")
+	var fl_seen := false
+	for row in fl_top:
+		if String(row["pair"]) == "10.190.1.10>10.190.2.10":
+			fl_seen = true
+	check(fl_seen, "flows: the pair that actually talked is named")
+	check(CLI.new_session(fl_rtr).exec("/ip traffic-flow print").contains("10.190.2.10"),
+		"flows: RouterOS reports them too")
+	Game.clear_talkers()
+	check(Game.top_talkers().is_empty(), "flows: the counters can be reset")
+
 	# --- SNMP: monitoring is a thing you have to configure, on both ends ---
 	var snm_rack := Game.add_rack(Vector2i(35, 1))
 	var snm_sw := Game.new_device("sw-24")  # an L3 switch, so it can own a management address
