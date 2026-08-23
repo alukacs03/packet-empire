@@ -3143,6 +3143,86 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- staff: shifts, morale, training and negotiation ---
+	var st_saved := Game.staff.duplicate()
+	var st_cycle := Game.cycle
+	var st_money := Game.money
+	Game.money = 200000
+	Game.staff = []
+	var st_rng := RandomNumberGenerator.new()
+	st_rng.seed = 99
+	var st_a := Staff.make_candidate(st_rng)
+	st_a["role"] = "noc"
+	st_a["skill"] = 2
+	st_a["salary"] = 300
+	Game.staff.append(st_a)
+	# shifts: only the people who are awake count
+	Game.cycle = 3  # early afternoon
+	check(Staff.shift_of(st_a) == "day", "staff: people start on days")
+	check(Staff.on_shift(st_a), "staff: and a day person is on shift in the afternoon")
+	check(Staff.repair_power()[0] == 1, "staff: so they can work")
+	Game.cycle = 7  # late evening
+	check(not Staff.on_shift(st_a), "staff: the same person is not on shift at night")
+	check(Staff.repair_power()[0] == 0, "staff: and nothing gets fixed while nobody is awake")
+	check(not Staff.anyone_on_shift(), "staff: the rota says the floor is unattended")
+	Staff.set_shift(st_a, "night")
+	check(Staff.on_shift(st_a), "staff: moving them to nights covers those hours")
+	check(int(st_a["salary"]) >= Staff.market_rate(st_a),
+		"staff: and nights are paid at the night rate")
+	Staff.set_shift(st_a, "day")
+	Game.cycle = 3
+	# morale: a quiet cycle helps, a bad one hurts, underpaying hurts more
+	st_a["morale"] = 60
+	Staff.morale_tick(0)
+	check(int(st_a["morale"]) > 60, "staff: a quiet cycle restores morale")
+	st_a["morale"] = 60
+	Staff.morale_tick(10)
+	check(int(st_a["morale"]) < 60, "staff: a cycle full of trouble costs it")
+	st_a["salary"] = 10  # far below market
+	st_a["morale"] = 60
+	Staff.morale_tick(0)
+	check(int(st_a["morale"]) < 63, "staff: being paid under the market rate weighs on them")
+	var st_before_raise := int(st_a["morale"])
+	Staff.give_raise(st_a, 200)
+	check(int(st_a["morale"]) > st_before_raise and int(st_a["salary"]) == 210,
+		"staff: a raise costs money and buys goodwill")
+	# training takes them off the floor and brings them back better
+	var st_skill := int(st_a["skill"])
+	check(Staff.start_course(st_a, "switching") == "", "staff: a course can be paid for")
+	check(not Staff.on_shift(st_a), "staff: somebody on a course is not on the floor")
+	check(Staff.start_course(st_a, "routing") != "", "staff: and cannot be on two at once")
+	for st_i in Staff.COURSES["switching"]["cycles"]:
+		Staff.morale_tick(0)
+	check(int(st_a["skill"]) == st_skill + 1, "staff: they come back one better")
+	check("switching" in st_a.get("certs", []), "staff: with the certification recorded")
+	# quitting
+	st_a["morale"] = 0
+	st_a["salary"] = 1
+	var st_left := false
+	for st_try in 30:
+		Staff.morale_tick(20)
+		if Game.staff.is_empty():
+			st_left = true
+			break
+	check(st_left, "staff: somebody miserable and underpaid eventually resigns")
+	# hiring negotiation
+	Game.staff = []
+	Game.reputation = 50
+	Game.refresh_candidates(true)
+	check(not Game.candidates.is_empty(), "hiring: there are candidates")
+	var st_cand: Dictionary = Game.candidates[0]
+	var st_ask := int(st_cand["ask"])
+	check(Game.offer_job(st_cand, int(st_ask * 0.4)) == "walked",
+		"hiring: a derisory offer is refused outright")
+	Game.refresh_candidates(true)
+	var st_c2: Dictionary = Game.candidates[0]
+	check(Game.offer_job(st_c2, int(st_c2["ask"])) == "",
+		"hiring: their asking price is always accepted")
+	check(Game.staff.size() == 1, "hiring: and they join")
+	Game.staff = st_saved
+	Game.cycle = st_cycle
+	Game.money = st_money
+
 	# --- IPv4 scarcity ---
 	var v4_deals := Game.deals.duplicate()
 	var v4_blocks := Game.ipv4_blocks

@@ -2432,14 +2432,60 @@ func _build_business_tab() -> void:
 	if Game.staff.is_empty():
 		contracts_box.add_child(_label("  Nobody on the payroll: every fault is yours to fix.",
 			13, Color(0.7, 0.7, 0.75)))
+	if not Game.staff.is_empty() and not Staff.anyone_on_shift():
+		contracts_box.add_child(_wrap("  Nobody is on shift right now (it is %s). Whatever breaks in the next few cycles waits until somebody clocks on."
+			% Game.day_name(), 13, Color(1.0, 0.8, 0.5), 560))
 	for m: Dictionary in Game.staff.duplicate():
 		var srow := HBoxContainer.new()
+		srow.add_theme_constant_override("separation", 6)
 		contracts_box.add_child(srow)
-		var sl := _label("  %-18s %-18s skill %d   $%d/cycle" % [m["name"], Staff.label(m),
-			int(m["skill"]), int(m["salary"])], 13, Color(0.78, 0.85, 0.8))
-		sl.tooltip_text = Staff.ROLES[m["role"]]["blurb"]
+		var under: bool = int(m["salary"]) < Staff.market_rate(m)
+		var busy: int = int(m.get("training_left", 0))
+		var state := "on a course, %d cycle(s) left" % busy if busy > 0 else \
+			("on shift" if Staff.on_shift(m) else "off shift")
+		var sl := _label("  %-16s %-16s skill %d  $%d/cycle  morale %d  %s%s" % [m["name"],
+			Staff.label(m), int(m["skill"]), int(m["salary"]), int(m.get("morale", 70)),
+			state, "  (under market)" if under else ""], 12,
+			Prefs.bad_colour() if int(m.get("morale", 70)) < 30 else Color(0.78, 0.85, 0.8))
+		sl.add_theme_font_override("font", mono)
+		sl.tooltip_text = "%s\nShift: %s\nMarket rate: $%d\nCertifications: %s" % [
+			Staff.ROLES[m["role"]]["blurb"], Staff.SHIFTS[Staff.shift_of(m)]["label"],
+			Staff.market_rate(m),
+			", ".join(PackedStringArray(m.get("certs", []))) if not m.get("certs", []).is_empty()
+			else "none"]
 		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sl)
+		var shift_btn := Button.new()
+		shift_btn.text = Staff.SHIFTS[Staff.shift_of(m)]["label"]
+		shift_btn.tooltip_text = "Which part of the day they cover. Nights cost a premium."
+		shift_btn.pressed.connect(func() -> void:
+			Staff.set_shift(m, "night" if Staff.shift_of(m) == "day" else "day")
+			_refresh_contracts())
+		srow.add_child(shift_btn)
+		var raise_btn := Button.new()
+		raise_btn.text = "Raise"
+		raise_btn.tooltip_text = "Ten percent. Cheaper than replacing them."
+		raise_btn.pressed.connect(func() -> void:
+			Staff.give_raise(m, maxi(20, int(m["salary"]) / 10))
+			_refresh_contracts())
+		srow.add_child(raise_btn)
+		var train_btn := Button.new()
+		train_btn.text = "Train…"
+		train_btn.disabled = busy > 0
+		train_btn.pressed.connect(func() -> void:
+			var opts: Array = []
+			var keys: Array = []
+			for course in Staff.COURSES:
+				var c: Dictionary = Staff.COURSES[course]
+				opts.append("%s   $%d, %d cycles off the floor" % [c["label"], int(c["cost"]),
+					int(c["cycles"])])
+				keys.append(course)
+			_menu(train_btn, opts, func(id: int) -> void:
+				var err := Staff.start_course(m, String(keys[id]))
+				if err != "":
+					_toast(err)
+				_refresh_contracts()))
+		srow.add_child(train_btn)
 		var fire_btn := Button.new()
 		fire_btn.text = "Let go"
 		fire_btn.pressed.connect(func() -> void:
@@ -2452,16 +2498,27 @@ func _build_business_tab() -> void:
 	hire_btn.pressed.connect(func() -> void:
 		var opts: Array = []
 		for c: Dictionary in Game.candidates:
-			opts.append("%-18s %-18s skill %d   asking $%d/cycle" % [c["name"], Staff.label(c),
-				int(c["skill"]), int(c["salary"])])
+			opts.append("%-18s %-18s skill %d   asking $%d/cycle%s" % [c["name"], Staff.label(c),
+				int(c["skill"]), int(c["ask"]),
+				"   (they countered: $%d)" % int(c["counter"]) if c.has("counter") else ""])
 		if opts.is_empty():
 			_toast("no candidates right now: the market refreshes every few cycles")
 			return
 		_menu(hire_btn, opts, func(id: int) -> void:
-			var err: String = Game.hire(Game.candidates[id])
+			var cand: Dictionary = Game.candidates[id]
+			# offer nine tenths of what they asked for and see what happens
+			var offered := int(float(int(cand["ask"])) * 0.9)
+			var res := Game.offer_job(cand, offered)
 			_refresh_contracts()
-			if err != "":
-				_toast(err)))
+			if res == "counter":
+				_toast("%s says $%d and not a forint less." % [cand["name"],
+					int(cand.get("counter", cand["ask"]))])
+			elif res == "walked":
+				_toast("%s took another offer." % cand["name"])
+			elif res == "":
+				hud_toast("%s starts at $%d/cycle." % [cand["name"], int(cand["salary"])], true)
+			else:
+				_toast(res)))
 	contracts_box.add_child(hire_btn)
 	contracts_box.add_child(_section("SITES"))
 	for i in Game.site_count():

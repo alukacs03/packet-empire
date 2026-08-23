@@ -1198,8 +1198,34 @@ func refresh_candidates(force := false) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
 	candidates = []
-	for i in 3:
-		candidates.append(Staff.make_candidate(rng))
+	# a company people have heard good things about attracts better applicants
+	var pool := 3 + int(reputation / 40)
+	for i in pool:
+		var c := Staff.make_candidate(rng)
+		if reputation >= 65 and rng.randf() < 0.4:
+			c["skill"] = mini(5, int(c["skill"]) + 1)
+			c["ask"] = int(float(c["ask"]) * 1.15)
+			c["salary"] = c["ask"]
+		candidates.append(c)
+
+func offer_job(candidate: Dictionary, salary: int) -> String:
+	## Negotiating: below their asking price they may take it, push back, or
+	## walk. A good reputation makes people want to work for you.
+	if salary >= int(candidate["ask"]):
+		candidate["salary"] = salary
+		return hire(candidate)
+	var gap := float(int(candidate["ask"]) - salary) / float(maxi(1, int(candidate["ask"])))
+	var tolerance := 0.08 + float(reputation) / 100.0 * 0.22
+	if gap <= tolerance:
+		candidate["salary"] = salary
+		log_event("HIRING: %s accepted $%d, below their asking price." % [candidate["name"], salary])
+		return hire(candidate)
+	if gap <= tolerance * 2.0:
+		candidate["counter"] = int(round(float(int(candidate["ask"])) * (1.0 - tolerance * 0.5)))
+		return "counter"
+	candidates.erase(candidate)
+	log_event("HIRING: %s turned you down and took something else." % candidate["name"])
+	return "walked"
 
 func hire(candidate: Dictionary) -> String:
 	if money < int(candidate["salary"]):
@@ -2195,6 +2221,18 @@ func sla_tick() -> void:
 		last_pl["salaries"] = -wages
 		earned -= wages
 		Staff.work_cycle()
+		# how hard a cycle it was for them: broken links, dead kit, breaches
+		var trouble := 0
+		for l in links:
+			if not l.a.enabled or not l.b.enabled:
+				trouble += 1
+		for d in all_devices():
+			if d.status != "active":
+				trouble += 1
+		for cid in sla_status:
+			if not sla_status[cid]:
+				trouble += 1
+		Staff.morale_tick(trouble)
 	if cycle % 4 == 0:
 		refresh_candidates(true)  # the job market moves
 	if stage >= 2 and randf() < 0.25 * fault_scale():
