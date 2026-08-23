@@ -191,6 +191,32 @@ func exec(line: String) -> String:
 			for r in Sim._bgp_learned(dev):
 				out += " %-18s %s (bgp)\n" % ["%s/%d" % [r["prefix"], int(r["plen"])], r["via"]]
 			return out
+		"routing ospf network add":
+			if not dev.ip_forwarding:
+				return "failure: OSPF needs a router\n"
+			if Net.valid_cidr(p.get("prefix", "")):
+				if dev.ospf.is_empty():
+					dev.ospf = {"networks": []}
+				if p["prefix"] not in dev.ospf["networks"]:
+					dev.ospf["networks"].append(p["prefix"])
+				Game.topology_changed.emit()
+				return ""
+			return "usage: /routing ospf network add prefix=<p/len>\n"
+		"routing ospf network remove":
+			if not dev.ospf.is_empty():
+				dev.ospf["networks"].erase(p.get("prefix", ""))
+				Game.topology_changed.emit()
+			return ""
+		"routing ospf print":
+			if dev.ospf.is_empty():
+				return "not configured\n"
+			var out := "networks: %s\n NEIGHBOR       ADDRESS\n" % ", ".join(PackedStringArray(dev.ospf["networks"]))
+			var seen := {}
+			for nb in Sim.ospf_neighbors(dev):
+				if not seen.has(nb["dev"]):
+					seen[nb["dev"]] = true
+					out += " %-14s %s\n" % [nb["dev"].name, nb["via_ip"]]
+			return out
 		"routing bgp set":
 			if dev.type != "router":
 				return "failure: BGP needs a router\n"
@@ -238,7 +264,8 @@ const PATHS := ["help", "export", "ping", "tool traceroute",
 	"ip address add", "ip address remove", "ip address print",
 	"ip route add", "ip route remove", "ip route print",
 	"ip firewall nat add", "ip firewall nat print",
-	"routing bgp set", "routing bgp peer add", "routing bgp network add", "routing bgp print"]
+	"routing bgp set", "routing bgp peer add", "routing bgp network add", "routing bgp print",
+	"routing ospf network add", "routing ospf network remove", "routing ospf print"]
 
 func _is_path_word(prefix: String) -> bool:
 	for c in PATHS:

@@ -193,6 +193,65 @@ static func _ip_of_on_subnet(dev: Net.NDevice, peer_ip: String) -> String:
 static var _stp_blocked := {}  # Iface -> true
 static var _stp_dirty := true
 
+static func ospf_covered_ifaces(dev: Net.NDevice) -> Array:
+	## interfaces whose subnet is covered by a network statement
+	var out: Array = []
+	if dev.ospf.is_empty():
+		return out
+	for i: Net.Iface in dev.ifaces:
+		if not i.enabled:
+			continue
+		for cidr: String in i.ips:
+			for net in dev.ospf.get("networks", []):
+				var parts := String(net).split("/")
+				if Net.same_subnet(cidr.split("/")[0], parts[0], int(parts[1])):
+					out.append(i)
+	return out
+
+static func ospf_neighbors(dev: Net.NDevice) -> Array:
+	## -> [{dev, via_ip}] adjacent OSPF routers (shared covered subnet)
+	var out: Array = []
+	for other in Game.all_devices():
+		if other == dev or other.ospf.is_empty() or not other.ip_forwarding 				or other.status != "active":
+			continue
+		for ia: Net.Iface in ospf_covered_ifaces(dev):
+			for cidr_a: String in ia.ips:
+				var pa := cidr_a.split("/")
+				for ib: Net.Iface in ospf_covered_ifaces(other):
+					for cidr_b: String in ib.ips:
+						if Net.same_subnet(cidr_b.split("/")[0], pa[0], int(pa[1])):
+							out.append({"dev": other, "via_ip": cidr_b.split("/")[0]})
+	return out
+
+static func _ospf_learned(dev: Net.NDevice) -> Array:
+	## BFS shortest-path: every reachable OSPF router's covered subnets,
+	## via the first-hop neighbor toward it. -> [{prefix, plen, via}]
+	var out: Array = []
+	if dev.ospf.is_empty() or not dev.ip_forwarding:
+		return out
+	var first_hop := {}  # router -> via_ip of dev's first hop
+	var frontier: Array = []
+	for nb in ospf_neighbors(dev):
+		if not first_hop.has(nb["dev"]):
+			first_hop[nb["dev"]] = nb["via_ip"]
+			frontier.append(nb["dev"])
+	var visited := {dev: true}
+	while not frontier.is_empty():
+		var cur: Net.NDevice = frontier.pop_front()
+		if visited.has(cur):
+			continue
+		visited[cur] = true
+		for i: Net.Iface in ospf_covered_ifaces(cur):
+			for cidr: String in i.ips:
+				var netw := Net.network_of(cidr)
+				out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": first_hop[cur]})
+		for nb in ospf_neighbors(cur):
+			if not visited.has(nb["dev"]):
+				if not first_hop.has(nb["dev"]):
+					first_hop[nb["dev"]] = first_hop[cur]
+				frontier.append(nb["dev"])
+	return out
+
 static func flush_learned_state() -> void:
 	_stp_dirty = true
 	for d in Game.all_devices():
@@ -302,7 +361,7 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 			if not via_rt.is_empty():
 				best_len = int(r["plen"])
 				best = via_rt
-	for r in _bgp_learned(dev):
+	for r in _bgp_learned(dev) + _ospf_learned(dev):
 		if int(r["plen"]) > best_len and Net.same_subnet(dst_ip, r["prefix"], int(r["plen"])):
 			var out := _connected_iface(dev, r["via"])
 			if out:

@@ -139,6 +139,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "dynamic_routing",
+			"title": "Static spaghetti",
+			"customer": "Gamma Corp (again)",
+			"reward": 2600,
+			"brief": "Gamma opened a third office and your static routes are becoming spaghetti — every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik: '/routing ospf network add prefix=10.20.0.0/16'. NO static routes on the routers — OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
+			"reqs": [
+				{"d": "Servers own 10.20.1.10 and 10.20.2.10", "t": func() -> bool: return _owner("10.20.1.10") != null and _owner("10.20.2.10") != null},
+				{"d": "Two routers share an OSPF adjacency", "t": func() -> bool: return _ospf_adjacency()},
+				{"d": "Both servers reach each other — no static routes on routers", "t": func() -> bool: return _ospf_no_static_path()},
+			],
+		},
+		{
 			"id": "feel_the_heat",
 			"title": "Feeling the heat",
 			"customer": "Your own ops",
@@ -211,6 +223,18 @@ static func _nat_not_announced() -> bool:
 						if Net.same_subnet(ip, parts[0], int(parts[1])):
 							return false
 	return true
+
+static func _ospf_adjacency() -> bool:
+	for d in Game.all_devices():
+		if not d.ospf.is_empty() and not Sim.ospf_neighbors(d).is_empty():
+			return true
+	return false
+
+static func _ospf_no_static_path() -> bool:
+	for d in Game.all_devices():
+		if d.ip_forwarding and not d.ospf.is_empty() and not d.static_routes.is_empty():
+			return false
+	return _ping("10.20.1.10", "10.20.2.10", true) and _ping("10.20.2.10", "10.20.1.10", true)
 
 static func _has_active(type: String) -> bool:
 	for d in Game.all_devices():

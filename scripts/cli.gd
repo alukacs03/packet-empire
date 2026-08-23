@@ -77,6 +77,8 @@ class EOS extends Session:
 				return "%s(config-vlan-%d)#" % [dev.name, ctx_vlan]
 			"router":
 				return dev.name + "(config-router)#"
+			"ospf":
+				return dev.name + "(config-router-ospf)#"
 		return dev.name + ">"
 
 	static func _short(ifname: String) -> String:
@@ -84,7 +86,7 @@ class EOS extends Session:
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
-		var EP := ["exec", "priv", "config", "if", "vlan", "router"]  # show/ping work everywhere via 'do'-free shortcut
+		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
@@ -99,6 +101,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
+			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
@@ -114,6 +117,9 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl},
 			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
 			{"m": ["config"], "p": ["router", "bgp"], "h": _cfg_router_bgp},
+			{"m": ["config"], "p": ["router", "ospf"], "h": _cfg_router_ospf},
+			{"m": ["ospf"], "p": ["network"], "h": _ospf_network},
+			{"m": ["ospf"], "p": ["no", "network"], "h": _ospf_no_network},
 			{"m": ["router"], "p": ["neighbor"], "h": _bgp_neighbor},
 			{"m": ["router"], "p": ["no", "neighbor"], "h": _bgp_no_neighbor},
 			{"m": ["router"], "p": ["network"], "h": _bgp_network},
@@ -129,7 +135,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): ctx_if.enabled = true; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
-			{"m": ["config", "if", "vlan", "router"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
 		]
@@ -202,7 +208,7 @@ class EOS extends Session:
 
 	func _exit(_r: Array) -> String:
 		match mode:
-			"if", "vlan", "router":
+			"if", "vlan", "router", "ospf":
 				mode = "config"
 			"config":
 				mode = "priv"
@@ -395,6 +401,47 @@ class EOS extends Session:
 			n += 1
 		return out + "    (first match wins; default permit)\n"
 
+	func _cfg_router_ospf(r: Array) -> String:
+		if not dev.ip_forwarding or dev.type == "uplink":
+			return "% OSPF runs on routers and firewalls\n"
+		if r.size() > 1:
+			return "usage: router ospf [process-id]\n"
+		if dev.ospf.is_empty():
+			dev.ospf = {"networks": []}
+		mode = "ospf"
+		return ""
+
+	func _ospf_network(r: Array) -> String:
+		# accept: network <p/len> [area 0]
+		if r.size() >= 1 and Net.valid_cidr(r[0]):
+			if r[0] not in dev.ospf["networks"]:
+				dev.ospf["networks"].append(r[0])
+			Game.topology_changed.emit()
+			return ""
+		return "usage: network <prefix/len> area 0\n"
+
+	func _ospf_no_network(r: Array) -> String:
+		if r.size() >= 1:
+			dev.ospf["networks"].erase(r[0])
+			Game.topology_changed.emit()
+			return ""
+		return "usage: no network <prefix/len>\n"
+
+	func _show_ospf(_r: Array) -> String:
+		if dev.ospf.is_empty():
+			return "% OSPF not running — 'router ospf' in config mode\n"
+		var nbs := Sim.ospf_neighbors(dev)
+		if nbs.is_empty():
+			return "  (no neighbors — check network statements on both sides)\n"
+		var out := "%-14s %-8s %s\n" % ["Neighbor", "State", "Address"]
+		var seen := {}
+		for nb in nbs:
+			if seen.has(nb["dev"]):
+				continue
+			seen[nb["dev"]] = true
+			out += "%-14s %-8s %s\n" % [nb["dev"].name, "FULL", nb["via_ip"]]
+		return out
+
 	func _cfg_router_bgp(r: Array) -> String:
 		if dev.type != "router":
 			return "% BGP runs on routers\n"
@@ -561,6 +608,8 @@ class EOS extends Session:
 			out += "S  %s/%d [1/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		for r in Sim._bgp_learned(dev):
 			out += "B  %s/%d [20/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
+		for r in Sim._ospf_learned(dev):
+			out += "O  %s/%d [110/%d] via %s\n" % [r["prefix"], int(r["plen"]), 10, r["via"]]
 		return out if out else "  (no routes — configure ip addresses)\n"
 
 	func _show_ip_brief(_r: Array) -> String:
@@ -582,6 +631,11 @@ class EOS extends Session:
 			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		for rule in dev.acls:
 			out += "acl %s %s/%d %s/%d\n!\n" % [rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
+		if not dev.ospf.is_empty():
+			out += "router ospf 1\n"
+			for net in dev.ospf["networks"]:
+				out += "   network %s area 0\n" % net
+			out += "!\n"
 		if not dev.bgp.is_empty() and dev.type == "router":
 			out += "router bgp %d\n" % int(dev.bgp["asn"])
 			for nb in dev.bgp["neighbors"]:

@@ -30,6 +30,7 @@ class NDevice:
 	var static_routes: Array = []  # {"prefix": "0.0.0.0", "plen": 0, "via": "10.0.0.1"}
 	var acls: Array = []  # firewall rules {action, src, splen, dst, dplen}; first match wins
 	var bgp := {}  # {asn, neighbors: [{ip, remote_as}], networks: ["prefix/len"]}
+	var ospf := {}  # {"networks": ["prefix/len"]} — single area 0, enabled when non-empty
 	var services := {}  # "dhcp": {iface,start,end,plen,gw,dns,leases}, "dns": {records}
 	var resolver := ""  # DNS server ip for this host
 	var nat_flows := {}  # runtime: l4 id -> original private src ip
@@ -66,6 +67,15 @@ static func ip_to_int(ip: String) -> int:
 	for p in ip.split("."):
 		v = v * 256 + int(p)
 	return v
+
+static func int_to_ip(v: int) -> String:
+	return "%d.%d.%d.%d" % [v >> 24 & 255, v >> 16 & 255, v >> 8 & 255, v & 255]
+
+static func network_of(cidr: String) -> Dictionary:
+	var parts := cidr.split("/")
+	var plen := int(parts[1])
+	var mask := 0 if plen == 0 else (0xFFFFFFFF << (32 - plen)) & 0xFFFFFFFF
+	return {"prefix": int_to_ip(ip_to_int(parts[0]) & mask), "plen": plen}
 
 static func same_subnet(ip: String, net_ip: String, plen: int) -> bool:
 	if plen <= 0:

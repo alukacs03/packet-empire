@@ -392,6 +392,52 @@ static func run() -> int:
 	var rs2 := CLI.new_session(mkt_sw)
 	check("bridge host" in rs2.exec("help"), "cli: ROS help lists bridge host print")
 
+	# --- OSPF dynamic routing ---
+	var r5 := Game.add_rack(Vector2i(0, 1))
+	var o_r1 := Game.new_device("rtr-edge")
+	var o_r2 := Game.new_device("rtr-lite")
+	var t1 := Game.new_device("server")
+	var t2 := Game.new_device("server")
+	r5.slots[0] = o_r1
+	r5.slots[1] = o_r2
+	r5.slots[2] = t1
+	r5.slots[3] = t2
+	Game.connect_ifaces(t1.ifaces[0], o_r1.ifaces[1])
+	Game.connect_ifaces(o_r1.ifaces[2], o_r2.ifaces[1])
+	Game.connect_ifaces(t2.ifaces[0], o_r2.ifaces[2])
+	Game.add_ip(t1.ifaces[0], "10.20.1.10/24")
+	Game.add_ip(o_r1.ifaces[1], "10.20.1.1/24")
+	Game.add_ip(o_r1.ifaces[2], "10.20.9.1/30")
+	Game.add_ip(o_r2.ifaces[1], "10.20.9.2/30")
+	Game.add_ip(o_r2.ifaces[2], "10.20.2.1/24")
+	Game.add_ip(t2.ifaces[0], "10.20.2.10/24")
+	Game.add_static_route(t1, "0.0.0.0", 0, "10.20.1.1")
+	Game.add_static_route(t2, "0.0.0.0", 0, "10.20.2.1")
+	check(not Sim.ping(t1, "10.20.2.10")["ok"], "ospf: no routes yet, offices can't talk")
+	var os1 := CLI.new_session(o_r1)
+	os1.exec("en")
+	os1.exec("conf t")
+	os1.exec("router ospf")
+	os1.exec("network 10.20.0.0/16 area 0")
+	os1.exec("end")
+	var os2 := CLI.new_session(o_r2)
+	os2.exec("/routing ospf network add prefix=10.20.0.0/16")
+	check(os1.exec("show ip ospf neighbor").contains(o_r2.name), "ospf: adjacency comes up (EOS side)")
+	check(os2.exec("/routing ospf print").contains(o_r1.name), "ospf: adjacency visible from RouterOS side")
+	check(Sim.ping(t1, "10.20.2.10")["ok"] and Sim.ping(t2, "10.20.1.10")["ok"],
+		"ospf: cross-office ping with zero static routes on routers")
+	check(os1.exec("sh ip route").contains("O  10.20.2.0/24"), "ospf: O route in show ip route")
+	check(Game.try_complete_contract(_contract("dynamic_routing")), "ospf: contract verifies")
+	os1.exec("conf t")
+	os1.exec("router ospf")
+	os1.exec("no network 10.20.0.0/16")
+	os1.exec("end")
+	check(not Sim.ping(t1, "10.20.2.10")["ok"], "ospf: withdrawing networks drops the adjacency and the routes")
+	os1.exec("conf t")
+	os1.exec("router ospf")
+	os1.exec("network 10.20.0.0/16 area 0")
+	os1.exec("end")
+
 	# --- reputation & public hosting ---
 	var rep0 := Game.reputation
 	Game.sla_tick()

@@ -442,7 +442,8 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"nat": i.nat, "ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
-		"services": d.services, "resolver": d.resolver, "acls": d.acls, "bgp": d.bgp, "ifaces": ifs}
+		"services": d.services, "resolver": d.resolver, "acls": d.acls, "bgp": d.bgp,
+		"ospf": d.ospf, "ifaces": ifs}
 
 func load_game() -> bool:
 	if not FileAccess.file_exists(save_path):
@@ -474,6 +475,7 @@ func load_game() -> bool:
 		d.services = sd.get("services", {})
 		d.acls = sd.get("acls", [])
 		d.bgp = sd.get("bgp", {})
+		d.ospf = sd.get("ospf", {})
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]
