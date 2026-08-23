@@ -1015,5 +1015,49 @@ static func run() -> int:
 	check(Game.all_devices().size() == pre_devs and during != pre_devs,
 		"drill: abandoning restores the real datacenter")
 
+	# --- long-run economy sanity ---
+	Game.racks = []
+	Game.links = []
+	Game.deals = []
+	Game.offers = []
+	Game.events = []
+	Game.contracts_done = []
+	Game.sla_status = {}
+	Game.incidents_seen = {}
+	Game.stage = 1
+	Game.debt = 0
+	Game.money = 6000
+	Game.reputation = 50
+	var er := Game.add_rack(Vector2i(0, 0))
+	var esw := Game.new_device("sw-8")
+	var eh1 := Game.new_device("srv-1")
+	var eh2 := Game.new_device("srv-1")
+	er.slots[0] = esw
+	er.slots[1] = eh1
+	er.slots[2] = eh2
+	Game.connect_ifaces(eh1.ifaces[0], esw.ifaces[0])
+	Game.connect_ifaces(eh2.ifaces[0], esw.ifaces[1])
+	Game.add_ip(eh1.ifaces[0], "10.99.0.10/24")
+	Game.add_ip(eh2.ifaces[0], "10.99.0.11/24")
+	Game.deals = [{"id": "e1", "customer": "SteadyCo", "kind": "hosting",
+		"params": {"ip": "10.99.0.10"}, "fee": 120, "load": 200, "brief": "", "healthy": true}]
+	var money_start := Game.money
+	for i in 60:
+		Game.sla_tick()
+	check(Game.money > money_start, "economy: a delivering operator grows over 60 cycles (%d -> %d)" % [money_start, Game.money])
+	check(Game.money < money_start + 60 * 400, "economy: growth stays bounded, no runaway income")
+	check(Game.reputation >= 50, "economy: steady delivery keeps reputation up")
+	check(Game.last_pl.has("power"), "economy: the power bill is charged once you own the room")
+	# now break the service and verify the pressure lands
+	eh1.ifaces[0].enabled = false
+	Game.topology_changed.emit()
+	var money_broken := Game.money
+	var rep_broken := Game.reputation
+	for i in 8:
+		Game.sla_tick()
+	check(Game.money < money_broken, "economy: a broken datacenter bleeds money")
+	check(Game.deals.is_empty(), "economy: undelivered customers eventually walk")
+	check(Game.reputation < rep_broken, "economy: failure costs reputation (%d -> %d)" % [rep_broken, Game.reputation])
+
 	print("---- %d failures" % fails)
 	return fails
