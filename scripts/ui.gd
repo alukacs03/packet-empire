@@ -64,10 +64,12 @@ func _ready() -> void:
 	Game.topology_changed.connect(_refresh_open)
 
 func _process(_dt: float) -> void:
-	# focus watchdog: while the console is open, dropped focus returns to it
-	if cli_box and cli_box.visible and not if_overlay.visible \
-			and get_viewport().gui_get_focus_owner() == null:
-		cli_in.grab_focus()
+	# focus watchdog: while the console is open, dropped focus/editing returns to it
+	if cli_box and cli_box.visible and not if_overlay.visible:
+		if get_viewport().gui_get_focus_owner() == null:
+			cli_in.grab_focus()
+		if cli_in.has_focus() and not cli_in.is_editing():
+			cli_in.edit()
 
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible
@@ -320,7 +322,9 @@ func _build_dev_overlay() -> void:
 	cli_in = LineEdit.new()
 	cli_in.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cli_in.add_theme_font_override("font", mono)
+	cli_in.keep_editing_on_text_submit = true
 	cli_in.text_submitted.connect(_cli_submit)
+	cli_in.gui_input.connect(_cli_key)
 	h.add_child(cli_in)
 
 func open_dev(d: Net.NDevice) -> void:
@@ -581,6 +585,27 @@ func _toggle_cli() -> void:
 	else:
 		cli_toggle.text = "Open console  ▤"
 		cli_out.text = ""
+
+func _cli_key(e: InputEvent) -> void:
+	if e is InputEventKey and e.pressed and e.keycode == KEY_TAB:
+		cli_in.accept_event()
+		var text := cli_in.text
+		var cands := CLI.complete(cur_dev, text)
+		if cands.is_empty():
+			return
+		var start := text.rfind(" ") + 1
+		var cur := text.substr(start)
+		var common: String = cands[0]
+		for c: String in cands:
+			while not c.begins_with(common):
+				common = common.left(common.length() - 1)
+		if cands.size() == 1:
+			common += " "
+		if common.length() > cur.length():
+			cli_in.text = text.left(start) + common
+			cli_in.caret_column = cli_in.text.length()
+		elif cands.size() > 1:
+			cli_out.append_text("  ".join(PackedStringArray(cands)) + "\n")
 
 func _cli_submit(cmd: String) -> void:
 	cli_in.clear()

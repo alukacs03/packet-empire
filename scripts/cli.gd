@@ -21,6 +21,67 @@ static func exec(dev: Net.NDevice, line: String) -> String:
 			return _cmd_set(dev, args)
 	return "% Unknown command — try 'help'\n"
 
+static func complete(dev: Net.NDevice, line: String) -> Array:
+	## Candidates for the token being typed at the end of `line`.
+	var ends_space := line.ends_with(" ")
+	var toks := Array(line.strip_edges().split(" ", false))
+	var cur: String = "" if ends_space or toks.is_empty() else toks.pop_back()
+	var out: Array = []
+	for c in _candidates(dev, toks):
+		if c.begins_with(cur):
+			out.append(c)
+	out.sort()
+	return out
+
+static func _candidates(dev: Net.NDevice, ctx: Array) -> Array:
+	var is_sw := dev.type == "switch"
+	var ifnames: Array = []
+	for i: Net.Iface in dev.ifaces:
+		ifnames.append(i.name)
+	match ctx.size():
+		0:
+			var cmds := ["help", "show", "hostname", "set"]
+			if is_sw:
+				cmds.append("vlan")
+			return cmds
+		1:
+			match ctx[0]:
+				"show":
+					return ["interfaces", "vlans", "version"] if is_sw else ["interfaces", "version"]
+				"set":
+					return ifnames
+				"vlan":
+					return ["add", "del"] if is_sw else []
+		2:
+			if ctx[0] == "set" and ctx[1] in ifnames:
+				var props := ["ip", "enable", "disable", "mtu"]
+				if is_sw:
+					props += ["mode", "vlan"]
+				return props
+			if ctx[0] == "vlan" and ctx[1] == "del":
+				return _vids(dev)
+		3:
+			if ctx[0] == "set":
+				match ctx[2]:
+					"mode":
+						return ["access", "trunk"]
+					"vlan":
+						return _vids(dev)
+					"ip":
+						return ["add", "del"]
+		4:
+			if ctx[0] == "set" and ctx[2] == "ip" and ctx[3] == "del":
+				for i: Net.Iface in dev.ifaces:
+					if i.name == ctx[1]:
+						return i.ips.duplicate()
+	return []
+
+static func _vids(dev: Net.NDevice) -> Array:
+	var out: Array = []
+	for vid in dev.vlans:
+		out.append(str(vid))
+	return out
+
 static func _help(dev: Net.NDevice) -> String:
 	var out := "  show interfaces | show version | hostname <name>
   set <iface> ip add <a.b.c.d/len>   set <iface> ip del <cidr>
