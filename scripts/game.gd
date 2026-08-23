@@ -48,6 +48,9 @@ var links: Array = []
 var money := 2000
 var stage := 0
 var contracts_done: Array = []
+var cycle := 0
+var events: Array = []  # operational event log (newest first)
+var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
@@ -130,10 +133,48 @@ func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 		"params": offer["params"], "fee": fee, "brief": offer["brief"], "healthy": false})
 	money_changed.emit()
 
+func log_event(text: String) -> void:
+	events.push_front("cycle %d: %s" % [cycle, text])
+	if events.size() > 20:
+		events.pop_back()
+
+func _security_sweep() -> int:
+	## Customer machines (marketplace deal servers) that can reach the IP of
+	## your routers/firewalls are a breach waiting to happen — once per pair.
+	var cost := 0
+	for deal in deals:
+		var ip: String = deal["params"].get("ip", "")
+		if ip == "":
+			continue
+		var srv := Contracts._owner(ip)
+		if srv == null or srv.type != "server":
+			continue
+		for d in all_devices():
+			if not d.ip_forwarding or d.type == "uplink":
+				continue
+			var key := "%s|%s" % [srv.name, d.name]
+			if incidents_seen.has(key):
+				continue
+			for i: Net.Iface in d.ifaces:
+				if i.name == "lo" or i.ips.is_empty():
+					continue
+				var mgmt_ip: String = i.ips[0].split("/")[0]
+				if Sim.ping(srv, mgmt_ip)["ok"]:
+					incidents_seen[key] = true
+					cost += 100
+					log_event("SECURITY: %s's machine %s reached %s management at %s — incident response -$100. Isolate your management plane (firewall it off from customer networks)!"
+						% [deal["customer"], srv.name, d.name, mgmt_ip])
+					break
+			if incidents_seen.has(key):
+				break
+	return cost
+
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees — but only while
 	## their requirements still hold. Break the network, lose the revenue.
+	cycle += 1
 	var earned := 0
+	earned -= _security_sweep()
 	if stage >= 1:  # colo includes power; your own room doesn't
 		earned -= power_draw() / 10
 	for c in Contracts.all():
@@ -380,7 +421,8 @@ func save_game() -> void:
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"money": money, "stage": stage, "counters": _counter,
+	f.store_string(JSON.stringify({"money": money, "stage": stage, "cycle": cycle,
+		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
 
@@ -406,6 +448,9 @@ func load_game() -> bool:
 	contracts_done = data.get("contracts_done", [])
 	stage = int(data.get("stage", 0))
 	offers = data.get("offers", [])
+	cycle = int(data.get("cycle", 0))
+	events = data.get("events", [])
+	incidents_seen = data.get("incidents_seen", {})
 	deals = data.get("deals", [])
 	for k in data["counters"]:
 		_counter[k] = int(data["counters"][k])

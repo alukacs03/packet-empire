@@ -745,6 +745,18 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	return h
 
 func _build_market_section() -> void:
+	if not Game.events.is_empty():
+		contracts_box.add_child(_section("EVENT LOG"))
+		for ev in Game.events.slice(0, 4):
+			var col := Color(0.75, 0.8, 0.88)
+			if "SECURITY" in ev:
+				col = Color(0.95, 0.55, 0.45)
+			elif "OVERHEAT" in ev:
+				col = Color(0.95, 0.7, 0.4)
+			var l := _label(ev, 12, col)
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size = Vector2(560, 0)
+			contracts_box.add_child(l)
 	if not Game.offers.is_empty():
 		contracts_box.add_child(_section("INCOMING OFFERS — QUOTE A PRICE PER REVENUE CYCLE"))
 	for offer: Dictionary in Game.offers:

@@ -273,6 +273,7 @@ static func run() -> int:
 	Game.accept_counter(off2)
 	check(Game.deals.size() == 1 and int(Game.deals[0]["fee"]) == 100,
 		"market: counter signs at their budget")
+	Game.incidents_seen["%s|%s" % [b2.name, rtr.name]] = true  # security tested separately below
 	Game.sla_tick()
 	check(Game.deals[0]["healthy"] == false, "market: undelivered deal does not pay")
 	Game.add_ip(b2.ifaces[0], "10.9.9.10/24")
@@ -286,6 +287,18 @@ static func run() -> int:
 	Game.offers.append(off3)
 	check(Game.respond_offer(off3, 90) == "accepted" and Game.deals.size() == 2,
 		"market: fair quote accepted directly")
+
+	# --- security sweep: exposed management plane ---
+	Game.incidents_seen.clear()
+	var m7 := Game.money
+	var ev0 := Game.events.size()
+	Game.sla_tick()  # deal server b2 can reach rtr's 10.0.0.254 -> one-shot incident
+	check(Game.events.size() > ev0 and "SECURITY" in Game.events[0], "sec: exposed management logs an incident")
+	var m8 := Game.money
+	var ev1 := Game.events.size()
+	Game.sla_tick()
+	check(Game.events.size() == ev1 or "SECURITY" not in Game.events[0], "sec: same exposure doesn't bill twice")
+	check(m8 > m7 - 200, "sec: incident cost bounded")
 
 	# --- RouterOS CLI (PacketTik gear) ---
 	var mkt_sw := Game.new_device("sw-lite")
