@@ -19,6 +19,7 @@ var dev_title: Label
 var name_edit: LineEdit
 var name_hint: Label
 var status_opt: OptionButton
+var psu_opt: OptionButton
 var port_row: VBoxContainer
 var conn_list: VBoxContainer
 var svc_lbl: Label
@@ -632,6 +633,17 @@ func _build_dev_overlay() -> void:
 		cur_dev.status = "active" if idx == 0 else "offline"
 		Game.topology_changed.emit())
 	name_row.add_child(status_opt)
+	name_row.add_child(_label("   Power:  ", 14, MUTED))
+	psu_opt = OptionButton.new()
+	for feed in ["A", "B", "AB"]:
+		psu_opt.add_item("feed " + feed if feed != "AB" else "both feeds")
+	psu_opt.tooltip_text = "Which power feed this device is plugged into"
+	psu_opt.item_selected.connect(func(idx: int) -> void:
+		var err := Game.set_psu(cur_dev, ["A", "B", "AB"][idx])
+		if err != "":
+			_toast(err)
+		_refresh_dev_header())
+	name_row.add_child(psu_opt)
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)
 
@@ -781,6 +793,13 @@ func _refresh_dev_header() -> void:
 	dev_title.text = "%s  /  %s: %s" % [Game.rack_of(cur_dev).name, cur_dev.name, Game.MODELS[cur_dev.model]["label"]]
 	name_edit.text = cur_dev.name
 	status_opt.select(0 if cur_dev.status == "active" else 1)
+	psu_opt.select(["A", "B", "AB"].find(cur_dev.psu))
+	psu_opt.set_item_disabled(2, not Game.dual_psu(cur_dev))
+	psu_opt.tooltip_text = "Two power supplies: it survives either feed failing" \
+		if Game.dual_psu(cur_dev) else "One power supply. Spread single-supply gear across both feeds."
+	status_opt.disabled = cur_dev.status == "nopower"
+	status_opt.tooltip_text = "No power on feed %s. It comes back on its own." % cur_dev.psu \
+		if cur_dev.status == "nopower" else "Take the device out of service"
 	name_hint.text = ""
 
 func _rename_dev(new_name: String) -> void:
@@ -1322,6 +1341,48 @@ func _refresh_ops() -> void:
 	var advice := _capacity_advice()
 	if advice != "":
 		ops_box.add_child(_wrap("  " + advice, 13, Color(1.0, 0.82, 0.5), 780))
+	ops_box.add_child(_section("POWER"))
+	for si2 in Game.site_count():
+		if si2 == 0 and Game.stage < 1:
+			ops_box.add_child(_label("  The colo provides power and cooling. Your own room will not.",
+				12, MUTED))
+			continue
+		var f: Dictionary = Game.site_feeds(si2)
+		var bits: Array = []
+		for letter in ["A", "B"]:
+			bits.append("feed %s %s" % [letter, "live" if bool(f[letter]) else "DOWN"])
+		if Game.has_ups(si2):
+			bits.append("UPS %d/%d cycles" % [int(Game.ups.get(si2, 0)), Game.UPS_CYCLES])
+		var pl := _label("  %-22s %s" % [Game.site_name(si2), "   ".join(PackedStringArray(bits))],
+			12, Prefs.bad_colour() if (not bool(f["A"]) or not bool(f["B"]))
+			else Color(0.7, 0.78, 0.85))
+		pl.add_theme_font_override("font", mono)
+		ops_box.add_child(pl)
+		var exposed: Array = Game.single_feed_exposure(si2)
+		var on_a: Array = []
+		var on_b: Array = []
+		for d3: Net.NDevice in exposed:
+			if d3.psu == "A":
+				on_a.append(d3.name)
+			else:
+				on_b.append(d3.name)
+		if not exposed.is_empty():
+			ops_box.add_child(_wrap("    Single-supply gear: feed A carries %s; feed B carries %s. Losing one feed takes exactly those down."
+				% [", ".join(PackedStringArray(on_a)) if not on_a.is_empty() else "nothing",
+				", ".join(PackedStringArray(on_b)) if not on_b.is_empty() else "nothing"],
+				12, Color(0.8, 0.75, 0.6), 780))
+	if Game.stage >= 1 and not Game.has_ups(Game.current_site):
+		var ups_btn := Button.new()
+		ups_btn.text = "Install a UPS on this floor  ($%d)" % Game.UPS_PRICE
+		ups_btn.tooltip_text = "Holds a dead feed up for %d cycles while the utility sorts itself out" % Game.UPS_CYCLES
+		ups_btn.pressed.connect(func() -> void:
+			var err := Game.buy_ups()
+			if err != "":
+				_toast(err)
+			else:
+				hud_toast("UPS installed.", true)
+			_refresh_ops())
+		ops_box.add_child(ups_btn)
 	ops_box.add_child(_section("ASSETS AND SPARES"))
 	var shelf: Array = []
 	for m in Game.spares:

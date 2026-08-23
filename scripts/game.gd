@@ -22,6 +22,10 @@ const MODELS := {
 	"isp-uplink": {"speed": 1000, "tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
 	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
+## Which models ship with two power supplies. Everything else has one, and a
+## single-supply device is only as reliable as the feed you plugged it into.
+const DUAL_PSU := ["sw-24", "srv-2", "rtr-edge", "fw-1", "lb-1"]
+
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
 	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100, "lb-1": 120,
 	"ap-1": 15}
@@ -554,6 +558,110 @@ const RANKS := [
 	["Packet Emperor", 150000],
 ]
 
+# ---------- power distribution ----------
+
+static func default_psu(model: String) -> String:
+	## dual-supply gear takes both feeds out of the box, which is the whole
+	## reason it costs more
+	return "AB" if model in DUAL_PSU else "A"
+
+func dual_psu(d: Net.NDevice) -> bool:
+	return d.model in DUAL_PSU
+
+func set_psu(d: Net.NDevice, which: String) -> String:
+	if which == "AB" and not dual_psu(d):
+		return "%s has one power supply; it can take A or B, not both" % d.name
+	if which not in ["A", "B", "AB"]:
+		return "a device plugs into feed A, feed B, or both"
+	d.psu = which
+	topology_changed.emit()
+	_apply_feed_state()
+	return ""
+
+func site_feeds(site: int) -> Dictionary:
+	if not feeds.has(site):
+		feeds[site] = {"A": true, "B": true}
+	return feeds[site]
+
+func feed_live(site: int, which: String) -> bool:
+	## a dead feed is still carried while the battery holds
+	return bool(site_feeds(site).get(which, true)) or int(ups.get(site, 0)) > 0
+
+func device_powered(d: Net.NDevice) -> bool:
+	var site := site_of_device(d)
+	for letter in d.psu:
+		if feed_live(site, letter):
+			return true
+	return false
+
+func site_of_device(d: Net.NDevice) -> int:
+	var r := rack_of(d)
+	return r.site if r != null else 0
+
+func buy_ups() -> String:
+	if ups.has(current_site) and int(ups.get(current_site, 0)) > 0:
+		return "there is already a UPS on this floor"
+	if stage < 1 and current_site == 0:
+		return "the colo provides its own power; a UPS is for your own room"
+	if not try_spend(UPS_PRICE):
+		return "you cannot afford the $%d UPS" % UPS_PRICE
+	ups[current_site] = UPS_CYCLES
+	log_event("POWER: a UPS is installed on %s, good for %d cycles of one dead feed."
+		% [site_name(current_site), UPS_CYCLES])
+	topology_changed.emit()
+	return ""
+
+func has_ups(site: int) -> bool:
+	return ups.has(site)
+
+func _apply_feed_state() -> void:
+	## a device with no live feed is off, and comes straight back when power does
+	for d in all_devices():
+		if device_powered(d):
+			if d.status == "nopower":
+				d.status = "active"
+		elif d.status == "active":
+			d.status = "nopower"
+	topology_changed.emit()
+
+func power_tick() -> void:
+	## utility feeds fail occasionally, and the battery drains while one is out
+	for site in site_count():
+		var f := site_feeds(site)
+		for letter in ["A", "B"]:
+			var key := "%d|%s" % [site, letter]
+			if not bool(f[letter]):
+				if cycle >= int(feed_out_until.get(key, 0)):
+					f[letter] = true
+					feed_out_until.erase(key)
+					log_event("POWER: feed %s on %s is back." % [letter, site_name(site)])
+				continue
+			# the colo's power is somebody else's problem; your own room is not
+			if site == 0 and stage < 1:
+				continue
+			if randf() < 0.012 * DIFFICULTIES[difficulty]["faults"]:
+				f[letter] = false
+				feed_out_until[key] = cycle + randi_range(1, 3)
+				log_event("POWER: feed %s on %s has dropped." % [letter, site_name(site)])
+		var any_out := not bool(f["A"]) or not bool(f["B"])
+		if any_out and int(ups.get(site, 0)) > 0:
+			ups[site] = int(ups[site]) - 1
+			if int(ups[site]) == 0:
+				log_event("POWER: the UPS on %s is flat. Anything on the dead feed is going down."
+					% site_name(site))
+		elif not any_out and ups.has(site) and int(ups[site]) < UPS_CYCLES:
+			ups[site] = mini(UPS_CYCLES, int(ups[site]) + 1)  # recharging
+	_apply_feed_state()
+
+func single_feed_exposure(site: int) -> Array:
+	## every device that one feed failure would take out, and which feed
+	var out: Array = []
+	for r in racks_on(site):
+		for d in r.slots:
+			if d != null and d.psu.length() == 1:
+				out.append(d)
+	return out
+
 func capacity_runway(key: String, used: int, total: int, window := 12) -> int:
 	## how many cycles until this resource is full at the rate it has been
 	## filling. -1 means "not filling", which is a perfectly good answer.
@@ -714,6 +822,11 @@ const SLA_PERIOD := 45.0  # seconds per billing cycle
 var sla_status := {}  # contract id -> bool (last billing check passed)
 var last_link_load := {}  # Link -> Mbps, from the latest cycle
 var last_cycle_delta := 0
+var feeds := {}  # site -> {"A": true, "B": true}; false while that feed is out
+var feed_out_until := {}  # "site|feed" -> cycle the utility expects to be back
+var ups := {}  # site -> cycles of battery the UPS can still cover
+const UPS_PRICE := 1800
+const UPS_CYCLES := 3  # how long a full battery holds a dead feed up
 var _pristine := {}  # what a brand new game looks like
 var last_pl := {}  # line item -> amount, from the latest cycle
 var cycle_timer: Timer
@@ -1432,6 +1545,8 @@ func sla_tick() -> void:
 	## Completed contracts pay recurring service fees: but only while
 	## their requirements still hold. Break the network, lose the revenue.
 	autosave_due()
+	if not sandbox and not drill_active:
+		power_tick()
 	if drill_active:
 		return  # the economy pauses while you run a drill
 	if sandbox:
@@ -1680,6 +1795,7 @@ func new_device(model: String) -> Net.NDevice:
 	_counter[type] += 1
 	var d := Net.NDevice.new(type, spec["name_prefix"] + str(_counter[type]))
 	d.model = model
+	d.psu = default_psu(model)
 	d.installed_cycle = cycle
 	if type == "switch":
 		d.vlans = {1: "default"}
@@ -1958,6 +2074,7 @@ func _serialize() -> Dictionary:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,
+		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
@@ -2208,7 +2325,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
 		"ssids": d.ssids, "wifi": d.wifi, "radius": d.radius,
 		"igmp_snooping": d.igmp_snooping, "mcast_groups": d.mcast_groups,
-		"mlag_peer": d.mlag_peer,
+		"mlag_peer": d.mlag_peer, "psu": d.psu,
 		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
 		"log_host": d.log_host, "ntp_server": d.ntp_server,
@@ -2232,6 +2349,13 @@ func _apply(data: Dictionary) -> void:
 	money = int(data["money"])
 	company_name = String(data.get("company_name", "Packet Empire"))
 	demo = bool(data.get("demo", false))
+	feeds = {}
+	for k in data.get("feeds", {}):
+		feeds[int(k)] = data["feeds"][k]
+	feed_out_until = data.get("feed_out_until", {})
+	ups = {}
+	for k2 in data.get("ups", {}):
+		ups[int(k2)] = int(data["ups"][k2])
 	contracts_done = data.get("contracts_done", [])
 	stage = int(data.get("stage", 0))
 	offers = data.get("offers", [])
@@ -2294,6 +2418,7 @@ func _apply(data: Dictionary) -> void:
 		d.wifi = sd.get("wifi", "")
 		d.radius = sd.get("radius", "")
 		d.mlag_peer = sd.get("mlag_peer", "")
+		d.psu = String(sd.get("psu", default_psu(d.model)))
 		d.igmp_snooping = bool(sd.get("igmp_snooping", false))
 		d.mcast_groups = sd.get("mcast_groups", [])
 		d.startup = sd.get("startup", {})

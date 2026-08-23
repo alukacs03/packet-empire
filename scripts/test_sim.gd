@@ -1687,6 +1687,40 @@ static func run() -> int:
 	ml_a.ifaces[0].enabled = true
 	Sim.flush_learned_state()
 
+	# --- power distribution: A and B feeds ---
+	var pw_rack := Game.add_rack(Vector2i(34, 1))
+	var pw_single := Game.new_device("srv-1")
+	var pw_dual := Game.new_device("srv-2")
+	pw_rack.slots[0] = pw_single
+	pw_rack.slots[1] = pw_dual
+	check(pw_single.psu == "A", "power: single-supply gear lands on feed A")
+	check(pw_dual.psu == "AB", "power: dual-supply gear takes both feeds")
+	check(Game.set_psu(pw_single, "AB") != "",
+		"power: a single supply cannot be plugged into two feeds")
+	check(Game.set_psu(pw_single, "B") == "", "power: it can be moved to the other feed")
+	var pw_site := Game.site_of_device(pw_single)
+	Game.site_feeds(pw_site)["B"] = false
+	Game._apply_feed_state()
+	check(pw_single.status == "nopower", "power: losing its only feed takes the device down")
+	check(pw_dual.status == "active", "power: the dual-supply machine rides it out")
+	Game.site_feeds(pw_site)["B"] = true
+	Game._apply_feed_state()
+	check(pw_single.status == "active", "power: it comes straight back when the feed does")
+	# a UPS carries a dead feed until the battery runs out
+	Game.ups[pw_site] = 2
+	Game.site_feeds(pw_site)["B"] = false
+	Game._apply_feed_state()
+	check(pw_single.status == "active", "power: the UPS holds it up")
+	Game.ups[pw_site] = 0
+	Game._apply_feed_state()
+	check(pw_single.status == "nopower", "power: a flat battery is no battery")
+	Game.site_feeds(pw_site)["B"] = true
+	Game.ups.erase(pw_site)
+	Game._apply_feed_state()
+	var exposed_now := Game.single_feed_exposure(pw_site)
+	check(pw_single in exposed_now and pw_dual not in exposed_now,
+		"power: the exposure list names exactly the single-supply gear")
+
 	# --- multicast ---
 	var mc_rack := Game.add_rack(Vector2i(32, 1))
 	var mc_sw := Game.new_device("sw-8")

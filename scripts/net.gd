@@ -57,6 +57,7 @@ class NDevice:
 	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
 	var dai := false  # dynamic ARP inspection, using the snooping bindings
 	var bindings := {}  # mac -> address learned from a legitimate lease
+	var psu := "A"  # which feed(s) this device is plugged into: A, B or AB
 	var mlag_peer := ""  # switch: the name of the switch it shares bundles with
 	var igmp_snooping := false  # forward multicast only where it was asked for
 	var mcast_ports := {}  # group -> {Iface: true} learned from membership reports
