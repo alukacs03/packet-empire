@@ -2645,6 +2645,9 @@ func _build_business_tab() -> void:
 	# (market moved to its own tab)
 
 func _build_market_tab() -> void:
+	if not Game.references.is_empty():
+		contracts_box.add_child(_wrap("Willing to be a reference: %s. Customers who have been happy for a long time are worth more than any advertising."
+			% ", ".join(PackedStringArray(Game.references)), 13, Color(0.65, 0.88, 0.72), 560))
 	if Game.market_intel == 0:
 		contracts_box.add_child(_label("You have no read on competitor pricing yet: lose a bid and you will learn.",
 			13, Color(0.6, 0.62, 0.7)))
@@ -2900,6 +2903,28 @@ func _build_jobs_tab() -> void:
 				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
 					"" if ok else "   (not delivered: not paying)"],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
+			if deal.has("upsell"):
+				var up: Dictionary = deal["upsell"]
+				var urow := HBoxContainer.new()
+				urow.add_theme_constant_override("separation", 8)
+				contracts_box.add_child(urow)
+				urow.add_child(_label("      they have grown: +%d Mbps for +$%d/cycle" % [
+					int(up["load"]), int(up["fee"])], 13, Color(0.6, 0.9, 0.75)))
+				var up_yes := Button.new()
+				up_yes.text = "Take it"
+				up_yes.tooltip_text = "More money, and more traffic on the same links tonight."
+				_accent(up_yes)
+				up_yes.pressed.connect(func() -> void:
+					Game.accept_upsell(deal)
+					_refresh_contracts())
+				urow.add_child(up_yes)
+				var up_no := Button.new()
+				up_no.text = "Decline"
+				up_no.tooltip_text = "They will remember it at renewal."
+				up_no.pressed.connect(func() -> void:
+					Game.decline_upsell(deal)
+					_refresh_contracts())
+				urow.add_child(up_no)
 			if deal.has("renewal"):
 				var rn: Dictionary = deal["renewal"]
 				var rrow := HBoxContainer.new()

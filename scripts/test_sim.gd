@@ -1353,6 +1353,11 @@ static func run() -> int:
 		"params": {"ip": "10.99.0.10"}, "fee": 120, "load": 200, "brief": "", "healthy": true}]
 	var money_start := Game.money
 	for i in 60:
+		# this measures the economics of steady delivery, so keep the utility
+		# and the internet honest; both are exercised in their own sections
+		Game.feeds = {}
+		Game.carrier_outage = {}
+		Game.hijacks = []
 		Game.sla_tick()
 		for d_ren in Game.deals:  # a working operator renews their contracts
 			if d_ren.has("renewal"):
@@ -3147,6 +3152,43 @@ static func run() -> int:
 		"bgp: the default route is filtered out and the other upstream carries it")
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
+
+	# --- customers who grow, and what people say about you ---
+	var gr_deal := {"id": "grow1", "customer": "Growing Kft", "kind": "hosting",
+		"params": {}, "fee": 200, "load": 300, "healthy": true, "cycles": 30,
+		"up_cycles": 30, "loyalty": 0.6}
+	var gr_deals := Game.deals.duplicate()
+	Game.deals = [gr_deal]
+	check(Game.accept_upsell(gr_deal) != "", "growth: nothing to accept before they ask")
+	gr_deal["upsell"] = {"load": 200, "fee": 80}
+	check(Game.accept_upsell(gr_deal) == "", "growth: an upsell can be taken")
+	check(int(gr_deal["fee"]) == 280 and int(gr_deal["load"]) == 500,
+		"growth: which raises both the fee and the traffic you have to carry")
+	check(not gr_deal.has("upsell"), "growth: and clears the request")
+	gr_deal["upsell"] = {"load": 200, "fee": 80}
+	var gr_loyalty := float(gr_deal["loyalty"])
+	check(Game.decline_upsell(gr_deal) == "", "growth: or turned down")
+	check(float(gr_deal["loyalty"]) < gr_loyalty, "growth: which costs you their goodwill")
+	# references
+	Game.references = []
+	var gr_rep := Game.reputation
+	Game.reference_tick()
+	check(Game.references.size() == 1 and Game.reputation > gr_rep,
+		"reputation: a long-happy customer becomes a reference and lifts you")
+	Game.reference_tick()
+	check(Game.references.size() == 1, "reputation: and only counts once")
+	# press
+	Game.reputation = 50
+	Game.press_tick({"uptime": 100, "net": 500, "deal_cycles": 12})
+	check(Game.reputation > 50, "press: a clean profitable quarter gets written up")
+	Game.reputation = 50
+	Game.press_tick({"uptime": 40, "net": 500, "deal_cycles": 12})
+	check(Game.reputation < 50, "press: a bad one gets written up too")
+	Game.reputation = 50
+	Game.press_tick({"uptime": 0, "net": 0, "deal_cycles": 0})
+	check(Game.reputation == 50, "press: a quarter with no customers is not a story")
+	Game.deals = gr_deals
+	Game.references = []
 
 	# --- rival strategies and their interest in buying you ---
 	var rv_saved := Game.rivals.duplicate(true)

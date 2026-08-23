@@ -950,6 +950,7 @@ func make_report() -> Dictionary:
 		"deals": deals.size(), "staff": staff.size(), "sites": site_count(),
 		"reputation": reputation, "rank": rank(), "devices": all_devices().size(),
 		"uptime": int(100.0 * float(up) / maxf(1.0, float(deal_cycles))),
+		"deal_cycles": deal_cycles,
 	}
 	reports.push_front(rep)
 	if reports.size() > 8:
@@ -1747,6 +1748,82 @@ func _attack_tick() -> void:
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
 
+# ---------- customers who grow, and what people say about you ----------
+
+const UPSELL_AFTER := 8  # cycles of good service before they ask for more
+var references: Array = []  # customer names who will vouch for you
+
+func maybe_upsell() -> void:
+	## A customer whose service has been solid for a while grows into it, and
+	## growth means more traffic than you agreed to carry.
+	for deal in deals:
+		if deal.has("upsell") or deal.has("renewal"):
+			continue
+		if int(deal.get("cycles", 0)) < UPSELL_AFTER or not bool(deal.get("healthy", false)):
+			continue
+		if float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1))) < 0.9:
+			continue
+		if randf() > 0.06:
+			continue
+		var extra_load := int(float(int(deal.get("load", 200))) * randf_range(0.4, 0.9))
+		var extra_fee := int(float(int(deal["fee"])) * randf_range(0.25, 0.5))
+		deal["upsell"] = {"load": extra_load, "fee": extra_fee}
+		log_event("GROWTH: %s wants %d Mbps more for $%d/cycle more. Can you carry it?"
+			% [deal["customer"], extra_load, extra_fee])
+		return
+
+func accept_upsell(deal: Dictionary) -> String:
+	if not deal.has("upsell"):
+		return "they have not asked for anything"
+	var up: Dictionary = deal["upsell"]
+	deal["load"] = int(deal.get("load", 200)) + int(up["load"])
+	deal["fee"] = int(deal["fee"]) + int(up["fee"])
+	deal.erase("upsell")
+	reputation = mini(100, reputation + 1)
+	log_event("GROWTH: %s upgraded to $%d/cycle. Their traffic goes up tonight."
+		% [deal["customer"], int(deal["fee"])])
+	return ""
+
+func decline_upsell(deal: Dictionary) -> String:
+	if not deal.has("upsell"):
+		return "they have not asked for anything"
+	deal.erase("upsell")
+	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.2)
+	log_event("GROWTH: you turned %s down. They will remember that at renewal."
+		% deal["customer"])
+	return ""
+
+func reference_tick() -> void:
+	## A customer you have kept happy for a long time will say so out loud,
+	## which is worth more than any amount of marketing.
+	for deal in deals:
+		if String(deal["customer"]) in references:
+			continue
+		if int(deal.get("cycles", 0)) < 20:
+			continue
+		if float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1))) < 0.97:
+			continue
+		references.append(String(deal["customer"]))
+		reputation = mini(100, reputation + 6)
+		log_event("REPUTATION: %s is willing to be a reference. That opens doors."
+			% deal["customer"])
+		return
+
+func press_tick(rep: Dictionary) -> void:
+	## the trade press notices a quarter, for better or worse
+	if int(rep.get("deal_cycles", 0)) <= 0:
+		return  # a quarter with no customers is not a story either way
+	var uptime := int(rep.get("uptime", 100))
+	var net := int(rep.get("net", 0))
+	if uptime >= 98 and net > 0:
+		reputation = mini(100, reputation + 4)
+		log_event("PRESS: a trade piece names you as one to watch. %d%% delivered on the quarter."
+			% uptime)
+	elif uptime < 80:
+		reputation = maxi(0, reputation - 3)
+		log_event("PRESS: a piece about operators who overpromise. You are in it, at %d%% delivered."
+			% uptime)
+
 # ---------- tax, depreciation and the meter ----------
 
 const TAX_RATE := 0.18
@@ -2471,20 +2548,27 @@ func sla_tick() -> void:
 		money += earned
 		money_changed.emit()
 	var up_deals := 0
+	var billed_deals := 0
 	for deal in deals:
+		if deal.has("renewal"):
+			continue  # nothing is being delivered or billed while they decide
+		billed_deals += 1
 		if deal["healthy"]:
 			up_deals += 1
 	var cap_now := capacity(0)
 	history.append({"cycle": cycle, "money": money, "net": last_cycle_delta,
-		"reputation": reputation, "deals": deals.size(), "up": up_deals,
+		"reputation": reputation, "deals": billed_deals, "up": up_deals,
 		"devices": all_devices().size(),
 		"slots_used": int(cap_now["slots_used"]), "watts": int(cap_now["watts"])})
 	if history.size() > 120:
 		history.pop_front()
 	quarter_profit += last_cycle_delta
 	quarter_depreciation += depreciation_this_cycle()
+	maybe_upsell()
+	reference_tick()
 	if cycle % 12 == 0 and cycle > 0:
-		make_report()
+		var rep_now := make_report()
+		press_tick(rep_now)
 		settle_quarter()
 		maintenance_used = 0  # a new quarter, a fresh allowance
 	if cycle % 5 == 0:
@@ -2831,7 +2915,7 @@ func _serialize() -> Dictionary:
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
-		"buyout_offer": buyout_offer, "sold_out": sold_out,
+		"buyout_offer": buyout_offer, "sold_out": sold_out, "references": references,
 		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
 		"efficiency": efficiency, "quarter_profit": quarter_profit,
 		"quarter_depreciation": quarter_depreciation,
@@ -3127,6 +3211,7 @@ func _apply(data: Dictionary) -> void:
 	ipv4_blocks = int(data.get("ipv4_blocks", 1))
 	buyout_offer = data.get("buyout_offer", {})
 	sold_out = bool(data.get("sold_out", false))
+	references = data.get("references", [])
 	accountant = bool(data.get("accountant", false))
 	fixed_tariff = bool(data.get("fixed_tariff", false))
 	efficiency = int(data.get("efficiency", 0))
