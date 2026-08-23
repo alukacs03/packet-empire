@@ -1452,6 +1452,39 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- multicast ---
+	var mc_rack := Game.add_rack(Vector2i(32, 1))
+	var mc_sw := Game.new_device("sw-8")
+	var mc_src := Game.new_device("srv-1")
+	var mc_a := Game.new_device("srv-1")
+	var mc_b := Game.new_device("srv-1")
+	var mc_idle := Game.new_device("srv-1")
+	mc_rack.slots[0] = mc_sw
+	mc_rack.slots[1] = mc_src
+	mc_rack.slots[2] = mc_a
+	mc_rack.slots[3] = mc_b
+	mc_rack.slots[4] = mc_idle
+	Game.connect_ifaces(mc_src.ifaces[0], mc_sw.ifaces[0])
+	Game.connect_ifaces(mc_a.ifaces[0], mc_sw.ifaces[1])
+	Game.connect_ifaces(mc_b.ifaces[0], mc_sw.ifaces[2])
+	Game.connect_ifaces(mc_idle.ifaces[0], mc_sw.ifaces[3])
+	for idx in [0, 1, 2, 3]:
+		Game.add_ip([mc_src, mc_a, mc_b, mc_idle][idx].ifaces[0], "10.170.9.%d/24" % (10 + idx))
+	var mc_cli := CLI.new_session(mc_sw)
+	mc_cli.exec("en")
+	mc_cli.exec("conf t")
+	check(mc_cli.exec("ip igmp snooping").is_empty(), "multicast: snooping can be enabled")
+	mc_cli.exec("end")
+	check(CLI.new_session(mc_a).exec("igmp join 239.1.1.1").contains("joined"),
+		"multicast: a host can join a group")
+	CLI.new_session(mc_b).exec("igmp join 239.1.1.1")
+	check(mc_cli.exec("show ip igmp snooping").contains("239.1.1.1"),
+		"multicast: the switch learned where the group is wanted")
+	check(Sim.mcast_send(mc_src, "239.1.1.1") == 2,
+		"multicast: exactly the two members receive the stream")
+	check(mc_idle.mcast_rx == 0, "multicast: the host that never joined is not bothered by it")
+	check(Sim.mcast_send(mc_src, "239.9.9.9") == 0, "multicast: nobody listens to an unused group")
+
 	# --- status page and spares ---
 	Game.status_posts = []
 	Game.spares = {}

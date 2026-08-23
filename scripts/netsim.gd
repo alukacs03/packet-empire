@@ -10,6 +10,7 @@ class_name Sim
 ## DHCP pl: {op: "discover"|"ack", mac, ...lease fields}: pure L2 broadcast
 
 const BCAST := "ff:ff:ff:ff:ff:ff"
+const MCAST_PREFIX := "01:00:5e"
 const MAX_DEPTH := 400  # flood guard for misconfigurations STP cannot see
 
 static var _depth := 0
@@ -304,6 +305,45 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 							first_hop[nb["dev"]].append(via)
 				frontier.append(nb["dev"])
 	return out
+
+static func mcast_mac(group: String) -> String:
+	## the link-layer address a multicast group maps to
+	var parts := group.split(".")
+	if parts.size() != 4:
+		return BCAST
+	return "%s:%02x:%02x:%02x" % [MCAST_PREFIX, int(parts[1]) & 0x7f, int(parts[2]), int(parts[3])]
+
+static func igmp_join(host: Net.NDevice, group: String) -> String:
+	## announce membership: the report floods the VLAN and any snooping switch
+	## on the way records which port asked for it
+	if not group.begins_with("2"):
+		return "%s is not a multicast group" % group
+	if group not in host.mcast_groups:
+		host.mcast_groups.append(group)
+	for i: Net.Iface in host.ifaces:
+		if Game.link_at(i) != null and i.enabled:
+			_tx(i, {"src": i.mac, "dst": BCAST, "vlan": 0, "type": "igmp",
+				"pl": {"op": "report", "group": group, "src_ip": _first_ip(i),
+					"dst_ip": group, "ttl": 1, "l4": {"proto": "igmp"}}})
+			break
+	return ""
+
+static func mcast_send(host: Net.NDevice, group: String) -> int:
+	## send one multicast frame and report how many members received it
+	for d in Game.all_devices():
+		d.mcast_rx = 0
+	for i: Net.Iface in host.ifaces:
+		if Game.link_at(i) != null and i.enabled:
+			_depth = 0
+			_tx(i, {"src": i.mac, "dst": mcast_mac(group), "vlan": 0, "type": "ipv4",
+				"pl": {"src_ip": _first_ip(i), "dst_ip": group, "ttl": 8,
+					"l4": {"proto": "udp", "type": "stream"}}})
+			break
+	var got := 0
+	for d in Game.all_devices():
+		if d.mcast_rx > 0:
+			got += 1
+	return got
 
 static func flush_learned_state() -> void:
 	_stp_dirty = true
@@ -840,6 +880,29 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 				% [dev.name, in_if.name, frame["src"], in_if.secure_mac])
 			Game.topology_changed.emit()
 			return
+	# membership reports teach a snooping switch where a group is wanted
+	if frame["type"] == "igmp":
+		var grp: String = String(frame["pl"]["group"])
+		if not dev.mcast_ports.has(grp):
+			dev.mcast_ports[grp] = {}
+		dev.mcast_ports[grp][in_if] = true
+	# multicast goes only where it was asked for, when snooping is on
+	if dev.igmp_snooping and String(frame["dst"]).begins_with(MCAST_PREFIX):
+		var wanted := {}
+		for grp2 in dev.mcast_ports:
+			if mcast_mac(String(grp2)) == String(frame["dst"]):
+				for port in dev.mcast_ports[grp2]:
+					wanted[port] = true
+		dev.mac_table[vlan][frame["src"]] = in_if
+		for o2: Net.Iface in wanted:
+			if o2 == in_if or stp_blocked(o2) or not o2.enabled:
+				continue
+			if o2.mode == "access" and o2.untagged_vlan != vlan:
+				continue
+			var mf := frame.duplicate(true)
+			mf["vlan"] = 0 if o2.mode == "access" else vlan
+			_tx(o2, mf)
+		return
 	dev.mac_table[vlan][frame["src"]] = in_if
 	for svi: Net.Iface in dev.ifaces:
 		if not svi.name.begins_with("Vlan") or not svi.enabled:
@@ -889,6 +952,15 @@ static func _logical_rx_iface(phys: Net.Iface, frame: Dictionary) -> Net.Iface:
 	return phys
 
 static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
+	if String(frame["dst"]).begins_with(MCAST_PREFIX):
+		# a host only listens to the groups it joined
+		var pl_m: Dictionary = frame["pl"]
+		if String(pl_m.get("dst_ip", "")) in dev.mcast_groups:
+			dev.mcast_rx += 1
+			_cap(dev, iface, frame)
+		return
+	if frame["type"] == "igmp":
+		return  # membership reports are for the switches
 	# a frame for one of the host's virtual machines is that machine's business
 	if iface.vm == "":
 		for guest: Net.Iface in dev.ifaces:

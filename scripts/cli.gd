@@ -192,6 +192,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
+			{"m": ["config"], "p": ["ip", "igmp", "snooping"], "h": func(_r): return _igmp(true)},
+			{"m": ["config"], "p": ["no", "ip", "igmp", "snooping"], "h": func(_r): return _igmp(false)},
+			{"m": EP, "p": ["show", "ip", "igmp", "snooping"], "h": _show_igmp},
 			{"m": ["config"], "p": ["ip", "dhcp", "snooping"], "h": func(_r): return _snoop(true)},
 			{"m": ["config"], "p": ["no", "ip", "dhcp", "snooping"], "h": func(_r): return _snoop(false)},
 			{"m": ["config"], "p": ["ip", "arp", "inspection"], "h": func(_r): return _dai(true)},
@@ -596,6 +599,27 @@ class EOS extends Session:
 			if not on:
 				i.secure_mac = ""
 			return "")
+
+	func _igmp(on: bool) -> String:
+		if dev.type not in ["switch", "ap"]:
+			return "% IGMP snooping is a switch feature\n"
+		dev.igmp_snooping = on
+		if not on:
+			dev.mcast_ports.clear()
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_igmp(_r: Array) -> String:
+		var out := "IGMP snooping: %s\n" % ("on" if dev.igmp_snooping else "off")
+		if dev.mcast_ports.is_empty():
+			return out + "  (no groups heard yet)\n"
+		out += "%-18s %s\n" % ["GROUP", "PORTS"]
+		for grp in dev.mcast_ports:
+			var names: Array = []
+			for port in dev.mcast_ports[grp]:
+				names.append(EOS._short(port.name))
+			out += "%-18s %s\n" % [grp, ", ".join(PackedStringArray(names))]
+		return out
 
 	func _snoop(on: bool) -> String:
 		if dev.type != "switch":
@@ -1457,7 +1481,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1524,6 +1548,17 @@ class Linux extends Session:
 									", ".join(PackedStringArray(i.ips))]
 					return out if out != "" else "(no virtual machines)\n"
 				return "usage: vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list\n"
+			"igmp":
+				if t.size() == 3 and t[1] == "join":
+					var err := Sim.igmp_join(dev, t[2])
+					return "joined %s\n" % t[2] if err == "" else "igmp: %s\n" % err
+				if t.size() == 3 and t[1] == "send":
+					var got := Sim.mcast_send(dev, t[2])
+					return "sent to %s: %d member(s) received it\n" % [t[2], got]
+				if t.size() >= 2 and t[1] == "groups":
+					return "%s\n" % ", ".join(PackedStringArray(dev.mcast_groups)) \
+						if not dev.mcast_groups.is_empty() else "(no groups joined)\n"
+				return "usage: igmp join <group> | igmp send <group> | igmp groups\n"
 			"radiusd":
 				# radiusd add <mac> [vlan] | radiusd list
 				if not dev.services.has("radius"):
@@ -1752,7 +1787,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

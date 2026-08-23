@@ -55,6 +55,10 @@ class NDevice:
 	var snooping := false  # DHCP snooping: only trusted ports may answer DHCP
 	var dai := false  # dynamic ARP inspection, using the snooping bindings
 	var bindings := {}  # mac -> address learned from a legitimate lease
+	var igmp_snooping := false  # forward multicast only where it was asked for
+	var mcast_ports := {}  # group -> {Iface: true} learned from membership reports
+	var mcast_groups: Array = []  # host: the groups it has joined
+	var mcast_rx := 0  # host: multicast frames received, for the tests and the UI
 	var radius := ""  # switch/AP: address of the authentication server
 	var ssids := {}  # access point: SSID name -> VLAN id
 	var wifi := ""  # host: the SSID it is associated with

@@ -2098,6 +2098,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
 		"ssids": d.ssids, "wifi": d.wifi, "radius": d.radius,
+		"igmp_snooping": d.igmp_snooping, "mcast_groups": d.mcast_groups,
 		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
 		"log_host": d.log_host, "ntp_server": d.ntp_server,
@@ -2177,6 +2178,8 @@ func _apply(data: Dictionary) -> void:
 			d.ssids[sk] = int(sd["ssids"][sk])
 		d.wifi = sd.get("wifi", "")
 		d.radius = sd.get("radius", "")
+		d.igmp_snooping = bool(sd.get("igmp_snooping", false))
+		d.mcast_groups = sd.get("mcast_groups", [])
 		d.startup = sd.get("startup", {})
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
