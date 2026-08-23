@@ -1757,16 +1757,47 @@ func _build_tutorial() -> void:
 	tutorial_panel.add_child(tutorial_box)
 	_refresh_tutorial()
 
+var tutorial_hidden := false
+
+func _next_job() -> Dictionary:
+	for c in Contracts.all():
+		if c["id"] not in Game.contracts_done:
+			return c
+	return {}
+
 func _refresh_tutorial() -> void:
 	if tutorial_panel == null:
 		return
-	if "rackup" in Game.contracts_done:
+	if tutorial_hidden:
 		tutorial_panel.visible = false
+		return
+	if "rackup" in Game.contracts_done:
+		# past the opening steps, the panel becomes a live checklist for
+		# whatever job is currently open, so there is always a next thing
+		var job := _next_job()
+		if job.is_empty():
+			tutorial_panel.visible = false
+			return
+		tutorial_panel.visible = true
+		for c2 in tutorial_box.get_children():
+			c2.queue_free()
+		tutorial_box.add_child(_tutorial_head(String(job["title"]).to_upper()))
+		for rq in job["reqs"]:
+			var rq_ok: bool = rq["t"].call()
+			var rl := _label("%s  %s" % ["●" if rq_ok else "○", rq["d"]], 13,
+				Color(0.5, 0.9, 0.6) if rq_ok else Color(0.68, 0.72, 0.8))
+			rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			rl.custom_minimum_size = Vector2(290, 0)
+			tutorial_box.add_child(rl)
+		var open_btn := Button.new()
+		open_btn.text = "Open the brief"
+		open_btn.pressed.connect(open_contracts)
+		tutorial_box.add_child(open_btn)
 		return
 	tutorial_panel.visible = true
 	for c in tutorial_box.get_children():
 		c.queue_free()
-	tutorial_box.add_child(_section("GETTING STARTED"))
+	tutorial_box.add_child(_tutorial_head("GETTING STARTED"))
 	var servers := 0
 	var cabled := 0
 	for d in Game.all_devices():
@@ -1801,6 +1832,21 @@ func _refresh_tutorial() -> void:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.custom_minimum_size = Vector2(290, 0)
 		tutorial_box.add_child(l)
+
+func _tutorial_head(text: String) -> Control:
+	var h := HBoxContainer.new()
+	var sec := _section(text)
+	sec.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(sec)
+	var x := Button.new()
+	x.text = "×"
+	x.tooltip_text = "Hide this panel for now"
+	x.flat = true
+	x.pressed.connect(func() -> void:
+		tutorial_hidden = true
+		_refresh_tutorial())
+	h.add_child(x)
+	return h
 
 # ---------- welcome ----------
 

@@ -118,6 +118,16 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.toggle_menu()
 	ui.menu_overlay.visible = false
 	ui._refresh_tutorial()
+	var tut_done := Game.contracts_done.duplicate()
+	Game.contracts_done = ["rackup"]
+	ui._refresh_tutorial()
+	check(ui.tutorial_panel.visible, "ui: the checklist follows on to the next job")
+	ui.tutorial_hidden = true
+	ui._refresh_tutorial()
+	check(not ui.tutorial_panel.visible, "ui: the checklist can be dismissed")
+	ui.tutorial_hidden = false
+	Game.contracts_done = tut_done
+	ui._refresh_tutorial()
 	ui._refresh_money()
 	# the front door and the demo arc
 	var title := TitleScreen.new()
