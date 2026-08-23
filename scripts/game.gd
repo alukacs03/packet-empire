@@ -30,7 +30,15 @@ const DUAL_PSU := ["sw-24", "srv-2", "rtr-edge", "fw-1", "lb-1"]
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
 	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100, "lb-1": 120,
 	"ap-1": 15}
-const TRANSIT_FEE := 30  # per cycle per established upstream BGP session
+const TRANSIT_FEE := 30  # port charge per cycle per established upstream session
+## Transit is not billed on what you average, it is billed on the 95th
+## percentile of what you burst to: drop the worst five percent of samples and
+## pay for the highest of what is left.
+const TRANSIT_PER_MBPS := 0.35
+const TRANSIT_WINDOW := 20  # samples kept for the percentile
+const IXP_SETUP := 3500
+const IXP_PORT_FEE := 90  # per cycle, and settlement-free once you are on it
+const IXP_PEER_SHARE := 0.12  # fraction of traffic each peering session takes off transit
 const BASE_COOLING := 400  # watts the bare room can dissipate
 const STAGES := [
 	{"name": "Colo corner", "grid": Vector2i(3, 3), "price": 0,
@@ -1680,6 +1688,69 @@ func hijack_tick() -> void:
 	log_event("SECURITY: %s is announcing %s. Traffic for it is going to them, not you. Sign the prefix with a ROA and ask an upstream to validate."
 		% [culprit, entry["cidr"]])
 
+# ---------- transit and peering ----------
+
+var transit_samples: Array = []  # Mbps across upstream links, most recent last
+var ixp := {}  # {"joined": bool, "peers": int}
+
+func transit_mbps_now() -> int:
+	## everything riding a link that touches an upstream handoff
+	var total := 0
+	for l in last_link_load:
+		if l.a.dev.type == "uplink" or l.b.dev.type == "uplink":
+			total += int(last_link_load[l])
+	return total
+
+func peering_share() -> float:
+	## each peering session at the exchange takes some traffic off transit;
+	## in reality this is where most of it goes, and it is why exchanges exist
+	if not bool(ixp.get("joined", false)):
+		return 0.0
+	return minf(0.75, IXP_PEER_SHARE * float(int(ixp.get("peers", 0))))
+
+func percentile_95(samples: Array) -> int:
+	## drop the top five percent and bill the highest of what is left
+	if samples.is_empty():
+		return 0
+	var sorted_samples := samples.duplicate()
+	sorted_samples.sort()
+	var idx := int(floor(float(sorted_samples.size()) * 0.95)) - 1
+	return int(sorted_samples[clampi(idx, 0, sorted_samples.size() - 1)])
+
+func transit_billed_mbps() -> int:
+	return percentile_95(transit_samples)
+
+func transit_cost() -> int:
+	return int(round(float(transit_billed_mbps()) * TRANSIT_PER_MBPS))
+
+func sample_transit() -> void:
+	var billable := int(round(float(transit_mbps_now()) * (1.0 - peering_share())))
+	transit_samples.append(billable)
+	while transit_samples.size() > TRANSIT_WINDOW:
+		transit_samples.pop_front()
+
+func join_ixp() -> String:
+	if bool(ixp.get("joined", false)):
+		return "you already have a port at the exchange"
+	if not try_spend(IXP_SETUP):
+		return "you cannot afford the $%d cross-connect and port" % IXP_SETUP
+	ixp = {"joined": true, "peers": 0}
+	log_event("PEERING: you have a port at the exchange ($%d/cycle). Now find networks to peer with."
+		% IXP_PORT_FEE)
+	topology_changed.emit()
+	return ""
+
+func add_peering() -> String:
+	if not bool(ixp.get("joined", false)):
+		return "you need a port at the exchange first"
+	if int(ixp.get("peers", 0)) >= 6:
+		return "you are peering with everyone worth peering with here"
+	ixp["peers"] = int(ixp.get("peers", 0)) + 1
+	log_event("PEERING: another network agreed to peer. %d%% of your traffic now bypasses transit."
+		% int(peering_share() * 100.0))
+	topology_changed.emit()
+	return ""
+
 func attack_on(ip: String) -> Dictionary:
 	for a in attacks:
 		if a["target"] == ip:
@@ -1859,7 +1930,7 @@ func sla_tick() -> void:
 	for d in all_devices():  # transit invoices
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
-				last_pl["transit"] = int(last_pl.get("transit", 0)) - TRANSIT_FEE
+				last_pl["transit ports"] = int(last_pl.get("transit ports", 0)) - TRANSIT_FEE
 				earned -= TRANSIT_FEE
 	if overheating():
 		# heat kills: one active device trips per cycle until capacity recovers
@@ -1982,6 +2053,16 @@ func sla_tick() -> void:
 	var offer_chance := 0.7 + 0.06 * float(marketing) / float(MARKETING_STEP)
 	if offers.size() < offer_cap and contracts_done.size() >= 2 and randf() < offer_chance:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
+	# transit is billed on the 95th percentile of what you burst to, so the
+	# sample has to be taken after this cycle's link loads are known
+	sample_transit()
+	var transit_bill := transit_cost()
+	if transit_bill > 0:
+		last_pl["transit (95th)"] = int(last_pl.get("transit (95th)", 0)) - transit_bill
+		earned -= transit_bill
+	if bool(ixp.get("joined", false)):
+		last_pl["exchange port"] = int(last_pl.get("exchange port", 0)) - IXP_PORT_FEE
+		earned -= IXP_PORT_FEE
 	earned += collect_invoices()
 	last_cycle_delta = earned
 	if earned > 0:
@@ -2346,6 +2427,7 @@ func _serialize() -> Dictionary:
 		"company_name": company_name, "demo": demo,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
+		"transit_samples": transit_samples, "ixp": ixp,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
@@ -2631,6 +2713,8 @@ func _apply(data: Dictionary) -> void:
 	invoices = data.get("invoices", [])
 	carrier_outage = data.get("carrier_outage", {})
 	hijacks = data.get("hijacks", [])
+	transit_samples = data.get("transit_samples", [])
+	ixp = data.get("ixp", {})
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])

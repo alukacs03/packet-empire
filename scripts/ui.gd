@@ -2108,6 +2108,34 @@ func _build_business_tab() -> void:
 			row.add_child(chase)
 	if Game.invoices.size() > 8:
 		contracts_box.add_child(_label("  ...and %d more." % (Game.invoices.size() - 8), 12, MUTED))
+	contracts_box.add_child(_section("TRANSIT AND PEERING"))
+	var billed := Game.transit_billed_mbps()
+	contracts_box.add_child(_wrap(
+		"Transit is billed on the 95th percentile, not the average: right now %d Mbps at $%.2f per Mbps, which is $%d a cycle. Bursting is free five percent of the time; sustained traffic is not."
+		% [billed, Game.TRANSIT_PER_MBPS, Game.transit_cost()], 13, Color(0.75, 0.82, 0.9), 560))
+	if bool(Game.ixp.get("joined", false)):
+		contracts_box.add_child(_label("  At the exchange: %d peering session(s), %d%% of traffic off transit, $%d/cycle port."
+			% [int(Game.ixp.get("peers", 0)), int(Game.peering_share() * 100.0), Game.IXP_PORT_FEE],
+			13, Color(0.65, 0.88, 0.72)))
+		var peer_btn := Button.new()
+		peer_btn.text = "Approach another network to peer with"
+		peer_btn.pressed.connect(func() -> void:
+			var err := Game.add_peering()
+			if err != "":
+				_toast(err)
+			_refresh_contracts())
+		contracts_box.add_child(peer_btn)
+	else:
+		var ixp_btn := Button.new()
+		ixp_btn.text = "Take a port at the internet exchange  ($%d, then $%d/cycle)" % [
+			Game.IXP_SETUP, Game.IXP_PORT_FEE]
+		ixp_btn.tooltip_text = "Settlement-free peering. It only pays for itself past a certain volume, which is the decision."
+		ixp_btn.pressed.connect(func() -> void:
+			var err := Game.join_ixp()
+			if err != "":
+				_toast(err)
+			_refresh_contracts())
+		contracts_box.add_child(ixp_btn)
 	var bank := HBoxContainer.new()
 	bank.add_theme_constant_override("separation", 10)
 	contracts_box.add_child(bank)

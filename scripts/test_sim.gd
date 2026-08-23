@@ -3129,6 +3129,42 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- transit billed on the 95th percentile, and peering ---
+	check(Game.percentile_95([]) == 0, "transit: nothing measured costs nothing")
+	# twenty samples, one enormous spike: the spike is in the free five percent
+	var pc_samples: Array = []
+	for pc_i in 19:
+		pc_samples.append(100)
+	pc_samples.append(5000)
+	check(Game.percentile_95(pc_samples) == 100,
+		"transit: a single burst falls in the free five percent")
+	var pc_sustained: Array = []
+	for pc_j in 18:
+		pc_sustained.append(100)
+	pc_sustained.append(5000)
+	pc_sustained.append(5000)
+	check(Game.percentile_95(pc_sustained) == 5000,
+		"transit: burst twice and you pay for it, which is the whole point")
+	Game.transit_samples = [400]
+	check(Game.transit_cost() == int(round(400 * Game.TRANSIT_PER_MBPS)),
+		"transit: the bill is the percentile times the rate")
+	# peering takes traffic off transit, and each session takes a bit more
+	Game.ixp = {}
+	check(Game.peering_share() == 0.0, "peering: no exchange port, no peering")
+	check(Game.add_peering() != "", "peering: you cannot peer without a port")
+	var ixp_money := Game.money
+	Game.money = Game.IXP_SETUP + 100
+	check(Game.join_ixp() == "", "peering: a port at the exchange can be bought")
+	check(Game.join_ixp() != "", "peering: and only once")
+	Game.add_peering()
+	var share_one := Game.peering_share()
+	Game.add_peering()
+	check(Game.peering_share() > share_one, "peering: each session moves more traffic off transit")
+	check(Game.peering_share() <= 0.75, "peering: but never all of it, so transit is never optional")
+	Game.ixp = {}
+	Game.transit_samples = []
+	Game.money = ixp_money
+
 	# --- route hijacks and RPKI ---
 	Game.hijacks = []
 	mh_cli.exec("configure terminal")
