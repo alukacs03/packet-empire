@@ -230,6 +230,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "always_on",
+			"title": "Always on",
+			"customer": "Fecske Media",
+			"reward": 3400,
+			"brief": "Fecske's site went down last month because it lived on one server, and they are not doing that again. Put two servers behind an Equipoise LB10: give the load balancer an address on their subnet, stand up 10.190.0.11 and 10.190.0.12, then 'virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12'. A client on the same network must reach 10.190.0.100, and it must keep reaching it with one of the two servers switched off.",
+			"reqs": [
+				{"d": "A load balancer with a two-member pool", "t": func() -> bool: return _lb_pool() >= 2},
+				{"d": "The virtual address 10.190.0.100 answers", "t": func() -> bool: return _server_pings("10.190.0.100")},
+				{"d": "At least one member is in service", "t": func() -> bool: return _lb_healthy() >= 1},
+			],
+		},
+		{
 			"id": "two_sites",
 			"title": "Two roofs, one service",
 			"customer": "Tisza Bank",
@@ -355,6 +367,22 @@ static func _l3_switch_svis() -> int:
 			if i.name.begins_with("Vlan") and not i.ips.is_empty():
 				n += 1
 		best = maxi(best, n)
+	return best
+
+static func _lb_pool() -> int:
+	var best := 0
+	for d in Game.all_devices():
+		var svc: Dictionary = d.services.get("lb", {})
+		if not svc.is_empty():
+			best = maxi(best, svc.get("members", []).size())
+	return best
+
+static func _lb_healthy() -> int:
+	var best := 0
+	for d in Game.all_devices():
+		var svc: Dictionary = d.services.get("lb", {})
+		if not svc.is_empty():
+			best = maxi(best, svc.get("healthy", []).size())
 	return best
 
 static func _fabric_shape() -> bool:

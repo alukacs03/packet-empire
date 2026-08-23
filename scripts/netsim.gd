@@ -673,7 +673,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 	if frame["type"] == "arp" or frame["type"] == "ndp":
 		var nkey := _neigh_key(iface, String(p["spa"]))
 		if p["op"] == "req":
-			if _iface_owns_ip(iface, p["tpa"]) or _vrrp_owns(dev, iface, p["tpa"]):
+			var lb_vip: String = String(dev.services.get("lb", {}).get("vip", ""))
+			if _iface_owns_ip(iface, p["tpa"]) or _vrrp_owns(dev, iface, p["tpa"]) \
+					or (lb_vip != "" and Net.addr_eq(lb_vip, String(p["tpa"]))):
 				dev.arp[nkey] = p["sha"]
 				_tx(iface, {"src": iface.mac, "dst": p["sha"], "vlan": 0, "type": frame["type"],
 					"pl": {"op": "rep", "spa": p["tpa"], "sha": iface.mac, "tpa": p["spa"]}})
@@ -683,6 +685,18 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 	# ipv4
 	if dev.ip_forwarding and _has_ip(dev, p["dst_ip"]):
 		var flow_id: int = p["l4"].get("id", 0)
+		var lb_svc: Dictionary = dev.services.get("lb", {})
+		if not lb_svc.is_empty() and dev.nat_flows.has(flow_id):
+			var back_lb := p.duplicate(true)
+			back_lb["src_ip"] = String(dev.nat_flows[flow_id])  # answer as the virtual address
+			back_lb["ttl"] = int(p["ttl"]) - 1
+			var rt_back := _route_lookup(dev, back_lb["dst_ip"], "", iface.vrf)
+			if not rt_back.is_empty():
+				var mac_back := _arp_resolve(dev, rt_back["iface"], rt_back["next_hop"])
+				if mac_back != "":
+					_tx(rt_back["iface"], {"src": rt_back["iface"].mac, "dst": mac_back,
+						"vlan": 0, "type": "ipv4", "pl": back_lb})
+			return
 		var out_if := _nat_outside(dev)
 		if out_if != null and dev.nat_flows.has(flow_id) and _iface_owns_ip(out_if, p["dst_ip"]):
 			var back := p.duplicate(true)
@@ -695,6 +709,26 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 					_tx(rt2["iface"], {"src": rt2["iface"].mac, "dst": mac2, "vlan": 0,
 						"type": "ipv4", "pl": back})
 			return
+	# a load balancer answers for its virtual address and hands the work on
+	var lb: Dictionary = dev.services.get("lb", {})
+	if not lb.is_empty() and Net.addr_eq(String(lb.get("vip", "")), String(p["dst_ip"])):
+		var pool: Array = lb.get("healthy", [])
+		if pool.is_empty():
+			return  # nothing healthy to serve it
+		var pick: String = pool[hash("%s|%s" % [p["src_ip"], str(p["l4"].get("id", 0))]) % pool.size()]
+		dev.nat_flows[int(p["l4"].get("id", 0))] = String(lb["vip"])
+		var fwd_lb := p.duplicate(true)
+		fwd_lb["dst_ip"] = pick
+		fwd_lb["ttl"] = int(p["ttl"]) - 1
+		var rt_lb := _route_lookup(dev, pick, "", iface.vrf)
+		if rt_lb.is_empty():
+			return
+		var mac_lb := _arp_resolve(dev, rt_lb["iface"], rt_lb["next_hop"])
+		if mac_lb == "":
+			return
+		_tx(rt_lb["iface"], {"src": rt_lb["iface"].mac, "dst": mac_lb, "vlan": 0,
+			"type": "ipv4", "pl": fwd_lb})
+		return
 	var vrrp_local := _vrrp_owns(dev, iface, p["dst_ip"])
 	if _has_ip(dev, p["dst_ip"]) or vrrp_local:
 		var l4: Dictionary = p["l4"]

@@ -6,7 +6,8 @@ class_name CLI
 static func new_session(dev: Net.NDevice) -> Session:
 	if Game.MODELS.get(dev.model, {}).get("os", "") == "ros":
 		return ROS.new(dev)
-	return EOS.new(dev) if dev.type in ["switch", "router", "firewall", "uplink"] else Linux.new(dev)
+	return EOS.new(dev) if dev.type in ["switch", "router", "firewall", "uplink", "loadbalancer"] \
+		else Linux.new(dev)
 
 static func try_ssh(session: Session, target: String) -> String:
 	var ip := Sim.resolve(session.dev, target)
@@ -149,6 +150,9 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["ip", "vrf"], "h": _cfg_vrf},
+			{"m": ["config"], "p": ["virtual-server"], "h": _cfg_vip},
+			{"m": ["config"], "p": ["no", "virtual-server"], "h": _cfg_no_vip},
+			{"m": EP, "p": ["show", "virtual-server"], "h": _show_vip},
 			{"m": ["if"], "p": ["ip", "vrf", "forwarding"], "h": _if_vrf},
 			{"m": EP, "p": ["show", "ip", "vrf"], "h": _show_vrf},
 			{"m": ["config"], "p": ["firewall", "stateful"], "h": func(_r): return _set_stateful(true)},
@@ -787,6 +791,36 @@ class EOS extends Session:
 			out += "%-16s %-10d %s\n" % [nb["ip"], int(nb["remote_as"]), st]
 		if not dev.bgp["networks"].is_empty():
 			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
+		return out
+
+	func _cfg_vip(r: Array) -> String:
+		## virtual-server <vip> members <ip>,<ip>
+		if dev.type != "loadbalancer":
+			return "% virtual servers live on a load balancer\n"
+		if r.size() != 3 or String(r[1]) != "members":
+			return "usage: virtual-server <vip> members <ip>,<ip>\n"
+		var members: Array = []
+		for m in String(r[2]).split(",", false):
+			members.append(String(m).strip_edges())
+		if members.is_empty():
+			return "% name at least one pool member\n"
+		dev.services["lb"] = {"vip": String(r[0]), "members": members, "healthy": []}
+		Game.lb_health_check()
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_no_vip(_r: Array) -> String:
+		dev.services.erase("lb")
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_vip(_r: Array) -> String:
+		var svc: Dictionary = dev.services.get("lb", {})
+		if svc.is_empty():
+			return "  (no virtual server configured)\n"
+		var out := "Virtual server %s\n%-18s %s\n" % [svc["vip"], "MEMBER", "STATE"]
+		for m in svc["members"]:
+			out += "%-18s %s\n" % [m, "in service" if m in svc.get("healthy", []) else "out of service"]
 		return out
 
 	func _cfg_vrf(r: Array) -> String:

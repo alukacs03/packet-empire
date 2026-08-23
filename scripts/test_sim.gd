@@ -1431,6 +1431,52 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- load balancing ---
+	var lb_rack := Game.add_rack(Vector2i(18, 1))
+	var lb := Game.new_device("lb-1")
+	var lb_sw := Game.new_device("sw-8")
+	var web1 := Game.new_device("srv-1")
+	var web2 := Game.new_device("srv-1")
+	var lb_client := Game.new_device("srv-1")
+	lb_rack.slots[0] = lb
+	lb_rack.slots[1] = lb_sw
+	lb_rack.slots[2] = web1
+	lb_rack.slots[3] = web2
+	lb_rack.slots[4] = lb_client
+	Game.connect_ifaces(lb.ifaces[0], lb_sw.ifaces[0])
+	Game.connect_ifaces(web1.ifaces[0], lb_sw.ifaces[1])
+	Game.connect_ifaces(web2.ifaces[0], lb_sw.ifaces[2])
+	Game.connect_ifaces(lb_client.ifaces[0], lb_sw.ifaces[3])
+	Game.add_ip(lb.ifaces[0], "10.190.0.2/24")
+	Game.add_ip(web1.ifaces[0], "10.190.0.11/24")
+	Game.add_ip(web2.ifaces[0], "10.190.0.12/24")
+	Game.add_ip(lb_client.ifaces[0], "10.190.0.50/24")
+	var lbs := CLI.new_session(lb)
+	lbs.exec("en")
+	lbs.exec("conf t")
+	check(lbs.exec("virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12").is_empty(),
+		"lb: a virtual server with two members is configured")
+	lbs.exec("end")
+	check(lbs.exec("show virtual-server").contains("in service"), "lb: healthy members are in service")
+	check(Sim.ping(lb_client, "10.190.0.100")["ok"], "lb: the virtual address answers")
+	# take one member out: the service survives
+	web1.status = "offline"
+	Game.topology_changed.emit()
+	Game.lb_health_check()
+	check(Sim.ping(lb_client, "10.190.0.100")["ok"], "lb: losing a member does not lose the service")
+	check(lbs.exec("show virtual-server").contains("out of service"), "lb: the dead member is marked")
+	# take both out: honest failure
+	web2.status = "offline"
+	Game.topology_changed.emit()
+	Game.lb_health_check()
+	check(not Sim.ping(lb_client, "10.190.0.100")["ok"], "lb: with no healthy members it stops answering")
+	web1.status = "active"
+	web2.status = "active"
+	Game.topology_changed.emit()
+	Game.lb_health_check()
+	check(Sim.ping(lb_client, "10.190.0.100")["ok"], "lb: the pool recovers when servers come back")
+	check(Game.try_complete_contract(_contract("always_on")), "lb: the always-on contract verifies")
+
 	# --- VRFs: two tenants on the same addresses ---
 	var vrf_rack := Game.add_rack(Vector2i(17, 1))
 	var vrf_rtr := Game.new_device("rtr-edge")

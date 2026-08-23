@@ -15,11 +15,13 @@ const MODELS := {
 	"rtr-lite": {"speed": 1000, "tier": 0, "type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
 	"rtr-edge": {"speed": 10000, "tier": 2, "type": "router", "ports": 8, "label": "Junivista MX8", "price": 1200},
 	"fw-1": {"speed": 1000, "tier": 1, "type": "firewall", "ports": 4, "label": "PacketSense FW4", "price": 800},
+	"lb-1": {"speed": 10000, "tier": 2, "type": "loadbalancer", "ports": 4,
+		"label": "Equipoise LB10", "price": 1400},
 	"isp-uplink": {"speed": 1000, "tier": 1, "type": "uplink", "ports": 1, "label": "ISP Handoff (AS64500)", "price": 200},
 	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 const WATTS := {"sw-lite": 10, "sw-8": 30, "sw-24": 80, "srv-1": 150, "srv-2": 250,
-	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100}
+	"rtr-lite": 20, "rtr-edge": 90, "fw-1": 40, "isp-uplink": 5, "crac-1": 100, "lb-1": 120}
 const TRANSIT_FEE := 30  # per cycle per established upstream BGP session
 const BASE_COOLING := 400  # watts the bare room can dissipate
 const STAGES := [
@@ -31,7 +33,7 @@ const STAGES := [
 		"blurb": "A real floor. Grow the empire."},
 ]
 const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1",
-	"uplink": "isp-uplink", "cooling": "crac-1"}
+	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1"}
 const TYPE_SPECS := {
 	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
 	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
@@ -39,6 +41,7 @@ const TYPE_SPECS := {
 	"firewall": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "fw"},
 	"uplink": {"if_prefix": "port", "if_start": 1, "name_prefix": "isp"},
 	"cooling": {"if_prefix": "port", "if_start": 1, "name_prefix": "crac"},
+	"loadbalancer": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "lb"},
 }
 const DIFFICULTIES := [
 	{"name": "Apprentice", "cash": 4000, "aggression": 0.75, "faults": 0.5, "cycle": 60.0,
@@ -192,7 +195,7 @@ var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
-	"cooling": 0, "rack": 0, "mac": 0}
+	"cooling": 0, "loadbalancer": 0, "rack": 0, "mac": 0}
 
 func _ensure_sites() -> void:
 	if sites.is_empty():
@@ -559,6 +562,23 @@ func monitor_ok(m: Dictionary) -> bool:
 						and l.a.dev.status == "active" and l.b.dev.status == "active"
 			return false
 	return false
+
+func lb_health_check() -> void:
+	## the load balancer keeps its pool honest: a member that stops answering
+	## is taken out of rotation until it comes back
+	for d in all_devices():
+		var svc: Dictionary = d.services.get("lb", {})
+		if svc.is_empty():
+			continue
+		var healthy: Array = []
+		for member in svc.get("members", []):
+			if Sim.ping(d, String(member))["ok"]:
+				healthy.append(member)
+		var was: Array = svc.get("healthy", [])
+		if JSON.stringify(was) != JSON.stringify(healthy):
+			device_log(d, "pool for %s now has %d healthy member(s) of %d"
+				% [svc.get("vip", "?"), healthy.size(), svc.get("members", []).size()])
+		svc["healthy"] = healthy
 
 func _run_monitors() -> void:
 	for m in monitors:
@@ -1034,6 +1054,7 @@ func sla_tick() -> void:
 	if scrubbing:
 		last_pl["scrubbing"] = -SCRUB_FEE
 		earned -= SCRUB_FEE
+	lb_health_check()
 	_run_monitors()
 	clock_tick()
 	check_achievements()
@@ -1192,7 +1213,7 @@ func new_device(model: String) -> Net.NDevice:
 	d.model = model
 	if type == "switch":
 		d.vlans = {1: "default"}
-	if type in ["router", "firewall", "uplink"]:
+	if type in ["router", "firewall", "uplink", "loadbalancer"]:
 		d.ip_forwarding = true
 	if type == "uplink":
 		# the ISP side is preconfigured: handoff /30 + anycast internet, announces default

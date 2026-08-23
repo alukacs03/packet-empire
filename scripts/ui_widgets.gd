@@ -8,6 +8,7 @@ const TYPE_COLORS := {
 	"firewall": Color(0.85, 0.35, 0.35),
 	"uplink": Color(0.7, 0.5, 0.9),
 	"cooling": Color(0.5, 0.8, 0.95),
+	"loadbalancer": Color(0.55, 0.85, 0.55),
 	"server": Color(0.45, 0.55, 0.8),
 }
 
