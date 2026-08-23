@@ -345,6 +345,8 @@ func sla_tick() -> void:
 	if earned != 0:
 		money += earned
 		money_changed.emit()
+	if cycle % 5 == 0:
+		save_game()
 
 # ---------- money ----------
 
@@ -577,7 +579,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	for i: Net.Iface in d.ifaces:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
-			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "ips": i.ips})
+			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper, "ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "bgp": d.bgp,
@@ -631,6 +633,7 @@ func load_game() -> bool:
 			i.nat = si.get("nat", "")
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
+			i.helper = si.get("helper", "")
 			i.ips = si["ips"]
 			d.ifaces.append(i)
 		if d.type == "switch":

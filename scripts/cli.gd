@@ -151,6 +151,8 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
 			{"m": ["if"], "p": ["vrrp"], "h": _if_vrrp},
 			{"m": ["if"], "p": ["channel-group"], "h": _if_lag},
+			{"m": ["if"], "p": ["ip", "helper-address"], "h": _if_helper},
+			{"m": ["if"], "p": ["no", "ip", "helper-address"], "h": func(_r): ctx_if.helper = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "channel-group"], "h": func(_r): ctx_if.lag = 0; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "vrrp"], "h": func(_r): ctx_if.vrrp = {}; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
@@ -388,6 +390,15 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
+
+	func _if_helper(r: Array) -> String:
+		if not dev.ip_forwarding:
+			return "% DHCP relay needs a router or firewall\n"
+		if r.size() == 1 and String(r[0]).is_valid_ip_address():
+			ctx_if.helper = r[0]
+			Game.topology_changed.emit()
+			return ""
+		return "usage: ip helper-address <dhcp-server-ip>\n"
 
 	func _if_lag(r: Array) -> String:
 		if dev.type != "switch":
@@ -778,6 +789,8 @@ class EOS extends Session:
 				out += "   ip address %s\n" % cidr
 			if i.nat != "":
 				out += "   ip nat %s\n" % i.nat
+			if i.helper != "":
+				out += "   ip helper-address %s\n" % i.helper
 			if not i.vrrp.is_empty():
 				out += "   vrrp %d ip %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
 				if int(i.vrrp.get("priority", 100)) != 100:

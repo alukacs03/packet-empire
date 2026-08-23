@@ -74,6 +74,11 @@ static func dhcp_request(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
 
 static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	var p: Dictionary = frame["pl"]
+	if p["op"] == "discover" and dev.ip_forwarding and iface.helper != "":
+		# DHCP relay: forward the broadcast as unicast IP with giaddr
+		_send_ip(dev, iface.helper, 64, {"proto": "dhcp-relay", "op": "discover",
+			"mac": p["mac"], "giaddr": _first_ip(iface)})
+		return
 	if p["op"] == "discover":
 		var svc: Dictionary = dev.services.get("dhcp", {})
 		if svc.is_empty() or svc.get("iface", "") != iface.name:
@@ -538,6 +543,29 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 						break
 		elif l4["proto"] == "dns-resp":
 			_dns_results.append(l4)
+		elif l4["proto"] == "dhcp-relay" and l4["op"] == "discover":
+			var svc2: Dictionary = dev.services.get("dhcp", {})
+			if not svc2.is_empty() and Net.same_subnet(l4["giaddr"], svc2["start"], int(svc2["plen"])):
+				var leases: Dictionary = svc2["leases"]
+				var lease_ip: String
+				if leases.has(l4["mac"]):
+					lease_ip = leases[l4["mac"]]
+				else:
+					var nxt := Net.ip_to_int(svc2["start"]) + leases.size()
+					if nxt > Net.ip_to_int(svc2["end"]):
+						return
+					lease_ip = Net.int_to_ip(nxt)
+					leases[l4["mac"]] = lease_ip
+				_send_ip(dev, p["src_ip"], 64, {"proto": "dhcp-relay", "op": "ack",
+					"mac": l4["mac"], "ip": lease_ip, "plen": svc2["plen"],
+					"gw": l4["giaddr"], "dns": svc2.get("dns", "")})
+		elif l4["proto"] == "dhcp-relay" and l4["op"] == "ack":
+			# the relay router: hand the lease back to the client as an L2 ack
+			for i: Net.Iface in dev.ifaces:
+				if i.helper != "" and _iface_owns_ip(i, l4["gw"]):
+					_tx(i, {"src": i.mac, "dst": l4["mac"], "vlan": 0, "type": "dhcp",
+						"pl": {"op": "ack", "mac": l4["mac"], "ip": l4["ip"],
+							"plen": l4["plen"], "gw": l4["gw"], "dns": l4["dns"]}})
 	elif dev.ip_forwarding:
 		if not _acl_permits(dev, p["src_ip"], p["dst_ip"]):
 			return  # filtered by firewall policy

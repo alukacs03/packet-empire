@@ -739,6 +739,31 @@ static func run() -> int:
 	check(mkt_sw.ifaces[2].lag > 0 and mkt_sw.ifaces[2].lag == mkt_sw.ifaces[3].lag,
 		"lag: RouterOS bonding maps to the same model")
 
+	# --- DHCP relay ---
+	var rel_r := Game.new_device("rtr-edge")
+	var rel_srv := Game.new_device("server")
+	var rel_cli := Game.new_device("server")
+	r7.slots[4] = rel_r
+	r7.slots[5] = rel_srv
+	r7.slots[6] = rel_cli
+	Game.connect_ifaces(rel_cli.ifaces[0], rel_r.ifaces[0])
+	Game.connect_ifaces(rel_srv.ifaces[0], rel_r.ifaces[1])
+	Game.add_ip(rel_r.ifaces[0], "10.60.0.1/24")
+	Game.add_ip(rel_r.ifaces[1], "10.61.0.1/24")
+	Game.add_ip(rel_srv.ifaces[0], "10.61.0.5/24")
+	Game.add_static_route(rel_srv, "0.0.0.0", 0, "10.61.0.1")
+	var rel_ss := CLI.new_session(rel_srv)
+	rel_ss.exec("dhcpd eth0 10.60.0.50 10.60.0.99 24 10.60.0.1 10.61.0.5")
+	var rel_es := CLI.new_session(rel_r)
+	rel_es.exec("en")
+	rel_es.exec("conf t")
+	rel_es.exec("int et1")
+	rel_es.exec("ip helper-address 10.61.0.5")
+	rel_es.exec("end")
+	var rel_out: String = CLI.new_session(rel_cli).exec("dhclient eth0")
+	check("bound to 10.60.0.50/24" in rel_out, "relay: client leased across the router (got: %s)" % rel_out.strip_edges())
+	check(Sim.ping(rel_cli, "10.61.0.5")["ok"], "relay: leased client routes to the central DHCP server")
+
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
 	check(Game.iface_speed(mkt_sw.ifaces[0]) == 1000, "capacity: PacketTik port is 1G")
