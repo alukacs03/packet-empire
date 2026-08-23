@@ -2257,6 +2257,47 @@ func _build_business_tab() -> void:
 			row.add_child(chase)
 	if Game.invoices.size() > 8:
 		contracts_box.add_child(_label("  ...and %d more." % (Game.invoices.size() - 8), 12, MUTED))
+	contracts_box.add_child(_section("ENERGY AND THE BOOKS"))
+	if Game.stage >= 1:
+		contracts_box.add_child(_wrap(
+			"Drawing %dW of a nameplate %dW, at %s rate: $%d this cycle. Electricity is dearest exactly when your customers are busiest."
+			% [Game.effective_draw(), Game.power_draw(),
+				"a fixed" if Game.fixed_tariff else "the spot", Game.power_bill()],
+			13, Color(0.75, 0.82, 0.9), 560))
+		var e_row := HBoxContainer.new()
+		e_row.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(e_row)
+		var tariff_btn := Button.new()
+		tariff_btn.text = "Switch to a spot tariff" if Game.fixed_tariff \
+			else "Switch to a fixed tariff"
+		tariff_btn.tooltip_text = "Fixed costs more on average and does not care what time it is."
+		tariff_btn.pressed.connect(func() -> void:
+			Game.set_fixed_tariff(not Game.fixed_tariff)
+			_refresh_contracts())
+		e_row.add_child(tariff_btn)
+		var eff_btn := Button.new()
+		eff_btn.text = "Efficiency retrofit  ($%d)" % (Game.EFFICIENCY_PRICE + Game.efficiency * 800)
+		eff_btn.tooltip_text = "Removes %d%% of your draw, permanently." % int(Game.EFFICIENCY_STEP * 100.0)
+		eff_btn.pressed.connect(func() -> void:
+			var err := Game.buy_efficiency()
+			if err != "":
+				_toast(err)
+			_refresh_contracts())
+		e_row.add_child(eff_btn)
+	else:
+		contracts_box.add_child(_label("  The colo pays for power. Your own room will not.", 12, MUTED))
+	contracts_box.add_child(_wrap(
+		"This quarter: profit $%d, depreciation allowance $%d, tax as it stands $%d."
+		% [Game.quarter_profit, Game.quarter_depreciation, Game.tax_due()],
+		13, Color(0.75, 0.82, 0.9), 560))
+	var acc_btn := Button.new()
+	acc_btn.text = "Dismiss the accountant" if Game.accountant \
+		else "Put an accountant on retainer  ($%d/cycle)" % Game.ACCOUNTANT_FEE
+	acc_btn.tooltip_text = "Without one, only half your depreciation allowance is ever claimed."
+	acc_btn.pressed.connect(func() -> void:
+		Game.hire_accountant(not Game.accountant)
+		_refresh_contracts())
+	contracts_box.add_child(acc_btn)
 	contracts_box.add_child(_section("ADDRESS SPACE"))
 	contracts_box.add_child(_wrap(
 		"You hold %d public IPv4 addresses and %d are spoken for. Customers who do not insist on one of their own sit behind shared translation and cost you nothing."

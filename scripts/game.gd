@@ -1720,6 +1720,89 @@ func _attack_tick() -> void:
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
 
+# ---------- tax, depreciation and the meter ----------
+
+const TAX_RATE := 0.18
+## Small-business relief: the first slice of quarterly profit is untaxed, so a
+## company that is barely making rent is not taxed out of existence.
+const TAX_FREE := 1500
+const DEPRECIATION_LIFE := 60  # cycles over which a device writes itself off
+const ACCOUNTANT_FEE := 55  # per cycle; they make the allowances stick
+const ENERGY_BASE := 0.10  # dollars per watt per cycle at the flat rate
+## What the meter charges by the hour. Electricity is dearest exactly when
+## your customers are busiest, which is not a coincidence.
+const ENERGY_CURVE := [0.55, 0.6, 1.15, 1.45, 1.5, 1.25, 0.95, 0.7]
+const EFFICIENCY_STEP := 0.09  # draw removed per upgrade
+const EFFICIENCY_PRICE := 2600
+
+var accountant := false
+var fixed_tariff := false  # a flat rate: dearer on average, immune to peaks
+var efficiency := 0  # upgrades bought
+var quarter_profit := 0
+var quarter_depreciation := 0
+
+func energy_multiplier() -> float:
+	return 1.0 if fixed_tariff else ENERGY_CURVE[day_slot()]
+
+func energy_rate() -> float:
+	## the flat contract is priced above the average of the spot curve, which
+	## is what you pay for not having to think about it
+	return ENERGY_BASE * (1.18 if fixed_tariff else energy_multiplier())
+
+func efficiency_factor() -> float:
+	return maxf(0.55, 1.0 - EFFICIENCY_STEP * float(efficiency))
+
+func effective_draw() -> int:
+	return int(round(float(power_draw()) * efficiency_factor()))
+
+func power_bill() -> int:
+	return int(round(float(effective_draw()) * energy_rate()))
+
+func buy_efficiency() -> String:
+	if efficiency >= 5:
+		return "there is nothing left worth retrofitting"
+	var price := EFFICIENCY_PRICE + efficiency * 800
+	if not try_spend(price):
+		return "the retrofit costs $%d" % price
+	efficiency += 1
+	log_event("ENERGY: efficiency retrofit fitted. Draw is now %d%% of nameplate."
+		% int(efficiency_factor() * 100.0))
+	topology_changed.emit()
+	return ""
+
+func set_fixed_tariff(on: bool) -> void:
+	fixed_tariff = on
+	log_event("ENERGY: switched to a %s tariff." % ("fixed" if on else "spot"))
+
+func depreciation_this_cycle() -> int:
+	var total := 0
+	for d in all_devices():
+		if device_age(d) < DEPRECIATION_LIFE:
+			total += int(MODELS[d.model]["price"]) / DEPRECIATION_LIFE
+	return total
+
+func hire_accountant(on: bool) -> void:
+	accountant = on
+	log_event("BOOKS: an accountant is %s." % ("on retainer" if on else "no longer retained"))
+
+func tax_due() -> int:
+	## profit for the quarter, less what the equipment wrote off. Without an
+	## accountant only half the allowance is claimed, because nobody filed it.
+	var allowance := quarter_depreciation if accountant else quarter_depreciation / 2
+	var taxable := quarter_profit - allowance - TAX_FREE
+	return maxi(0, int(round(float(taxable) * TAX_RATE)))
+
+func settle_quarter() -> void:
+	var tax := tax_due()
+	if tax > 0:
+		money -= tax
+		last_pl["tax"] = -tax
+		log_event("TAX: $%d on a quarter's profit of $%d (allowances $%d)."
+			% [tax, quarter_profit, quarter_depreciation if accountant else quarter_depreciation / 2])
+		money_changed.emit()
+	quarter_profit = 0
+	quarter_depreciation = 0
+
 # ---------- IPv4 scarcity ----------
 
 const IPV4_BLOCK := 8  # a /29: eight addresses, six of them usable in practice
@@ -2153,9 +2236,12 @@ func sla_tick() -> void:
 			last_pl["site rent"] = int(last_pl.get("site rent", 0)) - rent
 			earned -= rent
 	if stage >= 1:  # colo includes power; your own room doesn't
-		var power_bill := power_draw() / 10
-		last_pl["power"] = -power_bill
-		earned -= power_bill
+		var bill := power_bill()
+		last_pl["power"] = -bill
+		earned -= bill
+	if accountant:
+		last_pl["accountant"] = -ACCOUNTANT_FEE
+		earned -= ACCOUNTANT_FEE
 	for c in Contracts.all():
 		if c["id"] not in contracts_done:
 			continue
@@ -2360,8 +2446,11 @@ func sla_tick() -> void:
 		"slots_used": int(cap_now["slots_used"]), "watts": int(cap_now["watts"])})
 	if history.size() > 120:
 		history.pop_front()
+	quarter_profit += last_cycle_delta
+	quarter_depreciation += depreciation_this_cycle()
 	if cycle % 12 == 0 and cycle > 0:
 		make_report()
+		settle_quarter()
 		maintenance_used = 0  # a new quarter, a fresh allowance
 	if cycle % 5 == 0:
 		save_game()
@@ -2707,7 +2796,9 @@ func _serialize() -> Dictionary:
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
-		"ipv4_blocks": ipv4_blocks,
+		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
+		"efficiency": efficiency, "quarter_profit": quarter_profit,
+		"quarter_depreciation": quarter_depreciation,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
@@ -2998,6 +3089,11 @@ func _apply(data: Dictionary) -> void:
 	ixp = data.get("ixp", {})
 	playbooks = data.get("playbooks", [])
 	ipv4_blocks = int(data.get("ipv4_blocks", 1))
+	accountant = bool(data.get("accountant", false))
+	fixed_tariff = bool(data.get("fixed_tariff", false))
+	efficiency = int(data.get("efficiency", 0))
+	quarter_profit = int(data.get("quarter_profit", 0))
+	quarter_depreciation = int(data.get("quarter_depreciation", 0))
 	ups = {}
 	for k2 in data.get("ups", {}):
 		ups[int(k2)] = int(data["ups"][k2])

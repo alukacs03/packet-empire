@@ -826,6 +826,8 @@ static func run() -> int:
 	check(Game.borrow() and Game.money == money_b + 1000 and Game.debt == 1000, "bank: borrow lands a tranche")
 	Game.debt = 0
 	Game.invoices = []  # measure the interest, not what happened to land this cycle
+	var bank_tariff := Game.fixed_tariff
+	Game.fixed_tariff = true  # a flat energy rate, so the two cycles are comparable
 	var d0_start := Game.money
 	Game.sla_tick()
 	var delta0 := Game.money - d0_start
@@ -834,6 +836,7 @@ static func run() -> int:
 	var d1_start := Game.money
 	Game.sla_tick()
 	var delta1 := Game.money - d1_start
+	Game.fixed_tariff = bank_tariff
 	check(delta0 - delta1 == 500, "bank: interest bites exactly debt*rate (got %d)" % (delta0 - delta1))
 	Game.debt = 1000
 	check(Game.repay() and Game.debt == 0, "bank: repay clears the tranche")
@@ -1261,6 +1264,8 @@ static func run() -> int:
 	var cap_deal := {"id": "cap1", "customer": "LoadCo", "kind": "hosting",
 		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 1500, "healthy": false}
 	Game.deals.append(cap_deal)
+	# traffic follows the working day, so measure congestion at the busy part
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3
 	Game.sla_tick()
 	check(cap_deal["healthy"] and cap_deal.get("degraded", false),
 		"capacity: 1500 Mbps through 1G access link degrades the deal")
@@ -3142,6 +3147,56 @@ static func run() -> int:
 		"bgp: the default route is filtered out and the other upstream carries it")
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
+
+	# --- energy and the books ---
+	var en_cycle := Game.cycle
+	var en_fixed := Game.fixed_tariff
+	var en_eff := Game.efficiency
+	var en_acc := Game.accountant
+	Game.fixed_tariff = false
+	Game.efficiency = 0
+	Game.cycle = 4  # the expensive part of the day
+	var en_peak := Game.energy_rate()
+	Game.cycle = 0  # the middle of the night
+	check(Game.energy_rate() < en_peak,
+		"energy: the spot rate is cheaper at night and dearer at noon")
+	Game.fixed_tariff = true
+	check(Game.energy_rate() > Game.ENERGY_BASE,
+		"energy: a fixed tariff costs more than the base, which is what certainty costs")
+	Game.cycle = 4
+	check(Game.energy_rate() < en_peak,
+		"energy: but it does not move with the peak, which is the point of it")
+	Game.fixed_tariff = false
+	var en_draw := Game.effective_draw()
+	Game.money = 1000000
+	check(Game.buy_efficiency() == "", "energy: a retrofit can be bought")
+	check(Game.effective_draw() < en_draw or en_draw == 0,
+		"energy: and it takes a slice off the draw permanently")
+	# tax
+	Game.quarter_profit = 0
+	Game.quarter_depreciation = 0
+	Game.accountant = false
+	check(Game.tax_due() == 0, "tax: no profit, no tax")
+	Game.quarter_profit = Game.TAX_FREE
+	check(Game.tax_due() == 0, "tax: the small-business allowance covers a lean quarter")
+	Game.quarter_profit = Game.TAX_FREE + 10000
+	Game.quarter_depreciation = 4000
+	var tax_without := Game.tax_due()
+	check(tax_without > 0, "tax: a profitable quarter is taxed")
+	Game.accountant = true
+	check(Game.tax_due() < tax_without,
+		"tax: an accountant claims the whole allowance instead of half of it")
+	var tax_money := Game.money
+	Game.settle_quarter()
+	check(Game.money < tax_money, "tax: settling the quarter actually takes the money")
+	check(Game.quarter_profit == 0 and Game.quarter_depreciation == 0,
+		"tax: and starts the next quarter clean")
+	check(Game.depreciation_this_cycle() > 0,
+		"tax: installed hardware writes itself off a little every cycle")
+	Game.cycle = en_cycle
+	Game.fixed_tariff = en_fixed
+	Game.efficiency = en_eff
+	Game.accountant = en_acc
 
 	# --- staff: shifts, morale, training and negotiation ---
 	var st_saved := Game.staff.duplicate()
