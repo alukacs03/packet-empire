@@ -21,6 +21,7 @@ var name_hint: Label
 var status_opt: OptionButton
 var port_row: VBoxContainer
 var conn_list: VBoxContainer
+var svc_lbl: Label
 var cap_box: VBoxContainer
 var cap_out: RichTextLabel
 var cap_toggle: Button
@@ -439,7 +440,7 @@ func _build_dev_overlay() -> void:
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)
 
-	v.add_child(_section("FRONT PANEL — CLICK A PORT TO CONFIGURE"))
+	v.add_child(_section("FRONT PANEL: CLICK A PORT TO CONFIGURE"))
 	var plate := PanelContainer.new()
 	var plate_sb := _sb(Color(0.1, 0.11, 0.14), Color(0.4, 0.44, 0.52), 10, 16)
 	plate_sb.border_width_top = 3
@@ -451,6 +452,8 @@ func _build_dev_overlay() -> void:
 
 	conn_list = VBoxContainer.new()
 	v.add_child(conn_list)
+	svc_lbl = _label("", 13, Color(0.6, 0.75, 0.65))
+	v.add_child(svc_lbl)
 
 	vlan_section = VBoxContainer.new()
 	v.add_child(vlan_section)
@@ -552,7 +555,7 @@ func close_dev() -> void:
 	cur_dev = null
 
 func _refresh_dev_header() -> void:
-	dev_title.text = "%s  /  %s — %s" % [Game.rack_of(cur_dev).name, cur_dev.name, Game.MODELS[cur_dev.model]["label"]]
+	dev_title.text = "%s  /  %s: %s" % [Game.rack_of(cur_dev).name, cur_dev.name, Game.MODELS[cur_dev.model]["label"]]
 	name_edit.text = cur_dev.name
 	status_opt.select(0 if cur_dev.status == "active" else 1)
 	name_hint.text = ""
@@ -586,6 +589,19 @@ func _refresh_ports() -> void:
 				14, Color(0.55, 0.85, 0.65)))
 	if conn_list.get_child_count() == 0:
 		conn_list.add_child(_label("  no cables connected", 14, Color(0.45, 0.5, 0.6)))
+	var svc_bits: Array = []
+	if cur_dev.services.has("dhcp"):
+		var svc: Dictionary = cur_dev.services["dhcp"]
+		svc_bits.append("dhcpd %s–%s (%d leases)" % [svc["start"], svc["end"], svc["leases"].size()])
+	if cur_dev.services.has("dns"):
+		svc_bits.append("dns (%d records)" % cur_dev.services["dns"]["records"].size())
+	if cur_dev.resolver != "":
+		svc_bits.append("resolver %s" % cur_dev.resolver)
+	if not cur_dev.bgp.is_empty():
+		svc_bits.append("bgp AS%d" % int(cur_dev.bgp["asn"]))
+	if not cur_dev.ospf.is_empty():
+		svc_bits.append("ospf")
+	svc_lbl.text = ("  ⚙ " + "   ".join(PackedStringArray(svc_bits))) if not svc_bits.is_empty() else ""
 	_refresh_vlans()
 
 func _refresh_vlans() -> void:
@@ -694,6 +710,16 @@ func _build_if_overlay() -> void:
 	if_ip_in.placeholder_text = "10.0.0.5/24"
 	if_ip_in.text_submitted.connect(_add_ip)
 	ip_row.add_child(if_ip_in)
+	var dhcp_btn := Button.new()
+	dhcp_btn.text = "DHCP"
+	dhcp_btn.tooltip_text = "Get an address automatically (dhclient)"
+	dhcp_btn.pressed.connect(func() -> void:
+		var lease := Sim.dhcp_request(cur_if.dev, cur_if)
+		if lease.is_empty():
+			if_ip_hint.text = " no DHCP server answered"
+		else:
+			_refresh_iface())
+	ip_row.add_child(dhcp_btn)
 	var add_btn := Button.new()
 	add_btn.text = "Add IP"
 	add_btn.pressed.connect(func() -> void: _add_ip(if_ip_in.text))
@@ -859,7 +885,7 @@ func _build_menu() -> void:
 	var newg := Button.new()
 	newg.text = "New game (wipes save!)"
 	newg.pressed.connect(func() -> void:
-		_menu(newg, ["Yes, start over — my datacenter will be GONE"], func(_id: int) -> void:
+		_menu(newg, ["Yes, start over: my datacenter will be GONE"], func(_id: int) -> void:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
 			get_tree().reload_current_scene()))
 	v.add_child(newg)
@@ -958,7 +984,7 @@ func _build_welcome() -> void:
 	var v := _card(welcome_overlay, 620)
 	var t := _header(v, func() -> void: welcome_overlay.visible = false)
 	t.text = "Welcome to Packet Empire"
-	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire — by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n\nEverything costs money — contracts pay. Open Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
+	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire: by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n\nEverything costs money: contracts pay. Open Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(560, 0)
 	v.add_child(body)
@@ -1045,7 +1071,7 @@ func _build_market_section() -> void:
 			l.custom_minimum_size = Vector2(560, 0)
 			contracts_box.add_child(l)
 	if not Game.offers.is_empty():
-		contracts_box.add_child(_section("INCOMING OFFERS — QUOTE A PRICE PER REVENUE CYCLE"))
+		contracts_box.add_child(_section("INCOMING OFFERS: QUOTE A PRICE PER REVENUE CYCLE"))
 	for offer: Dictionary in Game.offers:
 		var card := PanelContainer.new()
 		card.add_theme_stylebox_override("panel", _sb(Color(0.12, 0.1, 0.15), Color(0.6, 0.5, 0.8, 0.5), 8, 14))
@@ -1053,7 +1079,7 @@ func _build_market_section() -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 6)
 		card.add_child(cv)
-		cv.add_child(_label("%s   (%s — they seem %s)" % [offer["customer"], offer["kind"], offer["hint"]],
+		cv.add_child(_label("%s   (%s: they seem %s)" % [offer["customer"], offer["kind"], offer["hint"]],
 			16, Color.WHITE))
 		var brief := _label(offer["brief"], 14, Color(0.78, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1114,8 +1140,8 @@ func _build_market_section() -> void:
 			contracts_box.add_child(_chip_row(
 				"PAYING" if ok else "DOWN",
 				Color(0.4, 0.85, 0.5) if ok else Color(0.95, 0.45, 0.35),
-				"%s — %s   $%d/cycle%s" % [deal["customer"], deal["kind"], int(deal["fee"]),
-					"" if ok else "   (not delivered — not paying)"],
+				"%s: %s   $%d/cycle%s" % [deal["customer"], deal["kind"], int(deal["fee"]),
+					"" if ok else "   (not delivered: not paying)"],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
 
 var _toast_lbl: Label
@@ -1140,11 +1166,11 @@ func _refresh_contracts() -> void:
 			var mrr: int = int(c["reward"]) / 10
 			if healthy:
 				contracts_box.add_child(_chip_row("DONE", Color(0.4, 0.85, 0.5),
-					"%s — %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
+					"%s: %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
 					14, Color(0.55, 0.8, 0.6)))
 			else:
 				contracts_box.add_child(_chip_row("BREACH", Color(0.95, 0.45, 0.35),
-					"%s — %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
+					"%s: %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
 					14, Color(0.95, 0.55, 0.4)))
 			continue
 		if found_active:
@@ -1157,7 +1183,7 @@ func _refresh_contracts() -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 8)
 		card.add_child(cv)
-		cv.add_child(_label("%s — %s      reward $%d" % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
+		cv.add_child(_label("%s: %s      reward $%d" % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
 		var brief := _label(c["brief"], 14, Color(0.75, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
@@ -1174,7 +1200,7 @@ func _refresh_contracts() -> void:
 			_refresh_contracts())
 		cv.add_child(btn)
 	if not found_active:
-		contracts_box.add_child(_label("All contracts complete! More arrive with future updates —\nsee the GitHub roadmap.", 14, Color(0.7, 0.85, 0.75)))
+		contracts_box.add_child(_label("All contracts complete! More arrive with future updates -\nsee the GitHub roadmap.", 14, Color(0.7, 0.85, 0.75)))
 
 # ---------- refresh / CLI ----------
 
@@ -1183,7 +1209,7 @@ func _refresh_capture() -> void:
 		return
 	cap_out.clear()
 	if cur_dev.capture.is_empty():
-		cap_out.append_text("(no frames captured — generate some traffic, e.g. ping something)")
+		cap_out.append_text("(no frames captured: generate some traffic, e.g. ping something)")
 	else:
 		cap_out.append_text("\n".join(PackedStringArray(cur_dev.capture.slice(-14))))
 

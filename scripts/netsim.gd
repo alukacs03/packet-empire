@@ -7,7 +7,7 @@ class_name Sim
 ##   vlan 0 = untagged on the wire; switches assign the bridging VLAN.
 ## ARP pl:  {op: "req"|"rep", spa, sha, tpa}
 ## IPv4 pl: {src_ip, dst_ip, ttl, l4: {proto: "icmp"|"dns", ...}}
-## DHCP pl: {op: "discover"|"ack", mac, ...lease fields} — pure L2 broadcast
+## DHCP pl: {op: "discover"|"ack", mac, ...lease fields}: pure L2 broadcast
 
 const BCAST := "ff:ff:ff:ff:ff:ff"
 const MAX_DEPTH := 400  # loop guard until STP exists (issue #18)
@@ -52,7 +52,7 @@ static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Arra
 			break
 		hops.append(r["from"] if r["from"] != "" else "*")
 		if r["detail"] != "ttl-exceeded" and r["from"] == "":
-			break  # unreachable — no point probing further
+			break  # unreachable: no point probing further
 	return hops
 
 static func dhcp_request(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:

@@ -22,7 +22,7 @@ static func all() -> Array:
 			"title": "First light",
 			"customer": "Internal ops",
 			"reward": 500,
-			"brief": "Make your two servers talk. Both need an IP address in the same subnet: 10.0.0.1/24 on one and 10.0.0.2/24 on the other. Use each server's console — 'ip addr add 10.0.0.1/24 dev eth0' — or the port editor. Then verify with 'ping 10.0.0.2'. Same subnet = no router needed: this is switching.",
+			"brief": "Make your two servers talk. Both need an IP address in the same subnet: 10.0.0.1/24 on one and 10.0.0.2/24 on the other. Use each server's console: 'ip addr add 10.0.0.1/24 dev eth0': or the port editor. Then verify with 'ping 10.0.0.2'. Same subnet = no router needed: this is switching.",
 			"reqs": [
 				{"d": "A server owns 10.0.0.1/24", "t": func() -> bool: return _owner("10.0.0.1") != null},
 				{"d": "A server owns 10.0.0.2/24", "t": func() -> bool: return _owner("10.0.0.2") != null},
@@ -34,7 +34,7 @@ static func all() -> Array:
 			"title": "Two tenants, one switch",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 800,
-			"brief": "Your two servers now belong to different customers who must NOT see each other — but they share the switch. That's what VLANs are for. Cisco-style gear: 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1' → 'switchport access vlan 10'. PacketTik (RouterOS): '/interface bridge vlan add vlan-ids=10' and '/interface set ether1 pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20 — the ping that worked before must now FAIL: separate VLANs are separate networks.",
+			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. Cisco-style gear: 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1' → 'switchport access vlan 10'. PacketTik (RouterOS): '/interface bridge vlan add vlan-ids=10' and '/interface set ether1 pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
 			"reqs": [
 				{"d": "A switch has VLANs 10 and 20", "t": func() -> bool: return _switch_with_vlans([10, 20]) != null},
 				{"d": "Access ports assigned to both VLAN 10 and 20", "t": func() -> bool: return _access_port_in(10) and _access_port_in(20)},
@@ -46,7 +46,7 @@ static func all() -> Array:
 			"title": "Growing pains",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 1000,
-			"brief": "Alfa and Beta grew — you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (Cisco-style: 'switchport mode trunk'; PacketTik: '/interface set ether5 mode=trunk'): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
+			"brief": "Alfa and Beta grew: you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (Cisco-style: 'switchport mode trunk'; PacketTik: '/interface set ether5 mode=trunk'): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
 			"reqs": [
 				{"d": "Two switches joined by a trunk (both ends)", "t": func() -> bool: return _trunk_between_switches(10)},
 				{"d": "10.0.0.3 reaches 10.0.0.1 across switches", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
@@ -58,7 +58,7 @@ static func all() -> Array:
 			"title": "One cable from disaster",
 			"customer": "Alfa Ltd (again)",
 			"reward": 1100,
-			"brief": "Last month a janitor unplugged your inter-switch cable and Alfa's network split in half. They demand redundancy: run a SECOND cable between your two switches. Two links between switches form a LOOP — broadcasts would circulate forever and melt the network, but spanning tree saves you: it automatically blocks the spare link and unblocks it when the primary dies. Check 'show spanning-tree' (or '/interface bridge port print') — one port must show discarding/blocked while pings still flow.",
+			"brief": "Last month a janitor unplugged your inter-switch cable and Alfa's network split in half. They demand redundancy: run a SECOND cable between your two switches. Two links between switches form a LOOP: broadcasts would circulate forever and melt the network, but spanning tree saves you: it automatically blocks the spare link and unblocks it when the primary dies. Check 'show spanning-tree' (or '/interface bridge port print'): one port must show discarding/blocked while pings still flow.",
 			"reqs": [
 				{"d": "Two links between the same pair of switches", "t": func() -> bool: return _parallel_sw_links() >= 2},
 				{"d": "Spanning tree is blocking the spare", "t": func() -> bool: return _stp_blocking()},
@@ -83,7 +83,7 @@ static func all() -> Array:
 			"title": "Plug and play",
 			"customer": "Delta Web Kft",
 			"reward": 1500,
-			"brief": "Delta keeps adding machines and refuses to type IP addresses. Give them DHCP: on one of their servers run a DHCP service — 'dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1' (that's: interface, first and last lease, prefix length, gateway) — the DHCP server itself needs a static IP in that subnet (e.g. 10.2.0.5/24). Then install a NEW server on the same switch/VLAN and just type 'dhclient eth0' on it: it must receive a lease automatically. DHCP works by broadcast, so both must share a broadcast domain.",
+			"brief": "Delta keeps adding machines and refuses to type IP addresses. Give them DHCP: on one of their servers run a DHCP service: 'dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1' (that's: interface, first and last lease, prefix length, gateway): the DHCP server itself needs a static IP in that subnet (e.g. 10.2.0.5/24). Then install a NEW server on the same switch/VLAN and just type 'dhclient eth0' on it: it must receive a lease automatically. DHCP works by broadcast, so both must share a broadcast domain.",
 			"reqs": [
 				{"d": "A server runs a DHCP service", "t": func() -> bool: return _dhcp_server() != null},
 				{"d": "At least one lease has been handed out", "t": func() -> bool: return _lease_count() >= 1},
@@ -95,7 +95,7 @@ static func all() -> Array:
 			"title": "Names, not numbers",
 			"customer": "Delta Web Kft",
 			"reward": 1800,
-			"brief": "Nobody remembers 10.2.0.x. Delta wants DNS: pick a server to be the resolver, give it records — 'dns add www.delta.hu 10.2.0.10' — and point a client at it ('nameserver <dns-server-ip>', or hand it out via DHCP's dns field). Then 'nslookup www.delta.hu' and 'ping www.delta.hu' must work from the client.",
+			"brief": "Nobody remembers 10.2.0.x. Delta wants DNS: pick a server to be the resolver, give it records: 'dns add www.delta.hu 10.2.0.10': and point a client at it ('nameserver <dns-server-ip>', or hand it out via DHCP's dns field). Then 'nslookup www.delta.hu' and 'ping www.delta.hu' must work from the client.",
 			"reqs": [
 				{"d": "A DNS server has a record for www.delta.hu", "t": func() -> bool: return _dns_record("www.delta.hu") != ""},
 				{"d": "A client resolves www.delta.hu via the network", "t": func() -> bool: return _client_resolves("www.delta.hu")},
@@ -107,7 +107,7 @@ static func all() -> Array:
 			"title": "Lock it down",
 			"customer": "Epsilon Bank",
 			"reward": 2500,
-			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console: 'acl deny 172.16.1.0/24 172.16.2.20/32' — first match wins, everything else is permitted. Verify with 'show acl' and pings both ways.",
+			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console: 'acl deny 172.16.1.0/24 172.16.2.20/32': first match wins, everything else is permitted. Verify with 'show acl' and pings both ways.",
 			"reqs": [
 				{"d": "A firewall with at least one deny rule", "t": func() -> bool: return _fw_with_deny() != null},
 				{"d": "Office 172.16.1.10 reaches app 172.16.2.10", "t": func() -> bool: return _ping("172.16.1.10", "172.16.2.10", true)},
@@ -119,7 +119,7 @@ static func all() -> Array:
 			"title": "Join the Internet",
 			"customer": "Zeta Hosting",
 			"reward": 3000,
-			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30 — put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4: '/routing bgp set as=65001', '/routing bgp peer add address=100.64.0.1 as=64500'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route — but the Internet can't answer until you ANNOUNCE your prefix: network add prefix=<your-server-subnet>/24 (or 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
+			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4: '/routing bgp set as=65001', '/routing bgp peer add address=100.64.0.1 as=64500'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: network add prefix=<your-server-subnet>/24 (or 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
 			"reqs": [
 				{"d": "ISP handoff cabled to a router", "t": func() -> bool: return _uplink_cabled()},
 				{"d": "eBGP session Established", "t": func() -> bool: return _bgp_up() != null},
@@ -131,7 +131,7 @@ static func all() -> Array:
 			"title": "Hide the internals",
 			"customer": "Zeta Hosting (again)",
 			"reward": 2200,
-			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP — real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista: on the uplink-facing interface, 'ip nat outside'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8 — with NO announcement covering it.",
+			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista: on the uplink-facing interface, 'ip nat outside'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
 			"reqs": [
 				{"d": "A NAT outside interface on a router", "t": func() -> bool: return _nat_router() != null},
 				{"d": "A private (10.x) server reaches 8.8.8.8", "t": func() -> bool: return _private_pings_inet() != null},
@@ -143,11 +143,11 @@ static func all() -> Array:
 			"title": "Static spaghetti",
 			"customer": "Gamma Corp (again)",
 			"reward": 2600,
-			"brief": "Gamma opened a third office and your static routes are becoming spaghetti — every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik: '/routing ospf network add prefix=10.20.0.0/16'. NO static routes on the routers — OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
+			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik: '/routing ospf network add prefix=10.20.0.0/16'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
 			"reqs": [
 				{"d": "Servers own 10.20.1.10 and 10.20.2.10", "t": func() -> bool: return _owner("10.20.1.10") != null and _owner("10.20.2.10") != null},
 				{"d": "Two routers share an OSPF adjacency", "t": func() -> bool: return _ospf_adjacency()},
-				{"d": "Both servers reach each other — no static routes on routers", "t": func() -> bool: return _ospf_no_static_path()},
+				{"d": "Both servers reach each other: no static routes on routers", "t": func() -> bool: return _ospf_no_static_path()},
 			],
 		},
 		{
@@ -155,7 +155,7 @@ static func all() -> Array:
 			"title": "Feeling the heat",
 			"customer": "Your own ops",
 			"reward": 2000,
-			"brief": "Now that you own the room (Server room stage), the racks dump heat into it and the bare walls only dissipate 400W. Exceed that and gear starts tripping offline every cycle. Buy a CoolRow CRAC unit ($600 — it cools 1500W but draws 100W itself) and keep total cooling capacity above total power draw. The HUD shows ⚡draw / ❄capacity.",
+			"brief": "Now that you own the room (Server room stage), the racks dump heat into it and the bare walls only dissipate 400W. Exceed that and gear starts tripping offline every cycle. Buy a CoolRow CRAC unit ($600: it cools 1500W but draws 100W itself) and keep total cooling capacity above total power draw. The HUD shows ⚡draw / ❄capacity.",
 			"reqs": [
 				{"d": "Own at least a Server room (Expand)", "t": func() -> bool: return Game.stage >= 1},
 				{"d": "A CRAC unit is installed and active", "t": func() -> bool: return _has_active("cooling")},
@@ -167,7 +167,7 @@ static func all() -> Array:
 			"title": "No single point of failure",
 			"customer": "Omega Holding (pre-audit)",
 			"reward": 3200,
-			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master). A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway — 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
+			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master). A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
 			"reqs": [
 				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
 				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},
@@ -179,7 +179,7 @@ static func all() -> Array:
 			"title": "The big client",
 			"customer": "Omega Holding",
 			"reward": 5000,
-			"brief": "Omega Holding audited you for a month. Their requirements read like everything you've learned: (1) their own VLAN 30 with a server on an access port; (2) a server at 10.30.0.10/24 that reaches the Internet (NAT or announced — your call); (3) a firewall rule explicitly protecting the 10.30.0.0/24 segment; (4) dynamic routing in the core (a live OSPF adjacency); (5) managed infrastructure — at least one switch with an addressed Management port. Deliver all five and they sign the biggest cheque you've seen.",
+			"brief": "Omega Holding audited you for a month. Their requirements read like everything you've learned: (1) their own VLAN 30 with a server on an access port; (2) a server at 10.30.0.10/24 that reaches the Internet (NAT or announced: your call); (3) a firewall rule explicitly protecting the 10.30.0.0/24 segment; (4) dynamic routing in the core (a live OSPF adjacency); (5) managed infrastructure: at least one switch with an addressed Management port. Deliver all five and they sign the biggest cheque you've seen.",
 			"reqs": [
 				{"d": "VLAN 30 with a connected access-port server", "t": func() -> bool: return _vlan_with_server(30)},
 				{"d": "10.30.0.10 reaches the Internet (8.8.8.8)", "t": func() -> bool: return _owner("10.30.0.10") != null and Sim.ping(_owner("10.30.0.10"), "8.8.8.8")["ok"]},

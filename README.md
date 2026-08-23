@@ -2,7 +2,7 @@
 
 A datacenter-tycoon game that teaches real network engineering, built with
 Godot 4. You start with a few rack units in a colocation corner and grow into
-your own datacenter floor — by actually configuring switches, routers,
+your own datacenter floor: by actually configuring switches, routers,
 firewalls and servers, on real(istic) CLIs, over a real packet-level
 simulation.
 
@@ -23,7 +23,7 @@ macOS: `/Applications/Godot.app/Contents/MacOS/Godot --path .`
   and command history
 - **Contracts** (top bar) drives the campaign: each mission's brief teaches the
   commands it needs. Marketplace customers arrive with needs and hidden
-  budgets — quote a price per revenue cycle; delivery is verified against the
+  budgets: quote a price per revenue cycle; delivery is verified against the
   live simulation every cycle, and only working services pay.
 
 ## What's simulated
@@ -62,7 +62,7 @@ The CLI depends on what you buy, like real life:
 | `scripts/world.gd`, `floor.gd`, `rack_visual.gd`, `camera.gd`, `iso.gd` | Isometric floor scene |
 | `scripts/test_sim.gd` | Integration suite |
 
-CLI and UI mutate the same `Game` state — they can never disagree.
+CLI and UI mutate the same `Game` state: they can never disagree.
 
 ## Tests
 

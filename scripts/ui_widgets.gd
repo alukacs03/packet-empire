@@ -107,7 +107,7 @@ class TopoMap extends Control:
 			draw_string(_mono, rect.position + Vector2(8, 29), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col.lightened(0.3))
 		# legend
 		var ly := size.y - 26
-		draw_string(_mono, Vector2(30, ly), "— host link   — trunk/inter-switch   ┄ STP blocked   — management",
+		draw_string(_mono, Vector2(30, ly), "- host link  : trunk/inter-switch   ┄ STP blocked  : management",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.55, 0.65))
 
 # ================================================================ RackSlot ==
@@ -127,9 +127,9 @@ class RackSlot extends Control:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		_mono = UIW.mono_font()
 		if d:
-			tooltip_text = "%s — open device" % d.name
+			tooltip_text = "%s: open device" % d.name
 		else:
-			tooltip_text = "Empty slot — install hardware"
+			tooltip_text = "Empty slot: install hardware"
 		return self
 
 	func _notification(what: int) -> void:
@@ -257,7 +257,7 @@ class Faceplate extends Control:
 				if idx >= 0:
 					var i: Net.Iface = _ports[idx]
 					var peer := Game.peer_label(i)
-					tooltip_text = "%s — %s" % [i.name,
+					tooltip_text = "%s: %s" % [i.name,
 						("connected to " + peer) if peer else ("free port" if i.enabled else "disabled")]
 				else:
 					tooltip_text = ""

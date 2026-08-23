@@ -238,7 +238,7 @@ static func run() -> int:
 	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
 	check(not Sim.ping(office, "172.16.2.20")["ok"], "fw: deny rule blocks office->vault")
 	check(not Sim.ping(vault, "172.16.1.10")["ok"],
-		"fw: stateless — vault->office echo passes but its reply is filtered (the classic lesson)")
+		"fw: stateless: vault->office echo passes but its reply is filtered (the classic lesson)")
 	check(fs.exec("end") == "" and fs.exec("show acl").contains("deny"), "fw: show acl lists the rule")
 	fs.exec("conf t")
 	fs.exec("no acl 1")
@@ -608,6 +608,44 @@ static func run() -> int:
 	Game.save_game()
 	Game.load_game()
 	check(not Game._rack_outside_grid(), "legacy: load grandfathers the stage until racks fit")
+
+	# --- economy walkthrough: the colo arc must be affordable ---
+	Game.racks = []
+	Game.links = []
+	Game.deals = []
+	Game.offers = []
+	Game.contracts_done = []
+	Game.sla_status = {}
+	Game.stage = 0
+	Game.debt = 0
+	Game.money = 2000
+	Game.topology_changed.emit()
+	var w_rack := Game.add_rack(Vector2i(0, 0))
+	check(Game.try_spend(Game.RACK_PRICE), "walkthrough: rack affordable at start")
+	var w_sw := Game.new_device("sw-lite")
+	var w_s1 := Game.new_device("srv-1")
+	var w_s2 := Game.new_device("srv-1")
+	check(Game.try_spend(90 + 400 + 400), "walkthrough: tier-0 starter kit affordable")
+	w_rack.slots[0] = w_sw
+	w_rack.slots[1] = w_s1
+	w_rack.slots[2] = w_s2
+	Game.connect_ifaces(w_s1.ifaces[0], w_sw.ifaces[0])
+	Game.connect_ifaces(w_s2.ifaces[0], w_sw.ifaces[1])
+	check(Game.try_complete_contract(_contract("rackup")), "walkthrough: contract 1 pays")
+	Game.add_ip(w_s1.ifaces[0], "10.0.0.1/24")
+	Game.add_ip(w_s2.ifaces[0], "10.0.0.2/24")
+	check(Game.try_complete_contract(_contract("first_ping")), "walkthrough: contract 2 pays")
+	Game.add_vlan(w_sw, 10, "alfa")
+	Game.add_vlan(w_sw, 20, "beta")
+	Game.set_access_vlan(w_sw.ifaces[0], 10)
+	Game.set_access_vlan(w_sw.ifaces[1], 20)
+	check(Game.try_complete_contract(_contract("two_tenants")), "walkthrough: contract 3 pays")
+	check(Game.money > 0, "walkthrough: never broke during the colo arc (have $%d)" % Game.money)
+	var cycles := 0
+	while Game.money < 5000 + 1500 and cycles < 40:
+		Game.sla_tick()
+		cycles += 1
+	check(cycles < 40, "walkthrough: expansion affordable within %d cycles" % cycles)
 
 	print("---- %d failures" % fails)
 	return fails

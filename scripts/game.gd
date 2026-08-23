@@ -169,7 +169,7 @@ func log_event(text: String) -> void:
 
 func _security_sweep() -> int:
 	## Customer machines (marketplace deal servers) that can reach the IP of
-	## your routers/firewalls are a breach waiting to happen — once per pair.
+	## your routers/firewalls are a breach waiting to happen: once per pair.
 	var cost := 0
 	for deal in deals:
 		var ip: String = deal["params"].get("ip", "")
@@ -193,7 +193,7 @@ func _security_sweep() -> int:
 					cost += 100
 					stats["incidents"] += 1
 					reputation = maxi(0, reputation - 5)
-					log_event("SECURITY: %s's machine %s reached %s management at %s — incident response -$100. Isolate your management plane (firewall it off from customer networks)!"
+					log_event("SECURITY: %s's machine %s reached %s management at %s: incident response -$100. Isolate your management plane (firewall it off from customer networks)!"
 						% [deal["customer"], srv.name, d.name, mgmt_ip])
 					break
 			if incidents_seen.has(key):
@@ -212,12 +212,12 @@ func _field_fault() -> void:
 	var victim: Net.Iface = candidates[randi() % candidates.size()]
 	victim.enabled = false
 	stats["faults"] += 1
-	log_event("FIELD: link fault on %s %s — port went down. Find it (Map, lldp, counters) and re-enable it!"
+	log_event("FIELD: link fault on %s %s: port went down. Find it (Map, lldp, counters) and re-enable it!"
 		% [victim.dev.name, victim.name])
 	topology_changed.emit()
 
 func sla_tick() -> void:
-	## Completed contracts pay recurring service fees — but only while
+	## Completed contracts pay recurring service fees: but only while
 	## their requirements still hold. Break the network, lose the revenue.
 	cycle += 1
 	var earned := 0
@@ -226,7 +226,7 @@ func sla_tick() -> void:
 		earned -= ceili(debt * LOAN_RATE)
 	if money < 0:
 		reputation = maxi(0, reputation - 2)
-		log_event("BANK: you are insolvent ($%d) — reputation is bleeding." % money)
+		log_event("BANK: you are insolvent ($%d): reputation is bleeding." % money)
 	if stage >= 1:  # colo includes power; your own room doesn't
 		earned -= power_draw() / 10
 	for c in Contracts.all():
@@ -238,7 +238,7 @@ func sla_tick() -> void:
 				ok = false
 				break
 		if sla_status.get(c["id"], true) and not ok:
-			log_event("SLA BREACH: '%s' (%s) is down — fees suspended." % [c["title"], c["customer"]])
+			log_event("SLA BREACH: '%s' (%s) is down: fees suspended." % [c["title"], c["customer"]])
 		sla_status[c["id"]] = ok
 		if ok:
 			earned += int(c["reward"]) / 10

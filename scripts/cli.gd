@@ -75,7 +75,7 @@ class EOS extends Session:
 		_build_cmds()
 
 	func banner() -> String:
-		return "%s — PacketOS EOS. Type '?' area: try 'enable', then 'configure terminal'.\n" % dev.name
+		return "%s: PacketOS EOS. Type '?' area: try 'enable', then 'configure terminal'.\n" % dev.name
 
 	func prompt() -> String:
 		match mode:
@@ -373,7 +373,7 @@ class EOS extends Session:
 		var vids: Array = []
 		for part in String(r[0]).split(",", false):
 			if not part.is_valid_int() or int(part) < 1 or int(part) > 4094:
-				return "% bad VLAN list — e.g. 10,20,30 or 'all'\n"
+				return "% bad VLAN list: e.g. 10,20,30 or 'all'\n"
 			vids.append(int(part))
 		ctx_if.tagged_vlans = vids
 		Game.topology_changed.emit()
@@ -381,7 +381,7 @@ class EOS extends Session:
 
 	func _if_ip(r: Array) -> String:
 		if dev.type == "switch" and not ctx_if.name.begins_with("Management"):
-			return "% SVIs are not supported yet — use the Management1 port or a router\n"
+			return "% SVIs are not supported yet: use the Management1 port or a router\n"
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
@@ -450,7 +450,7 @@ class EOS extends Session:
 		var src := "0.0.0.0/0" if r[0] == "any" else String(r[0])
 		var dst := "0.0.0.0/0" if r[1] == "any" else String(r[1])
 		if not Net.valid_cidr(src) or not Net.valid_cidr(dst):
-			return "% bad prefix — use a.b.c.d/len or 'any'\n"
+			return "% bad prefix: use a.b.c.d/len or 'any'\n"
 		var sp := src.split("/")
 		var dp := dst.split("/")
 		dev.acls.append({"action": action, "src": sp[0], "splen": int(sp[1]),
@@ -467,7 +467,7 @@ class EOS extends Session:
 
 	func _show_acl(_r: Array) -> String:
 		if dev.acls.is_empty():
-			return "  (no rules — default permit)\n"
+			return "  (no rules: default permit)\n"
 		var out := ""
 		var n := 1
 		for rule in dev.acls:
@@ -503,10 +503,10 @@ class EOS extends Session:
 
 	func _show_ospf(_r: Array) -> String:
 		if dev.ospf.is_empty():
-			return "% OSPF not running — 'router ospf' in config mode\n"
+			return "% OSPF not running: 'router ospf' in config mode\n"
 		var nbs := Sim.ospf_neighbors(dev)
 		if nbs.is_empty():
-			return "  (no neighbors — check network statements on both sides)\n"
+			return "  (no neighbors: check network statements on both sides)\n"
 		var out := "%-14s %-8s %s\n" % ["Neighbor", "State", "Address"]
 		var seen := {}
 		for nb in nbs:
@@ -563,7 +563,7 @@ class EOS extends Session:
 
 	func _show_bgp(_r: Array) -> String:
 		if dev.bgp.is_empty():
-			return "% BGP not running — 'router bgp <asn>' in config mode\n"
+			return "% BGP not running: 'router bgp <asn>' in config mode\n"
 		var out := "BGP router AS %d\n%-16s %-10s %s\n" % [int(dev.bgp["asn"]), "Neighbor", "Remote-AS", "State"]
 		if dev.bgp["neighbors"].is_empty():
 			out += "  (no neighbors configured)\n"
@@ -628,11 +628,11 @@ class EOS extends Session:
 		for vlan in vlans:
 			for mac in dev.mac_table[vlan]:
 				out += "%-6d %-18s %s\n" % [vlan, mac, EOS._short(dev.mac_table[vlan][mac].name)]
-		return out if vlans else "  (empty — send some traffic first)\n"
+		return out if vlans else "  (empty: send some traffic first)\n"
 
 	func _show_capture(_r: Array) -> String:
 		if dev.capture.is_empty():
-			return "  (no frames captured — generate some traffic)\n"
+			return "  (no frames captured: generate some traffic)\n"
 		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
 
 	func _show_stp(_r: Array) -> String:
@@ -696,7 +696,7 @@ class EOS extends Session:
 			out += "B  %s/%d [20/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		for r in Sim._ospf_learned(dev):
 			out += "O  %s/%d [110/%d] via %s\n" % [r["prefix"], int(r["plen"]), 10, r["via"]]
-		return out if out else "  (no routes — configure ip addresses)\n"
+		return out if out else "  (no routes: configure ip addresses)\n"
 
 	func _show_ip_brief(_r: Array) -> String:
 		var out := "%-11s %-18s %-8s\n" % ["Interface", "IP Address", "Status"]
@@ -807,7 +807,7 @@ class Linux extends Session:
 				if t.size() == 2 and t[1] == "list":
 					var recs: Dictionary = dev.services.get("dns", {}).get("records", {})
 					if recs.is_empty():
-						return "(no records — this host is not a DNS server yet)\n"
+						return "(no records: this host is not a DNS server yet)\n"
 					var out := ""
 					for k in recs:
 						out += "%-20s A  %s\n" % [k, recs[k]]
@@ -894,7 +894,7 @@ class Linux extends Session:
 			return "usage: ip link set <if> up|down\n"
 		if String(t[0]).begins_with("n"):  # ip neigh
 			if dev.arp.is_empty():
-				return "(empty — no ARP entries yet)\n"
+				return "(empty: no ARP entries yet)\n"
 			var out := ""
 			for ip in dev.arp:
 				out += "%s dev %s lladdr %s REACHABLE\n" % [ip, dev.ifaces[0].name, dev.arp[ip]]

@@ -4,7 +4,7 @@ extends CLI.Session
 ## with key=value parameters, /ping, export. Same Game state as everything.
 
 func banner() -> String:
-	return "PacketTik RouterOS %s — try '/interface print', '/ping <ip>', 'help'\n" % dev.name
+	return "PacketTik RouterOS %s: try '/interface print', '/ping <ip>', 'help'\n" % dev.name
 
 func prompt() -> String:
 	return "[admin@%s] >" % dev.name
@@ -161,7 +161,7 @@ func exec(line: String) -> String:
 			for vid in vids:
 				for mac in dev.mac_table[vid]:
 					out += " %-4d %-18s %s\n" % [vid, mac, dev.mac_table[vid][mac].name]
-			return out if vids else " (empty — send some traffic first)\n"
+			return out if vids else " (empty: send some traffic first)\n"
 		"ip firewall nat add":
 			if dev.type == "switch":
 				return "failure: NAT needs a router\n"
@@ -271,7 +271,7 @@ func exec(line: String) -> String:
 	if not nexts.is_empty():
 		var opts := nexts.keys()
 		opts.sort()
-		return "incomplete command — next: %s\n" % ", ".join(PackedStringArray(opts))
+		return "incomplete command: next: %s\n" % ", ".join(PackedStringArray(opts))
 	return "bad command name %s (try 'help')\n" % path.split(" ")[0]
 
 const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit",
