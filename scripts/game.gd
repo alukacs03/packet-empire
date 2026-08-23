@@ -80,6 +80,7 @@ var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var acquisitions: Array = []  # integration jobs from companies you bought
+var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
@@ -114,6 +115,56 @@ func add_site(name: String, grid: Vector2i, kind := "acquired") -> int:
 	_ensure_sites()
 	sites.append({"name": name, "grid": [grid.x, grid.y], "kind": kind})
 	return sites.size() - 1
+
+const CIRCUIT_GRADES := [
+	{"label": "100 Mbit metro line", "mbps": 100, "setup": 1200, "fee": 60},
+	{"label": "1 Gbit leased line", "mbps": 1000, "setup": 4000, "fee": 180},
+	{"label": "10 Gbit dark fibre", "mbps": 10000, "setup": 14000, "fee": 500},
+]
+
+func circuit_between(site_a: int, site_b: int) -> Dictionary:
+	for c in circuits:
+		if (int(c["a"]) == site_a and int(c["b"]) == site_b) \
+				or (int(c["a"]) == site_b and int(c["b"]) == site_a):
+			return c
+	return {}
+
+func buy_circuit(site_a: int, site_b: int, grade: int) -> String:
+	if site_a == site_b:
+		return "a site does not need a circuit to itself"
+	if not circuit_between(site_a, site_b).is_empty():
+		return "those sites are already linked"
+	var g: Dictionary = CIRCUIT_GRADES[grade]
+	if not try_spend(int(g["setup"])):
+		return "you cannot afford the $%d installation" % int(g["setup"])
+	circuits.append({"a": site_a, "b": site_b, "mbps": int(g["mbps"]),
+		"fee": int(g["fee"]), "label": g["label"]})
+	log_event("CIRCUIT: %s ordered between %s and %s ($%d/cycle)." % [g["label"],
+		site_name(site_a), site_name(site_b), int(g["fee"])])
+	topology_changed.emit()
+	return ""
+
+func cancel_circuit(c: Dictionary) -> void:
+	for l in links.duplicate():
+		if rack_of(l.a.dev) and rack_of(l.b.dev) \
+				and rack_of(l.a.dev).site != rack_of(l.b.dev).site:
+			var cc := circuit_between(rack_of(l.a.dev).site, rack_of(l.b.dev).site)
+			if cc == c:
+				links.erase(l)  # the cables riding it go with it
+	circuits.erase(c)
+	log_event("CIRCUIT: cancelled %s." % c["label"])
+	topology_changed.emit()
+
+func sites_of(a: Net.Iface, b: Net.Iface) -> Array:
+	var ra := rack_of(a.dev)
+	var rb := rack_of(b.dev)
+	return [ra.site if ra else 0, rb.site if rb else 0]
+
+func can_link(a: Net.Iface, b: Net.Iface) -> bool:
+	var s := sites_of(a, b)
+	if s[0] == s[1]:
+		return true
+	return not circuit_between(s[0], s[1]).is_empty()
 
 func racks_on(site: int) -> Array:
 	var out: Array = []
@@ -235,6 +286,10 @@ func lag_members(l: Net.Link) -> Array:
 	return out
 
 func link_capacity(l: Net.Link) -> int:
+	var s := sites_of(l.a, l.b)
+	if s[0] != s[1]:
+		var c := circuit_between(s[0], s[1])
+		return int(c.get("mbps", 0)) if not c.is_empty() else 0
 	var members := lag_members(l)
 	if members.size() <= 1:
 		return mini(iface_speed(l.a), iface_speed(l.b))
@@ -602,6 +657,9 @@ func sla_tick() -> void:
 	if money < 0:
 		reputation = maxi(0, reputation - 2)
 		log_event("BANK: you are insolvent ($%d): reputation is bleeding." % money)
+	for c in circuits:
+		last_pl["wan circuits"] = int(last_pl.get("wan circuits", 0)) - int(c["fee"])
+		earned -= int(c["fee"])
 	if stage >= 1:  # colo includes power; your own room doesn't
 		var power_bill := power_draw() / 10
 		last_pl["power"] = -power_bill
@@ -827,9 +885,12 @@ func peer_label(i: Net.Iface) -> String:
 	var p := l.other(i)
 	return "%s %s" % [p.dev.name, p.name]
 
-func connect_ifaces(a: Net.Iface, b: Net.Iface) -> void:
+func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
+	if not can_link(a, b):
+		return false  # different sites need a leased circuit first
 	links.append(Net.Link.new(a, b))
 	topology_changed.emit()
+	return true
 
 func disconnect_iface(i: Net.Iface) -> void:
 	var l := link_at(i)
@@ -935,6 +996,7 @@ func _serialize() -> Dictionary:
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
+		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}
@@ -1040,6 +1102,7 @@ func _apply(data: Dictionary) -> void:
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
 	acquisitions = data.get("acquisitions", [])
+	circuits = data.get("circuits", [])
 	sites = data.get("sites", [])
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)

@@ -983,6 +983,10 @@ func _cable_action() -> void:
 	root.popup_hide.connect(root.queue_free)
 	for dev: Net.NDevice in by_dev:
 		var ports: Array = by_dev[dev]
+		var dev_rack := Game.rack_of(dev)
+		var my_rack := Game.rack_of(cur_if.dev)
+		var remote: bool = dev_rack != null and my_rack != null and dev_rack.site != my_rack.site
+		var linkable: bool = ports.is_empty() or Game.can_link(cur_if, ports[0])
 		var sub := PopupMenu.new()
 		sub.add_theme_font_override("font", mono)
 		sub.name = "sub_%s" % dev.name
@@ -996,8 +1000,14 @@ func _cable_action() -> void:
 		var names: Array = []
 		for t: Net.Iface in ports:
 			names.append(t.name)
-		root.add_submenu_item("%-4s %-8s %2d free: %s" % [Game.rack_of(dev).name, dev.name,
-			ports.size(), compress_ports(names)], sub.name)
+		var suffix := ""
+		if remote:
+			suffix = "   [%s%s]" % [Game.site_name(dev_rack.site),
+				"" if linkable else ": no circuit"]
+		root.add_submenu_item("%-4s %-8s %2d free: %s%s" % [Game.rack_of(dev).name, dev.name,
+			ports.size(), compress_ports(names), suffix], sub.name)
+		if not linkable:
+			root.set_item_disabled(root.item_count - 1, true)
 	root.popup(Rect2i(Vector2i(if_cable_btn.get_screen_position() + Vector2(0, if_cable_btn.size.y + 4)), Vector2i.ZERO))
 
 # ---------- encyclopedia ----------
@@ -1447,6 +1457,48 @@ func _build_market_section() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	if Game.site_count() > 1:
+		contracts_box.add_child(_section("WAN CIRCUITS"))
+		for c: Dictionary in Game.circuits.duplicate():
+			var crow := HBoxContainer.new()
+			contracts_box.add_child(crow)
+			var cl := _label("  %s: %s ⇄ %s   $%d/cycle" % [c["label"],
+				Game.site_name(int(c["a"])), Game.site_name(int(c["b"])), int(c["fee"])],
+				13, Color(0.7, 0.85, 0.9))
+			cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			crow.add_child(cl)
+			var cancel := Button.new()
+			cancel.text = "Cancel"
+			cancel.tooltip_text = "Ends the circuit and any cables riding it"
+			cancel.pressed.connect(func() -> void:
+				Game.cancel_circuit(c)
+				_refresh_contracts())
+			crow.add_child(cancel)
+		var order := Button.new()
+		order.text = "Order a circuit…"
+		order.pressed.connect(func() -> void:
+			var pairs: Array = []
+			var combos: Array = []
+			for i in Game.site_count():
+				for j in range(i + 1, Game.site_count()):
+					if not Game.circuit_between(i, j).is_empty():
+						continue
+					for g in Game.CIRCUIT_GRADES.size():
+						var gr: Dictionary = Game.CIRCUIT_GRADES[g]
+						pairs.append("%s ⇄ %s   %s   $%d install, $%d/cycle" % [
+							Game.site_name(i), Game.site_name(j), gr["label"],
+							int(gr["setup"]), int(gr["fee"])])
+						combos.append([i, j, g])
+			if pairs.is_empty():
+				_toast("every pair of sites is already linked")
+				return
+			_menu(order, pairs, func(id: int) -> void:
+				var pick: Array = combos[id]
+				var err: String = Game.buy_circuit(int(pick[0]), int(pick[1]), int(pick[2]))
+				_refresh_contracts()
+				if err != "":
+					_toast(err)))
+		contracts_box.add_child(order)
 	contracts_box.add_child(_section("THE COMPETITION"))
 	for r: Dictionary in Game.rivals:
 		if not Rivals.alive(r):

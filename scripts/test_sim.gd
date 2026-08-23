@@ -1225,5 +1225,43 @@ static func run() -> int:
 	check(Game.racks_on(0).size() == 1 + Rivals.racks_needed(target),
 		"sites: the small shop's racks did move into your room")
 
+	# --- WAN circuits between sites ---
+	var home_dev: Net.NDevice = null
+	var far_dev: Net.NDevice = null
+	for d in Game.all_devices():
+		var rk := Game.rack_of(d)
+		if rk == null or d.type != "switch":
+			continue
+		if rk.site == 0 and home_dev == null:
+			home_dev = d
+		elif rk.site == new_site and far_dev == null:
+			far_dev = d
+	check(home_dev != null and far_dev != null, "wan: switches exist on both sites")
+	var home_port: Net.Iface = null
+	var far_port: Net.Iface = null
+	for i: Net.Iface in home_dev.ifaces:
+		if Game.link_at(i) == null and not i.name.begins_with("Management"):
+			home_port = i
+			break
+	for i: Net.Iface in far_dev.ifaces:
+		if Game.link_at(i) == null and not i.name.begins_with("Management"):
+			far_port = i
+			break
+	check(not Game.can_link(home_port, far_port), "wan: no circuit means no cross-site cable")
+	check(not Game.connect_ifaces(home_port, far_port), "wan: connecting across sites is refused")
+	Game.money = 200000
+	check(Game.buy_circuit(0, new_site, 1).is_empty(), "wan: a 1 Gbit leased line can be ordered")
+	check(Game.can_link(home_port, far_port), "wan: the circuit permits the cross-site cable")
+	check(Game.connect_ifaces(home_port, far_port), "wan: the cable connects over the circuit")
+	var wan_link := Game.link_at(home_port)
+	check(Game.link_capacity(wan_link) == 1000, "wan: link capacity comes from the circuit grade")
+	var pl_before := Game.money
+	Game.sla_tick()
+	check(Game.last_pl.has("wan circuits"), "wan: the circuit fee appears in the cycle P&L")
+	var circuit: Dictionary = Game.circuits[0]
+	Game.cancel_circuit(circuit)
+	check(Game.circuits.is_empty() and Game.link_at(home_port) == null,
+		"wan: cancelling the circuit drops the cables riding it")
+
 	print("---- %d failures" % fails)
 	return fails

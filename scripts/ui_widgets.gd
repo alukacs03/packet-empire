@@ -89,7 +89,9 @@ class TopoMap extends Control:
 			var box := Rect2(origin, Vector2(215, box_h))
 			draw_rect(box, Color(0.09, 0.1, 0.14))
 			draw_rect(box, Color(0.3, 0.34, 0.44), false, 1.0)
-			draw_string(_mono, origin + Vector2(10, 22), "▤ " + r.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.75, 0.8, 0.9))
+			var site_tag: String = "" if Game.site_count() <= 1 else "  ·  " + Game.site_name(r.site)
+			draw_string(_mono, origin + Vector2(10, 22), "▤ " + r.name + site_tag,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.75, 0.8, 0.9))
 			var y := origin.y + 34
 			for d in filled:
 				_nodes[d] = Rect2(origin.x + 8, y, 199, 36)
@@ -107,6 +109,9 @@ class TopoMap extends Control:
 				blocked = Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b)
 			if l.a.name.begins_with("Management") or l.b.name.begins_with("Management"):
 				col = Color(0.75, 0.55, 0.95, 0.85)
+			var ls := Game.sites_of(l.a, l.b)
+			if ls[0] != ls[1]:
+				col = Color(0.4, 0.9, 1.0, 0.9)  # rides a WAN circuit
 			var over: bool = Game.last_link_load.get(l, 0) > Game.link_capacity(l)
 			if over:
 				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.9), 5.0)
