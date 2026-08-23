@@ -18,8 +18,12 @@ static func try_ssh(session: Session, target: String) -> String:
 	var owner := Sim._ip_owner(ip)
 	if owner == null or owner == session.dev or not Sim.ping(session.dev, ip)["ok"]:
 		return "ssh: connect to host %s: No route to host\n" % ip
+	var admit := Sim.aaa_admit(owner)
+	if not bool(admit["ok"]):
+		return "ssh: %s: authentication failed (%s)\n" % [owner.name, admit["why"]]
 	session.pending_ssh = owner
-	return "Connected to %s (%s).\n" % [owner.name, ip]
+	var note := "" if String(admit["why"]) == "" else "  [%s]" % admit["why"]
+	return "Connected to %s (%s).%s\n" % [owner.name, ip, note]
 
 static func fmt_ping(dev: Net.NDevice, target: String, size := 64) -> String:
 	var ip := Sim.resolve(dev, target)
@@ -144,6 +148,12 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["bfd"], "h": func(_r): return _bfd(true)},
 			{"m": ["if"], "p": ["no", "bfd"], "h": func(_r): return _bfd(false)},
 			{"m": EP, "p": ["show", "bfd"], "h": _show_bfd},
+			{"m": ["config"], "p": ["aaa", "authentication", "login"], "h": _aaa_login},
+			{"m": ["config"], "p": ["no", "aaa"], "h": func(_r):
+				dev.aaa = {}
+				Game.topology_changed.emit()
+				return ""},
+			{"m": EP, "p": ["show", "aaa"], "h": _show_aaa},
 			{"m": ["config"], "p": ["spanning-tree", "mode"], "h": _stp_mode},
 			{"m": ["config"], "p": ["spanning-tree", "priority"], "h": _stp_priority},
 			{"m": ["config"], "p": ["spanning-tree", "mst"], "h": _stp_mst},
@@ -258,6 +268,7 @@ class EOS extends Session:
 		var toks := Array(line.strip_edges().split(" ", false))
 		if toks.is_empty():
 			return ""
+		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
 		# resolve with per-token prefix matching (Cisco-style abbreviation)
 		var full: Array = []
 		for c in _cmds:
@@ -1349,6 +1360,34 @@ class EOS extends Session:
 			return "  (no frames captured: generate some traffic)\n"
 		return "\n".join(PackedStringArray(dev.capture.slice(-20))) + "\n"
 
+	func _aaa_login(r: Array) -> String:
+		## aaa authentication login radius <ip> key <secret> [local]
+		## aaa authentication login local
+		if r.size() == 1 and String(r[0]) == "local":
+			if dev.aaa.is_empty():
+				return "% no authentication server configured to fall back from\n"
+			dev.aaa["local"] = true
+			Game.topology_changed.emit()
+			return ""
+		if r.size() >= 4 and String(r[0]) in ["radius", "tacacs"] \
+				and String(r[1]).is_valid_ip_address() and String(r[2]) == "key":
+			dev.aaa = {"server": String(r[1]), "key": String(r[3]),
+				"local": r.size() > 4 and String(r[4]) == "local"}
+			Game.topology_changed.emit()
+			return ""
+		return "usage: aaa authentication login radius <ip> key <secret> [local]\n       aaa authentication login local\n"
+
+	func _show_aaa(_r: Array) -> String:
+		if dev.aaa.is_empty():
+			return "Administrative login: local only\n"
+		var admit := Sim.aaa_admit(dev)
+		var out := "Authentication server: %s\n" % dev.aaa.get("server", "-")
+		out += "Local fallback: %s\n" % ("configured" if bool(dev.aaa.get("local", false))
+			else "NONE: if the server goes away, so does your way in")
+		out += "Right now: %s%s\n" % ["would admit you" if bool(admit["ok"]) else "would LOCK YOU OUT",
+			"" if String(admit["why"]) == "" else " (%s)" % admit["why"]]
+		return out
+
 	func _bfd(on: bool) -> String:
 		for i: Net.Iface in ctx_ifs:
 			i.bfd = on
@@ -1715,7 +1754,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  aaad <secret> | aaad log             authenticate admins, keep the audit trail\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1809,6 +1848,25 @@ class Linux extends Session:
 						leg.mac = legs[0].mac  # a bond presents one address
 				Game.topology_changed.emit()
 				return "bond%d: %s\n" % [gid, " ".join(PackedStringArray(t.slice(1)))]
+			"aaad":
+				if t.size() >= 2 and t[1] == "off":
+					dev.services.erase("aaa")
+					Game.topology_changed.emit()
+					return "aaa service stopped\n"
+				if t.size() < 2:
+					return "usage: aaad <shared-secret> | aaad off | aaad log\n"
+				if t[1] == "log":
+					var trail: Array = dev.services.get("aaa", {}).get("log", [])
+					if trail.is_empty():
+						return "(no administrative commands recorded)\n"
+					var lout := ""
+					for entry in trail:
+						lout += "  %s\n" % entry
+					return lout
+				dev.services["aaa"] = {"key": String(t[1]),
+					"log": dev.services.get("aaa", {}).get("log", [])}
+				Game.topology_changed.emit()
+				return "aaa service listening (shared secret set)\n"
 			"snmpd":
 				if t.size() >= 2 and t[1] == "off":
 					dev.snmp = ""
@@ -2138,7 +2196,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

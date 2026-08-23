@@ -3129,6 +3129,66 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- AAA for administrators, and the lockout it can cause ---
+	var aa_rack := Game.add_rack(Vector2i(43, 1))
+	var aa_sw := Game.new_device("sw-24")
+	var aa_srv := Game.new_device("srv-1")   # the AAA server
+	var aa_admin := Game.new_device("srv-1") # where the administrator sits
+	aa_rack.slots[0] = aa_sw
+	aa_rack.slots[1] = aa_srv
+	aa_rack.slots[2] = aa_admin
+	Game.connect_ifaces(aa_srv.ifaces[0], aa_sw.ifaces[0])
+	Game.connect_ifaces(aa_admin.ifaces[0], aa_sw.ifaces[1])
+	var aa_svi := Game.add_svi(aa_sw, 1)
+	Game.add_ip(aa_svi, "10.250.0.1/24")
+	Game.add_ip(aa_srv.ifaces[0], "10.250.0.10/24")
+	Game.add_ip(aa_admin.ifaces[0], "10.250.0.20/24")
+	Sim.flush_learned_state()
+	var aa_acli := CLI.new_session(aa_admin)
+	var aa_scli := CLI.new_session(aa_srv)
+	var aa_swcli := CLI.new_session(aa_sw)
+	aa_swcli.exec("enable")
+	aa_swcli.exec("configure terminal")
+	check(aa_acli.exec("ssh 10.250.0.1").contains("Connected"),
+		"aaa: with no server configured, local login works")
+	aa_acli.exec("exit")
+	check(aa_scli.exec("aaad s3cret").contains("listening"), "aaa: a server can be started")
+	check(aa_swcli.exec("aaa authentication login radius 10.250.0.10 key s3cret").is_empty(),
+		"aaa: a device can be pointed at it")
+	aa_swcli.exec("end")
+	check(aa_acli.exec("ssh 10.250.0.1").contains("Connected"),
+		"aaa: a reachable server with the right secret admits you")
+	aa_acli.exec("exit")
+	# the wrong secret is refused, which is not the same as the server being down
+	aa_swcli.exec("configure terminal")
+	aa_swcli.exec("aaa authentication login radius 10.250.0.10 key wrong")
+	aa_swcli.exec("end")
+	check(aa_acli.exec("ssh 10.250.0.1").contains("shared secret"),
+		"aaa: a mismatched shared secret is refused")
+	aa_swcli.exec("configure terminal")
+	aa_swcli.exec("aaa authentication login radius 10.250.0.10 key s3cret")
+	aa_swcli.exec("end")
+	# now the classic: the server goes away and there is no local fallback
+	aa_srv.ifaces[0].enabled = false
+	Sim.flush_learned_state()
+	check(aa_acli.exec("ssh 10.250.0.1").contains("no local fallback"),
+		"aaa: an unreachable server with no fallback locks you out of your own switch")
+	check(aa_swcli.exec("show aaa").contains("LOCK YOU OUT"),
+		"aaa: and show aaa warns you about it before it happens")
+	aa_swcli.exec("configure terminal")
+	check(aa_swcli.exec("aaa authentication login local").is_empty(),
+		"aaa: a local fallback can be configured")
+	aa_swcli.exec("end")
+	check(aa_acli.exec("ssh 10.250.0.1").contains("falling back to the local account"),
+		"aaa: with one, you get in and are told why")
+	aa_acli.exec("exit")
+	aa_srv.ifaces[0].enabled = true
+	Sim.flush_learned_state()
+	# the audit trail records what was typed, centrally
+	aa_swcli.exec("show version")
+	check(aa_scli.exec("aaad log").contains("show version"),
+		"aaa: the server keeps a record of what was typed and where")
+
 	# --- out-of-band console: reaching a device when the device is the problem ---
 	var ob_rack := Game.add_rack(Vector2i(42, 1))
 	var ob_con := Game.new_device("con-1")

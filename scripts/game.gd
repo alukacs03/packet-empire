@@ -2750,7 +2750,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
 		"ssids": d.ssids, "wifi": d.wifi, "radius": d.radius,
 		"igmp_snooping": d.igmp_snooping, "mcast_groups": d.mcast_groups,
-		"mlag_peer": d.mlag_peer, "psu": d.psu, "snmp": d.snmp,
+		"mlag_peer": d.mlag_peer, "psu": d.psu, "snmp": d.snmp, "aaa": d.aaa,
 		"stp_mode": d.stp_mode, "stp_priority": d.stp_priority,
 		"mst_instances": d.mst_instances,
 		"startup": d.startup, "versions": d.versions,
@@ -2852,6 +2852,7 @@ func _apply(data: Dictionary) -> void:
 		d.mlag_peer = sd.get("mlag_peer", "")
 		d.psu = String(sd.get("psu", default_psu(d.model)))
 		d.snmp = String(sd.get("snmp", ""))
+		d.aaa = sd.get("aaa", {}).duplicate(true)
 		d.stp_mode = String(sd.get("stp_mode", "rstp"))
 		d.stp_priority = int(sd.get("stp_priority", 32768))
 		d.mst_instances = sd.get("mst_instances", {}).duplicate(true)

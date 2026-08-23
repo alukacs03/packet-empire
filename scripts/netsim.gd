@@ -703,6 +703,42 @@ static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		out.append(cand)
 	return out
 
+static func aaa_admit(dev: Net.NDevice) -> Dictionary:
+	## Can somebody log in to administer this device right now?
+	## -> {ok: bool, how: String, why: String}
+	if dev.aaa.is_empty():
+		return {"ok": true, "how": "local", "why": ""}
+	var server: String = String(dev.aaa.get("server", ""))
+	var reachable: bool = server != "" and bool(ping(dev, server)["ok"])
+	if reachable:
+		var host := _ip_owner(server)
+		var svc: Dictionary = host.services.get("aaa", {}) if host != null else {}
+		if svc.is_empty():
+			return {"ok": bool(dev.aaa.get("local", false)), "how": "local",
+				"why": "nothing is answering AAA at %s" % server}
+		if String(svc.get("key", "")) != String(dev.aaa.get("key", "")):
+			return {"ok": false, "how": "", "why": "shared secret does not match %s" % server}
+		return {"ok": true, "how": "aaa", "why": ""}
+	# the server is unreachable: this is the moment the local account matters
+	if bool(dev.aaa.get("local", false)):
+		return {"ok": true, "how": "local fallback",
+			"why": "%s is unreachable; falling back to the local account" % server}
+	return {"ok": false, "how": "",
+		"why": "%s is unreachable and no local fallback is configured" % server}
+
+static func aaa_account(dev: Net.NDevice, command: String) -> void:
+	## the audit trail: what was typed, on which device, recorded centrally
+	if dev.aaa.is_empty():
+		return
+	var host := _ip_owner(String(dev.aaa.get("server", "")))
+	if host == null or not host.services.has("aaa"):
+		return
+	var trail: Array = host.services["aaa"].get("log", [])
+	trail.push_front("cycle %d  %s: %s" % [Game.cycle, dev.name, command])
+	while trail.size() > 40:
+		trail.pop_back()
+	host.services["aaa"]["log"] = trail
+
 static func route_via(dev: Net.NDevice, dst_ip: String) -> String:
 	## the next hop this router would use, or "" if it has no usable path
 	var rt := _route_lookup(dev, dst_ip, "%s|probe" % dst_ip)

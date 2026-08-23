@@ -63,6 +63,7 @@ class NDevice:
 	var mst_instances := {}  # instance id -> [vlan ids] when running MST
 	var dns_cache := {}  # name -> {"ip": .., "expires": cycle}; why a change is not seen at once
 	var talkers := {}  # "src>dst" -> packets forwarded, netflow-style
+	var aaa := {}  # admin login: {"server": ip, "key": secret, "local": bool}
 	var snmp := ""  # read community; empty means the agent is not running
 	var psu := "A"  # which feed(s) this device is plugged into: A, B or AB
 	var mlag_peer := ""  # switch: the name of the switch it shares bundles with
