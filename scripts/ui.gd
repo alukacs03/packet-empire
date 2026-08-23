@@ -114,7 +114,7 @@ func _refresh_attention() -> void:
 		if not deal["healthy"]:
 			n += 1
 	for cid in Game.sla_status:
-		if not Game.sla_status[cid]:
+		if not Game.sla_status[cid] and not Contracts.retired(cid):
 			n += 1
 	if n > 0:
 		contracts_btn.text = "Contracts (%d!)" % n
@@ -1195,13 +1195,13 @@ func _refresh_contracts() -> void:
 	for c in Contracts.all():
 		var done: bool = c["id"] in Game.contracts_done
 		if done:
-			var healthy: bool = Game.sla_status.get(c["id"], true)
-			var mrr: int = int(c["reward"]) / 10
 			if Contracts.retired(c["id"]):
 				contracts_box.add_child(_chip_row("RETIRED", Color(0.55, 0.6, 0.7),
 					"%s: %s   superseded by a later job" % [c["title"], c["customer"]],
 					14, Color(0.55, 0.6, 0.7)))
 				continue
+			var healthy: bool = Game.sla_status.get(c["id"], true)
+			var mrr: int = int(c["reward"]) / 10
 			if healthy:
 				contracts_box.add_child(_chip_row("DONE", Color(0.4, 0.85, 0.5),
 					"%s: %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],

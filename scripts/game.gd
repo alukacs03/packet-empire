@@ -145,6 +145,8 @@ func try_complete_contract(c: Dictionary) -> bool:
 		if not r["t"].call():
 			return false
 	contracts_done.append(c["id"])
+	if Contracts.SUPERSEDES.has(c["id"]):
+		sla_status[Contracts.SUPERSEDES[c["id"]]] = true  # retire immediately, no stale breach
 	stats["contracts"] += 1
 	stats["earned"] += int(c["reward"])
 	money += c["reward"]

@@ -246,6 +246,7 @@ static func run() -> int:
 	Game.sla_tick()
 	check(Game.sla_status.get("first_ping", false), "retire: retired contract never breaches")
 	Game.contracts_done.erase("two_tenants")
+	Game.sla_status.erase("two_tenants")
 
 	# --- SLA recurring revenue ---
 	var m1 := Game.money
