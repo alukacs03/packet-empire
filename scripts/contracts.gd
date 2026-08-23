@@ -42,6 +42,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "stretch_vlans",
+			"title": "Growing pains",
+			"customer": "Alfa Ltd & Beta Kft",
+			"reward": 1000,
+			"brief": "Alfa and Beta grew — you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports ('interface EthernetN' → 'switchport mode trunk'): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
+			"reqs": [
+				{"d": "Two switches joined by a trunk (both ends)", "t": func() -> bool: return _trunk_between_switches(10)},
+				{"d": "10.0.0.3 reaches 10.0.0.1 across switches", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
+				{"d": "Beta (10.0.0.2) is still isolated from Alfa", "t": func() -> bool: return _ping("10.0.0.1", "10.0.0.2", false)},
+			],
+		},
+		{
 			"id": "two_offices",
 			"title": "Connect two offices",
 			"customer": "Gamma Corp",
@@ -204,6 +216,16 @@ static func _client_pings_name(name: String) -> bool:
 			var ip := Sim.resolve(d, name)
 			if ip != "" and Sim.ping(d, ip)["ok"]:
 				return true
+	return false
+
+static func _trunk_between_switches(vid: int) -> bool:
+	for l in Game.links:
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" \
+				and l.a.dev != l.b.dev \
+				and l.a.mode == "trunk" and l.b.mode == "trunk" \
+				and (l.a.tagged_vlans.is_empty() or vid in l.a.tagged_vlans) \
+				and (l.b.tagged_vlans.is_empty() or vid in l.b.tagged_vlans):
+			return true
 	return false
 
 static func _fw_with_deny() -> Net.NDevice:
