@@ -206,6 +206,55 @@ class TopoMap extends Control:
 			var f := fmod(t * speed + float(k) / dots, 1.0)
 			draw_circle(pa.lerp(pb, f), 2.6, Color(col.lightened(0.45), 0.9))
 
+# ===================================================================== Bar ==
+
+class Bar extends Control:
+	## A labelled capacity bar. Amber past two thirds, red once it is full,
+	## with the runway (cycles until it fills) on the right where there is one.
+	var caption := ""
+	var used := 0
+	var total := 0
+	var runway := -1
+	var note := ""
+	var _mono: SystemFont
+
+	func setup(text: String, u: int, t: int, cycles := -1, extra := "") -> Bar:
+		caption = text
+		used = u
+		total = t
+		runway = cycles
+		note = extra
+		_mono = UIW.mono_font()
+		custom_minimum_size = Vector2(560, 34)
+		return self
+
+	func _draw() -> void:
+		var share := 0.0 if total <= 0 else clampf(float(used) / float(total), 0.0, 1.0)
+		var col := Color(0.35, 0.8, 0.6)
+		if share >= 1.0:
+			col = Prefs.bad_colour()
+		elif share > 0.66:
+			col = Color(1.0, 0.75, 0.35)
+		draw_string(_mono, Vector2(0, 13), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+			Color(0.72, 0.78, 0.86))
+		var right := "%d / %d" % [used, total]
+		if note != "":
+			right += "   " + note
+		draw_string(_mono, Vector2(size.x - 250, 13), right, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+			Color(0.62, 0.68, 0.76))
+		if runway >= 0:
+			draw_string(_mono, Vector2(size.x - 120, 13),
+				"full now" if runway == 0 else "~%d cycles" % runway,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+				Prefs.bad_colour() if runway <= 6 else Color(0.62, 0.68, 0.76))
+		var track := Rect2(0, 19, size.x - 4, 8)
+		draw_rect(track, Color(0.13, 0.15, 0.19))
+		draw_rect(Rect2(track.position, Vector2(track.size.x * share, track.size.y)), col)
+		# the two-thirds mark, which is where you should already be ordering
+		var mark := track.position.x + track.size.x * 0.66
+		draw_line(Vector2(mark, track.position.y - 2), Vector2(mark, track.end.y + 2),
+			Color(0.45, 0.5, 0.6, 0.8), 1.0)
+
 # ================================================================ RackSlot ==
 
 class RackSlot extends Control:

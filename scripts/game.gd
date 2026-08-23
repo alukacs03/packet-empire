@@ -554,6 +554,25 @@ const RANKS := [
 	["Packet Emperor", 150000],
 ]
 
+func capacity_runway(key: String, used: int, total: int, window := 12) -> int:
+	## how many cycles until this resource is full at the rate it has been
+	## filling. -1 means "not filling", which is a perfectly good answer.
+	if total <= 0 or used >= total:
+		return 0 if used >= total and total > 0 else -1
+	var samples: Array = []
+	for h in history:
+		if h.has(key):
+			samples.append(h)
+	if samples.size() < 3:
+		return -1
+	var recent: Array = samples.slice(maxi(0, samples.size() - window))
+	var span: int = int(recent[-1]["cycle"]) - int(recent[0]["cycle"])
+	var grew: int = int(recent[-1][key]) - int(recent[0][key])
+	if span <= 0 or grew <= 0:
+		return -1
+	var per_cycle := float(grew) / float(span)
+	return int(ceil(float(total - used) / per_cycle))
+
 func capacity(site: int) -> Dictionary:
 	## headroom on one floor: space, power, cooling and switch ports
 	var g := grid_size(site)
@@ -1589,9 +1608,11 @@ func sla_tick() -> void:
 	for deal in deals:
 		if deal["healthy"]:
 			up_deals += 1
+	var cap_now := capacity(0)
 	history.append({"cycle": cycle, "money": money, "net": last_cycle_delta,
 		"reputation": reputation, "deals": deals.size(), "up": up_deals,
-		"devices": all_devices().size()})
+		"devices": all_devices().size(),
+		"slots_used": int(cap_now["slots_used"]), "watts": int(cap_now["watts"])})
 	if history.size() > 120:
 		history.pop_front()
 	if cycle % 12 == 0 and cycle > 0:

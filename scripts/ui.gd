@@ -1302,18 +1302,26 @@ func _refresh_ops() -> void:
 	ops_box.add_child(_section("CAPACITY"))
 	for si in Game.site_count():
 		var cap: Dictionary = Game.capacity(si)
-		var line := "  %-22s racks %d/%d   rack units %d/%d   ports %d/%d   %dW" % [
-			Game.site_name(si), int(cap["tiles_used"]), int(cap["tiles"]),
+		if Game.site_count() > 1:
+			ops_box.add_child(_label("  " + Game.site_name(si), 13, ACCENT))
+		ops_box.add_child(UIW.Bar.new().setup("  Floor space (racks)",
+			int(cap["tiles_used"]), int(cap["tiles"])))
+		ops_box.add_child(UIW.Bar.new().setup("  Rack units",
 			int(cap["slots_used"]), int(cap["slots"]),
-			int(cap["ports_used"]), int(cap["ports"]), int(cap["watts"])]
+			Game.capacity_runway("slots_used", int(cap["slots_used"]), int(cap["slots"])) if si == 0 else -1))
+		ops_box.add_child(UIW.Bar.new().setup("  Switch and server ports",
+			int(cap["ports_used"]), int(cap["ports"])))
 		if si == 0 and Game.stage >= 1:
-			line += " / %dW cooling" % int(cap["cooling"])
-		var tight: bool = int(cap["tiles_used"]) >= int(cap["tiles"]) \
-			or (int(cap["slots"]) > 0 and int(cap["slots_used"]) >= int(cap["slots"]) - 1) \
-			or (si == 0 and Game.overheating())
-		var cl := _label(line, 12, Prefs.bad_colour() if tight else Color(0.7, 0.78, 0.85))
-		cl.add_theme_font_override("font", mono)
-		ops_box.add_child(cl)
+			ops_box.add_child(UIW.Bar.new().setup("  Cooling",
+				int(cap["watts"]), maxi(1, int(cap["cooling"])),
+				Game.capacity_runway("watts", int(cap["watts"]), maxi(1, int(cap["cooling"]))),
+				"W"))
+		elif si == 0:
+			ops_box.add_child(_label("    Power draw %dW; the colo includes cooling."
+				% int(cap["watts"]), 12, MUTED))
+	var advice := _capacity_advice()
+	if advice != "":
+		ops_box.add_child(_wrap("  " + advice, 13, Color(1.0, 0.82, 0.5), 780))
 	ops_box.add_child(_section("ASSETS AND SPARES"))
 	var shelf: Array = []
 	for m in Game.spares:
@@ -1447,6 +1455,20 @@ func _refresh_ops() -> void:
 			cur_rack = rk2
 			open_dev(d))
 		ops_box.add_child(b)
+
+func _capacity_advice() -> String:
+	## one sentence, and only when there is something worth saying
+	var cap := Game.capacity(0)
+	if int(cap["tiles_used"]) >= int(cap["tiles"]):
+		return "No floor tiles left. Expanding to the next stage is the only way to add racks."
+	if int(cap["slots"]) > 0 and int(cap["slots_used"]) >= int(cap["slots"]):
+		return "Every rack unit is full. Buy another rack before the next contract needs hardware."
+	if Game.overheating():
+		return "You are drawing more heat than you can remove. Install a CRAC unit or things start tripping."
+	var runway := Game.capacity_runway("slots_used", int(cap["slots_used"]), int(cap["slots"]))
+	if runway >= 0 and runway <= 6:
+		return "At the rate you have been filling them, you run out of rack units in about %d cycles. A rack costs $%d." % [runway, Game.RACK_PRICE]
+	return ""
 
 func toggle_ops() -> void:
 	if ops_overlay.visible:

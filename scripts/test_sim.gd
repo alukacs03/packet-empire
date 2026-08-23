@@ -180,6 +180,24 @@ static func ui_smoke(world: Node2D) -> int:
 	Sfx.play("bad")  # muted: must not raise
 	Sfx.muted = false
 	Sfx.play("no-such-cue")  # unknown: must not raise
+	# capacity runway: a resource that is not filling has no deadline, one that
+	# is filling gets an honest number of cycles
+	Game.history = [
+		{"cycle": 10, "slots_used": 4}, {"cycle": 11, "slots_used": 4},
+		{"cycle": 12, "slots_used": 6}, {"cycle": 13, "slots_used": 8},
+	]
+	check(Game.capacity_runway("slots_used", 8, 16) == 6,
+		"capacity: the runway is the honest number of cycles at the current rate")
+	check(Game.capacity_runway("slots_used", 16, 16) == 0, "capacity: full is full")
+	Game.history = [
+		{"cycle": 10, "slots_used": 8}, {"cycle": 11, "slots_used": 8},
+		{"cycle": 12, "slots_used": 8},
+	]
+	check(Game.capacity_runway("slots_used", 8, 16) == -1,
+		"capacity: something that is not filling has no deadline")
+	check(Game.capacity_runway("nothing_tracked", 1, 10) == -1,
+		"capacity: an untracked resource says so rather than guessing")
+	Game.history = []
 	world._draw()  # the cable-flow painter, with whatever load the cycle left
 	var crew := Techs.new()
 	world.add_child(crew)
@@ -236,6 +254,7 @@ static func ui_smoke(world: Node2D) -> int:
 	world.ui = null
 	print("PASS  ui: all overlays opened and refreshed without script errors")
 	check(true, "ui: smoke complete")
+	print("---- %d smoke failures" % fails)
 	return fails
 
 static func run() -> int:
