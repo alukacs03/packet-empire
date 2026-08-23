@@ -188,6 +188,7 @@ var scrubbing := false  # upstream scrubbing service, billed per cycle
 const SCRUB_FEE := 220
 var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
 var history: Array = []  # per-cycle snapshot for the graphs
+var reports: Array = []  # quarterly summaries
 var staff: Array = []  # people on the payroll
 var candidates: Array = []  # the current hiring market
 var acquisitions: Array = []  # integration jobs from companies you bought
@@ -402,6 +403,60 @@ const RANKS := [
 	["Datacenter architect", 70000],
 	["Packet Emperor", 150000],
 ]
+
+func capacity(site: int) -> Dictionary:
+	## headroom on one floor: space, power, cooling and switch ports
+	var g := grid_size(site)
+	var tiles: int = g.x * g.y
+	var used_tiles := racks_on(site).size()
+	var slots_total := used_tiles * Net.Rack.SLOTS
+	var slots_used := 0
+	var watts := 0
+	var ports_total := 0
+	var ports_used := 0
+	for r in racks_on(site):
+		for d in r.slots:
+			if d == null:
+				continue
+			slots_used += 1
+			if d.status == "active":
+				watts += int(WATTS.get(d.model, 0))
+			for i: Net.Iface in d.ifaces:
+				if i.name == "lo" or i.name.begins_with("Vlan") or i.name.begins_with("Tunnel") \
+						or i.parent != "":
+					continue
+				ports_total += 1
+				if link_at(i) != null:
+					ports_used += 1
+	return {"tiles": tiles, "tiles_used": used_tiles,
+		"slots": slots_total, "slots_used": slots_used,
+		"watts": watts, "cooling": cooling_capacity() if site == 0 else 0,
+		"ports": ports_total, "ports_used": ports_used}
+
+func make_report() -> Dictionary:
+	## a quarter is twelve revenue cycles
+	var window: Array = history.slice(maxi(0, history.size() - 12))
+	var net := 0
+	for h in window:
+		net += int(h.get("net", 0))
+	var up := 0
+	var deal_cycles := 0
+	for h in window:
+		up += int(h.get("up", 0))
+		deal_cycles += int(h.get("deals", 0))
+	var rep := {
+		"quarter": int(cycle / 12), "cycle": cycle, "money": money, "net": net,
+		"deals": deals.size(), "staff": staff.size(), "sites": site_count(),
+		"reputation": reputation, "rank": rank(), "devices": all_devices().size(),
+		"uptime": int(100.0 * float(up) / maxf(1.0, float(deal_cycles))),
+	}
+	reports.push_front(rep)
+	if reports.size() > 8:
+		reports.pop_back()
+	log_event("QUARTER %d closed: net %s$%d, %d customers, %d%% delivered, rank %s."
+		% [int(rep["quarter"]), "+" if net >= 0 else "-", absi(net), deals.size(),
+			int(rep["uptime"]), rep["rank"]])
+	return rep
 
 func rank_score() -> int:
 	## lifetime earnings, weighted by the scale and quality of the operation
@@ -1190,6 +1245,8 @@ func sla_tick() -> void:
 		"devices": all_devices().size()})
 	if history.size() > 120:
 		history.pop_front()
+	if cycle % 12 == 0 and cycle > 0:
+		make_report()
 	if cycle % 5 == 0:
 		save_game()
 
@@ -1466,7 +1523,7 @@ func _serialize() -> Dictionary:
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
-		"monitors": monitors, "history": history, "templates": templates,
+		"monitors": monitors, "history": history, "templates": templates, "reports": reports,
 		"attacks": attacks, "scrubbing": scrubbing,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
@@ -1691,6 +1748,7 @@ func _apply(data: Dictionary) -> void:
 	templates = data.get("templates", [])
 	monitors = data.get("monitors", [])
 	history = data.get("history", [])
+	reports = data.get("reports", [])
 	staff = data.get("staff", [])
 	candidates = data.get("candidates", [])
 	rivals = data.get("rivals", [])

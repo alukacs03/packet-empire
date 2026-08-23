@@ -1266,6 +1266,21 @@ func _refresh_ops() -> void:
 			alerting += 1
 	ops_title.text = "Operations   ·   %d devices   ·   %d cables (%d down)   ·   %d needing attention" % [
 		devs.size(), Game.links.size(), links_down, alerting]
+	ops_box.add_child(_section("CAPACITY"))
+	for si in Game.site_count():
+		var cap: Dictionary = Game.capacity(si)
+		var line := "  %-22s racks %d/%d   rack units %d/%d   ports %d/%d   %dW" % [
+			Game.site_name(si), int(cap["tiles_used"]), int(cap["tiles"]),
+			int(cap["slots_used"]), int(cap["slots"]),
+			int(cap["ports_used"]), int(cap["ports"]), int(cap["watts"])]
+		if si == 0 and Game.stage >= 1:
+			line += " / %dW cooling" % int(cap["cooling"])
+		var tight: bool = int(cap["tiles_used"]) >= int(cap["tiles"]) \
+			or (int(cap["slots"]) > 0 and int(cap["slots_used"]) >= int(cap["slots"]) - 1) \
+			or (si == 0 and Game.overheating())
+		var cl := _label(line, 12, Prefs.bad_colour() if tight else Color(0.7, 0.78, 0.85))
+		cl.add_theme_font_override("font", mono)
+		ops_box.add_child(cl)
 	ops_box.add_child(_section("MONITORS"))
 	if Game.monitors.is_empty():
 		ops_box.add_child(_label("  No checks defined: add one so you hear about failures.",
@@ -1755,6 +1770,16 @@ func _build_business_tab() -> void:
 		contracts_box.add_child(_label("  ⚡ %s under attack (%s), %d cycle(s) to go: %s"
 			% [a["target"], a["customer"], int(a["cycles_left"]), state], 13,
 			Color(0.95, 0.6, 0.45) if not (Game.scrubbing or blackholed) else Color(0.85, 0.85, 0.6)))
+	if not Game.reports.is_empty():
+		contracts_box.add_child(_section("QUARTERLY REPORTS"))
+		for rep: Dictionary in Game.reports.slice(0, 4):
+			var rl := _label("  Q%-3d cash $%-8d net %s$%-7d %d customers · %d%% delivered · %d staff · %s" % [
+				int(rep["quarter"]), int(rep["money"]),
+				"+" if int(rep["net"]) >= 0 else "-", absi(int(rep["net"])),
+				int(rep["deals"]), int(rep["uptime"]), int(rep["staff"]), rep["rank"]],
+				12, Color(0.72, 0.8, 0.88))
+			rl.add_theme_font_override("font", mono)
+			contracts_box.add_child(rl)
 	contracts_box.add_child(_section("ACHIEVEMENTS  (%d of %d)" % [Game.achievements.size(),
 		Game.ACHIEVEMENTS.size()]))
 	for a: Dictionary in Game.ACHIEVEMENTS:

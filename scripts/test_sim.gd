@@ -1436,6 +1436,26 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- capacity and quarterly reports ---
+	var cap0: Dictionary = Game.capacity(0)
+	check(int(cap0["tiles"]) > 0 and int(cap0["slots"]) >= int(cap0["slots_used"]),
+		"capacity: a site reports space, slots and ports")
+	check(int(cap0["ports"]) >= int(cap0["ports_used"]), "capacity: port usage never exceeds the total")
+	var cap_full := Game.capacity(0)
+	check(int(cap_full["watts"]) > 0, "capacity: power draw is counted per site")
+	Game.reports = []
+	var quarter_rep: Dictionary = Game.make_report()
+	check(quarter_rep.has("uptime") and quarter_rep.has("rank") and Game.reports.size() == 1,
+		"report: a quarter can be closed")
+	for i in 10:
+		Game.make_report()
+	check(Game.reports.size() == 8, "report: only the recent quarters are kept")
+	var reported := false
+	for ev in Game.events:
+		if "QUARTER" in ev:
+			reported = true
+	check(reported, "report: closing a quarter is announced")
+
 	# --- tunnels over an untrusted path ---
 	var tun_rack := Game.add_rack(Vector2i(20, 1))
 	var t_left := Game.new_device("rtr-edge")
