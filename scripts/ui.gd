@@ -1749,6 +1749,23 @@ func _build_business_tab() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_section("CHANGE MANAGEMENT"))
+	var maint_row := HBoxContainer.new()
+	contracts_box.add_child(maint_row)
+	maint_row.add_child(_label("  %s   (%d of 2 windows used this quarter)" % [
+		("Maintenance window open until cycle %d" % Game.maintenance_until) if Game.in_maintenance()
+		else "No window open: downtime counts against your service levels",
+		Game.maintenance_used], 13,
+		Color(0.7, 0.9, 0.7) if Game.in_maintenance() else Color(0.75, 0.75, 0.8)))
+	var maint_btn := Button.new()
+	maint_btn.text = "Declare a window"
+	maint_btn.tooltip_text = "Planned downtime in a window is excused by your customers"
+	maint_btn.pressed.connect(func() -> void:
+		var err: String = Game.declare_maintenance()
+		_refresh_contracts()
+		if err != "":
+			_toast(err))
+	maint_row.add_child(maint_btn)
 	contracts_box.add_child(_section("DEFENCE"))
 	var scrub_row := HBoxContainer.new()
 	contracts_box.add_child(scrub_row)
@@ -1935,6 +1952,31 @@ func _build_market_tab() -> void:
 		row.add_child(buy)
 
 func _build_log_tab() -> void:
+	var open_reviews: Array = []
+	for inc: Dictionary in Game.incidents:
+		if not bool(inc.get("reviewed", false)):
+			open_reviews.append(inc)
+	if not open_reviews.is_empty():
+		contracts_box.add_child(_section("INCIDENTS AWAITING A POST-MORTEM"))
+		for inc: Dictionary in open_reviews:
+			var irow := HBoxContainer.new()
+			contracts_box.add_child(irow)
+			var il := _label("  cycle %d: %s" % [int(inc["cycle"]), inc["summary"]], 13,
+				Color(0.95, 0.72, 0.55))
+			il.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			irow.add_child(il)
+			var rbtn := Button.new()
+			rbtn.text = "Write it up"
+			rbtn.pressed.connect(func() -> void:
+				_menu(rbtn, Game.REVIEW_CAUSES, func(id: int) -> void:
+					Game.review_incident(inc, id)
+					_refresh_contracts()))
+			irow.add_child(rbtn)
+	for inc2: Dictionary in Game.incidents:
+		if bool(inc2.get("reviewed", false)):
+			contracts_box.add_child(_label("  ✓ cycle %d: %s (cause: %s)" % [int(inc2["cycle"]),
+				inc2["summary"], inc2.get("cause", "")], 12, Color(0.6, 0.75, 0.65)))
+
 	if Game.events.is_empty():
 		contracts_box.add_child(_label("Nothing has happened yet.", 13, MUTED))
 		return

@@ -1436,6 +1436,35 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- maintenance windows and post-mortems ---
+	Game.maintenance_until = -1
+	Game.maintenance_used = 0
+	Game.incidents = []
+	check(Game.declare_maintenance().is_empty() and Game.in_maintenance(),
+		"maintenance: a window can be declared")
+	check(not Game.declare_maintenance().is_empty(), "maintenance: only one window at a time")
+	var maint_deal := {"id": "mw", "customer": "Planned Kft", "kind": "hosting", "sla": 2,
+		"params": {"ip": "10.150.0.10"}, "fee": 100, "load": 100, "brief": "",
+		"cycles": 0, "up_cycles": 0, "healthy": false}
+	Game.deals = [maint_deal]
+	Game.sla_tick()
+	check(int(maint_deal["cycles"]) == 0,
+		"maintenance: downtime inside a window does not count against uptime")
+	Game.maintenance_until = -1
+	Game.sla_tick()
+	check(int(maint_deal["cycles"]) == 1, "maintenance: outside a window it counts again")
+	Game.maintenance_used = 2
+	check(not Game.declare_maintenance().is_empty(), "maintenance: customers cap how many you take")
+	Game.deals = []
+	Game.record_incident("test", "a link nobody was watching went down")
+	check(Game.incidents.size() == 1, "post-mortem: an incident is recorded for review")
+	Game.record_incident("test", "a link nobody was watching went down")
+	check(Game.incidents.size() == 1, "post-mortem: the same open incident is not duplicated")
+	var rep_before_review := Game.reputation
+	check(Game.review_incident(Game.incidents[0], 3).is_empty(), "post-mortem: it can be written up")
+	check(Game.reputation > rep_before_review, "post-mortem: candour earns back some trust")
+	check(not Game.review_incident(Game.incidents[0], 1).is_empty(), "post-mortem: only once")
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

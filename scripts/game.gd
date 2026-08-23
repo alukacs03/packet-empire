@@ -183,6 +183,9 @@ var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
 var templates: Array = []  # golden configs: {name, type, cfg}
+var maintenance_until := -1  # cycle up to which planned work is excused
+var maintenance_used := 0  # windows taken this quarter: customers notice
+var incidents: Array = []  # things worth reviewing afterwards
 var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
 var scrubbing := false  # upstream scrubbing service, billed per cycle
 const SCRUB_FEE := 220
@@ -990,6 +993,48 @@ func customer_growth(deal: Dictionary) -> void:
 	log_event("GROWTH: %s is scaling up: their fee rises to $%d and their traffic with it."
 		% [deal["customer"], int(deal["fee"])])
 
+const MAINTENANCE_LENGTH := 3
+
+func in_maintenance() -> bool:
+	return cycle <= maintenance_until
+
+func declare_maintenance() -> String:
+	if in_maintenance():
+		return "you are already in a window"
+	if maintenance_used >= 2:
+		return "customers will not accept a third window this quarter"
+	maintenance_until = cycle + MAINTENANCE_LENGTH
+	maintenance_used += 1
+	log_event("MAINTENANCE: a planned window is open for %d cycles. Downtime in it is excused."
+		% MAINTENANCE_LENGTH)
+	return ""
+
+func record_incident(kind: String, summary: String) -> void:
+	for inc in incidents:
+		if inc["kind"] == kind and inc["summary"] == summary and not bool(inc.get("reviewed", false)):
+			return  # one open review per ongoing problem
+	incidents.push_front({"kind": kind, "summary": summary, "cycle": cycle, "reviewed": false})
+	if incidents.size() > 6:
+		incidents.pop_back()
+
+const REVIEW_CAUSES := [
+	"a change nobody reviewed",
+	"a single point of failure we knew about",
+	"capacity we never planned for",
+	"a monitor that did not exist",
+	"a configuration that was never saved",
+]
+
+func review_incident(inc: Dictionary, cause_idx: int) -> String:
+	if bool(inc.get("reviewed", false)):
+		return "that one is already written up"
+	inc["reviewed"] = true
+	inc["cause"] = REVIEW_CAUSES[clampi(cause_idx, 0, REVIEW_CAUSES.size() - 1)]
+	reputation = mini(100, reputation + 3)
+	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. Customers appreciate the candour."
+		% [inc["summary"], inc["cause"]])
+	return ""
+
 func _attack_tick() -> void:
 	## volumetric attacks: they eat bandwidth on the path to the victim until
 	## they are absorbed, blackholed, or simply burn out
@@ -1218,10 +1263,12 @@ func sla_tick() -> void:
 	last_link_load = link_load
 	var protected := _qos_protect(link_load, deal_links)
 	for deal in deals.duplicate():
-		deal["cycles"] = int(deal.get("cycles", 0)) + 1
+		# a declared maintenance window excuses planned downtime: the cycle
+		# only counts against uptime if the service was actually delivered
+		if not in_maintenance() or deal["healthy"]:
+			deal["cycles"] = int(deal.get("cycles", 0)) + 1
 		if deal["healthy"]:
 			customer_growth(deal)
-		if deal["healthy"]:
 			deal["up_cycles"] = int(deal.get("up_cycles", 0)) + 1
 		var sla := Market.tier(int(deal.get("sla", 0)))
 		var uptime := float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1)))
@@ -1233,6 +1280,7 @@ func sla_tick() -> void:
 			if not bool(deal.get("penalised", false)):
 				log_event("SLA PENALTY: %s is at %d%% uptime against a %s contract: $%d charged back."
 					% [deal["customer"], int(uptime * 100), sla["label"], penalty])
+				record_incident("sla", "%s missed their %s service level" % [deal["customer"], sla["label"]])
 			deal["penalised"] = true
 		else:
 			deal["penalised"] = false
@@ -1289,6 +1337,7 @@ func sla_tick() -> void:
 		history.pop_front()
 	if cycle % 12 == 0 and cycle > 0:
 		make_report()
+		maintenance_used = 0  # a new quarter, a fresh allowance
 	if cycle % 5 == 0:
 		save_game()
 
@@ -1567,6 +1616,8 @@ func _serialize() -> Dictionary:
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates, "reports": reports,
 		"attacks": attacks, "scrubbing": scrubbing,
+		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
+		"incidents": incidents,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -1787,6 +1838,9 @@ func _apply(data: Dictionary) -> void:
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	market_intel = int(data.get("market_intel", 0))
+	maintenance_until = int(data.get("maintenance_until", -1))
+	maintenance_used = int(data.get("maintenance_used", 0))
+	incidents = data.get("incidents", [])
 	attacks = data.get("attacks", [])
 	scrubbing = bool(data.get("scrubbing", false))
 	templates = data.get("templates", [])
