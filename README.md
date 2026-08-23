@@ -85,6 +85,11 @@ The CLI depends on what you buy, like real life:
 
 CLI and UI mutate the same `Game` state: they can never disagree.
 
+The simulation layer (`net.gd`, `netsim.gd`, `cli.gd`, `cli_ros.gd`,
+`pedia.gd`, about 4500 lines) has no dependency on any tycoon system and can
+be lifted into a different game wholesale. `docs/REUSE.md` lists exactly what
+a host game has to provide.
+
 ## Tests
 
 ```sh

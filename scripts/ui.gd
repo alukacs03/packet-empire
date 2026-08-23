@@ -295,31 +295,6 @@ func _accent(b: Button) -> Button:
 	b.add_theme_color_override("font_color", Color(0.8, 0.97, 1.0))
 	return b
 
-static func compress_ports(names: Array) -> String:
-	## Et1,Et2,Et3,Et7 -> "Et1-3,Et7" (what real switch output looks like)
-	if names.is_empty():
-		return ""
-	var short: Array = []
-	for n in names:
-		short.append(String(n).replace("Ethernet", "Et").replace("Management", "Ma"))
-	var out: Array = []
-	var run_start := -1
-	var run_prev := -1
-	var run_pfx := ""
-	for n in short + [""]:
-		var digits := String(n).lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
-		var pfx := String(n).trim_suffix(digits)
-		var num := int(digits) if digits.is_valid_int() else -999
-		if pfx == run_pfx and num == run_prev + 1:
-			run_prev = num
-			continue
-		if run_start >= 0:
-			out.append("%s%d" % [run_pfx, run_start] if run_start == run_prev
-				else "%s%d-%d" % [run_pfx, run_start, run_prev])
-		run_pfx = pfx
-		run_start = num
-		run_prev = num
-	return ",".join(PackedStringArray(out))
 
 func _section(text: String) -> Label:
 	return _label(text, 11, Color(0.5, 0.58, 0.72))
@@ -892,7 +867,7 @@ func _refresh_vlans() -> void:
 		for i: Net.Iface in cur_dev.ifaces:
 			if i.mode == "access" and i.untagged_vlan == vid:
 				ports.append(i.name)
-		var l := _label("  %-6d %-14s %s" % [vid, cur_dev.vlans[vid], compress_ports(ports)],
+		var l := _label("  %-6d %-14s %s" % [vid, cur_dev.vlans[vid], Net.compress_ports(ports)],
 			14, Color(0.7, 0.8, 0.9))
 		l.add_theme_font_override("font", mono)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1164,7 +1139,7 @@ func _cable_action() -> void:
 			suffix = "   [%s%s]" % [Game.site_name(dev_rack.site),
 				"" if linkable else ": no circuit"]
 		root.add_submenu_item("%-4s %-8s %2d free: %s%s" % [Game.rack_of(dev).name, dev.name,
-			ports.size(), compress_ports(names), suffix], sub.name)
+			ports.size(), Net.compress_ports(names), suffix], sub.name)
 		if not linkable:
 			root.set_item_disabled(root.item_count - 1, true)
 	root.popup(Rect2i(Vector2i(if_cable_btn.get_screen_position() + Vector2(0, if_cable_btn.size.y + 4)), Vector2i.ZERO))

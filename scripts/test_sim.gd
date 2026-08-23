@@ -231,9 +231,9 @@ static func ui_smoke(world: Node2D) -> int:
 	busy_dev.status = busy_was
 	crew.queue_free()
 	title.queue_free()
-	check(UILayer.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
+	check(Net.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
 		"ui: port lists compress into ranges")
-	check(UILayer.compress_ports([]) == "", "ui: empty port list compresses to nothing")
+	check(Net.compress_ports([]) == "", "ui: empty port list compresses to nothing")
 	# the new-game path end to end, exactly as the title screen drives it
 	var world_state := Game._serialize()
 	world.ui = ui

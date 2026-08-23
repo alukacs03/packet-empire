@@ -275,3 +275,31 @@ static func valid_cidr(s: String) -> bool:
 	var plen := int(parts[1])
 	return parts[0].is_valid_ip_address() and not parts[0].contains(":") \
 		and plen >= 0 and plen <= 32
+
+static func compress_ports(names: Array) -> String:
+	## Et1,Et2,Et3,Et7 -> "Et1-3,Et7" (what real switch output looks like).
+	## Lives here rather than in the UI: switch CLIs print this, and the CLI
+	## layer has no business knowing a UI exists.
+	if names.is_empty():
+		return ""
+	var short: Array = []
+	for n in names:
+		short.append(String(n).replace("Ethernet", "Et").replace("Management", "Ma"))
+	var out: Array = []
+	var run_start := -1
+	var run_prev := -1
+	var run_pfx := ""
+	for n in short + [""]:
+		var digits := String(n).lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+		var pfx := String(n).trim_suffix(digits)
+		var num := int(digits) if digits.is_valid_int() else -999
+		if pfx == run_pfx and num == run_prev + 1:
+			run_prev = num
+			continue
+		if run_start >= 0:
+			out.append("%s%d" % [run_pfx, run_start] if run_start == run_prev
+				else "%s%d-%d" % [run_pfx, run_start, run_prev])
+		run_pfx = pfx
+		run_start = num
+		run_prev = num
+	return ",".join(PackedStringArray(out))
