@@ -2450,7 +2450,10 @@ static func run() -> int:
 	Game.deals = [premium, cheap]
 	for i: Net.Iface in qos_sw.ifaces:
 		i.qos = false
+	# traffic follows the working day, so measure oversubscription at the peak
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3
 	Game.sla_tick()
+	check(Game.day_factor() > 1.0, "qos: measured at the busy part of the day")
 	check(bool(premium.get("degraded", false)) and bool(cheap.get("degraded", false)),
 		"qos: without a policy an oversubscribed link degrades everyone")
 	for i: Net.Iface in qos_sw.ifaces:
@@ -3070,6 +3073,22 @@ static func run() -> int:
 	check(okc >= 39, "perf: pings across the floor succeed (%d/40)" % okc)
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
+
+	# --- the working day ---
+	var day_saved := Game.cycle
+	var day_seen := {}
+	var day_peak := 0.0
+	var day_low := 99.0
+	for slot in Game.DAY_CYCLES:
+		Game.cycle = slot
+		day_seen[Game.day_name()] = true
+		day_peak = maxf(day_peak, Game.day_factor())
+		day_low = minf(day_low, Game.day_factor())
+	check(day_seen.size() == Game.DAY_CYCLES, "day: every part of the day has a name")
+	check(day_peak > 1.2 and day_low < 0.5,
+		"day: the peak is several times the quiet hours (%0.2f vs %0.2f)" % [day_peak, day_low])
+	check(Game.peak_factor() >= 1.3, "day: provisioning for the average would undersize a link")
+	Game.cycle = day_saved
 
 	# --- BFD: noticing that the far end died ---
 	var bf_rack := Game.add_rack(Vector2i(38, 1))

@@ -91,6 +91,7 @@ var money_lbl: Label
 var cycle_lbl: Label
 var contracts_btn: Button
 var objective_lbl: Label
+var clock_lbl: Label
 var expand_btn: Button
 var site_btn: Button
 var speed_btns := {}
@@ -191,6 +192,12 @@ func _refresh_money() -> void:
 			var nr := Game.next_rank()
 			objective_lbl.text = "★ %s" % Game.rank() if nr.is_empty() \
 				else "★ %s  ·  $%d to %s" % [Game.rank(), int(nr[1]), nr[0]]
+	if clock_lbl:
+		var f := Game.day_factor()
+		clock_lbl.text = "%s  %d%%" % [Game.day_name(), int(round(f * 100.0))]
+		clock_lbl.add_theme_color_override("font_color",
+			Color(1.0, 0.75, 0.4) if f > 1.1 else Color(0.55, 0.65, 0.78))
+		clock_lbl.tooltip_text = "How much of your customers' traffic is flowing right now. Links that cope at night can still congest at the peak, so provision for this number, not the average."
 	var power := ""
 	if Game.stage >= 1:
 		power = "  ⚡%d/❄%d" % [Game.power_draw(), Game.cooling_capacity()]
@@ -482,6 +489,10 @@ func _build_toolbar() -> void:
 	objective_lbl.clip_text = true
 	objective_lbl.tooltip_text = "Current campaign objective: details in Contracts"
 	h.add_child(objective_lbl)
+	clock_lbl = _label("", 11, Color(0.55, 0.65, 0.78))
+	clock_lbl.custom_minimum_size = Vector2(120, 0)
+	clock_lbl.clip_text = true
+	h.add_child(clock_lbl)
 	for spec in [["⏸", 0, "Pause (Space)"], ["▶", 1, "Normal speed (1)"],
 			["▶▶", 2, "Fast (2)"], ["▶▶▶", 3, "Faster (3)"]]:
 		var spd_btn := Button.new()

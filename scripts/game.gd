@@ -605,6 +605,29 @@ func collect_invoices() -> int:
 		last_pl["collections"] = int(last_pl.get("collections", 0)) + collected
 	return collected
 
+# ---------- the working day ----------
+
+const DAY_CYCLES := 8  # one working day, so a quarter is a couple of weeks
+## What fraction of a customer's traffic is actually flowing, hour by hour.
+## Provisioning for the average is the mistake this exists to punish.
+const DAY_CURVE := [0.35, 0.45, 0.9, 1.25, 1.35, 1.15, 0.85, 0.5]
+const DAY_NAMES := ["night", "early morning", "morning", "late morning",
+	"early afternoon", "afternoon", "evening", "late evening"]
+
+func day_slot() -> int:
+	return int(cycle) % DAY_CYCLES
+
+func day_factor() -> float:
+	## the seasonal part rides on top: business picks up towards year end
+	var seasonal := 1.0 + 0.12 * sin(TAU * float(cycle) / float(DAY_CYCLES * 12))
+	return DAY_CURVE[day_slot()] * seasonal
+
+func day_name() -> String:
+	return DAY_NAMES[day_slot()]
+
+func peak_factor() -> float:
+	return DAY_CURVE.max()
+
 func top_talkers(limit := 8) -> Array:
 	## the busiest source and destination pairs across every router, newest
 	## counters first. Answers "what is filling that link" without guessing.
@@ -1771,7 +1794,8 @@ func sla_tick() -> void:
 		if deal["healthy"]:
 			var used := _deal_path_links(deal)
 			deal_links[deal["id"]] = used
-			var load: int = int(deal.get("load", 200))
+			# traffic follows the working day: quiet at night, heaviest at noon
+			var load := int(round(float(int(deal.get("load", 200))) * day_factor()))
 			var atk := attack_on(deal["params"].get("ip", ""))
 			if not atk.is_empty() and not scrubbing and not attack_blackholed(atk):
 				load += int(atk["mbps"])  # the flood rides the same path
