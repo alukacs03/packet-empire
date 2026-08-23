@@ -67,6 +67,8 @@ var tutorial_panel: PanelContainer
 var tutorial_box: VBoxContainer
 var contracts_overlay: Control
 var contracts_box: VBoxContainer
+var contracts_tabs := {}
+var _toast_lbl: Label
 var vlan_section: VBoxContainer
 var vlan_box: VBoxContainer
 var vlan_vid_in: LineEdit
@@ -1392,11 +1394,25 @@ func show_welcome() -> void:
 
 # ---------- contracts ----------
 
+var contracts_tab := "Jobs"
+
 func _build_contracts_overlay() -> void:
 	contracts_overlay = _overlay()
-	var v := _card(contracts_overlay, 640)
+	var v := _card(contracts_overlay, 660)
 	var t := _header(v, close_contracts)
-	t.text = "Contracts"
+	t.text = "Your company"
+	var tabs := HBoxContainer.new()
+	tabs.add_theme_constant_override("separation", 6)
+	v.add_child(tabs)
+	for name in ["Jobs", "Business", "Market", "Log"]:
+		var tb := Button.new()
+		tb.text = name
+		tb.toggle_mode = true
+		tb.pressed.connect(func() -> void:
+			contracts_tab = name
+			_refresh_contracts())
+		tabs.add_child(tb)
+		contracts_tabs[name] = tb
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(600, 480)
 	v.add_child(scroll)
@@ -1427,7 +1443,7 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	h.add_child(_label(text, size, col))
 	return h
 
-func _build_market_section() -> void:
+func _build_business_tab() -> void:
 	var bank := HBoxContainer.new()
 	bank.add_theme_constant_override("separation", 10)
 	contracts_box.add_child(bank)
@@ -1526,6 +1542,15 @@ func _build_market_section() -> void:
 				if err != "":
 					_toast(err)))
 		contracts_box.add_child(order)
+	# (market moved to its own tab)
+
+func _build_market_tab() -> void:
+	if Game.market_intel == 0:
+		contracts_box.add_child(_label("You have no read on competitor pricing yet: lose a bid and you will learn.",
+			13, Color(0.6, 0.62, 0.7)))
+	else:
+		contracts_box.add_child(_label("Market intelligence from %d observed bid(s)." % Game.market_intel,
+			13, Color(0.65, 0.85, 0.6)))
 	contracts_box.add_child(_section("THE COMPETITION"))
 	for r: Dictionary in Game.rivals:
 		if not Rivals.alive(r):
@@ -1537,15 +1562,19 @@ func _build_market_section() -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(row)
-		var premises: String = ("owns %s (%dx%d)" % [r["site"]["name"], int(r["site"]["grid"][0]),
-			int(r["site"]["grid"][1])]) if Rivals.has_site(r) else "no premises: racks move into your room"
-		var l := _label("  %-16s %d customers · %d racks · %s · asking $%d" % [r["name"],
+		var premises: String = ("site %dx%d" % [int(r["site"]["grid"][0]),
+			int(r["site"]["grid"][1])]) if Rivals.has_site(r) else "no premises"
+		var l := _label("  %-16s %2d cust · %d racks · %-11s · $%d" % [r["name"],
 			int(r["deals"]), Rivals.racks_needed(r), premises, price], 13, Color(0.8, 0.78, 0.7))
+		l.tooltip_text = ("Buying %s brings %d rack(s) and %d contract(s). %s" % [r["name"],
+			Rivals.racks_needed(r), int(r["deals"]),
+			("Their site '%s' comes with the company." % r["site"]["name"]) if Rivals.has_site(r)
+			else "Their racks must fit on a floor you already have."])
 		l.add_theme_font_override("font", mono)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
 		var buy := Button.new()
-		buy.text = "Acquire $%d" % price
+		buy.text = "Acquire"
 		buy.disabled = Game.money < price
 		buy.pressed.connect(func() -> void:
 			var err: String = Game.buy_rival(r)
@@ -1555,50 +1584,26 @@ func _build_market_section() -> void:
 			else:
 				get_parent().rebuild_racks())
 		row.add_child(buy)
-	for a: Dictionary in Game.acquisitions:
-		if bool(a.get("done", false)):
-			contracts_box.add_child(_chip_row("MERGED", Color(0.4, 0.85, 0.5),
-				"%s is integrated into your network" % a["rival"], 13, Color(0.55, 0.8, 0.6)))
-			continue
-		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", _sb(Color(0.1, 0.12, 0.1), Color(0.5, 0.8, 0.5, 0.5), 8, 14))
-		contracts_box.add_child(card)
-		var cv := VBoxContainer.new()
-		card.add_child(cv)
-		cv.add_child(_label("INTEGRATION: %s" % a["rival"], 16, Color.WHITE))
-		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
-			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
-		var brief := _label(("Their kit is %s, but it still runs their way: subnet %s.0/24 on VLAN %d, "
-			+ "cabled only to itself. Merge it into your network without breaking their customers, "
-			+ "then save the configs.") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
-		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		brief.custom_minimum_size = Vector2(560, 0)
-		cv.add_child(brief)
-		for req in Game.integration_status(a):
-			var ok: bool = req["ok"]
-			var txt: String = ("●  " if ok else "○  ") + String(req["d"])
-			if not ok and String(req.get("detail", "")) != "":
-				txt += "   (%s)" % req["detail"]
-			cv.add_child(_label(txt, 13, Color(0.5, 0.95, 0.6) if ok else Color(0.7, 0.65, 0.6)))
-		var btn := Button.new()
-		btn.text = "Check integration & collect $1500"
-		_accent(btn)
-		btn.pressed.connect(func() -> void:
-			Game.try_complete_integration(a)
-			_refresh_contracts())
-		cv.add_child(btn)
-	if not Game.events.is_empty():
-		contracts_box.add_child(_section("EVENT LOG"))
-		for ev in Game.events.slice(0, 4):
-			var col := Color(0.75, 0.8, 0.88)
-			if "SECURITY" in ev:
-				col = Color(0.95, 0.55, 0.45)
-			elif "OVERHEAT" in ev:
-				col = Color(0.95, 0.7, 0.4)
-			var l := _label(ev, 12, col)
-			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			l.custom_minimum_size = Vector2(560, 0)
-			contracts_box.add_child(l)
+
+func _build_log_tab() -> void:
+	if Game.events.is_empty():
+		contracts_box.add_child(_label("Nothing has happened yet.", 13, MUTED))
+		return
+	contracts_box.add_child(_section("EVENT LOG"))
+	for ev in Game.events:
+		var col := Color(0.75, 0.8, 0.88)
+		if "SECURITY" in ev or "POACHED" in ev or "CANCELLED" in ev:
+			col = Color(0.95, 0.55, 0.45)
+		elif "OVERHEAT" in ev or "FIELD" in ev or "LOST:" in ev:
+			col = Color(0.95, 0.7, 0.4)
+		elif "ACQUISITION" in ev or "INTEGRATION" in ev or "CIRCUIT" in ev:
+			col = Color(0.6, 0.9, 0.75)
+		var l := _label(ev, 12, col)
+		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		l.custom_minimum_size = Vector2(580, 0)
+		contracts_box.add_child(l)
+
+func _build_jobs_tab() -> void:
 	if not Game.offers.is_empty():
 		contracts_box.add_child(_section("INCOMING OFFERS: QUOTE A PRICE PER REVENUE CYCLE"))
 	for offer: Dictionary in Game.offers:
@@ -1706,7 +1711,38 @@ func _build_market_section() -> void:
 				dl.custom_minimum_size = Vector2(560, 0)
 				contracts_box.add_child(dl)
 
-var _toast_lbl: Label
+	for a: Dictionary in Game.acquisitions:
+		if bool(a.get("done", false)):
+			contracts_box.add_child(_chip_row("MERGED", Color(0.4, 0.85, 0.5),
+				"%s is integrated into your network" % a["rival"], 13, Color(0.55, 0.8, 0.6)))
+			continue
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sb(Color(0.1, 0.12, 0.1), Color(0.5, 0.8, 0.5, 0.5), 8, 14))
+		contracts_box.add_child(card)
+		var cv := VBoxContainer.new()
+		card.add_child(cv)
+		cv.add_child(_label("INTEGRATION: %s" % a["rival"], 16, Color.WHITE))
+		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
+			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
+		var brief := _label(("Their kit is %s, but it still runs their way: subnet %s.0/24 on VLAN %d, "
+			+ "cabled only to itself. Merge it into your network without breaking their customers, "
+			+ "then save the configs.") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
+		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brief.custom_minimum_size = Vector2(560, 0)
+		cv.add_child(brief)
+		for req in Game.integration_status(a):
+			var ok: bool = req["ok"]
+			var txt: String = ("●  " if ok else "○  ") + String(req["d"])
+			if not ok and String(req.get("detail", "")) != "":
+				txt += "   (%s)" % req["detail"]
+			cv.add_child(_label(txt, 13, Color(0.5, 0.95, 0.6) if ok else Color(0.7, 0.65, 0.6)))
+		var btn := Button.new()
+		btn.text = "Check integration & collect $1500"
+		_accent(btn)
+		btn.pressed.connect(func() -> void:
+			Game.try_complete_integration(a)
+			_refresh_contracts())
+		cv.add_child(btn)
 
 func _toast(text: String) -> void:
 	if _toast_lbl == null or not is_instance_valid(_toast_lbl):
@@ -1718,7 +1754,19 @@ func _toast(text: String) -> void:
 func _refresh_contracts() -> void:
 	for c in contracts_box.get_children():
 		c.queue_free()
-	_build_market_section()
+	for k in contracts_tabs:
+		contracts_tabs[k].button_pressed = (k == contracts_tab)
+	match contracts_tab:
+		"Business":
+			_build_business_tab()
+			return
+		"Market":
+			_build_market_tab()
+			return
+		"Log":
+			_build_log_tab()
+			return
+	_build_jobs_tab()
 	contracts_box.add_child(_section("CAMPAIGN"))
 	var found_active := false
 	var active_shown := 0

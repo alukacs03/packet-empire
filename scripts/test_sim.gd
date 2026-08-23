@@ -50,6 +50,9 @@ static func demo_world() -> void:
 	Game.add_ip(srv1.ifaces[0], "10.0.0.1/24")
 	Game.add_ip(srv2.ifaces[0], "10.0.0.2/24")
 	Game.add_ip(rtr.ifaces[0], "10.0.0.254/24")
+	Game.market_intel = 3
+	Game.rivals = Rivals.spawn()
+	Game.rivals[1]["deals"] = 2
 	Game.offers = [Market.gen_offer()]
 	Game.deals = [{"id": "d1", "customer": "Balaton Zrt", "kind": "hosting",
 		"params": {"ip": "10.0.0.1"}, "fee": 120, "load": 300,
