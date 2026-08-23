@@ -191,7 +191,25 @@ static func ui_smoke(world: Node2D) -> int:
 	check(crew.people.size() > crew_before, "floor: hiring puts another person on the floor")
 	Game.staff.clear()
 	crew._resize_crew()
-	crew._process(0.2)
+	for person in crew.people:
+		person._process(0.2)
+	check(Techs.HEIGHT > RackVisual.H * 0.7,
+		"floor: a person stands within sight of a cabinet's height")
+	# a work spot must land on a neighbouring tile, not inside the cabinet:
+	# in isometric "one step towards the viewer" means both axes, not just y
+	var busy_rack: Net.Rack = Game.racks_on(Game.current_site)[0]
+	var busy_dev: Net.NDevice = null
+	for d in busy_rack.slots:
+		if d != null:
+			busy_dev = d
+	var busy_was := busy_dev.status
+	busy_dev.status = "down"
+	var spot_tile := Iso.world_to_tile(crew._work_spot(0))
+	check(spot_tile != busy_rack.tile,
+		"floor: a technician stands beside the cabinet, not inside it")
+	check(absi(spot_tile.x - busy_rack.tile.x) <= 1 and absi(spot_tile.y - busy_rack.tile.y) <= 1,
+		"floor: and no further away than the next tile")
+	busy_dev.status = busy_was
 	crew.queue_free()
 	title.queue_free()
 	check(UILayer.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
