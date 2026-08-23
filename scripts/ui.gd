@@ -14,6 +14,8 @@ var rack_title: Label
 var slot_box: VBoxContainer
 var dev_overlay: Control
 var dev_title: Label
+var name_edit: LineEdit
+var name_hint: Label
 var port_row: HBoxContainer
 var conn_list: VBoxContainer
 var cli_box: VBoxContainer
@@ -35,6 +37,11 @@ func _ready() -> void:
 	_build_rack_overlay()
 	_build_dev_overlay()
 	Game.topology_changed.connect(_refresh_open)
+
+func _process(_dt: float) -> void:
+	# focus watchdog: while the console is open, dropped focus returns to it
+	if cli_box and cli_box.visible and get_viewport().gui_get_focus_owner() == null:
+		cli_in.grab_focus()
 
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible
@@ -195,6 +202,17 @@ func _build_dev_overlay() -> void:
 	var v := _card(dev_overlay, 720)
 	dev_title = _header(v, close_dev)
 
+	var name_row := HBoxContainer.new()
+	v.add_child(name_row)
+	name_row.add_child(_label("Hostname:  ", 14, Color(0.55, 0.6, 0.7)))
+	name_edit = LineEdit.new()
+	name_edit.custom_minimum_size = Vector2(220, 0)
+	name_edit.add_theme_font_override("font", mono)
+	name_edit.text_submitted.connect(_rename_dev)
+	name_row.add_child(name_edit)
+	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
+	name_row.add_child(name_hint)
+
 	v.add_child(_label("FRONT PANEL", 12, Color(0.5, 0.55, 0.65)))
 	var plate := PanelContainer.new()
 	plate.add_theme_stylebox_override("panel", _sb(Color(0.14, 0.15, 0.18), Color(0.35, 0.38, 0.45), 8, 14))
@@ -238,11 +256,25 @@ func _build_dev_overlay() -> void:
 
 func open_dev(d: Net.NDevice) -> void:
 	cur_dev = d
-	dev_title.text = "%s  /  %s — %s" % [Game.rack_of(d).name, d.name, d.type]
+	_refresh_dev_header()
 	cli_box.visible = false
 	cli_toggle.text = "Open console  ▤"
 	_refresh_ports()
 	dev_overlay.visible = true
+
+func _refresh_dev_header() -> void:
+	dev_title.text = "%s  /  %s — %s" % [Game.rack_of(cur_dev).name, cur_dev.name, cur_dev.type]
+	name_edit.text = cur_dev.name
+	name_hint.text = ""
+
+func _rename_dev(new_name: String) -> void:
+	if Game.rename_device(cur_dev, new_name):
+		_refresh_dev_header()
+		if cli_box.visible:
+			cli_prompt.text = cur_dev.name + "> "
+	else:
+		name_hint.text = "  invalid or taken (letters, digits, _, no spaces)"
+		name_edit.text = cur_dev.name
 
 func close_dev() -> void:
 	dev_overlay.visible = false

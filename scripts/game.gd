@@ -26,6 +26,25 @@ func new_device(type: String) -> Net.NDevice:
 	_counter[type] += 1
 	return Net.NDevice.new(type, PREFIX[type] + str(_counter[type]), PORTS[type])
 
+func all_devices() -> Array:
+	var out: Array = []
+	for r in racks:
+		for d in r.slots:
+			if d:
+				out.append(d)
+	return out
+
+func rename_device(dev: Net.NDevice, new_name: String) -> bool:
+	new_name = new_name.strip_edges()
+	if new_name == "" or not new_name.is_valid_ascii_identifier():
+		return false
+	for d in all_devices():
+		if d != dev and d.name == new_name:
+			return false
+	dev.name = new_name
+	topology_changed.emit()
+	return true
+
 func rack_of(dev: Net.NDevice) -> Net.Rack:
 	for r in racks:
 		if dev in r.slots:
