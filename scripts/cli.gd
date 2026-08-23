@@ -209,6 +209,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "qos", "priority-queueing"], "h": func(_r): return _qos(false)},
 			{"m": EP, "p": ["show", "qos"], "h": _show_qos},
 			{"m": ["if"], "p": ["encapsulation", "dot1q"], "h": _if_encap},
+			{"m": ["if"], "p": ["wireguard", "peer"], "h": _wg_peer},
+			{"m": ["if"], "p": ["no", "wireguard", "peer"], "h": _wg_no_peer},
+			{"m": EP, "p": ["show", "wireguard"], "h": _show_wg},
 			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
 			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
 			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
@@ -452,6 +455,12 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: interface <name>\n"
 		var want := String(r[0]).to_lower()
+		if want.begins_with("wg") and want.trim_prefix("wg").is_valid_int():
+			var wif := Game.add_wireguard(dev, int(want.trim_prefix("wg")))
+			if wif == null:
+				return "% could not create the wireguard interface\n"
+			_select_ifaces([wif])
+			return ""
 		if want.begins_with("tu") and want.lstrip("abcdefghijklmnopqrstuvwxyz").is_valid_int():
 			if not dev.ip_forwarding:
 				return "% tunnels need a router or firewall\n"
@@ -704,6 +713,47 @@ class EOS extends Session:
 			for cidr in ctx_if.ips.duplicate():
 				Game.remove_ip(ctx_if, cidr)
 		return ""
+
+	func _wg_peer(r: Array) -> String:
+		## wireguard peer <public-key> endpoint <ip> allowed <cidr>[,<cidr>]
+		if not ctx_if.name.begins_with("wg"):
+			return "% that is not a wireguard interface\n"
+		if r.size() != 5 or String(r[1]) != "endpoint" or String(r[3]) != "allowed":
+			return "usage: wireguard peer <key> endpoint <ip> allowed <cidr>[,<cidr>]\n"
+		var allowed: Array = []
+		for c in String(r[4]).split(",", false):
+			if not Net.valid_cidr(String(c).strip_edges()):
+				return "%% '%s' is not a prefix\n" % c
+			allowed.append(String(c).strip_edges())
+		for existing in ctx_if.wg_peers.duplicate():
+			if String(existing.get("key", "")) == String(r[0]):
+				ctx_if.wg_peers.erase(existing)
+		ctx_if.wg_peers.append({"key": String(r[0]), "endpoint": String(r[2]), "allowed": allowed})
+		Game.topology_changed.emit()
+		return ""
+
+	func _wg_no_peer(r: Array) -> String:
+		if r.size() != 1:
+			return "usage: no wireguard peer <key>\n"
+		for existing in ctx_if.wg_peers.duplicate():
+			if String(existing.get("key", "")) == String(r[0]):
+				ctx_if.wg_peers.erase(existing)
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_wg(_r: Array) -> String:
+		var out := ""
+		for i: Net.Iface in dev.ifaces:
+			if not i.name.begins_with("wg"):
+				continue
+			out += "interface %s   public key %s\n" % [i.name, i.wg_key]
+			if i.wg_peers.is_empty():
+				out += "   (no peers)\n"
+			for p in i.wg_peers:
+				out += "   peer %-18s endpoint %-16s allowed %-24s %s\n" % [p.get("key", ""),
+					p.get("endpoint", ""), ", ".join(PackedStringArray(p.get("allowed", []))),
+					"handshake ok" if Sim.wg_handshake(i, p) else "no handshake"]
+		return out if out != "" else "  (no wireguard interfaces: 'interface wg0' creates one)\n"
 
 	func _tunnel_src(r: Array) -> String:
 		if not ctx_if.name.begins_with("Tunnel"):
@@ -1274,6 +1324,9 @@ class EOS extends Session:
 				out += "   encapsulation dot1q %d\n" % i.dot1q
 			if i.tunnel_src != "":
 				out += "   tunnel source %s\n   tunnel destination %s\n" % [i.tunnel_src, i.tunnel_dst]
+			for wp in i.wg_peers:
+				out += "   wireguard peer %s endpoint %s allowed %s\n" % [wp.get("key", ""),
+					wp.get("endpoint", ""), ",".join(PackedStringArray(wp.get("allowed", [])))]
 			if i.mode == "trunk":
 				out += "   switchport mode trunk\n"
 				if not i.tagged_vlans.is_empty():
@@ -1318,7 +1371,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1385,6 +1438,40 @@ class Linux extends Session:
 									", ".join(PackedStringArray(i.ips))]
 					return out if out != "" else "(no virtual machines)\n"
 				return "usage: vm create <name> | vm addr <name> <cidr> | vm migrate <name> <host> | vm list\n"
+			"wg":
+				# wg up <n> | wg addr <n> <cidr> | wg peer <n> <key> <endpoint> <allowed> | wg show
+				if t.size() == 3 and t[1] == "up":
+					var w := Game.add_wireguard(dev, int(t[2]))
+					return "wg%s up with public key %s\n" % [t[2], w.wg_key] if w else "wg: failed\n"
+				if t.size() == 4 and t[1] == "addr":
+					var wi := _iface("wg%s" % t[2])
+					if wi == null:
+						return "wg: no such interface\n"
+					return "" if Game.add_ip(wi, t[3]) else "wg: invalid address\n"
+				if t.size() == 6 and t[1] == "peer":
+					var wi2 := _iface("wg%s" % t[2])
+					if wi2 == null:
+						return "wg: no such interface\n"
+					var allowed2: Array = []
+					for c in String(t[5]).split(",", false):
+						allowed2.append(String(c).strip_edges())
+					wi2.wg_peers.append({"key": t[3], "endpoint": t[4], "allowed": allowed2})
+					Game.topology_changed.emit()
+					return ""
+				if t.size() >= 2 and t[1] == "show":
+					var out := ""
+					for i: Net.Iface in dev.ifaces:
+						if not i.name.begins_with("wg"):
+							continue
+						out += "%s  key %s  %s\n" % [i.name, i.wg_key,
+							", ".join(PackedStringArray(i.ips))]
+						for p in i.wg_peers:
+							out += "  peer %s via %s allowed %s  %s\n" % [p.get("key", ""),
+								p.get("endpoint", ""),
+								",".join(PackedStringArray(p.get("allowed", []))),
+								"handshake ok" if Sim.wg_handshake(i, p) else "no handshake"]
+					return out if out != "" else "(no wireguard interfaces)\n"
+				return "usage: wg up <n> | wg addr <n> <cidr> | wg peer <n> <key> <endpoint> <allowed> | wg show\n"
 			"syslogd":
 				dev.services["syslog"] = dev.services.get("syslog", {"messages": []})
 				return "syslogd: collecting logs on this host\n"
@@ -1549,7 +1636,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]

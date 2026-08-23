@@ -515,6 +515,12 @@ static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> Stri
 	if iface.name.begins_with("Tunnel"):
 		var peer := tunnel_peer(iface)
 		return peer.mac if peer != null else ""  # point to point: the far end is the only neighbour
+	if iface.name.begins_with("wg"):
+		var wpeer := wg_peer_for(iface, ip)
+		if wpeer.is_empty():
+			return ""
+		var remote := wg_remote(iface, wpeer)
+		return remote.mac if remote != null else ""
 	var key := _neigh_key(iface, ip)
 	if dev.arp.has(key):
 		return dev.arp[key]
@@ -558,6 +564,9 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 				_tx(phys, out_frame)
 				return
 		return
+	if iface.name.begins_with("wg"):
+		_wg_tx(iface, frame)
+		return
 	if iface.name.begins_with("Tunnel"):
 		_tunnel_tx(iface, frame)
 		return
@@ -587,6 +596,64 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		_switch_rx(peer.dev, peer, frame)
 	else:
 		_host_rx(peer.dev, _logical_rx_iface(peer, frame), frame)
+	_depth -= 1
+
+static func wg_peer_for(w: Net.Iface, dst_ip: String) -> Dictionary:
+	## the peer whose allowed IPs cover this destination: with WireGuard the
+	## allowed-IPs list is both the access control and the routing table
+	for p in w.wg_peers:
+		for cidr in p.get("allowed", []):
+			var parts := String(cidr).split("/")
+			if parts.size() == 2 and Net.same_net(dst_ip, parts[0], int(parts[1])):
+				return p
+	return {}
+
+static func wg_remote(w: Net.Iface, peer: Dictionary) -> Net.Iface:
+	## the interface on the far side, if it exists and names us back
+	for d in Game.all_devices():
+		for other: Net.Iface in d.ifaces:
+			if other == w or not other.name.begins_with("wg"):
+				continue
+			if other.wg_key != String(peer.get("key", "")):
+				continue
+			for back in other.wg_peers:
+				if String(back.get("key", "")) == w.wg_key:
+					return other  # both sides list each other: a handshake is possible
+	return null
+
+static func wg_handshake(w: Net.Iface, peer: Dictionary) -> bool:
+	var remote := wg_remote(w, peer)
+	if remote == null or not w.enabled or not remote.enabled:
+		return false
+	if w.dev.status != "active" or remote.dev.status != "active":
+		return false
+	var endpoint := String(peer.get("endpoint", ""))
+	return endpoint != "" and ping(w.dev, endpoint)["ok"]
+
+static func _wg_tx(w: Net.Iface, frame: Dictionary) -> void:
+	if _depth > MAX_DEPTH:
+		return
+	var pl: Dictionary = frame["pl"]
+	var dst: String = String(pl.get("dst_ip", ""))
+	var peer := wg_peer_for(w, dst)
+	if peer.is_empty():
+		Game.device_log(w.dev, "wireguard dropped a packet for %s: no peer allows it" % dst)
+		return  # not in anybody's allowed IPs: dropped, which is the point
+	if not wg_handshake(w, peer):
+		return
+	var remote := wg_remote(w, peer)
+	# the far side must also allow the source, or it drops what we send
+	if wg_peer_for(remote, String(pl.get("src_ip", ""))).is_empty():
+		Game.device_log(remote.dev, "wireguard dropped traffic from %s: not in allowed IPs"
+			% pl.get("src_ip", ""))
+		return
+	w.tx_frames += 1
+	remote.rx_frames += 1
+	var inner := frame.duplicate(true)
+	inner["dst"] = remote.mac
+	_cap(remote.dev, remote, inner)
+	_depth += 1
+	_host_rx(remote.dev, remote, inner)
 	_depth -= 1
 
 static func tunnel_peer(t: Net.Iface) -> Net.Iface:

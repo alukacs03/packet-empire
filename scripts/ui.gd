@@ -782,12 +782,14 @@ func _refresh_ports() -> void:
 	if conn_list.get_child_count() == 0:
 		conn_list.add_child(_label("  no cables connected", 14, Color(0.45, 0.5, 0.6)))
 	for i: Net.Iface in cur_dev.ifaces:
-		if i.name.begins_with("Vlan") or i.name.begins_with("Tunnel") or i.parent != "":
+		if i.name.begins_with("Vlan") or i.name.begins_with("Tunnel") \
+				or i.name.begins_with("wg") or i.parent != "":
 			var b := Button.new()
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.add_theme_font_override("font", mono)
 			var kind_lbl := "802.1Q sub" if i.parent != "" else (
-				"tunnel" if i.name.begins_with("Tunnel") else "SVI")
+				"tunnel" if i.name.begins_with("Tunnel") else (
+				"wireguard" if i.name.begins_with("wg") else "SVI"))
 			b.text = "  %s (%s)   %s" % [i.name, kind_lbl,
 				", ".join(PackedStringArray(i.ips)) if not i.ips.is_empty() else "no address"]
 			b.pressed.connect(open_iface.bind(i))

@@ -230,6 +230,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "wireguard_link",
+			"title": "Encrypt the back road",
+			"customer": "Astra Legal",
+			"reward": 3600,
+			"brief": "Astra will not send their traffic between offices in the clear, and they will not pay for a second leased line either. Build a WireGuard tunnel over the path you already have: 'interface wg0' on both routers, a small address on each end (10.99.0.1/30 and 10.99.0.2/30), then on each side 'wireguard peer <the other key> endpoint <their public address> allowed <their network>,<their tunnel address>/32'. Route each office's network down the tunnel. Their hosts at 172.20.1.10 and 172.20.2.10 must reach each other, and 'show wireguard' must show a handshake.",
+			"reqs": [
+				{"d": "Two WireGuard interfaces that name each other", "t": func() -> bool: return _wg_pair()},
+				{"d": "The handshake succeeds", "t": func() -> bool: return _wg_handshaken()},
+				{"d": "172.20.1.10 and 172.20.2.10 reach each other", "t": func() -> bool: return _ping("172.20.1.10", "172.20.2.10", true) and _ping("172.20.2.10", "172.20.1.10", true)},
+			],
+		},
+		{
 			"id": "keep_it_moving",
 			"title": "Keep it moving",
 			"customer": "Obsidian Cloud",
@@ -380,6 +392,28 @@ static func _l3_switch_svis() -> int:
 				n += 1
 		best = maxi(best, n)
 	return best
+
+static func _wg_ifaces() -> Array:
+	var out: Array = []
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.name.begins_with("wg") and not i.wg_peers.is_empty():
+				out.append(i)
+	return out
+
+static func _wg_pair() -> bool:
+	for w: Net.Iface in _wg_ifaces():
+		for p in w.wg_peers:
+			if Sim.wg_remote(w, p) != null:
+				return true
+	return false
+
+static func _wg_handshaken() -> bool:
+	for w: Net.Iface in _wg_ifaces():
+		for p in w.wg_peers:
+			if Sim.wg_handshake(w, p):
+				return true
+	return false
 
 static func _vm_at(ip: String) -> Net.Iface:
 	for d in Game.all_devices():

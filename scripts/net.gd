@@ -22,6 +22,8 @@ class Iface:
 	var dhcp_trusted := false  # a port allowed to carry DHCP server replies
 	var tunnel_src := ""  # tunnel interfaces ride the underlay between two endpoints
 	var tunnel_dst := ""
+	var wg_key := ""  # WireGuard: this interface's public key
+	var wg_peers: Array = []  # [{key, endpoint, allowed: ["10.0.0.0/24", ...]}]
 	var port_security := false  # sticky-MAC lockdown on an access port
 	var secure_mac := ""  # the MAC this port is locked to
 	var violations := 0

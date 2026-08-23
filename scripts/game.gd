@@ -421,6 +421,22 @@ func migrate_vm(name: String, target: Net.NDevice) -> String:
 	topology_changed.emit()
 	return ""
 
+func add_wireguard(dev: Net.NDevice, num: int) -> Net.Iface:
+	## a WireGuard interface: identified by a key, with peers rather than a
+	## single far end, and an allowed-IPs list that is also its routing policy
+	if not dev.ip_forwarding and dev.type != "server":
+		return null
+	var name := "wg%d" % num
+	for i: Net.Iface in dev.ifaces:
+		if i.name == name:
+			return i
+	var w := Net.Iface.new(dev, name, _new_mac())
+	w.mode = "routed"
+	w.wg_key = "%s-key-%d" % [dev.name.to_lower(), num]  # stands in for a real public key
+	dev.ifaces.append(w)
+	topology_changed.emit()
+	return w
+
 func add_tunnel(dev: Net.NDevice, num: int) -> Net.Iface:
 	## a virtual point-to-point interface that rides whatever path exists
 	if not dev.ip_forwarding:
@@ -1523,7 +1539,8 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 			continue
 		for i in d.ifaces:
 			if link_at(i) == null and i.name != "lo" and not i.name.begins_with("Vlan") \
-					and not i.name.begins_with("Tunnel") and i.parent == "" and i.vm == "":
+					and not i.name.begins_with("Tunnel") and not i.name.begins_with("wg") \
+					and i.parent == "" and i.vm == "":
 				out.append(i)
 	return out
 
@@ -1832,6 +1849,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
 			"parent": i.parent, "dot1q": i.dot1q,
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
+			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"ips": i.ips})
@@ -1935,6 +1953,8 @@ func _apply(data: Dictionary) -> void:
 			i.secure_mac = si.get("secure_mac", "")
 			i.tunnel_src = si.get("tunnel_src", "")
 			i.tunnel_dst = si.get("tunnel_dst", "")
+			i.wg_key = si.get("wg_key", "")
+			i.wg_peers = si.get("wg_peers", [])
 			i.parent = si.get("parent", "")
 			i.dot1q = int(si.get("dot1q", 0))
 			i.ips = si["ips"]

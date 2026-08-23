@@ -1442,6 +1442,75 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- WireGuard ---
+	var wg_rack := Game.add_rack(Vector2i(23, 1))
+	var wg_l := Game.new_device("rtr-edge")
+	var wg_r := Game.new_device("rtr-edge")
+	var wg_mid := Game.new_device("rtr-edge")
+	var wg_a := Game.new_device("srv-1")
+	var wg_b := Game.new_device("srv-1")
+	wg_rack.slots[0] = wg_l
+	wg_rack.slots[1] = wg_r
+	wg_rack.slots[2] = wg_mid
+	wg_rack.slots[3] = wg_a
+	wg_rack.slots[4] = wg_b
+	Game.connect_ifaces(wg_l.ifaces[0], wg_mid.ifaces[0])
+	Game.connect_ifaces(wg_r.ifaces[0], wg_mid.ifaces[1])
+	Game.add_ip(wg_l.ifaces[0], "198.51.100.1/30")
+	Game.add_ip(wg_mid.ifaces[0], "198.51.100.2/30")
+	Game.add_ip(wg_mid.ifaces[1], "198.51.100.5/30")
+	Game.add_ip(wg_r.ifaces[0], "198.51.100.6/30")
+	Game.add_static_route(wg_l, "198.51.100.4", 30, "198.51.100.2")
+	Game.add_static_route(wg_r, "198.51.100.0", 30, "198.51.100.5")
+	Game.connect_ifaces(wg_a.ifaces[0], wg_l.ifaces[1])
+	Game.connect_ifaces(wg_b.ifaces[0], wg_r.ifaces[1])
+	Game.add_ip(wg_l.ifaces[1], "172.20.1.1/24")
+	Game.add_ip(wg_a.ifaces[0], "172.20.1.10/24")
+	Game.add_ip(wg_r.ifaces[1], "172.20.2.1/24")
+	Game.add_ip(wg_b.ifaces[0], "172.20.2.10/24")
+	Game.add_static_route(wg_a, "0.0.0.0", 0, "172.20.1.1")
+	Game.add_static_route(wg_b, "0.0.0.0", 0, "172.20.2.1")
+	check(not Sim.ping(wg_a, "172.20.2.10")["ok"], "wg: the private sides start unreachable")
+	var wl := CLI.new_session(wg_l)
+	wl.exec("en")
+	wl.exec("conf t")
+	check(wl.exec("interface wg0").is_empty(), "wg: a wireguard interface can be created")
+	wl.exec("ip address 10.99.0.1/30")
+	var key_l: String = wg_l.ifaces[wg_l.ifaces.size() - 1].wg_key
+	var wr := CLI.new_session(wg_r)
+	wr.exec("en")
+	wr.exec("conf t")
+	wr.exec("interface wg0")
+	wr.exec("ip address 10.99.0.2/30")
+	var key_r: String = wg_r.ifaces[wg_r.ifaces.size() - 1].wg_key
+	# each side names the other's key, endpoint and the prefixes it may carry
+	# allowed IPs must also cover the peer's own tunnel address, exactly as a
+	# real WireGuard configuration does
+	check(wl.exec("wireguard peer %s endpoint 198.51.100.6 allowed 172.20.2.0/24,10.99.0.2/32" % key_r).is_empty(),
+		"wg: a peer can be configured with allowed IPs")
+	wr.exec("wireguard peer %s endpoint 198.51.100.1 allowed 172.20.1.0/24,10.99.0.1/32" % key_l)
+	wl.exec("exit")
+	wl.exec("ip route 172.20.2.0/24 10.99.0.2")
+	wl.exec("end")
+	wr.exec("exit")
+	wr.exec("ip route 172.20.1.0/24 10.99.0.1")
+	wr.exec("end")
+	check(wl.exec("show wireguard").contains("handshake ok"), "wg: the handshake succeeds both ways")
+	check(Sim.ping(wg_a, "172.20.2.10")["ok"] and Sim.ping(wg_b, "172.20.1.10")["ok"],
+		"wg: traffic inside the allowed prefixes flows")
+	# a prefix nobody allows is dropped, which is the whole point of allowed IPs
+	Game.add_ip(wg_b.ifaces[0], "192.0.2.10/24")
+	check(not Sim.ping(wg_a, "192.0.2.10")["ok"], "wg: traffic outside the allowed IPs is dropped")
+	# and the tunnel dies with its underlay
+	wg_mid.status = "offline"
+	Game.topology_changed.emit()
+	check(not Sim.ping(wg_a, "172.20.2.10")["ok"], "wg: no path underneath means no handshake")
+	check(wl.exec("show wireguard").contains("no handshake"), "wg: and it says so")
+	wg_mid.status = "active"
+	Game.topology_changed.emit()
+	check(Sim.ping(wg_a, "172.20.2.10")["ok"], "wg: it comes back with the path")
+	check(Game.try_complete_contract(_contract("wireguard_link")), "wg: the contract verifies")
+
 	# --- geography and latency ---
 	check(Game.site_city(0) != "", "geo: every site sits in a city")
 	var far_site := Game.add_site("Remote room", Vector2i(5, 5), "leased", "Debrecen")
