@@ -1644,7 +1644,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1862,21 +1862,49 @@ class Linux extends Session:
 					out += "  %s\n" % l
 				return out if out != "" else "(no logs)\n"
 			"dns":
-				if t.size() == 4 and t[1] == "add" and String(t[3]).is_valid_ip_address():
+				if t.size() >= 4 and t[1] == "add" and String(t[3]).is_valid_ip_address():
 					if not dev.services.has("dns"):
 						dev.services["dns"] = {"records": {}}
 					dev.services["dns"]["records"][t[2]] = t[3]
+					if t.size() > 4 and String(t[4]).is_valid_int():
+						if not dev.services["dns"].has("ttls"):
+							dev.services["dns"]["ttls"] = {}
+						dev.services["dns"]["ttls"][t[2]] = int(t[4])
 					Game.topology_changed.emit()
 					return ""
+				if t.size() == 4 and t[1] == "delegate" and String(t[3]).is_valid_ip_address():
+					if not dev.services.has("dns"):
+						dev.services["dns"] = {"records": {}}
+					if not dev.services["dns"].has("delegations"):
+						dev.services["dns"]["delegations"] = {}
+					dev.services["dns"]["delegations"][t[2]] = t[3]
+					Game.topology_changed.emit()
+					return "%s delegated to %s\n" % [t[2], t[3]]
+				if t.size() == 2 and t[1] == "flush":
+					dev.dns_cache.clear()
+					return "resolver cache cleared\n"
+				if t.size() == 2 and t[1] == "cache":
+					if dev.dns_cache.is_empty():
+						return "(cache empty)\n"
+					var cout := "%-24s %-16s %s\n" % ["NAME", "ADDRESS", "EXPIRES"]
+					for nm2 in dev.dns_cache:
+						cout += "%-24s %-16s cycle %d\n" % [nm2, dev.dns_cache[nm2]["ip"],
+							int(dev.dns_cache[nm2]["expires"])]
+					return cout
 				if t.size() == 2 and t[1] == "list":
-					var recs: Dictionary = dev.services.get("dns", {}).get("records", {})
-					if recs.is_empty():
+					var svc_d: Dictionary = dev.services.get("dns", {})
+					var recs: Dictionary = svc_d.get("records", {})
+					var dels: Dictionary = svc_d.get("delegations", {})
+					if recs.is_empty() and dels.is_empty():
 						return "(no records: this host is not a DNS server yet)\n"
 					var out := ""
 					for k in recs:
-						out += "%-20s A  %s\n" % [k, recs[k]]
+						out += "%-24s A   %-16s ttl %d\n" % [k, recs[k],
+							int(svc_d.get("ttls", {}).get(k, Sim.DEFAULT_TTL))]
+					for z in dels:
+						out += "%-24s NS  %s\n" % [z, dels[z]]
 					return out
-				return "usage: dns add <name> <ip> | dns list\n"
+				return "usage: dns add <name> <ip> [ttl] | dns delegate <zone> <ns-ip> | dns list | dns cache | dns flush\n"
 			"nslookup":
 				if t.size() != 2:
 					return "usage: nslookup <name|ip>\n"

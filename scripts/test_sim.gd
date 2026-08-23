@@ -3074,6 +3074,51 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- DNS zones, delegation and TTLs ---
+	var dz_rack := Game.add_rack(Vector2i(39, 1))
+	var dz_sw := Game.new_device("sw-8")
+	var dz_root := Game.new_device("srv-1")   # authoritative for example.hu
+	var dz_sub := Game.new_device("srv-1")    # authoritative for eu.example.hu
+	var dz_client := Game.new_device("srv-1")
+	dz_rack.slots[0] = dz_sw
+	dz_rack.slots[1] = dz_root
+	dz_rack.slots[2] = dz_sub
+	dz_rack.slots[3] = dz_client
+	for dz_i in 3:
+		Game.connect_ifaces([dz_root, dz_sub, dz_client][dz_i].ifaces[0], dz_sw.ifaces[dz_i])
+		Game.add_ip([dz_root, dz_sub, dz_client][dz_i].ifaces[0], "10.220.0.%d/24" % (10 + dz_i))
+	Sim.flush_learned_state()
+	var dz_rcli := CLI.new_session(dz_root)
+	var dz_scli := CLI.new_session(dz_sub)
+	var dz_ccli := CLI.new_session(dz_client)
+	dz_rcli.exec("dns add www.example.hu 10.220.9.1")
+	dz_scli.exec("dns add www.eu.example.hu 10.220.9.2")
+	check(dz_rcli.exec("dns delegate eu.example.hu 10.220.0.11").contains("delegated"),
+		"dns: a subzone can be delegated to another server")
+	dz_ccli.exec("nameserver 10.220.0.10")
+	check(Sim.resolve(dz_client, "www.example.hu") == "10.220.9.1",
+		"dns: the parent answers for its own zone")
+	check(Sim.resolve(dz_client, "www.eu.example.hu", false) == "10.220.9.2",
+		"dns: a delegated name is resolved by following the referral")
+	check(Sim.resolve(dz_client, "www.nowhere.hu", false) == "",
+		"dns: a name nobody is authoritative for fails")
+	# TTL: a changed record is not seen until the cached answer expires
+	dz_ccli.exec("dns flush")
+	dz_rcli.exec("dns add ttl.example.hu 10.220.9.5 3")
+	check(Sim.resolve(dz_client, "ttl.example.hu") == "10.220.9.5", "dns: first lookup is authoritative")
+	dz_rcli.exec("dns add ttl.example.hu 10.220.9.6 3")
+	check(Sim.dns_cached(dz_client, "ttl.example.hu"), "dns: the answer is cached")
+	check(Sim.resolve(dz_client, "ttl.example.hu") == "10.220.9.5",
+		"dns: the client keeps the old address until the TTL runs out")
+	var dz_saved_cycle := Game.cycle
+	Game.cycle += 4
+	check(Sim.resolve(dz_client, "ttl.example.hu") == "10.220.9.6",
+		"dns: once it expires, the new address is picked up")
+	Game.cycle = dz_saved_cycle
+	check(dz_ccli.exec("dns cache").contains("ttl.example.hu"), "dns: the cache can be inspected")
+	check(dz_ccli.exec("dns flush").contains("cleared"), "dns: and cleared")
+	check(dz_rcli.exec("dns list").contains("NS"), "dns: delegations show in the zone listing")
+
 	# --- carrier outages and diversity ---
 	Game.circuits = []
 	Game.carrier_outage = {}

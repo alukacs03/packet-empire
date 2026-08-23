@@ -61,6 +61,7 @@ class NDevice:
 	var stp_mode := "rstp"  # rstp (modern default), stp (slow) or mst
 	var stp_priority := 32768  # lower wins the root election
 	var mst_instances := {}  # instance id -> [vlan ids] when running MST
+	var dns_cache := {}  # name -> {"ip": .., "expires": cycle}; why a change is not seen at once
 	var talkers := {}  # "src>dst" -> packets forwarded, netflow-style
 	var snmp := ""  # read community; empty means the agent is not running
 	var psu := "A"  # which feed(s) this device is plugged into: A, B or AB

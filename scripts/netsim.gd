@@ -18,6 +18,20 @@ static var _echo_id := 0
 static var _echo_results: Array = []
 static var rtt_ms := 0.0  # accumulated latency of the operation in flight
 static var last_trace: Array = []  # [{a: Iface, b: Iface, kind}] of the last operation
+const DEFAULT_TTL := 4  # cycles a resolver is entitled to keep an answer
+const MAX_REFERRALS := 4  # a delegation chain deeper than this is a loop
+
+static func _delegation_for(zones: Dictionary, name: String) -> String:
+	## the most specific delegated zone this name falls under
+	var best := ""
+	var best_len := -1
+	for zone in zones:
+		var z := String(zone)
+		if (name == z or name.ends_with("." + z)) and z.length() > best_len:
+			best_len = z.length()
+			best = String(zones[zone])
+	return best
+
 static var _dns_results: Array = []
 static var _dns_id := 0
 static var _dhcp_offer := {}
@@ -135,19 +149,44 @@ static func reverse_lookup(dev: Net.NDevice, ip: String) -> String:
 			return r["answer"]
 	return ""
 
-static func resolve(dev: Net.NDevice, name: String) -> String:
-	## DNS lookup via the device's configured resolver. Returns "" on failure.
+static func resolve(dev: Net.NDevice, name: String, use_cache := true) -> String:
+	## DNS lookup via the device's configured resolver, following delegations
+	## the way a real resolver does, and honouring the TTL it was given.
 	if name.is_valid_ip_address():
 		return name
+	if use_cache:
+		var hit: Dictionary = dev.dns_cache.get(name, {})
+		if not hit.is_empty() and Game.cycle < int(hit["expires"]):
+			return String(hit["ip"])
 	if dev.resolver == "":
 		return ""
-	_dns_id += 1
-	_dns_results = []
-	_send_ip(dev, dev.resolver, 64, {"proto": "dns", "q": name, "id": _dns_id})
-	for r in _dns_results:
-		if r["id"] == _dns_id and r["q"] == name:
-			return r["answer"]
+	var server: String = dev.resolver
+	for _hop in MAX_REFERRALS:
+		_dns_id += 1
+		_dns_results = []
+		_send_ip(dev, server, 64, {"proto": "dns", "q": name, "id": _dns_id})
+		var answered := ""
+		var referred := ""
+		var ttl := DEFAULT_TTL
+		for r in _dns_results:
+			if r["id"] != _dns_id or r["q"] != name:
+				continue
+			if r.has("referral"):
+				referred = String(r["referral"])
+			elif r.has("answer"):
+				answered = String(r["answer"])
+				ttl = int(r.get("ttl", DEFAULT_TTL))
+		if answered != "":
+			dev.dns_cache[name] = {"ip": answered, "expires": Game.cycle + maxi(0, ttl)}
+			return answered
+		if referred == "":
+			return ""
+		server = referred  # follow the delegation and ask the next one down
 	return ""
+
+static func dns_cached(dev: Net.NDevice, name: String) -> bool:
+	var hit: Dictionary = dev.dns_cache.get(name, {})
+	return not hit.is_empty() and Game.cycle < int(hit["expires"])
 
 static func bgp_established(dev: Net.NDevice, nb: Dictionary) -> bool:
 	## eBGP-lite: session is up when the neighbor IP is on a directly
@@ -1247,9 +1286,17 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				"reply", "ttl-exceeded":
 					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"]})
 		elif l4["proto"] == "dns":
-			var recs: Dictionary = dev.services.get("dns", {}).get("records", {})
+			var svc_dns: Dictionary = dev.services.get("dns", {})
+			var recs: Dictionary = svc_dns.get("records", {})
+			var zones: Dictionary = svc_dns.get("delegations", {})
 			if recs.has(l4["q"]):
-				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"], "answer": recs[l4["q"]], "id": l4["id"]})
+				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"],
+					"answer": recs[l4["q"]], "id": l4["id"],
+					"ttl": int(svc_dns.get("ttls", {}).get(l4["q"], DEFAULT_TTL))})
+			elif _delegation_for(zones, String(l4["q"])) != "":
+				# not ours, but we know who to ask: that is a referral
+				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"],
+					"referral": _delegation_for(zones, String(l4["q"])), "id": l4["id"]})
 			elif String(l4["q"]).is_valid_ip_address():
 				for nm in recs:  # synthesized PTR from A records
 					if recs[nm] == l4["q"]:
