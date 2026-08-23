@@ -1413,5 +1413,45 @@ static func run() -> int:
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
 
+	# --- performance at datacenter scale ---
+	Game.racks = []
+	Game.links = []
+	Game.deals = []
+	Game.sites = []
+	Game.acquisitions = []
+	Game.current_site = 0
+	Game.stage = 2
+	var core := Game.new_device("sw-24")
+	var perf_rack := Game.add_rack(Vector2i(0, 0))
+	perf_rack.slots[0] = core
+	Game.add_ip(core.ifaces[0], "10.200.0.1/24")
+	var edge_switches: Array = []
+	var hosts: Array = []
+	for k in 8:  # 8 access switches, 8 servers each: a real floor
+		var rk := Game.add_rack(Vector2i(k % 4, 1 + k / 4))
+		var esw2 := Game.new_device("sw-24")
+		rk.slots[0] = esw2
+		edge_switches.append(esw2)
+		Game.connect_ifaces(esw2.ifaces[23], core.ifaces[k + 1])
+		for h in 7:
+			var host := Game.new_device("srv-1")
+			rk.slots[h + 1] = host
+			Game.connect_ifaces(host.ifaces[0], esw2.ifaces[h])
+			Game.add_ip(host.ifaces[0], "10.200.0.%d/24" % (10 + hosts.size()))
+			hosts.append(host)
+	check(Game.all_devices().size() >= 60, "perf: a datacenter-scale topology was built (%d devices, %d links)"
+		% [Game.all_devices().size(), Game.links.size()])
+	var t0 := Time.get_ticks_msec()
+	var okc := 0
+	for i in 40:  # cold ARP on the first pass, then learned
+		var src: Net.NDevice = hosts[i % hosts.size()]
+		var dst_ip := "10.200.0.%d" % (10 + ((i * 13) % hosts.size()))
+		if Sim.ping(src, dst_ip)["ok"]:
+			okc += 1
+	var elapsed := Time.get_ticks_msec() - t0
+	check(okc >= 39, "perf: pings across the floor succeed (%d/40)" % okc)
+	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
+	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
+
 	print("---- %d failures" % fails)
 	return fails

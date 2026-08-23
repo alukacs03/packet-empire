@@ -97,11 +97,15 @@ func site_count() -> int:
 
 func site_name(idx: int) -> String:
 	_ensure_sites()
+	if idx < 0 or idx >= sites.size():
+		return "a site you no longer operate"
 	return sites[idx]["name"]
 
 func grid_size(site := -1) -> Vector2i:
 	_ensure_sites()
 	var idx := current_site if site < 0 else site
+	if idx < 0 or idx >= sites.size():
+		idx = 0
 	if idx == 0:
 		return STAGES[stage]["grid"]  # your own floor grows with your career
 	var g: Array = sites[idx]["grid"]
