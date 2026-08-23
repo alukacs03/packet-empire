@@ -16,6 +16,100 @@ static func mono_font() -> SystemFont:
 	f.font_names = PackedStringArray(["Menlo", "Consolas", "monospace"])
 	return f
 
+# ================================================================ TopoMap ==
+
+class TopoMap extends Control:
+	var on_dev: Callable  # (Net.NDevice)
+	var _mono: SystemFont
+	var _nodes := {}  # Net.NDevice -> Rect2
+
+	func setup(cb: Callable) -> TopoMap:
+		on_dev = cb
+		_mono = UIW.mono_font()
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		set_anchors_preset(Control.PRESET_FULL_RECT)
+		return self
+
+	func _process(_dt: float) -> void:
+		if visible:
+			queue_redraw()
+
+	func _gui_input(e: InputEvent) -> void:
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			for dev in _nodes:
+				if _nodes[dev].has_point(e.position):
+					on_dev.call(dev)
+					return
+
+	func _dev_info(dev: Net.NDevice) -> String:
+		var bits: Array = []
+		for i: Net.Iface in dev.ifaces:
+			for cidr: String in i.ips:
+				bits.append(cidr)
+				if bits.size() >= 2:
+					return ", ".join(PackedStringArray(bits))
+		if dev.type == "switch":
+			var vids := dev.vlans.keys()
+			vids.sort()
+			return "vlans " + ",".join(PackedStringArray(vids.map(func(v): return str(v))))
+		return ", ".join(PackedStringArray(bits))
+
+	func _draw() -> void:
+		_nodes.clear()
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.05, 0.08, 0.9))
+		var title_c := Color(0.5, 0.85, 0.95)
+		draw_string(_mono, Vector2(30, 40), "LOGICAL TOPOLOGY", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, title_c)
+		draw_string(_mono, Vector2(30, 62), "click a device to open it · M or Esc to close",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.55, 0.65))
+		# layout racks on their floor grid
+		for r in Game.racks:
+			var origin := Vector2(40 + r.tile.x * 250, 95 + r.tile.y * 260)
+			var filled: Array = []
+			for d in r.slots:
+				if d:
+					filled.append(d)
+			var box := Rect2(origin, Vector2(215, 34 + filled.size() * 40 + 8))
+			draw_rect(box, Color(0.09, 0.1, 0.14))
+			draw_rect(box, Color(0.3, 0.34, 0.44), false, 1.0)
+			draw_string(_mono, origin + Vector2(10, 22), "▤ " + r.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.75, 0.8, 0.9))
+			var y := origin.y + 34
+			for d in filled:
+				_nodes[d] = Rect2(origin.x + 8, y, 199, 36)
+				y += 40
+		# links under nodes
+		for l in Game.links:
+			if not _nodes.has(l.a.dev) or not _nodes.has(l.b.dev):
+				continue
+			var pa: Vector2 = _nodes[l.a.dev].get_center()
+			var pb: Vector2 = _nodes[l.b.dev].get_center()
+			var col := Color(0.35, 0.7, 0.65, 0.8)
+			var blocked := false
+			if l.a.dev.type == "switch" and l.b.dev.type == "switch":
+				col = Color(1.0, 0.62, 0.2, 0.85)
+				blocked = Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b)
+			if l.a.name.begins_with("Management") or l.b.name.begins_with("Management"):
+				col = Color(0.75, 0.55, 0.95, 0.85)
+			if blocked:
+				var n := 14
+				for k in n:
+					if k % 2 == 0:
+						draw_line(pa.lerp(pb, float(k) / n), pa.lerp(pb, float(k + 1) / n),
+							Color(0.9, 0.4, 0.35, 0.9), 2.0)
+			else:
+				draw_line(pa, pb, col, 2.0)
+		# nodes on top
+		for dev: Net.NDevice in _nodes:
+			var rect: Rect2 = _nodes[dev]
+			var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
+			draw_rect(rect, col.darkened(0.65))
+			draw_rect(rect, col if dev.status == "active" else Color(0.6, 0.3, 0.3), false, 1.5)
+			draw_string(_mono, rect.position + Vector2(8, 15), dev.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+			draw_string(_mono, rect.position + Vector2(8, 29), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col.lightened(0.3))
+		# legend
+		var ly := size.y - 26
+		draw_string(_mono, Vector2(30, ly), "— host link   — trunk/inter-switch   ┄ STP blocked   — management",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.55, 0.65))
+
 # ================================================================ RackSlot ==
 
 class RackSlot extends Control:

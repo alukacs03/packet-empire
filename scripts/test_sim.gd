@@ -503,5 +503,32 @@ static func run() -> int:
 			found_sw_event = true
 	check(found_sw_event, "mgmt: exposed switch management triggers a security incident")
 
+	# --- loans ---
+	var money_b := Game.money
+	check(Game.borrow() and Game.money == money_b + 1000 and Game.debt == 1000, "bank: borrow lands a tranche")
+	Game.debt = 0
+	var d0_start := Game.money
+	Game.sla_tick()
+	var delta0 := Game.money - d0_start
+	Game.debt = 10000
+	var d1_start := Game.money
+	Game.sla_tick()
+	var delta1 := Game.money - d1_start
+	check(delta0 - delta1 == 500, "bank: interest bites exactly debt*rate (got %d)" % (delta0 - delta1))
+	Game.debt = 1000
+	check(Game.repay() and Game.debt == 0, "bank: repay clears the tranche")
+
+	# --- capstone contract ---
+	var sw_bb := _dev_named(sw2.name)
+	Game.add_vlan(sw_bb, 30, "omega")
+	Game.set_access_vlan(sw_bb.ifaces[2], 30)  # b2's port
+	Game.add_ip(_dev_named(web.name).ifaces[0], "10.30.0.10/24")
+	var fs2 := CLI.new_session(_dev_named(fw.name))
+	fs2.exec("en")
+	fs2.exec("conf t")
+	fs2.exec("acl deny any 10.30.0.0/24")
+	fs2.exec("end")
+	check(Game.try_complete_contract(_contract("big_client")), "capstone: the big client signs")
+
 	print("---- %d failures" % fails)
 	return fails

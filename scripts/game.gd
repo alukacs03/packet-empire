@@ -50,6 +50,29 @@ var stage := 0
 var contracts_done: Array = []
 var cycle := 0
 var reputation := 50  # 0-100; feeds customer budgets
+var debt := 0  # bank loan principal
+
+const LOAN_TRANCHE := 1000
+const LOAN_MAX := 10000
+const LOAN_RATE := 0.05  # per revenue cycle
+
+func borrow() -> bool:
+	if debt + LOAN_TRANCHE > LOAN_MAX:
+		return false
+	debt += LOAN_TRANCHE
+	money += LOAN_TRANCHE
+	log_event("BANK: borrowed $%d (debt $%d, %d%% interest per cycle)" % [LOAN_TRANCHE, debt, int(LOAN_RATE * 100)])
+	money_changed.emit()
+	return true
+
+func repay() -> bool:
+	var amount := mini(LOAN_TRANCHE, debt)
+	if amount <= 0 or money < amount:
+		return false
+	debt -= amount
+	money -= amount
+	money_changed.emit()
+	return true
 var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var offers: Array = []  # open marketplace offers
@@ -177,6 +200,11 @@ func sla_tick() -> void:
 	cycle += 1
 	var earned := 0
 	earned -= _security_sweep()
+	if debt > 0:
+		earned -= ceili(debt * LOAN_RATE)
+	if money < 0:
+		reputation = maxi(0, reputation - 2)
+		log_event("BANK: you are insolvent ($%d) — reputation is bleeding." % money)
 	if stage >= 1:  # colo includes power; your own room doesn't
 		earned -= power_draw() / 10
 	for c in Contracts.all():
@@ -433,7 +461,7 @@ func save_game() -> void:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	f.store_string(JSON.stringify({"money": money, "stage": stage, "cycle": cycle,
-		"reputation": reputation,
+		"reputation": reputation, "debt": debt,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
@@ -463,6 +491,7 @@ func load_game() -> bool:
 	offers = data.get("offers", [])
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
+	debt = int(data.get("debt", 0))
 	events = data.get("events", [])
 	incidents_seen = data.get("incidents_seen", {})
 	deals = data.get("deals", [])

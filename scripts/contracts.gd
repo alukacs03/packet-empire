@@ -162,9 +162,51 @@ static func all() -> Array:
 				{"d": "Cooling capacity covers power draw", "t": func() -> bool: return not Game.overheating()},
 			],
 		},
+		{
+			"id": "big_client",
+			"title": "The big client",
+			"customer": "Omega Holding",
+			"reward": 5000,
+			"brief": "Omega Holding audited you for a month. Their requirements read like everything you've learned: (1) their own VLAN 30 with a server on an access port; (2) a server at 10.30.0.10/24 that reaches the Internet (NAT or announced — your call); (3) a firewall rule explicitly protecting the 10.30.0.0/24 segment; (4) dynamic routing in the core (a live OSPF adjacency); (5) managed infrastructure — at least one switch with an addressed Management port. Deliver all five and they sign the biggest cheque you've seen.",
+			"reqs": [
+				{"d": "VLAN 30 with a connected access-port server", "t": func() -> bool: return _vlan_with_server(30)},
+				{"d": "10.30.0.10 reaches the Internet (8.8.8.8)", "t": func() -> bool: return _owner("10.30.0.10") != null and Sim.ping(_owner("10.30.0.10"), "8.8.8.8")["ok"]},
+				{"d": "Firewall rule protecting 10.30.0.0/24", "t": func() -> bool: return _fw_deny_covering("10.30.0.0", 24)},
+				{"d": "Live OSPF adjacency in the core", "t": func() -> bool: return _ospf_adjacency()},
+				{"d": "A switch with an addressed Management port", "t": func() -> bool: return _managed_switch()},
+			],
+		},
 	]
 
 # ---------- check helpers ----------
+
+static func _vlan_with_server(vid: int) -> bool:
+	for d in Game.all_devices():
+		if d.type != "switch" or not d.vlans.has(vid):
+			continue
+		for i: Net.Iface in d.ifaces:
+			if i.mode == "access" and i.untagged_vlan == vid:
+				var l := Game.link_at(i)
+				if l and l.other(i).dev.type == "server":
+					return true
+	return false
+
+static func _fw_deny_covering(prefix: String, plen: int) -> bool:
+	for d in Game.all_devices():
+		if d.type == "firewall":
+			for rule in d.acls:
+				if rule["action"] == "deny" and int(rule["dplen"]) >= plen \
+						and Net.same_subnet(rule["dst"], prefix, plen):
+					return true
+	return false
+
+static func _managed_switch() -> bool:
+	for d in Game.all_devices():
+		if d.type == "switch":
+			for i: Net.Iface in d.ifaces:
+				if i.name.begins_with("Management") and not i.ips.is_empty():
+					return true
+	return false
 
 static func _uplink_cabled() -> bool:
 	for d in Game.all_devices():

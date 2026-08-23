@@ -46,6 +46,7 @@ var if_ip_hint: Label
 var if_cable_lbl: Label
 var if_cable_btn: Button
 
+var map_overlay: Control
 var welcome_overlay: Control
 var tutorial_panel: PanelContainer
 var tutorial_box: VBoxContainer
@@ -78,6 +79,7 @@ func _ready() -> void:
 	_build_if_overlay()
 	_build_contracts_overlay()
 	_build_welcome()
+	_build_map()
 	_build_tutorial()
 	Game.topology_changed.connect(_refresh_tutorial)
 	Game.money_changed.connect(_refresh_tutorial)
@@ -97,7 +99,8 @@ func _refresh_money() -> void:
 		power = "   ⚡%dW / ❄%dW" % [Game.power_draw(), Game.cooling_capacity()]
 		if Game.overheating():
 			power += "  🔥 OVERHEATING"
-	money_lbl.text = "  $%d   ♦%d%s" % [Game.money, Game.reputation, power]
+	var debt_s := ("  (debt $%d)" % Game.debt) if Game.debt > 0 else ""
+	money_lbl.text = "  $%d%s   ♦%d%s" % [Game.money, debt_s, Game.reputation, power]
 	money_lbl.tooltip_text = "Money · Reputation (drives customer budgets) · Power/Cooling"
 	money_lbl.add_theme_color_override("font_color",
 		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
@@ -119,7 +122,7 @@ func _process(_dt: float) -> void:
 
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
-		or contracts_overlay.visible or welcome_overlay.visible
+		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -257,6 +260,10 @@ func _build_toolbar() -> void:
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
+	var mapb := Button.new()
+	mapb.text = "Map (M)"
+	mapb.pressed.connect(toggle_map)
+	h.add_child(mapb)
 	var cb := Button.new()
 	cb.text = "Contracts"
 	_accent(cb)
@@ -706,6 +713,21 @@ func _cable_action() -> void:
 		Game.connect_ifaces(cur_if, targets[id])
 		_refresh_iface())
 
+# ---------- topology map ----------
+
+func _build_map() -> void:
+	map_overlay = _overlay()
+	map_overlay.add_child(UIW.TopoMap.new().setup(func(dev: Net.NDevice) -> void:
+		map_overlay.visible = false
+		cur_rack = Game.rack_of(dev)
+		open_dev(dev)))
+
+func toggle_map() -> void:
+	if map_overlay.visible:
+		map_overlay.visible = false
+	elif not is_open():
+		_show_overlay(map_overlay)
+
 # ---------- tutorial checklist ----------
 
 func _build_tutorial() -> void:
@@ -826,6 +848,26 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	return h
 
 func _build_market_section() -> void:
+	var bank := HBoxContainer.new()
+	bank.add_theme_constant_override("separation", 10)
+	contracts_box.add_child(bank)
+	bank.add_child(_label("BANK   debt $%d   (%d%%/cycle interest)" % [Game.debt, int(Game.LOAN_RATE * 100)],
+		13, Color(0.7, 0.75, 0.85) if Game.debt == 0 else Color(0.95, 0.75, 0.5)))
+	var borrow := Button.new()
+	borrow.text = "Borrow $%d" % Game.LOAN_TRANCHE
+	borrow.disabled = Game.debt + Game.LOAN_TRANCHE > Game.LOAN_MAX
+	borrow.pressed.connect(func() -> void:
+		Game.borrow()
+		_refresh_contracts())
+	bank.add_child(borrow)
+	if Game.debt > 0:
+		var repay := Button.new()
+		repay.text = "Repay $%d" % mini(Game.LOAN_TRANCHE, Game.debt)
+		repay.disabled = Game.money < mini(Game.LOAN_TRANCHE, Game.debt)
+		repay.pressed.connect(func() -> void:
+			Game.repay()
+			_refresh_contracts())
+		bank.add_child(repay)
 	if not Game.events.is_empty():
 		contracts_box.add_child(_section("EVENT LOG"))
 		for ev in Game.events.slice(0, 4):
@@ -1078,6 +1120,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				close_dev()
 				if cur_rack:
 					_show_overlay(rack_overlay)
+		elif map_overlay.visible:
+			map_overlay.visible = false
 		elif welcome_overlay.visible:
 			welcome_overlay.visible = false
 		elif contracts_overlay.visible:
