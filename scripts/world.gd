@@ -24,6 +24,7 @@ func _ready() -> void:
 	if OS.get_environment("PACKET_SHOT") != "":
 		_shoot_all.call_deferred()
 		return
+	Game.topology_changed.connect(_site_watch)
 	if Game.load_game():
 		rebuild_racks()
 	else:
@@ -81,10 +82,18 @@ func _shoot_all() -> void:
 func rebuild_racks() -> void:
 	for child in get_children():
 		if child is RackVisual:
+			child.visible = false  # racks on other sites are not on this floor
 			child.queue_free()
-	for r in Game.racks:
+	for r in Game.racks_on(Game.current_site):
 		add_child(RackVisual.new().setup(r))
 	queue_redraw()
+
+var _shown_site := 0
+
+func _site_watch() -> void:
+	if Game.current_site != _shown_site:
+		_shown_site = Game.current_site
+		rebuild_racks()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui:
@@ -180,7 +189,8 @@ func _draw() -> void:
 	for l in Game.links:
 		var ra := Game.rack_of(l.a.dev)
 		var rb := Game.rack_of(l.b.dev)
-		if ra == null or rb == null or ra == rb or ra.visual == null or rb.visual == null:
+		if ra == null or rb == null or ra == rb or ra.visual == null or rb.visual == null \
+				or ra.site != Game.current_site or rb.site != Game.current_site:
 			continue
 		var key := "%s|%s" % [mini(ra.tile.x * 100 + ra.tile.y, rb.tile.x * 100 + rb.tile.y),
 			maxi(ra.tile.x * 100 + ra.tile.y, rb.tile.x * 100 + rb.tile.y)]

@@ -11,8 +11,10 @@ func _ready() -> void:
 
 var _fitted_grid := Vector2i.ZERO
 
+var _fitted_site := 0
+
 func _maybe_refit() -> void:
-	if Game.grid_size() != _fitted_grid:
+	if Game.grid_size() != _fitted_grid or Game.current_site != _fitted_site:
 		fit_to_floor()  # the floor grew: frame the new space
 
 func fit_to_floor() -> void:
@@ -20,6 +22,7 @@ func fit_to_floor() -> void:
 	## lost in a sea of black and a full datacenter still fits on screen
 	var g: Vector2i = Game.grid_size()
 	_fitted_grid = g
+	_fitted_site = Game.current_site
 	position = Iso.tile_to_world(Vector2i(g.x, g.y)) * 0.5 - Vector2(0, Iso.TILE_H * 0.5)
 	var span := Vector2((g.x + g.y) * Iso.TILE_W * 0.5, (g.x + g.y) * Iso.TILE_H * 0.5 + 160.0)
 	var vp := get_viewport_rect().size

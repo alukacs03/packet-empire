@@ -68,6 +68,7 @@ class Link:
 class Rack:
 	const SLOTS := 8
 	var name: String
+	var site := 0  # which site (floor) this rack stands on
 	var tile: Vector2i
 	var slots: Array = []
 	var visual: Node2D

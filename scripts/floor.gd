@@ -32,8 +32,8 @@ func _draw() -> void:
 		var pulse := 0.35 + 0.2 * sin(Time.get_ticks_msec() / 280.0)
 		_draw_tile(hover_tile, Color(0.3, 0.62, 0.75, pulse))
 		_outline(hover_tile, Color(0.55, 0.9, 1.0, 0.9), 2.0)
-	# faint tease of the floor space the next stage unlocks
-	if Game.stage < Game.STAGES.size() - 1:
+	# faint tease of the floor space the next stage unlocks (your own floor only)
+	if Game.current_site == 0 and Game.stage < Game.STAGES.size() - 1:
 		var nxt: Vector2i = Game.STAGES[Game.stage + 1]["grid"]
 		for y in nxt.y:
 			for x in nxt.x:

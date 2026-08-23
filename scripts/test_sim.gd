@@ -1140,7 +1140,7 @@ static func run() -> int:
 	mine_rack.slots[1] = my_srv
 	Game.connect_ifaces(my_srv.ifaces[0], my_sw.ifaces[0])
 	Game.add_ip(my_srv.ifaces[0], "10.0.0.1/24")  # the address their kit also uses
-	var target: Dictionary = Game.rivals[0]
+	var target: Dictionary = Game.rivals[1]  # a small shop on 10.0.0: no premises of its own
 	target["deals"] = 2
 	var racks_before := Game.racks.size()
 	var cash_before_acq := Game.money
@@ -1201,6 +1201,29 @@ static func run() -> int:
 		check(bool(req["ok"]), "integration: '%s' satisfied after the migration" % req["d"])
 	check(Game.try_complete_integration(Game.acquisitions[0]), "integration: the merge pays out")
 	check(not Game.try_complete_integration(Game.acquisitions[0]), "integration: it only pays once")
+
+	# --- buying a company that owns premises ---
+	var big := {}
+	for rv in Game.rivals:
+		if Rivals.has_site(rv) and Rivals.alive(rv) and int(rv["capacity"]) >= 8:
+			big = rv
+	check(not big.is_empty(), "sites: a large multi-rack operator exists in the market")
+	var sites_before := Game.site_count()
+	var my_free_before := Game._free_tiles(0).size()
+	Game.money = 500000
+	check(Game.buy_rival(big).is_empty(), "sites: a large competitor can be acquired")
+	check(Game.site_count() == sites_before + 1, "sites: their floor becomes a site you operate")
+	check(Game._free_tiles(0).size() == my_free_before, "sites: your own floor is untouched by the deal")
+	var new_site := Game.site_count() - 1
+	check(Game.racks_on(new_site).size() == Rivals.racks_needed(big),
+		"sites: their racks stand on their own floor")
+	check(Game.grid_size(new_site).x >= 10, "sites: an acquired datacenter floor is big")
+	Game.switch_site(new_site)
+	check(Game.grid_size() == Game.grid_size(new_site), "sites: switching changes the active floor")
+	check(Game.rack_at(Game.racks_on(new_site)[0].tile) != null, "sites: rack lookup is per-site")
+	Game.switch_site(0)
+	check(Game.racks_on(0).size() == 1 + Rivals.racks_needed(target),
+		"sites: the small shop's racks did move into your room")
 
 	print("---- %d failures" % fails)
 	return fails

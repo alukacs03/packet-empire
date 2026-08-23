@@ -84,6 +84,7 @@ var cycle_lbl: Label
 var contracts_btn: Button
 var objective_lbl: Label
 var expand_btn: Button
+var site_btn: Button
 var theme_res: Theme
 var mono: SystemFont
 
@@ -156,7 +157,12 @@ func _refresh_money() -> void:
 	money_lbl.tooltip_text = "Money · Reputation (drives customer budgets) · Power/Cooling"
 	money_lbl.add_theme_color_override("font_color",
 		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
-	if Game.stage < Game.STAGES.size() - 1:
+	if site_btn:
+		site_btn.text = "Site: %s" % Game.site_name(Game.current_site)
+		site_btn.visible = Game.site_count() > 1
+	if Game.current_site != 0:
+		expand_btn.visible = false  # acquired floors come as they are
+	elif Game.stage < Game.STAGES.size() - 1:
 		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
 		expand_btn.text = "Expand: %s ($%d)" % [nxt["name"], nxt["price"]]
 		expand_btn.tooltip_text = nxt["blurb"]
@@ -377,6 +383,17 @@ func _build_toolbar() -> void:
 	learnb.text = "Learn"
 	learnb.pressed.connect(open_pedia)
 	h.add_child(learnb)
+	site_btn = Button.new()
+	site_btn.tooltip_text = "Switch between the floors you operate"
+	site_btn.pressed.connect(func() -> void:
+		var names: Array = []
+		for i in Game.site_count():
+			names.append("%s%s  (%dx%d, %d racks)" % ["▸ " if i == Game.current_site else "   ",
+				Game.site_name(i), Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size()])
+		_menu(site_btn, names, func(id: int) -> void:
+			Game.switch_site(id)
+			_refresh_money()))
+	h.add_child(site_btn)
 	var opsb := Button.new()
 	opsb.text = "Ops (O)"
 	opsb.pressed.connect(toggle_ops)
@@ -1439,8 +1456,10 @@ func _build_market_section() -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(row)
-		var l := _label("  %-16s %d customers · %d racks · asking $%d" % [r["name"],
-			int(r["deals"]), Rivals.racks_needed(r), price], 13, Color(0.8, 0.78, 0.7))
+		var premises: String = ("owns %s (%dx%d)" % [r["site"]["name"], int(r["site"]["grid"][0]),
+			int(r["site"]["grid"][1])]) if Rivals.has_site(r) else "no premises: racks move into your room"
+		var l := _label("  %-16s %d customers · %d racks · %s · asking $%d" % [r["name"],
+			int(r["deals"]), Rivals.racks_needed(r), premises, price], 13, Color(0.8, 0.78, 0.7))
 		l.add_theme_font_override("font", mono)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
@@ -1466,9 +1485,11 @@ func _build_market_section() -> void:
 		var cv := VBoxContainer.new()
 		card.add_child(cv)
 		cv.add_child(_label("INTEGRATION: %s" % a["rival"], 16, Color.WHITE))
-		var brief := _label(("You own their kit, but it still runs their way: subnet %s.0/24 on VLAN %d, "
+		var where: String = ("on their own site '%s' (switch floors in the HUD)" % Game.site_name(int(a.get("site", 0)))) \
+			if bool(a.get("premises", false)) else "moved into your room"
+		var brief := _label(("Their kit is %s, but it still runs their way: subnet %s.0/24 on VLAN %d, "
 			+ "cabled only to itself. Merge it into your network without breaking their customers, "
-			+ "then save the configs.") % [a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
+			+ "then save the configs.") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
 		cv.add_child(brief)

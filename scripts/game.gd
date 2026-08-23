@@ -43,6 +43,8 @@ const TYPE_SPECS := {
 const RACK_PRICE := 500
 var save_path := "user://save.json"
 
+var sites: Array = []  # [{name, grid: [w,h], kind}]; site 0 is your own floor
+var current_site := 0
 var racks: Array = []
 var links: Array = []
 var money := 2000
@@ -83,8 +85,42 @@ var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, heal
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
 	"cooling": 0, "rack": 0, "mac": 0}
 
-func grid_size() -> Vector2i:
-	return STAGES[stage]["grid"]
+func _ensure_sites() -> void:
+	if sites.is_empty():
+		sites = [{"name": "Home floor", "grid": [0, 0], "kind": "own"}]
+
+func site_count() -> int:
+	_ensure_sites()
+	return sites.size()
+
+func site_name(idx: int) -> String:
+	_ensure_sites()
+	return sites[idx]["name"]
+
+func grid_size(site := -1) -> Vector2i:
+	_ensure_sites()
+	var idx := current_site if site < 0 else site
+	if idx == 0:
+		return STAGES[stage]["grid"]  # your own floor grows with your career
+	var g: Array = sites[idx]["grid"]
+	return Vector2i(int(g[0]), int(g[1]))
+
+func switch_site(idx: int) -> void:
+	if idx >= 0 and idx < site_count():
+		current_site = idx
+		topology_changed.emit()
+
+func add_site(name: String, grid: Vector2i, kind := "acquired") -> int:
+	_ensure_sites()
+	sites.append({"name": name, "grid": [grid.x, grid.y], "kind": kind})
+	return sites.size() - 1
+
+func racks_on(site: int) -> Array:
+	var out: Array = []
+	for r in racks:
+		if r.site == site:
+			out.append(r)
+	return out
 
 func expand() -> bool:
 	if stage >= STAGES.size() - 1:
@@ -279,10 +315,18 @@ func buy_rival(r: Dictionary) -> String:
 	var price := Rivals.asking_price(r)
 	if money < price:
 		return "you cannot afford %s ($%d)" % [r["name"], price]
-	var free_tiles := _free_tiles()
-	if free_tiles.size() < Rivals.racks_needed(r):
-		return "no floor space: %s needs %d free tiles, you have %d (expand first)" % [
-			r["name"], Rivals.racks_needed(r), free_tiles.size()]
+	var target_site := current_site
+	var free_tiles: Array = []
+	if Rivals.has_site(r):
+		# they own premises: you buy the building and everything in it
+		var sg: Array = r["site"]["grid"]
+		target_site = add_site(r["site"]["name"], Vector2i(int(sg[0]), int(sg[1])), r["site"]["kind"])
+		free_tiles = _free_tiles(target_site)
+	else:
+		free_tiles = _free_tiles()
+		if free_tiles.size() < Rivals.racks_needed(r):
+			return "no floor space: %s runs from %d rack(s) that must move into your room, and you have %d free tile(s). Expand first." % [
+				r["name"], Rivals.racks_needed(r), free_tiles.size()]
 	money -= price
 	r["bought"] = true
 	var idx := 0
@@ -290,7 +334,7 @@ func buy_rival(r: Dictionary) -> String:
 	var their_net: String = r.get("net", "10.0.0")
 	var their_vlan: int = int(r.get("vlan", 1))
 	for rack_models in r["racks"]:
-		var rack := add_rack(free_tiles[idx])
+		var rack := add_rack(free_tiles[idx], target_site)
 		idx += 1
 		var slot := 0
 		var rack_switch: Net.NDevice = null
@@ -326,7 +370,8 @@ func buy_rival(r: Dictionary) -> String:
 		if rack_switch:
 			rack_switch.startup = device_config(rack_switch)  # their gear was saved
 	acquisitions.append({"rival": r["name"], "net": their_net, "vlan": their_vlan,
-		"hosts": host_ips, "done": false})
+		"hosts": host_ips, "site": target_site, "done": false,
+		"premises": Rivals.has_site(r)})
 	for i in int(r["deals"]):  # inherited customers, hosted on their kit
 		var served: String = host_ips[i % host_ips.size()] if not host_ips.is_empty() else ""
 		deals.append({"id": "acq_%s_%d" % [r["name"], i], "customer": "%s customer %d" % [r["name"], i + 1],
@@ -334,8 +379,12 @@ func buy_rival(r: Dictionary) -> String:
 			"brief": "Inherited from %s: their server at %s must stay reachable." % [r["name"], served],
 			"healthy": true, "acquired": true})
 	reputation = mini(100, reputation + 5)
-	log_event("ACQUISITION: you bought %s for $%d, taking their %d racks and %d contracts."
-		% [r["name"], price, Rivals.racks_needed(r), int(r["deals"])])
+	if Rivals.has_site(r):
+		log_event("ACQUISITION: you bought %s for $%d, including their site '%s' with %d racks and %d contracts."
+			% [r["name"], price, r["site"]["name"], Rivals.racks_needed(r), int(r["deals"])])
+	else:
+		log_event("ACQUISITION: you bought %s for $%d and moved their %d rack(s) into your room, with %d contracts."
+			% [r["name"], price, Rivals.racks_needed(r), int(r["deals"])])
 	money_changed.emit()
 	topology_changed.emit()
 	return ""
@@ -401,12 +450,13 @@ func try_complete_integration(a: Dictionary) -> bool:
 	money_changed.emit()
 	return true
 
-func _free_tiles() -> Array:
+func _free_tiles(site := -1) -> Array:
+	var idx := current_site if site < 0 else site
 	var out: Array = []
-	var g := grid_size()
+	var g := grid_size(idx)
 	for y in g.y:
 		for x in g.x:
-			if rack_at(Vector2i(x, y)) == null:
+			if rack_at(Vector2i(x, y), idx) == null:
 				out.append(Vector2i(x, y))
 	return out
 
@@ -661,9 +711,10 @@ func _refund(amount: int) -> void:
 
 # ---------- racks ----------
 
-func add_rack(tile: Vector2i) -> Net.Rack:
+func add_rack(tile: Vector2i, site := -1) -> Net.Rack:
 	_counter["rack"] += 1
 	var r := Net.Rack.new("R%d" % _counter["rack"], tile)
+	r.site = current_site if site < 0 else site
 	racks.append(r)
 	return r
 
@@ -678,9 +729,10 @@ func sell_rack(r: Net.Rack) -> bool:
 	topology_changed.emit()
 	return true
 
-func rack_at(tile: Vector2i) -> Net.Rack:
+func rack_at(tile: Vector2i, site := -1) -> Net.Rack:
+	var idx := current_site if site < 0 else site
 	for r in racks:
-		if r.tile == tile:
+		if r.tile == tile and r.site == idx:
 			return r
 	return null
 
@@ -876,13 +928,13 @@ func _serialize() -> Dictionary:
 			slot_names.append(d.name if d else null)
 			if d:
 				devs[d.name] = _ser_device(d)
-		rack_data.append({"name": r.name, "tile": [r.tile.x, r.tile.y], "slots": slot_names})
+		rack_data.append({"name": r.name, "site": r.site, "tile": [r.tile.x, r.tile.y], "slots": slot_names})
 	var link_data: Array = []
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
-		"acquisitions": acquisitions,
+		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}
@@ -988,6 +1040,9 @@ func _apply(data: Dictionary) -> void:
 	cycle = int(data.get("cycle", 0))
 	reputation = int(data.get("reputation", 50))
 	acquisitions = data.get("acquisitions", [])
+	sites = data.get("sites", [])
+	_ensure_sites()
+	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	rivals = data.get("rivals", [])
 	if rivals.is_empty():
 		rivals = Rivals.spawn()
@@ -1047,6 +1102,7 @@ func _apply(data: Dictionary) -> void:
 		by_name[d.name] = d
 	for rd in data["racks"]:
 		var r := Net.Rack.new(rd["name"], Vector2i(int(rd["tile"][0]), int(rd["tile"][1])))
+		r.site = int(rd.get("site", 0))
 		for si in rd["slots"].size():
 			if rd["slots"][si] != null:
 				r.slots[si] = by_name[rd["slots"][si]]
@@ -1063,8 +1119,8 @@ func _apply(data: Dictionary) -> void:
 	topology_changed.emit()
 
 func _rack_outside_grid() -> bool:
-	var g := grid_size()
 	for r in racks:
+		var g := grid_size(r.site)
 		if r.tile.x >= g.x or r.tile.y >= g.y:
 			return true
 	return false
