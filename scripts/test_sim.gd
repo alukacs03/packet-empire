@@ -3074,6 +3074,61 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- multihoming: two upstreams, and the policy that picks between them ---
+	var mh_rack := Game.add_rack(Vector2i(41, 1))
+	var mh_edge := Game.new_device("rtr-edge")
+	var mh_isp_a := Game.new_device("isp-uplink")
+	var mh_isp_b := Game.new_device("isp-uplink")
+	mh_rack.slots[0] = mh_edge
+	mh_rack.slots[1] = mh_isp_a
+	mh_rack.slots[2] = mh_isp_b
+	Game.connect_ifaces(mh_edge.ifaces[0], mh_isp_a.ifaces[0])
+	Game.connect_ifaces(mh_edge.ifaces[1], mh_isp_b.ifaces[0])
+	Game.add_ip(mh_edge.ifaces[0], "100.70.0.2/30")
+	Game.add_ip(mh_isp_a.ifaces[0], "100.70.0.1/30")
+	Game.add_ip(mh_edge.ifaces[1], "100.71.0.2/30")
+	Game.add_ip(mh_isp_b.ifaces[0], "100.71.0.1/30")
+	mh_isp_a.bgp = {"asn": 64500, "neighbors": [], "networks": ["0.0.0.0/0", "203.0.113.0/24"]}
+	mh_isp_b.bgp = {"asn": 64501, "neighbors": [], "networks": ["0.0.0.0/0", "198.51.100.0/24"]}
+	var mh_cli := CLI.new_session(mh_edge)
+	mh_cli.exec("enable")
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	mh_cli.exec("neighbor 100.70.0.1 remote-as 64500")
+	mh_cli.exec("neighbor 100.71.0.1 remote-as 64501")
+	mh_cli.exec("end")
+	Sim.flush_learned_state()
+	check(Sim.route_via(mh_edge, "8.8.8.8") != "", "bgp: a default route arrives from an upstream")
+	# local preference decides which upstream we send traffic to
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	check(mh_cli.exec("neighbor 100.71.0.1 local-preference 200").is_empty(),
+		"bgp: local preference can be set on a neighbour")
+	mh_cli.exec("end")
+	Sim.flush_learned_state()
+	check(Sim.route_via(mh_edge, "8.8.8.8") == "100.71.0.1",
+		"bgp: the higher local preference wins, whatever the path length")
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	mh_cli.exec("neighbor 100.71.0.1 local-preference 50")
+	mh_cli.exec("end")
+	Sim.flush_learned_state()
+	check(Sim.route_via(mh_edge, "8.8.8.8") == "100.70.0.1",
+		"bgp: lowering it sends the traffic back the other way")
+	# a prefix list filters what we are willing to accept
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	check(mh_cli.exec("neighbor 100.70.0.1 prefix-list in 203.0.113.0/24").is_empty(),
+		"bgp: an inbound prefix list can be applied")
+	mh_cli.exec("end")
+	Sim.flush_learned_state()
+	check(Sim.route_via(mh_edge, "203.0.113.5") != "",
+		"bgp: a permitted prefix is still accepted")
+	check(Sim.route_via(mh_edge, "8.8.8.8") == "100.71.0.1",
+		"bgp: the default route is filtered out and the other upstream carries it")
+	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
+		"bgp: show ip bgp reports the policy")
+
 	# --- MTU, jumbo frames and the mismatch that only breaks big packets ---
 	var mt_rack := Game.add_rack(Vector2i(40, 1))
 	var mt_sw := Game.new_device("sw-8")

@@ -1088,10 +1088,36 @@ class EOS extends Session:
 		if r.size() == 3 and String(r[0]).is_valid_ip_address() \
 				and "remote-as".begins_with(r[1]) and String(r[2]).is_valid_int():
 			_bgp_no_neighbor([r[0]])
-			dev.bgp["neighbors"].append({"ip": r[0], "remote_as": int(r[2])})
+			dev.bgp["neighbors"].append({"ip": r[0], "remote_as": int(r[2]),
+				"local_pref": 100, "prepend": 0, "prefix_in": [], "prefix_out": []})
 			Game.topology_changed.emit()
 			return ""
-		return "usage: neighbor <ip> remote-as <asn>\n"
+		var nb := _find_nb(String(r[0]) if r.size() > 0 else "")
+		if nb.is_empty():
+			return "usage: neighbor <ip> remote-as <asn> | local-preference <n> | prepend <n> | prefix-list in|out <cidr>[,...]\n"
+		if r.size() == 3 and "local-preference".begins_with(r[1]) and String(r[2]).is_valid_int():
+			nb["local_pref"] = int(r[2])  # higher wins: which upstream WE use
+			Game.topology_changed.emit()
+			return ""
+		if r.size() == 3 and String(r[1]) == "prepend" and String(r[2]).is_valid_int():
+			nb["prepend"] = clampi(int(r[2]), 0, 10)  # longer path: how THEY reach us
+			Game.topology_changed.emit()
+			return ""
+		if r.size() == 4 and "prefix-list".begins_with(r[1]) and String(r[2]) in ["in", "out"]:
+			var list: Array = []
+			for part in String(r[3]).split(","):
+				if part.strip_edges() != "":
+					list.append(part.strip_edges())
+			nb["prefix_%s" % r[2]] = list
+			Game.topology_changed.emit()
+			return ""
+		return "usage: neighbor <ip> remote-as <asn> | local-preference <n> | prepend <n> | prefix-list in|out <cidr>[,...]\n"
+
+	func _find_nb(ip: String) -> Dictionary:
+		for nb in dev.bgp.get("neighbors", []):
+			if String(nb["ip"]) == ip:
+				return nb
+		return {}
 
 	func _bgp_no_neighbor(r: Array) -> String:
 		if r.size() != 1:
@@ -1126,6 +1152,17 @@ class EOS extends Session:
 		for nb in dev.bgp["neighbors"]:
 			var st := "Established" if Sim.bgp_established(dev, nb) else "Idle"
 			out += "%-16s %-10d %s\n" % [nb["ip"], int(nb["remote_as"]), st]
+			var policy: Array = []
+			if int(nb.get("local_pref", 100)) != 100:
+				policy.append("local-pref %d" % int(nb["local_pref"]))
+			if int(nb.get("prepend", 0)) > 0:
+				policy.append("prepend x%d" % int(nb["prepend"]))
+			if not nb.get("prefix_in", []).is_empty():
+				policy.append("in: %s" % ",".join(PackedStringArray(nb["prefix_in"])))
+			if not nb.get("prefix_out", []).is_empty():
+				policy.append("out: %s" % ",".join(PackedStringArray(nb["prefix_out"])))
+			if not policy.is_empty():
+				out += "                 policy: %s\n" % "   ".join(PackedStringArray(policy))
 		if not dev.bgp["networks"].is_empty():
 			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
 		return out

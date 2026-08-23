@@ -225,9 +225,16 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 	for nb in dev.bgp.get("neighbors", []):
 		if bgp_established(dev, nb):
 			var peer := _ip_owner(nb["ip"])
+			var peer_nb := _neighbor_towards(peer, dev)
 			for net in peer.bgp.get("networks", []):
+				if not _policy_allows(peer_nb, "prefix_out", String(net)):
+					continue  # the far side is not announcing it to us
+				if not _policy_allows(nb, "prefix_in", String(net)):
+					continue  # we are not accepting it from them
 				var parts := String(net).split("/")
-				out.append({"prefix": parts[0], "plen": int(parts[1]), "via": nb["ip"]})
+				out.append({"prefix": parts[0], "plen": int(parts[1]), "via": nb["ip"],
+					"pref": int(nb.get("local_pref", 100)),
+					"cost": 1 + int(peer_nb.get("prepend", 0))})
 	for other in Game.all_devices():
 		if other == dev or other.bgp.is_empty():
 			continue
@@ -236,10 +243,35 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 				var via := _ip_of_on_subnet(other, onb["ip"])
 				if via == "":
 					continue
+				var our_nb := _neighbor_towards(dev, other)
 				for net in other.bgp.get("networks", []):
+					if not _policy_allows(onb, "prefix_out", String(net)):
+						continue
+					if not _policy_allows(our_nb, "prefix_in", String(net)):
+						continue
 					var parts := String(net).split("/")
-					out.append({"prefix": parts[0], "plen": int(parts[1]), "via": via})
+					# their prepending is how they ask us to prefer the other path
+					out.append({"prefix": parts[0], "plen": int(parts[1]), "via": via,
+						"pref": int(our_nb.get("local_pref", 100)),
+						"cost": 1 + int(onb.get("prepend", 0))})
 	return out
+
+static func _neighbor_towards(dev: Net.NDevice, other: Net.NDevice) -> Dictionary:
+	## the neighbour entry on dev that points at any address other owns
+	for nb in dev.bgp.get("neighbors", []):
+		if _owns_ip_anywhere(other, String(nb["ip"])):
+			return nb
+	return {}
+
+static func _policy_allows(nb: Dictionary, key: String, cidr: String) -> bool:
+	## an empty prefix list means no filter, which is how real gear behaves
+	## before anybody writes a policy: everything goes everywhere
+	if nb.is_empty():
+		return true
+	var list: Array = nb.get(key, [])
+	if list.is_empty():
+		return true
+	return cidr in list
 
 static func _ip_owner(ip: String) -> Net.NDevice:
 	for d in Game.all_devices():
@@ -648,14 +680,21 @@ static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		best_len = maxi(best_len, int(c["plen"]))
 	if best_len < 0:
 		return []
-	var best_cost := 1 << 30
+	# BGP decides on local preference before it looks at path length, which is
+	# the whole reason local-pref exists: it is how you pick your own upstream
+	var best_pref := -(1 << 30)
 	for c in cands:
 		if int(c["plen"]) == best_len:
+			best_pref = maxi(best_pref, int(c.get("pref", 100)))
+	var best_cost := 1 << 30
+	for c in cands:
+		if int(c["plen"]) == best_len and int(c.get("pref", 100)) == best_pref:
 			best_cost = mini(best_cost, int(c.get("cost", 1)))
 	var out: Array = []
 	var seen := {}
 	for cand in cands:
-		if int(cand["plen"]) != best_len or int(cand.get("cost", 1)) != best_cost:
+		if int(cand["plen"]) != best_len or int(cand.get("pref", 100)) != best_pref \
+				or int(cand.get("cost", 1)) != best_cost:
 			continue
 		var key := "%s|%s" % [str(cand["next_hop"]), str(cand["iface"])]
 		if seen.has(key):
@@ -718,7 +757,7 @@ static func _all_routes(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		var via_if := _connected_iface(dev, String(r["via"]), vrf)
 		if via_if:
 			out.append({"iface": via_if, "next_hop": r["via"], "plen": int(r["plen"]),
-				"cost": int(r.get("cost", 1))})
+				"cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100))})
 	return out
 
 static func _route_lookup_single(dev: Net.NDevice, dst_ip: String) -> Dictionary:
