@@ -3148,6 +3148,58 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- rival strategies and their interest in buying you ---
+	var rv_saved := Game.rivals.duplicate(true)
+	Game.rivals = Rivals.spawn()
+	var rv_kinds := {}
+	for rv in Game.rivals:
+		rv_kinds[String(rv.get("strategy", ""))] = true
+	check(rv_kinds.size() >= 4, "rivals: the field is not seven copies of one company")
+	var rv_budget := {}
+	var rv_premium := {}
+	var rv_spec := {}
+	for rv2 in Game.rivals:
+		if String(rv2["strategy"]) == "budget":
+			rv_budget = rv2
+		elif String(rv2["strategy"]) == "premium":
+			rv_premium = rv2
+		elif String(rv2["strategy"]) == "specialist":
+			rv_spec = rv2
+	var rv_offer := {"budget": 1000, "kind": "hosting"}
+	rv_premium["aggression"] = rv_budget["aggression"]
+	rv_premium["deals"] = int(rv_budget["deals"])
+	check(Rivals.bid_for(rv_budget, rv_offer) < Rivals.bid_for(rv_premium, rv_offer),
+		"rivals: the cut-price company undercuts the premium one on identical terms")
+	check(not Rivals.will_bid(rv_spec, {"kind": "nothing_they_do"}),
+		"rivals: a specialist does not chase work outside its patch")
+	check(Rivals.will_bid(rv_spec, {"kind": String(rv_spec["niche"])}),
+		"rivals: and does chase work inside it")
+	check(Rivals.bid_for(rv_spec, {"budget": 1000, "kind": String(rv_spec["niche"])})
+		< Rivals.bid_for(rv_spec, {"budget": 1000, "kind": "own_vlan"}) or
+		String(rv_spec["niche"]) == "own_vlan",
+		"rivals: a specialist prices its own patch keenly")
+	# a buyout approach, and both answers to it
+	var rv_pred := {}
+	for rv3 in Game.rivals:
+		if String(rv3["strategy"]) == "predator":
+			rv_pred = rv3
+	check(not rv_pred.is_empty(), "rivals: somebody in the field would rather buy than compete")
+	check(Rivals.player_valuation() > 0, "buyout: the company is worth something")
+	var rv_money := Game.money
+	Game.buyout_offer = {"rival": String(rv_pred["name"]), "price": 50000, "ttl": 3,
+		"cycle": Game.cycle}
+	check(Game.decline_buyout() == "", "buyout: an offer can be turned down")
+	check(Game.buyout_offer.is_empty(), "buyout: which takes it off the table")
+	check(Game.decline_buyout() != "", "buyout: and there is nothing left to decline")
+	Game.buyout_offer = {"rival": String(rv_pred["name"]), "price": 50000, "ttl": 3,
+		"cycle": Game.cycle}
+	check(Game.accept_buyout() == "", "buyout: or accepted")
+	check(Game.money == rv_money + 50000 and Game.sold_out,
+		"buyout: which pays out and ends the run")
+	Game.sold_out = false
+	Game.money = rv_money
+	Game.rivals = rv_saved
+
 	# --- energy and the books ---
 	var en_cycle := Game.cycle
 	var en_fixed := Game.fixed_tariff

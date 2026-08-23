@@ -2651,6 +2651,35 @@ func _build_market_tab() -> void:
 	else:
 		contracts_box.add_child(_label("Market intelligence from %d observed bid(s)." % Game.market_intel,
 			13, Color(0.65, 0.85, 0.6)))
+	if not Game.buyout_offer.is_empty():
+		contracts_box.add_child(_section("AN APPROACH"))
+		contracts_box.add_child(_wrap(
+			"%s would like to buy your company for $%d. They will wait %d more cycle(s). Your book, hardware and premises are worth about $%d on paper."
+			% [Game.buyout_offer["rival"], int(Game.buyout_offer["price"]),
+				int(Game.buyout_offer["ttl"]), Rivals.player_valuation()],
+			14, Color(1.0, 0.85, 0.55), 560))
+		var bo_row := HBoxContainer.new()
+		bo_row.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(bo_row)
+		var take := Button.new()
+		take.text = "Sell the company"
+		take.tooltip_text = "It ends here, with the money and the score you have earned."
+		take.pressed.connect(func() -> void:
+			_menu(take, ["Yes. Take the money and walk."], func(_id: int) -> void:
+				Game.accept_buyout()
+				_refresh_contracts()))
+		bo_row.add_child(take)
+		var refuse := Button.new()
+		refuse.text = "Turn them down"
+		refuse.tooltip_text = "They will compete harder for everything after this."
+		refuse.pressed.connect(func() -> void:
+			Game.decline_buyout()
+			_refresh_contracts())
+		_accent(refuse)
+		bo_row.add_child(refuse)
+	if Game.sold_out:
+		contracts_box.add_child(_wrap("You sold the company. Everything still runs, and none of it is yours.",
+			14, Color(0.7, 0.75, 0.85), 560))
 	contracts_box.add_child(_section("THE COMPETITION"))
 	for r: Dictionary in Game.rivals:
 		if not Rivals.alive(r):
@@ -2659,15 +2688,17 @@ func _build_market_tab() -> void:
 				Color(0.6, 0.62, 0.68) if r.has("merged_into") else Color(0.5, 0.8, 0.6)))
 			continue
 		var price := Rivals.asking_price(r)
+		var strat: Dictionary = Rivals.strategy_of(r)
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(row)
 		var premises: String = ("site %dx%d" % [int(r["site"]["grid"][0]),
 			int(r["site"]["grid"][1])]) if Rivals.has_site(r) else "no premises"
-		var l := _label("  %-16s %2d cust · %d racks · %-11s · $%d" % [r["name"],
-			int(r["deals"]), Rivals.racks_needed(r), premises, price], 13, Color(0.8, 0.78, 0.7))
-		l.tooltip_text = ("Buying %s brings %d rack(s) and %d contract(s). %s" % [r["name"],
-			Rivals.racks_needed(r), int(r["deals"]),
+		var l := _label("  %-16s %-11s %2d cust · %d racks · %-11s · $%d" % [r["name"],
+			strat["label"], int(r["deals"]), Rivals.racks_needed(r), premises, price],
+			13, Color(0.8, 0.78, 0.7))
+		l.tooltip_text = ("%s\n\nBuying %s brings %d rack(s) and %d contract(s). %s" % [
+			strat["blurb"], r["name"], Rivals.racks_needed(r), int(r["deals"]),
 			("Their site '%s' comes with the company." % r["site"]["name"]) if Rivals.has_site(r)
 			else "Their racks must fit on a floor you already have."])
 		l.add_theme_font_override("font", mono)

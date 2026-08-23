@@ -959,6 +959,33 @@ func make_report() -> Dictionary:
 			int(rep["uptime"]), rep["rank"]])
 	return rep
 
+func accept_buyout() -> String:
+	if buyout_offer.is_empty():
+		return "there is nothing on the table"
+	var price := int(buyout_offer["price"])
+	money += price
+	sold_out = true
+	stats["earned"] = int(stats.get("earned", 0)) + price
+	log_event("SOLD: %s bought the company for $%d. That is the end of it."
+		% [buyout_offer["rival"], price])
+	buyout_offer = {}
+	money_changed.emit()
+	topology_changed.emit()
+	return ""
+
+func decline_buyout() -> String:
+	if buyout_offer.is_empty():
+		return "there is nothing on the table"
+	var who := String(buyout_offer["rival"])
+	buyout_offer = {}
+	# turning somebody down makes them a worse neighbour
+	for r in rivals:
+		if String(r["name"]) == who:
+			r["aggression"] = maxf(0.6, float(r["aggression"]) - 0.12)
+			r["cash"] = int(r["cash"]) + 4000
+	log_event("APPROACH: you turned %s down. They are going to compete harder for it." % who)
+	return ""
+
 func rank_score() -> int:
 	## lifetime earnings, weighted by the scale and quality of the operation
 	var base: int = int(stats.get("earned", 0))
@@ -1735,6 +1762,8 @@ const ENERGY_CURVE := [0.55, 0.6, 1.15, 1.45, 1.5, 1.25, 0.95, 0.7]
 const EFFICIENCY_STEP := 0.09  # draw removed per upgrade
 const EFFICIENCY_PRICE := 2600
 
+var buyout_offer := {}  # a rival's standing offer to buy you out
+var sold_out := false  # you took it; the game is over and the score is final
 var accountant := false
 var fixed_tariff := false  # a flat rate: dearer on average, immune to peaks
 var efficiency := 0  # upgrades bought
@@ -2286,6 +2315,12 @@ func sla_tick() -> void:
 					topology_changed.emit()
 					break
 	Rivals.tick()
+	if not buyout_offer.is_empty():
+		buyout_offer["ttl"] = int(buyout_offer["ttl"]) - 1
+		if int(buyout_offer["ttl"]) <= 0:
+			log_event("APPROACH: %s has withdrawn their offer." % buyout_offer["rival"])
+			buyout_offer = {}
+	Rivals.maybe_offer_for_player()
 	_maybe_poach()
 	_attack_tick()
 	if scrubbing:
@@ -2796,6 +2831,7 @@ func _serialize() -> Dictionary:
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
+		"buyout_offer": buyout_offer, "sold_out": sold_out,
 		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
 		"efficiency": efficiency, "quarter_profit": quarter_profit,
 		"quarter_depreciation": quarter_depreciation,
@@ -3089,6 +3125,8 @@ func _apply(data: Dictionary) -> void:
 	ixp = data.get("ixp", {})
 	playbooks = data.get("playbooks", [])
 	ipv4_blocks = int(data.get("ipv4_blocks", 1))
+	buyout_offer = data.get("buyout_offer", {})
+	sold_out = bool(data.get("sold_out", false))
 	accountant = bool(data.get("accountant", false))
 	fixed_tariff = bool(data.get("fixed_tariff", false))
 	efficiency = int(data.get("efficiency", 0))
