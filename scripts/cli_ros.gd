@@ -126,6 +126,9 @@ func exec(line: String) -> String:
 				i.enabled = p["disabled"] != "yes"
 			if p.has("mtu") and String(p["mtu"]).is_valid_int():
 				i.mtu = clampi(int(p["mtu"]), 576, 9216)
+			if p.has("ra"):
+				i.ra = String(p["ra"]) == "yes"
+				Game.topology_changed.emit()
 			if p.has("bfd"):
 				i.bfd = String(p["bfd"]) == "yes"
 				Game.topology_changed.emit()

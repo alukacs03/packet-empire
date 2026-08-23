@@ -24,6 +24,7 @@ class Iface:
 	var storm_limit := 0  # broadcast frames allowed per operation, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation
 	var vm := ""  # a virtual machine's NIC, hosted on this server
+	var ra := false  # router: advertise this interface's v6 prefix to the segment
 	var bfd := false  # watch the far end, and withdraw the route when it dies
 	var mlag := 0  # member of a bundle shared with the peer switch
 	var mlag_peerlink := false  # the link that keeps the two switches in step
@@ -209,6 +210,28 @@ static func v6_compress(addr: String) -> String:
 	if best_start >= 0 and best_start + best_len == 8:
 		out += ":"
 	return out
+
+static func eui64(mac: String) -> String:
+	## the interface identifier a host builds from its own MAC: split it,
+	## push fffe into the middle, and flip the universal/local bit
+	var parts := mac.split(":")
+	if parts.size() != 6:
+		return "0000:0000:0000:0001"
+	var first := "%02x" % (("0x" + parts[0]).hex_to_int() ^ 0x02)
+	return "%s%s:%sff:fe%s:%s%s" % [first, parts[1], parts[2], parts[3], parts[4], parts[5]]
+
+static func slaac_address(prefix: String, plen: int, mac: String) -> String:
+	## prefix (first 64 bits) plus the host's own identifier
+	var h := v6_hextets(prefix)
+	if h.is_empty() or plen != 64:
+		return ""
+	var id := eui64(mac).split(":")
+	var out: Array = []
+	for i in 4:
+		out.append("%x" % int(h[i]))
+	for part in id:
+		out.append(part)
+	return v6_compress(":".join(PackedStringArray(out)))
 
 static func same_subnet6(a: String, b: String, plen: int) -> bool:
 	var ha := v6_hextets(a)

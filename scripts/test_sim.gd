@@ -3129,6 +3129,45 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- IPv6 autoconfiguration ---
+	check(Net.eui64("52:54:00:12:34:56") == "5054:00ff:fe12:3456",
+		"slaac: EUI-64 flips the universal bit and pushes fffe into the middle")
+	check(Net.slaac_address("2001:db8:1:1::", 64, "52:54:00:12:34:56").ends_with("5054:ff:fe12:3456"),
+		"slaac: the address is the prefix plus the host's own identifier")
+	check(Net.slaac_address("2001:db8:1:1::", 48, "52:54:00:12:34:56") == "",
+		"slaac: it needs a /64, which is arithmetic rather than convention")
+	var sl_rack := Game.add_rack(Vector2i(45, 1))
+	var sl_rtr := Game.new_device("rtr-edge")
+	var sl_sw := Game.new_device("sw-8")
+	var sl_host := Game.new_device("srv-1")
+	sl_rack.slots[0] = sl_rtr
+	sl_rack.slots[1] = sl_sw
+	sl_rack.slots[2] = sl_host
+	Game.connect_ifaces(sl_rtr.ifaces[0], sl_sw.ifaces[0])
+	Game.connect_ifaces(sl_host.ifaces[0], sl_sw.ifaces[1])
+	Game.add_ip(sl_rtr.ifaces[0], "2001:db8:77::1/64")
+	Sim.flush_learned_state()
+	var sl_cli := CLI.new_session(sl_host)
+	check(sl_cli.exec("autoconf eth0").contains("no router advertisements"),
+		"slaac: a router that is not advertising configures nobody")
+	var sl_rcli := CLI.new_session(sl_rtr)
+	sl_rcli.exec("enable")
+	sl_rcli.exec("configure terminal")
+	sl_rcli.exec("interface Ethernet1")
+	check(sl_rcli.exec("ipv6 nd ra").is_empty(), "slaac: advertisements can be turned on")
+	sl_rcli.exec("end")
+	Sim.flush_learned_state()
+	var sl_out := sl_cli.exec("autoconf eth0")
+	check(sl_out.contains("2001:db8:77:") and sl_out.contains(sl_rtr.name),
+		"slaac: the host builds an address from the advertised prefix")
+	check(Sim.ping(sl_host, "2001:db8:77::1")["ok"],
+		"slaac: and the address it built actually works")
+	var sl_default := false
+	for sl_r in sl_host.static_routes:
+		if String(sl_r["prefix"]) == "::" and int(sl_r["plen"]) == 0:
+			sl_default = true
+	check(sl_default, "slaac: it also learns a default route, with no DHCP server anywhere")
+
 	# --- certificates: up, correct, and refusing every client ---
 	var ce_rack := Game.add_rack(Vector2i(44, 1))
 	var ce_srv := Game.new_device("srv-1")

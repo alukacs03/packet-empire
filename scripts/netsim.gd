@@ -703,6 +703,58 @@ static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		out.append(cand)
 	return out
 
+static func slaac(host: Net.NDevice, iface: Net.Iface) -> Dictionary:
+	## Solicit a router on this segment and configure from what it advertises.
+	## No server, no leases, no state anywhere: the host builds its own address
+	## out of the prefix it was told and its own MAC.
+	## -> {ok, address, router, why}
+	var l := Game.link_at(iface)
+	if l == null or not iface.enabled:
+		return {"ok": false, "why": "the cable is not connected", "address": "", "router": ""}
+	for router in Game.all_devices():
+		if not router.ip_forwarding or router.status != "active" or router == host:
+			continue
+		for ri: Net.Iface in router.ifaces:
+			if not ri.ra or not ri.enabled:
+				continue
+			# the advertisement only reaches hosts in the same broadcast domain
+			if not _same_segment(iface, ri):
+				continue
+			for cidr: String in ri.ips:
+				if not Net.is_v6(cidr):
+					continue
+				var parts := cidr.split("/")
+				if int(parts[1]) != 64:
+					continue  # SLAAC needs a /64, which is not a convention, it is arithmetic
+				var addr := Net.slaac_address(parts[0], 64, iface.mac)
+				if addr == "":
+					continue
+				var full := "%s/64" % addr
+				if full not in iface.ips:
+					iface.ips.append(full)
+				var via: String = parts[0]
+				var already := false
+				for r in host.static_routes:
+					if String(r["prefix"]) == "::" and int(r["plen"]) == 0:
+						already = true
+				if not already:
+					host.static_routes.append({"prefix": "::", "plen": 0, "via": via})
+				Game.topology_changed.emit()
+				return {"ok": true, "address": full, "router": router.name, "why": ""}
+	return {"ok": false, "address": "", "router": "",
+		"why": "no router advertisements on this segment"}
+
+static func _same_segment(a: Net.Iface, b: Net.Iface) -> bool:
+	## crude but honest: can a broadcast from a reach b?
+	if a.dev == b.dev:
+		return false
+	var probe := {"src": a.mac, "dst": BCAST, "vlan": 0, "type": "arp",
+		"pl": {"op": "req", "spa": "0.0.0.0", "sha": a.mac, "tpa": "0.0.0.0"}}
+	var before: int = b.rx_frames
+	_depth = 0
+	_tx(a, probe)
+	return b.rx_frames > before
+
 static func aaa_admit(dev: Net.NDevice) -> Dictionary:
 	## Can somebody log in to administer this device right now?
 	## -> {ok: bool, how: String, why: String}

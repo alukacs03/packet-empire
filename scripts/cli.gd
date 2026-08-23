@@ -145,6 +145,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
 			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
 			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
+			{"m": ["if"], "p": ["ipv6", "nd", "ra"], "h": func(_r): return _ra(true)},
+			{"m": ["if"], "p": ["no", "ipv6", "nd", "ra"], "h": func(_r): return _ra(false)},
 			{"m": ["if"], "p": ["bfd"], "h": func(_r): return _bfd(true)},
 			{"m": ["if"], "p": ["no", "bfd"], "h": func(_r): return _bfd(false)},
 			{"m": EP, "p": ["show", "bfd"], "h": _show_bfd},
@@ -1388,6 +1390,14 @@ class EOS extends Session:
 			"" if String(admit["why"]) == "" else " (%s)" % admit["why"]]
 		return out
 
+	func _ra(on: bool) -> String:
+		if not dev.ip_forwarding:
+			return "% only a router advertises prefixes\n"
+		for i: Net.Iface in ctx_ifs:
+			i.ra = on
+		Game.topology_changed.emit()
+		return ""
+
 	func _bfd(on: bool) -> String:
 		for i: Net.Iface in ctx_ifs:
 			i.bfd = on
@@ -1754,7 +1764,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  aaad <secret> | aaad log             authenticate admins, keep the audit trail\n  cert issue|renew|auto|list           TLS certificates and their expiry\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  aaad <secret> | aaad log             authenticate admins, keep the audit trail\n  cert issue|renew|auto|list           TLS certificates and their expiry\n  autoconf <iface>                     build an IPv6 address from a router advert\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  console list | console <device>      reach a device over its serial port\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -1848,6 +1858,15 @@ class Linux extends Session:
 						leg.mac = legs[0].mac  # a bond presents one address
 				Game.topology_changed.emit()
 				return "bond%d: %s\n" % [gid, " ".join(PackedStringArray(t.slice(1)))]
+			"autoconf":
+				var ac_if: Net.Iface = _iface(String(t[1])) if t.size() > 1 else dev.ifaces[0]
+				if ac_if == null:
+					return "autoconf: no interface %s\n" % t[1]
+				var res := Sim.slaac(dev, ac_if)
+				if not bool(res["ok"]):
+					return "autoconf: %s\n" % res["why"]
+				return "%s: configured %s from a router advertisement by %s\n" \
+					% [ac_if.name, res["address"], res["router"]]
 			"cert":
 				var certs: Dictionary = Game.certs_on(dev)
 				if t.size() >= 3 and t[1] == "issue":
@@ -2226,7 +2245,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "cert", "exit", "clear", "help"]
+				opts = ["ip", "ping", "ping6", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "arp", "lldp", "ssh", "syslogd", "logging", "logs", "ntpd", "vm", "wg", "wifi", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "cert", "autoconf", "exit", "clear", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route", "neigh"]
