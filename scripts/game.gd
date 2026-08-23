@@ -203,6 +203,7 @@ const SLA_PERIOD := 45.0  # seconds per billing cycle
 var sla_status := {}  # contract id -> bool (last billing check passed)
 var last_link_load := {}  # Link -> Mbps, from the latest cycle
 var last_cycle_delta := 0
+var last_pl := {}  # line item -> amount, from the latest cycle
 var cycle_timer: Timer
 
 func _ready() -> void:
@@ -333,14 +334,22 @@ func sla_tick() -> void:
 		return  # the economy pauses while you run a drill
 	cycle += 1
 	var earned := 0
-	earned -= _security_sweep()
+	last_pl = {}
+	var incidents := _security_sweep()
+	if incidents != 0:
+		last_pl["security incidents"] = -incidents
+	earned -= incidents
 	if debt > 0:
-		earned -= ceili(debt * LOAN_RATE)
+		var interest := ceili(debt * LOAN_RATE)
+		last_pl["loan interest"] = -interest
+		earned -= interest
 	if money < 0:
 		reputation = maxi(0, reputation - 2)
 		log_event("BANK: you are insolvent ($%d): reputation is bleeding." % money)
 	if stage >= 1:  # colo includes power; your own room doesn't
-		earned -= power_draw() / 10
+		var power_bill := power_draw() / 10
+		last_pl["power"] = -power_bill
+		earned -= power_bill
 	for c in Contracts.all():
 		if c["id"] not in contracts_done:
 			continue
@@ -356,10 +365,13 @@ func sla_tick() -> void:
 			log_event("SLA BREACH: '%s' (%s) is down: fees suspended." % [c["title"], c["customer"]])
 		sla_status[c["id"]] = ok
 		if ok:
-			earned += int(c["reward"]) / 10
+			var fee: int = int(c["reward"]) / 10
+			last_pl["service fees"] = int(last_pl.get("service fees", 0)) + fee
+			earned += fee
 	for d in all_devices():  # transit invoices
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
+				last_pl["transit"] = int(last_pl.get("transit", 0)) - TRANSIT_FEE
 				earned -= TRANSIT_FEE
 	if overheating():
 		# heat kills: one active device trips per cycle until capacity recovers
@@ -404,7 +416,9 @@ func sla_tick() -> void:
 			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
 				% deal["customer"])
 		deal["degraded"] = congested
-		earned += int(deal["fee"]) / (2 if congested else 1)
+		var paid: int = int(deal["fee"]) / (2 if congested else 1)
+		last_pl["customer deals"] = int(last_pl.get("customer deals", 0)) + paid
+		earned += paid
 		reputation = mini(100, reputation + 1)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):

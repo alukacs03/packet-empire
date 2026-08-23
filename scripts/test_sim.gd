@@ -289,6 +289,18 @@ static func run() -> int:
 	Game.contracts_done.erase("two_tenants")
 	Game.sla_status.erase("two_tenants")
 
+	# --- cycle P&L breakdown ---
+	Game.debt = 2000
+	Game.sla_tick()
+	check(Game.last_pl.has("loan interest") and int(Game.last_pl["loan interest"]) == -100,
+		"pl: interest appears as its own line item")
+	check(Game.last_pl.has("service fees"), "pl: service fees are itemised")
+	var pl_sum := 0
+	for k in Game.last_pl:
+		pl_sum += int(Game.last_pl[k])
+	check(pl_sum == Game.last_cycle_delta, "pl: line items sum to the net delta (%d vs %d)" % [pl_sum, Game.last_cycle_delta])
+	Game.debt = 0
+
 	# --- SLA recurring revenue ---
 	var m1 := Game.money
 	Game.sla_tick()
@@ -682,6 +694,9 @@ static func run() -> int:
 	Game.topology_changed.emit()
 
 	# --- field faults, redundant-gw offers, reverse DNS ---
+	# marketplace checks first: a field fault may reboot gear and wipe its config
+	check(Market.check("redundant_gw", {"vip": "10.40.0.1"}), "market: redundant-gw kind verifies the VRRP setup")
+	check(not Market.check("redundant_gw", {"vip": "10.99.99.1"}), "market: redundant-gw fails for absent vip")
 	Game._field_fault()  # either a port fault or a power-blip reboot
 	check("FIELD" in Game.events[0], "field: a fault is logged for the operator to find")
 	var faulted: Net.Iface = null
@@ -692,8 +707,6 @@ static func run() -> int:
 	if faulted:
 		faulted.enabled = true
 		Game.topology_changed.emit()
-	check(Market.check("redundant_gw", {"vip": "10.40.0.1"}), "market: redundant-gw kind verifies the VRRP setup")
-	check(not Market.check("redundant_gw", {"vip": "10.99.99.1"}), "market: redundant-gw fails for absent vip")
 	check(cls_.exec("nslookup 10.2.0.10").contains("www.delta.hu"), "dns: reverse lookup finds the name")
 	check(cls_.exec("nslookup 10.2.0.77").contains("no PTR"), "dns: reverse lookup fails cleanly")
 

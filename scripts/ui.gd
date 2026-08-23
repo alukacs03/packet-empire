@@ -1298,6 +1298,15 @@ func _build_market_section() -> void:
 	var delta := Game.last_cycle_delta
 	contracts_box.add_child(_label("last cycle: %s$%d net" % ["+" if delta >= 0 else "-", absi(delta)],
 		13, Color(0.55, 0.9, 0.6) if delta >= 0 else Color(0.95, 0.6, 0.45)))
+	if not Game.last_pl.is_empty():
+		var parts: Array = []
+		for k in Game.last_pl:
+			var v: int = int(Game.last_pl[k])
+			parts.append("%s %s$%d" % [k, "+" if v >= 0 else "-", absi(v)])
+		var pl := _label("      " + "   ·   ".join(PackedStringArray(parts)), 12, Color(0.55, 0.6, 0.72))
+		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		pl.custom_minimum_size = Vector2(560, 0)
+		contracts_box.add_child(pl)
 	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	if not Game.events.is_empty():
 		contracts_box.add_child(_section("EVENT LOG"))
