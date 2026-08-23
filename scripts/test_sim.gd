@@ -812,5 +812,21 @@ static func run() -> int:
 	check(Game.try_complete_contract(_contract("bandwidth_crunch")), "capacity: bandwidth-crunch contract verifies")
 	Game.deals.erase(cap_deal)
 
+	# --- incident drills ---
+	var pre_devs := Game.all_devices().size()
+	var pre_money := Game.money
+	Drill.start(3, 42)
+	check(Game.drill_active and Drill.faults.size() == 3, "drill: starts with three hidden faults")
+	check(not Drill.solved(), "drill: the generated network is actually broken")
+	var pre_cycle := Game.cycle
+	Game.sla_tick()
+	check(Game.cycle == pre_cycle, "drill: the economy pauses during a drill")
+	Drill.cheat_fix()
+	check(Drill.solved(), "drill: reverting the faults restores all pings")
+	var revealed: Array = Drill.finish(true)
+	check(not Game.drill_active and revealed.size() == 3, "drill: finish reveals the fault list")
+	check(Game.all_devices().size() == pre_devs, "drill: the real datacenter came back intact")
+	check(Game.money == pre_money + Drill.REWARD, "drill: passing pays the bonus")
+
 	print("---- %d failures" % fails)
 	return fails

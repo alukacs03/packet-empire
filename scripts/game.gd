@@ -273,6 +273,8 @@ func _deal_path_links(deal: Dictionary) -> Array:
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees: but only while
 	## their requirements still hold. Break the network, lose the revenue.
+	if drill_active:
+		return  # the economy pauses while you run a drill
 	cycle += 1
 	var earned := 0
 	earned -= _security_sweep()
@@ -561,7 +563,21 @@ func remove_static_route(dev: Net.NDevice, prefix: String, plen: int) -> void:
 
 # ---------- save / load ----------
 
+var drill_active := false
+
+func snapshot() -> String:
+	return JSON.stringify(_serialize())
+
+func restore(snap: String) -> void:
+	_apply(JSON.parse_string(snap))
+
 func save_game() -> void:
+	if drill_active:
+		return  # never write drill state over the real save
+	var f := FileAccess.open(save_path, FileAccess.WRITE)
+	f.store_string(JSON.stringify(_serialize(), "  "))
+
+func _serialize() -> Dictionary:
 	var devs := {}  # name -> serialized (names are unique)
 	var rack_data: Array = []
 	for r in racks:
@@ -574,12 +590,11 @@ func save_game() -> void:
 	var link_data: Array = []
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
-	var f := FileAccess.open(save_path, FileAccess.WRITE)
-	f.store_string(JSON.stringify({"money": money, "stage": stage, "cycle": cycle,
+	return {"money": money, "stage": stage, "cycle": cycle,
 		"reputation": reputation, "debt": debt, "stats": stats,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
-		"racks": rack_data, "devices": devs, "links": link_data}, "  "))
+		"racks": rack_data, "devices": devs, "links": link_data}
 
 func _ser_device(d: Net.NDevice) -> Dictionary:
 	var ifs: Array = []
@@ -598,6 +613,10 @@ func load_game() -> bool:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(save_path))
 	if data == null:
 		return false
+	_apply(data)
+	return true
+
+func _apply(data: Dictionary) -> void:
 	racks = []
 	links = []
 	money = int(data["money"])
@@ -670,7 +689,6 @@ func load_game() -> bool:
 		log_event("Legacy floor grandfathered: you keep the %s you already built on." % STAGES[stage]["name"])
 	money_changed.emit()
 	topology_changed.emit()
-	return true
 
 func _rack_outside_grid() -> bool:
 	var g := grid_size()

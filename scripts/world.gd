@@ -22,10 +22,17 @@ func _ready() -> void:
 	add_child(ui)
 	Game.topology_changed.connect(queue_redraw)
 	if Game.load_game():
-		for r in Game.racks:
-			add_child(RackVisual.new().setup(r))
+		rebuild_racks()
 	else:
 		ui.show_welcome()
+
+func rebuild_racks() -> void:
+	for child in get_children():
+		if child is RackVisual:
+			child.queue_free()
+	for r in Game.racks:
+		add_child(RackVisual.new().setup(r))
+	queue_redraw()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui:

@@ -913,6 +913,16 @@ func _build_menu() -> void:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
 			get_tree().reload_current_scene()))
 	v.add_child(newg)
+	var drill_btn := Button.new()
+	drill_btn.text = "Incident drill  (fix a broken network, +$%d)" % Drill.REWARD
+	drill_btn.pressed.connect(func() -> void:
+		if Game.drill_active:
+			return
+		menu_overlay.visible = false
+		Drill.start()
+		get_parent().rebuild_racks()
+		_show_drill_banner())
+	v.add_child(drill_btn)
 	var quit := Button.new()
 	quit.text = "Save & quit"
 	quit.pressed.connect(func() -> void:
@@ -925,6 +935,57 @@ func toggle_menu() -> void:
 		menu_overlay.visible = false
 	elif not is_open():
 		_show_overlay(menu_overlay)
+
+# ---------- incident drill ----------
+
+var drill_panel: PanelContainer
+var drill_box: VBoxContainer
+
+func _show_drill_banner() -> void:
+	if drill_panel == null:
+		drill_panel = PanelContainer.new()
+		drill_panel.theme = theme_res
+		drill_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		drill_panel.position = Vector2(-240, 70)
+		drill_panel.custom_minimum_size = Vector2(480, 0)
+		drill_panel.add_theme_stylebox_override("panel",
+			_sb(Color(0.14, 0.08, 0.08, 0.96), Color(0.9, 0.5, 0.4, 0.8), 8, 12))
+		add_child(drill_panel)
+		drill_box = VBoxContainer.new()
+		drill_box.add_theme_constant_override("separation", 5)
+		drill_panel.add_child(drill_box)
+	for c in drill_box.get_children():
+		c.queue_free()
+	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
+	drill_box.add_child(_label("Something is broken. Restore connectivity between:", 13, Color(0.85, 0.8, 0.78)))
+	for pair in Drill.targets:
+		drill_box.add_child(_label("   %s  ⇄  %s" % [pair[0], pair[1]], 13, Color(0.9, 0.88, 0.8)))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	drill_box.add_child(row)
+	var chk := Button.new()
+	chk.text = "Check"
+	_accent(chk)
+	chk.pressed.connect(func() -> void:
+		if Drill.solved():
+			Drill.finish(true)
+			get_parent().rebuild_racks()
+			drill_panel.visible = false
+		else:
+			_show_drill_banner()
+			drill_box.add_child(_label("   ...still broken. ping/lldp/show run are your friends.", 12, Color(0.9, 0.6, 0.5))))
+	row.add_child(chk)
+	var give := Button.new()
+	give.text = "Abandon (reveal faults)"
+	give.pressed.connect(func() -> void:
+		var revealed: Array = Drill.finish(false)
+		for f in revealed:
+			Game.log_event("DRILL debrief: " + str(f))
+		get_parent().rebuild_racks()
+		drill_panel.visible = false
+		open_contracts())
+	row.add_child(give)
+	drill_panel.visible = true
 
 # ---------- topology map ----------
 
