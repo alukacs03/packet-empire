@@ -108,7 +108,11 @@ func _shoot_all() -> void:
 		["help", func() -> void:
 			ui.pedia_overlay.visible = false
 			ui.toggle_help()],
+		["demo_end", func() -> void:
+			ui.help_overlay.visible = false
+			ui._show_overlay(ui.demo_overlay)],
 		["ops", func() -> void:
+			ui.demo_overlay.visible = false
 			ui.help_overlay.visible = false
 			ui.toggle_ops()],
 	]

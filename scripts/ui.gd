@@ -1846,6 +1846,9 @@ func _build_demo_end() -> void:
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body.custom_minimum_size = Vector2(580, 0)
 	v.add_child(body)
+	var gap_demo := Control.new()
+	gap_demo.custom_minimum_size = Vector2(0, 6)
+	v.add_child(gap_demo)
 	v.add_child(_section("WHAT IS BEYOND THIS"))
 	for line: String in Demo.BEYOND:
 		v.add_child(_label("  •  " + line, 14, Color(0.72, 0.8, 0.88)))

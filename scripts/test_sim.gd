@@ -150,6 +150,17 @@ static func ui_smoke(world: Node2D) -> int:
 			if c2["id"] == cid:
 				found = String(c2.get("hint", "")) != ""
 		check(found, "demo: %s offers a hint when the player is stuck" % cid)
+	# a brand new game must be able to afford the very first job
+	var saved_state := Game._serialize()
+	Game.reset_new("Test Co", 1, true)
+	var starter: int = Game.RACK_PRICE + int(Game.MODELS["sw-lite"]["price"]) \
+		+ 2 * int(Game.MODELS["srv-1"]["price"])
+	check(Game.money >= starter,
+		"demo: a new game can afford a rack, a switch and two servers")
+	check(Game.racks.is_empty() and Game.contracts_done.is_empty(),
+		"demo: a new game starts from nothing")
+	check(Game.company_name == "Test Co" and Game.demo, "demo: the new game keeps its name")
+	Game._apply(saved_state)
 	title.queue_free()
 	check(UILayer.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
 		"ui: port lists compress into ranges")
