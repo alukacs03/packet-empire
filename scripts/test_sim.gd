@@ -197,6 +197,24 @@ static func ui_smoke(world: Node2D) -> int:
 	check(UILayer.compress_ports(["Ethernet1", "Ethernet2", "Ethernet3", "Ethernet7"]) == "Et1-3,Et7",
 		"ui: port lists compress into ranges")
 	check(UILayer.compress_ports([]) == "", "ui: empty port list compresses to nothing")
+	# the new-game path end to end, exactly as the title screen drives it
+	var world_state := Game._serialize()
+	world.ui = ui
+	world.title = TitleScreen.new()
+	world.add_child(world.title)
+	world._start_new(0, "Smoke Networks", 1, true)
+	check(Game.demo and Game.company_name == "Smoke Networks",
+		"title: starting a demo from the front door lands in a demo game")
+	check(not world.title.visible and ui.visible, "title: the front door steps aside once you start")
+	check(Game.slot_info(0).get("company", "") == "Smoke Networks",
+		"title: a new game writes its slot immediately")
+	world._continue(0)
+	check(Game.company_name == "Smoke Networks", "title: continuing reloads the slot it names")
+	Game.delete_slot(0)
+	Game._apply(world_state)
+	world.title.queue_free()
+	world.title = null
+	world.ui = null
 	print("PASS  ui: all overlays opened and refreshed without script errors")
 	check(true, "ui: smoke complete")
 	return fails
