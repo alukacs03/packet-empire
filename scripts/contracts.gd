@@ -127,6 +127,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "hide_the_internals",
+			"title": "Hide the internals",
+			"customer": "Zeta Hosting (again)",
+			"reward": 2200,
+			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP — real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista: on the uplink-facing interface, 'ip nat outside'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8 — with NO announcement covering it.",
+			"reqs": [
+				{"d": "A NAT outside interface on a router", "t": func() -> bool: return _nat_router() != null},
+				{"d": "A private (10.x) server reaches 8.8.8.8", "t": func() -> bool: return _private_pings_inet() != null},
+				{"d": "That server's prefix is NOT announced upstream", "t": func() -> bool: return _nat_not_announced()},
+			],
+		},
+		{
 			"id": "feel_the_heat",
 			"title": "Feeling the heat",
 			"customer": "Your own ops",
@@ -163,6 +175,42 @@ static func _server_pings(ip: String) -> bool:
 		if d.type == "server" and Sim.ping(d, ip)["ok"]:
 			return true
 	return false
+
+static func _nat_router() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.ip_forwarding:
+			for i: Net.Iface in d.ifaces:
+				if i.nat == "outside":
+					return d
+	return null
+
+static func _private_pings_inet() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.type != "server":
+			continue
+		var has_private := false
+		for i: Net.Iface in d.ifaces:
+			for cidr: String in i.ips:
+				if cidr.begins_with("10.") or cidr.begins_with("192.168."):
+					has_private = true
+		if has_private and Sim.ping(d, "8.8.8.8")["ok"]:
+			return d
+	return null
+
+static func _nat_not_announced() -> bool:
+	var srv := _private_pings_inet()
+	if srv == null:
+		return false
+	for i: Net.Iface in srv.ifaces:
+		for cidr: String in i.ips:
+			var ip: String = cidr.split("/")[0]
+			for d in Game.all_devices():
+				for net in d.bgp.get("networks", []):
+					if net != "0.0.0.0/0":
+						var parts := String(net).split("/")
+						if Net.same_subnet(ip, parts[0], int(parts[1])):
+							return false
+	return true
 
 static func _has_active(type: String) -> bool:
 	for d in Game.all_devices():

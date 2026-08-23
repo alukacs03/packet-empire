@@ -152,6 +152,21 @@ func exec(line: String) -> String:
 				for mac in dev.mac_table[vid]:
 					out += " %-4d %-18s %s\n" % [vid, mac, dev.mac_table[vid][mac].name]
 			return out if vids else " (empty — send some traffic first)\n"
+		"ip firewall nat add":
+			if dev.type == "switch":
+				return "failure: NAT needs a router\n"
+			if p.get("chain", "") == "srcnat" and p.get("action", "") == "masquerade" \
+					and _iface(p.get("out-interface", "")) != null:
+				_iface(p["out-interface"]).nat = "outside"
+				Game.topology_changed.emit()
+				return ""
+			return "usage: /ip firewall nat add chain=srcnat action=masquerade out-interface=<if>\n"
+		"ip firewall nat print":
+			var out := ""
+			for i: Net.Iface in dev.ifaces:
+				if i.nat == "outside":
+					out += " chain=srcnat action=masquerade out-interface=%s\n" % i.name
+			return out if out != "" else "(no NAT rules)\n"
 		"ip route add":
 			var dst: String = p.get("dst-address", "0.0.0.0/0")
 			if p.has("gateway") and Net.valid_cidr(dst):
@@ -222,6 +237,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
 	"ip address add", "ip address remove", "ip address print",
 	"ip route add", "ip route remove", "ip route print",
+	"ip firewall nat add", "ip firewall nat print",
 	"routing bgp set", "routing bgp peer add", "routing bgp network add", "routing bgp print"]
 
 func _is_path_word(prefix: String) -> bool:

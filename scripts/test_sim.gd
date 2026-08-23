@@ -337,6 +337,20 @@ static func run() -> int:
 	check(Sim.ping(web, "8.8.8.8")["ok"], "bgp: announcing the prefix opens the return path")
 	check(Game.try_complete_contract(_contract("join_internet")), "bgp: join-the-internet contract verifies")
 
+	# --- NAT masquerade ---
+	es.exec("conf t")
+	es.exec("router bgp 65001")
+	es.exec("no network 10.3.0.0/24")
+	es.exec("end")
+	check(not Sim.ping(web, "8.8.8.8")["ok"], "nat: withdrawn announcement kills unNATed reachability")
+	es.exec("conf t")
+	es.exec("int et1")
+	es.exec("ip nat outside")
+	es.exec("end")
+	check(Sim.ping(web, "8.8.8.8")["ok"], "nat: masquerade restores internet for the private server")
+	check(es.exec("sh run").contains("ip nat outside"), "nat: rendered in running-config")
+	check(Game.try_complete_contract(_contract("hide_the_internals")), "nat: contract verifies")
+
 	# --- overheating trips gear ---
 	crac1.status = "offline"
 	crac2.status = "offline"

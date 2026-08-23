@@ -123,6 +123,8 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
+			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
+			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): ctx_if.enabled = false; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): ctx_if.enabled = true; Game.topology_changed.emit(); return ""},
@@ -334,6 +336,16 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
+
+	func _if_nat(r: Array) -> String:
+		if dev.type == "switch":
+			return "% NAT needs a router or firewall\n"
+		for m in ["inside", "outside"]:
+			if r.size() == 1 and m.begins_with(r[0]):
+				ctx_if.nat = m
+				Game.topology_changed.emit()
+				return ""
+		return "usage: ip nat inside|outside\n"
 
 	func _if_no_ip(r: Array) -> String:
 		if r.size() == 1:
@@ -587,6 +599,8 @@ class EOS extends Session:
 				out += "   switchport access vlan %d\n" % i.untagged_vlan
 			for cidr in i.ips:
 				out += "   ip address %s\n" % cidr
+			if i.nat != "":
+				out += "   ip nat %s\n" % i.nat
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
 			if not i.enabled:

@@ -12,6 +12,7 @@ class Iface:
 	var mode := "access"  # access | trunk | routed
 	var untagged_vlan := 1
 	var tagged_vlans: Array = []  # trunk allowed VIDs; empty = all
+	var nat := ""  # "" | "inside" | "outside" (srcnat/masquerade toward outside)
 	var ips: Array = []  # CIDR strings, e.g. "10.0.0.5/24"
 	func _init(d: NDevice, n: String, m: String) -> void:
 		dev = d
@@ -31,6 +32,7 @@ class NDevice:
 	var bgp := {}  # {asn, neighbors: [{ip, remote_as}], networks: ["prefix/len"]}
 	var services := {}  # "dhcp": {iface,start,end,plen,gw,dns,leases}, "dns": {records}
 	var resolver := ""  # DNS server ip for this host
+	var nat_flows := {}  # runtime: l4 id -> original private src ip
 	# runtime state (not saved): learned tables
 	var mac_table := {}  # vlan -> {mac -> Iface}
 	var arp := {}  # ip -> mac

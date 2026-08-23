@@ -198,6 +198,7 @@ static func flush_learned_state() -> void:
 	for d in Game.all_devices():
 		d.mac_table.clear()
 		d.arp.clear()
+		d.nat_flows.clear()
 
 static func stp_blocked(i: Net.Iface) -> bool:
 	_stp_ensure()
@@ -402,6 +403,20 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			dev.arp[p["spa"]] = p["sha"]
 		return
 	# ipv4
+	if dev.ip_forwarding and _has_ip(dev, p["dst_ip"]):
+		var flow_id: int = p["l4"].get("id", 0)
+		var out_if := _nat_outside(dev)
+		if out_if != null and dev.nat_flows.has(flow_id) and _iface_owns_ip(out_if, p["dst_ip"]):
+			var back := p.duplicate(true)
+			back["dst_ip"] = dev.nat_flows[flow_id]
+			back["ttl"] -= 1
+			var rt2 := _route_lookup(dev, back["dst_ip"])
+			if not rt2.is_empty():
+				var mac2 := _arp_resolve(dev, rt2["iface"], rt2["next_hop"])
+				if mac2 != "":
+					_tx(rt2["iface"], {"src": rt2["iface"].mac, "dst": mac2, "vlan": 0,
+						"type": "ipv4", "pl": back})
+			return
 	if _has_ip(dev, p["dst_ip"]):
 		var l4: Dictionary = p["l4"]
 		if l4["proto"] == "icmp":
@@ -431,6 +446,10 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			return
 		var fwd := p.duplicate(true)
 		fwd["ttl"] -= 1
+		if out.nat == "outside":
+			# source NAT: hide the private source behind our outside address
+			dev.nat_flows[fwd["l4"].get("id", 0)] = fwd["src_ip"]
+			fwd["src_ip"] = _first_ip(out)
 		_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4", "pl": fwd})
 
 static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
@@ -458,6 +477,12 @@ static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bo
 				and Net.same_subnet(dst_ip, rule["dst"], int(rule["dplen"])):
 			return rule["action"] == "permit"
 	return true
+
+static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
+	for i: Net.Iface in dev.ifaces:
+		if i.nat == "outside":
+			return i
+	return null
 
 static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 	for cidr: String in iface.ips:
