@@ -41,7 +41,10 @@ func exec(line: String) -> String:
 		"export":
 			return _export()
 		"ping":
-			return CLI.fmt_ping(dev, args[0]) if args.size() >= 1 else "usage: /ping <ip>\n"
+			if args.size() >= 1:
+				return CLI.fmt_ping(dev, args[0], int(p.get("size", 64))
+					if String(p.get("size", "64")).is_valid_int() else 64)
+			return "usage: /ping <ip> [size=<bytes>]\n"
 		"tool traceroute":
 			return CLI.fmt_traceroute(dev, args[0]) if args.size() >= 1 else "usage: /tool traceroute <ip>\n"
 		"system ssh":

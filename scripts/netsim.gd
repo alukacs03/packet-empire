@@ -32,13 +32,15 @@ static func _delegation_for(zones: Dictionary, name: String) -> String:
 			best = String(zones[zone])
 	return best
 
+const STD_MTU := 1500
+static var last_mtu_drop := ""  # why the last oversized frame did not arrive
 static var _dns_results: Array = []
 static var _dns_id := 0
 static var _dhcp_offer := {}
 
 # ---------- public operations ----------
 
-static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dictionary:
+static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size := 64) -> Dictionary:
 	## -> {ok: bool, from: String (replier), detail: String}
 	## Re-entrant: a ping can happen inside another one (a tunnel checking its
 	## underlay while carrying traffic), so the outer results are preserved.
@@ -56,8 +58,12 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "") -> Dict
 		rtt_ms = outer_rtt
 		return {"ok": true, "from": dst_ip, "detail": "", "rtt": 0.0}  # loopback: our own address
 	var my_id := _echo_id
-	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": my_id}, vrf)
-	var result := {"ok": false, "from": "", "detail": "timeout"}
+	if _depth == 0:
+		last_mtu_drop = ""
+	var err := _send_ip(dev, dst_ip, ttl,
+		{"proto": "icmp", "type": "echo", "id": my_id, "size": size}, vrf)
+	var result := {"ok": false, "from": "", "detail":
+		last_mtu_drop if last_mtu_drop != "" else "timeout"}
 	if err != "":
 		result = {"ok": false, "from": "", "detail": err}
 	else:
@@ -815,6 +821,8 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		return
 	if not iface.enabled or iface.dev.status != "active":
 		return
+	if _too_big(iface, frame):
+		return  # the frame does not fit down this port; nothing is sent
 	if iface.name.begins_with("Vlan"):
 		_svi_tx(iface.dev, iface, frame)
 		return
@@ -1356,6 +1364,40 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			dev.nat_flows[fwd["l4"].get("id", 0)] = fwd["src_ip"]
 			fwd["src_ip"] = _first_ip(out)
 		_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4", "pl": fwd})
+
+static func frame_size(frame: Dictionary) -> int:
+	## payload bytes plus the headers a real frame would carry
+	var pl: Dictionary = frame.get("pl", {})
+	if not (pl is Dictionary):
+		return 0
+	var l4: Dictionary = pl.get("l4", {})
+	var payload := int(l4.get("size", 0)) if l4 is Dictionary else 0
+	if payload <= 0:
+		return 0  # control traffic: small enough that MTU never matters
+	return payload + 28  # IP and ICMP headers
+
+static func _too_big(iface: Net.Iface, frame: Dictionary) -> bool:
+	## A port silently drops what will not fit, and so does the far end if it
+	## was configured with a smaller MTU. That asymmetry is the classic bug:
+	## small packets work, large ones vanish, and nothing logs a thing.
+	var size := frame_size(frame)
+	if size <= 0:
+		return false
+	var limits: Array = [[iface, iface.mtu]]
+	var l := Game.link_at(iface)
+	if l != null:
+		var far: Net.Iface = l.b if l.a == iface else l.a
+		limits.append([far, far.mtu])
+	for pair in limits:
+		var port: Net.Iface = pair[0]
+		var mtu: int = int(pair[1])
+		if mtu > 0 and size > mtu:
+			last_mtu_drop = "dropped: %d bytes will not fit the %d byte MTU on %s %s" % [
+				size, mtu, port.dev.name, port.name]
+			Game.device_log(port.dev, "MTU: dropped a %d byte frame on %s (MTU %d)"
+				% [size, port.name, mtu])
+			return true
+	return false
 
 static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	## tcpdump-style one-liner for the device's capture ring

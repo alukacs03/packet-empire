@@ -3074,6 +3074,44 @@ static func run() -> int:
 	check(elapsed < 4000, "perf: 40 pings across a 60-device floor took %d ms" % elapsed)
 	print("     (perf: %d ms for 40 pings, %d devices, %d links)" % [elapsed, Game.all_devices().size(), Game.links.size()])
 
+	# --- MTU, jumbo frames and the mismatch that only breaks big packets ---
+	var mt_rack := Game.add_rack(Vector2i(40, 1))
+	var mt_sw := Game.new_device("sw-8")
+	var mt_a := Game.new_device("srv-1")
+	var mt_b := Game.new_device("srv-1")
+	mt_rack.slots[0] = mt_sw
+	mt_rack.slots[1] = mt_a
+	mt_rack.slots[2] = mt_b
+	Game.connect_ifaces(mt_a.ifaces[0], mt_sw.ifaces[0])
+	Game.connect_ifaces(mt_b.ifaces[0], mt_sw.ifaces[1])
+	Game.add_ip(mt_a.ifaces[0], "10.230.0.10/24")
+	Game.add_ip(mt_b.ifaces[0], "10.230.0.11/24")
+	Sim.flush_learned_state()
+	check(Sim.ping(mt_a, "10.230.0.11")["ok"], "mtu: an ordinary packet crosses a 1500 byte path")
+	check(not Sim.ping(mt_a, "10.230.0.11", 64, "", 9000)["ok"],
+		"mtu: a jumbo packet does not fit a standard path")
+	check(Sim.last_mtu_drop.contains("1500"), "mtu: and it says which MTU stopped it")
+	# jumbo everywhere: it fits
+	for mt_i in [mt_a.ifaces[0], mt_b.ifaces[0], mt_sw.ifaces[0], mt_sw.ifaces[1]]:
+		mt_i.mtu = 9216
+	Sim.flush_learned_state()
+	check(Sim.ping(mt_a, "10.230.0.11", 64, "", 9000)["ok"],
+		"mtu: jumbo frames work once every port on the path agrees")
+	# the classic bug: one port left behind. Small packets fine, big ones gone.
+	mt_sw.ifaces[1].mtu = 1500
+	Sim.flush_learned_state()
+	check(Sim.ping(mt_a, "10.230.0.11")["ok"],
+		"mtu: a mismatch does not show up in an ordinary ping, which is why it hurts")
+	check(not Sim.ping(mt_a, "10.230.0.11", 64, "", 9000)["ok"],
+		"mtu: one port left at 1500 silently swallows every large frame")
+	check(Sim.last_mtu_drop.contains(mt_sw.name),
+		"mtu: the drop names the device and port responsible")
+	var mt_cli := CLI.new_session(mt_a)
+	check(mt_cli.exec("ping -s 9000 10.230.0.11").contains("will not fit"),
+		"mtu: ping -s reproduces it from the console")
+	check(mt_cli.exec("ping 10.230.0.11").contains("0% packet loss"),
+		"mtu: and a normal ping still looks perfectly healthy")
+
 	# --- DNS zones, delegation and TTLs ---
 	var dz_rack := Game.add_rack(Vector2i(39, 1))
 	var dz_sw := Game.new_device("sw-8")

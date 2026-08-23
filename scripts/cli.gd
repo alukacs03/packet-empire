@@ -21,16 +21,16 @@ static func try_ssh(session: Session, target: String) -> String:
 	session.pending_ssh = owner
 	return "Connected to %s (%s).\n" % [owner.name, ip]
 
-static func fmt_ping(dev: Net.NDevice, target: String) -> String:
+static func fmt_ping(dev: Net.NDevice, target: String, size := 64) -> String:
 	var ip := Sim.resolve(dev, target)
 	if ip == "":
 		return "ping: %s: Name or service not known\n" % target
-	var r := Sim.ping(dev, ip)
-	var out := "PING %s (%s)\n" % [target, ip]
+	var r := Sim.ping(dev, ip, 64, "", size)
+	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, size, size + 28]
 	if r["ok"]:
 		var base: float = maxf(0.04, float(r.get("rtt", 0.1)))
 		for seq in [1, 2, 3]:
-			out += "64 bytes from %s: icmp_seq=%d ttl=64 time=%.2f ms\n" % [r["from"], seq,
+			out += "%d bytes from %s: icmp_seq=%d ttl=64 time=%.2f ms\n" % [size, r["from"], seq,
 				base * (1.0 + 0.04 * seq)]
 		return out + "3 packets transmitted, 3 received, 0% packet loss\n"
 	if r["detail"] == "ttl-exceeded":
@@ -382,8 +382,11 @@ class EOS extends Session:
 		return "" if Game.rename_device(dev, r[0]) else "% invalid or duplicate name\n"
 
 	func _ping(r: Array) -> String:
+		## ping <ip> [size <bytes>], the Arista-style spelling
+		if r.size() == 3 and String(r[1]) == "size" and String(r[2]).is_valid_int():
+			return CLI.fmt_ping(dev, String(r[0]), int(r[2]))
 		if r.size() != 1:
-			return "usage: ping <ip>\n"
+			return "usage: ping <ip> [size <bytes>]\n"
 		return CLI.fmt_ping(dev, r[0])
 
 	func _traceroute(r: Array) -> String:
@@ -1644,13 +1647,21 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping [-s <bytes>] <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump   clear\n  ip neigh | arp                       ARP table\n  syslogd | logging <ip> | logs        central logging\n  vm create|addr|migrate|list          virtual machines\n  wg up|addr|peer|show                 wireguard tunnels\n  wifi join|leave|status <ssid>        wireless\n  radiusd add|list <mac> [vlan]        who may join the network\n  igmp join|send|groups <group>        multicast\n  snmpd <community> | snmpd off        run a read-only SNMP agent\n  snmpwalk <addr> <community>          poll another device\n  flows                                what has been forwarded through here\n  bond <iface> <iface>                 one address over two cables\n  ntpd <ip>                            keep the clock honest\n  lldp                                 who is on the other end of my cables\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> [ttl]            host DNS records\n  dns delegate <zone> <ns-ip>          hand a subzone to another server\n  dns list | dns cache | dns flush     records, resolver cache, clear it\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
 				return "" if Game.rename_device(dev, t[1]) else "hostname: invalid or duplicate name\n"
 			"ping", "ping6":
-				return CLI.fmt_ping(dev, t[1]) if t.size() == 2 else "usage: ping <ip|name>\n"
+				# ping -s <bytes> <target>, for finding an MTU mismatch
+				var pargs := t.slice(1)
+				var psize := 64
+				if pargs.size() >= 2 and String(pargs[0]) == "-s" and String(pargs[1]).is_valid_int():
+					psize = int(pargs[1])
+					pargs = pargs.slice(2)
+				if pargs.size() != 1:
+					return "usage: ping [-s <bytes>] <ip|name>\n"
+				return CLI.fmt_ping(dev, String(pargs[0]), psize)
 			"traceroute":
 				return CLI.fmt_traceroute(dev, t[1]) if t.size() == 2 else "usage: traceroute <ip>\n"
 			"ip":
