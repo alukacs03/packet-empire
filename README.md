@@ -43,16 +43,19 @@ Saves live in three named slots plus an autosave written every five cycles.
 ## What's simulated
 
 - **L2**: MAC learning per VLAN, flooding, access/trunk tagging with allowed
-  lists, spanning tree (root election, blocked ports, failover), LACP bundles,
-  MLAG pairs for dual-homed servers, IGMP snooping for multicast
+  lists, spanning tree with bridge priority, RSTP and MST per-instance trees,
+  LACP bundles, MLAG pairs for dual-homed servers, IGMP snooping for multicast
 - **L3**: ARP, ICMP with TTL, longest-prefix routing (connected/static),
   routers and stateless-ACL firewalls, source NAT (masquerade)
 - **Dynamic routing**: eBGP-lite to an ISP handoff (transit fees, prefix
-  announcements, default via BGP) and single-area OSPF
+  announcements, default via BGP), single-area OSPF, and BFD so a router
+  notices that the far end of a link has died
 - **Services**: DHCP over real broadcast, DNS with A records and resolvers
 - **HA & scale**: VRRP virtual gateways with priority election and failover,
   link speeds (1G/10G/100M) with per-cycle load placement and congestion
-- **Ops**: power draw and cooling capacity (overheating trips gear), SLA
+- **Ops**: A and B power feeds with dual-supply gear and a UPS, power draw and
+  cooling capacity (overheating trips gear), SNMP agents and a station that
+  polls them, netflow-style top talkers, invoicing with real payment terms, SLA
   re-verification, security incidents when customer machines can reach your
   management addresses (switches have OOB Management ports), on-call field
   faults, reputation that moves customer budgets, bank loans with interest
@@ -88,7 +91,7 @@ CLI and UI mutate the same `Game` state: they can never disagree.
 PACKET_TEST=1 godot --headless --path . --quit-after 600
 ```
 
-590+ integration checks over the sim, all three CLI dialects, contracts,
+674 integration checks over the sim, all three CLI dialects, contracts,
 marketplace, save/load. Exit code 0 = green. Tests write their own save file
 (`save_test.json`), never the player's.
 
