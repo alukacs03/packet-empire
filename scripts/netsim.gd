@@ -6,7 +6,8 @@ class_name Sim
 ## Frame: {src, dst, vlan, type: "arp"|"ipv4", pl: Dictionary}
 ##   vlan 0 = untagged on the wire; switches assign the bridging VLAN.
 ## ARP pl:  {op: "req"|"rep", spa, sha, tpa}
-## IPv4 pl: {src_ip, dst_ip, ttl, icmp: {type: "echo"|"reply"|"ttl-exceeded", id}}
+## IPv4 pl: {src_ip, dst_ip, ttl, l4: {proto: "icmp"|"dns", ...}}
+## DHCP pl: {op: "discover"|"ack", mac, ...lease fields} — pure L2 broadcast
 
 const BCAST := "ff:ff:ff:ff:ff:ff"
 const MAX_DEPTH := 400  # loop guard until STP exists (issue #18)
@@ -15,6 +16,9 @@ static var _depth := 0
 static var _echo_id := 0
 static var _echo_results: Array = []
 static var last_trace: Array = []  # [{a: Iface, b: Iface, kind}] of the last operation
+static var _dns_results: Array = []
+static var _dns_id := 0
+static var _dhcp_offer := {}
 
 # ---------- public operations ----------
 
@@ -24,7 +28,9 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64) -> Dictionary:
 	_echo_results = []
 	if _depth == 0:
 		last_trace = []
-	var err := _send_ip(dev, dst_ip, ttl, {"type": "echo", "id": _echo_id})
+	if _has_ip(dev, dst_ip):
+		return {"ok": true, "from": dst_ip, "detail": ""}  # loopback: our own address
+	var err := _send_ip(dev, dst_ip, ttl, {"proto": "icmp", "type": "echo", "id": _echo_id})
 	if err != "":
 		return {"ok": false, "from": "", "detail": err}
 	for r in _echo_results:
@@ -49,6 +55,61 @@ static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Arra
 			break  # unreachable — no point probing further
 	return hops
 
+static func dhcp_request(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
+	## Broadcast a DHCP discover on iface; a reachable DHCP server in the same
+	## broadcast domain answers. On success the lease is applied to the iface.
+	_dhcp_offer = {}
+	if _depth == 0:
+		last_trace = []
+	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0, "type": "dhcp",
+		"pl": {"op": "discover", "mac": iface.mac}})
+	if _dhcp_offer.is_empty():
+		return {}
+	Game.add_ip(iface, "%s/%d" % [_dhcp_offer["ip"], int(_dhcp_offer["plen"])])
+	if _dhcp_offer.get("gw", "") != "":
+		Game.add_static_route(dev, "0.0.0.0", 0, _dhcp_offer["gw"])
+	if _dhcp_offer.get("dns", "") != "":
+		dev.resolver = _dhcp_offer["dns"]
+	return _dhcp_offer
+
+static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
+	var p: Dictionary = frame["pl"]
+	if p["op"] == "discover":
+		var svc: Dictionary = dev.services.get("dhcp", {})
+		if svc.is_empty() or svc.get("iface", "") != iface.name:
+			return
+		var leases: Dictionary = svc["leases"]
+		var ip: String
+		if leases.has(p["mac"]):
+			ip = leases[p["mac"]]
+		else:
+			var next := Net.ip_to_int(svc["start"]) + leases.size()
+			if next > Net.ip_to_int(svc["end"]):
+				return  # pool exhausted
+			ip = "%d.%d.%d.%d" % [next >> 24 & 255, next >> 16 & 255, next >> 8 & 255, next & 255]
+			leases[p["mac"]] = ip
+		_tx(iface, {"src": iface.mac, "dst": p["mac"], "vlan": 0, "type": "dhcp",
+			"pl": {"op": "ack", "mac": p["mac"], "ip": ip, "plen": svc["plen"],
+				"gw": svc.get("gw", ""), "dns": svc.get("dns", "")}})
+	elif p["op"] == "ack":
+		for i: Net.Iface in dev.ifaces:
+			if i.mac == p["mac"]:
+				_dhcp_offer = p
+
+static func resolve(dev: Net.NDevice, name: String) -> String:
+	## DNS lookup via the device's configured resolver. Returns "" on failure.
+	if name.is_valid_ip_address():
+		return name
+	if dev.resolver == "":
+		return ""
+	_dns_id += 1
+	_dns_results = []
+	_send_ip(dev, dev.resolver, 64, {"proto": "dns", "q": name, "id": _dns_id})
+	for r in _dns_results:
+		if r["id"] == _dns_id and r["q"] == name:
+			return r["answer"]
+	return ""
+
 static func flush_learned_state() -> void:
 	for d in Game.all_devices():
 		d.mac_table.clear()
@@ -56,7 +117,7 @@ static func flush_learned_state() -> void:
 
 # ---------- IP stack (hosts & routers) ----------
 
-static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, icmp: Dictionary) -> String:
+static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary) -> String:
 	if dev.status != "active":
 		return "device is offline"
 	var rt := _route_lookup(dev, dst_ip)
@@ -68,7 +129,7 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, icmp: Dictionar
 	if mac == "":
 		return "host unreachable (no ARP reply for %s)" % rt["next_hop"]
 	_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4",
-		"pl": {"src_ip": src_ip, "dst_ip": dst_ip, "ttl": ttl, "icmp": icmp}})
+		"pl": {"src_ip": src_ip, "dst_ip": dst_ip, "ttl": ttl, "l4": l4}})
 	return ""
 
 static func _route_lookup(dev: Net.NDevice, dst_ip: String) -> Dictionary:
@@ -178,6 +239,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 	if frame["dst"] != iface.mac and frame["dst"] != BCAST:
 		return
 	var p: Dictionary = frame["pl"]
+	if frame["type"] == "dhcp":
+		_dhcp_rx(dev, iface, frame)
+		return
 	if frame["type"] == "arp":
 		if p["op"] == "req":
 			if _iface_owns_ip(iface, p["tpa"]):
@@ -189,14 +253,22 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		return
 	# ipv4
 	if _has_ip(dev, p["dst_ip"]):
-		match p["icmp"]["type"]:
-			"echo":
-				_send_ip(dev, p["src_ip"], 64, {"type": "reply", "id": p["icmp"]["id"]})
-			"reply", "ttl-exceeded":
-				_echo_results.append({"type": p["icmp"]["type"], "id": p["icmp"]["id"], "from": p["src_ip"]})
+		var l4: Dictionary = p["l4"]
+		if l4["proto"] == "icmp":
+			match l4["type"]:
+				"echo":
+					_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "reply", "id": l4["id"]})
+				"reply", "ttl-exceeded":
+					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"]})
+		elif l4["proto"] == "dns":
+			var recs: Dictionary = dev.services.get("dns", {}).get("records", {})
+			if recs.has(l4["q"]):
+				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"], "answer": recs[l4["q"]], "id": l4["id"]})
+		elif l4["proto"] == "dns-resp":
+			_dns_results.append(l4)
 	elif dev.ip_forwarding:
 		if p["ttl"] <= 1:
-			_send_ip(dev, p["src_ip"], 64, {"type": "ttl-exceeded", "id": p["icmp"]["id"]})
+			_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)})
 			return
 		var rt := _route_lookup(dev, p["dst_ip"])
 		if rt.is_empty():
@@ -212,13 +284,17 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	var p: Dictionary = frame["pl"]
 	var desc: String
+	if frame["type"] == "dhcp":
+		_dhcp_rx(dev, iface, frame)
+		return
 	if frame["type"] == "arp":
 		if p["op"] == "req":
 			desc = "ARP who-has %s tell %s" % [p["tpa"], p["spa"]]
 		else:
 			desc = "ARP reply %s is-at %s" % [p["spa"], p["sha"]]
 	else:
-		desc = "IP %s > %s ICMP %s ttl %d" % [p["src_ip"], p["dst_ip"], p["icmp"]["type"], p["ttl"]]
+		desc = "IP %s > %s %s %s ttl %d" % [p["src_ip"], p["dst_ip"],
+			String(p["l4"]["proto"]).to_upper(), str(p["l4"].get("type", p["l4"].get("q", ""))), p["ttl"]]
 	var vl := (" [vlan %d]" % frame["vlan"]) if frame["vlan"] != 0 else ""
 	dev.capture.append("%-10s %s%s" % [iface.name, desc, vl])
 	if dev.capture.size() > 50:

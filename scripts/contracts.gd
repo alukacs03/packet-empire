@@ -54,6 +54,30 @@ static func all() -> Array:
 				{"d": "192.168.2.10 pings 192.168.1.10", "t": func() -> bool: return _ping("192.168.2.10", "192.168.1.10", true)},
 			],
 		},
+		{
+			"id": "plug_and_play",
+			"title": "Plug and play",
+			"customer": "Delta Web Kft",
+			"reward": 1500,
+			"brief": "Delta keeps adding machines and refuses to type IP addresses. Give them DHCP: on one of their servers run a DHCP service — 'dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1' (that's: interface, first and last lease, prefix length, gateway) — the DHCP server itself needs a static IP in that subnet (e.g. 10.2.0.5/24). Then install a NEW server on the same switch/VLAN and just type 'dhclient eth0' on it: it must receive a lease automatically. DHCP works by broadcast, so both must share a broadcast domain.",
+			"reqs": [
+				{"d": "A server runs a DHCP service", "t": func() -> bool: return _dhcp_server() != null},
+				{"d": "At least one lease has been handed out", "t": func() -> bool: return _lease_count() >= 1},
+				{"d": "A leased client can ping its DHCP server", "t": func() -> bool: return _leased_client_pings_server()},
+			],
+		},
+		{
+			"id": "names_not_numbers",
+			"title": "Names, not numbers",
+			"customer": "Delta Web Kft",
+			"reward": 1800,
+			"brief": "Nobody remembers 10.2.0.x. Delta wants DNS: pick a server to be the resolver, give it records — 'dns add www.delta.hu 10.2.0.10' — and point a client at it ('nameserver <dns-server-ip>', or hand it out via DHCP's dns field). Then 'nslookup www.delta.hu' and 'ping www.delta.hu' must work from the client.",
+			"reqs": [
+				{"d": "A DNS server has a record for www.delta.hu", "t": func() -> bool: return _dns_record("www.delta.hu") != ""},
+				{"d": "A client resolves www.delta.hu via the network", "t": func() -> bool: return _client_resolves("www.delta.hu")},
+				{"d": "That client can ping www.delta.hu by name", "t": func() -> bool: return _client_pings_name("www.delta.hu")},
+			],
+		},
 	]
 
 # ---------- check helpers ----------
@@ -109,6 +133,64 @@ static func _access_port_in(vid: int) -> bool:
 			continue
 		for i: Net.Iface in d.ifaces:
 			if i.mode == "access" and i.untagged_vlan == vid and Game.link_at(i):
+				return true
+	return false
+
+static func _dhcp_server() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.services.has("dhcp"):
+			return d
+	return null
+
+static func _lease_count() -> int:
+	var n := 0
+	for d in Game.all_devices():
+		if d.services.has("dhcp"):
+			n += d.services["dhcp"]["leases"].size()
+	return n
+
+static func _leased_client_pings_server() -> bool:
+	var srv := _dhcp_server()
+	if srv == null:
+		return false
+	var srv_ip := ""
+	for i: Net.Iface in srv.ifaces:
+		if i.name == srv.services["dhcp"]["iface"] and not i.ips.is_empty():
+			srv_ip = i.ips[0].split("/")[0]
+	if srv_ip == "":
+		return false
+	for mac in srv.services["dhcp"]["leases"]:
+		var client := _mac_owner(mac)
+		if client and Sim.ping(client, srv_ip)["ok"]:
+			return true
+	return false
+
+static func _mac_owner(mac: String) -> Net.NDevice:
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.mac == mac:
+				return d
+	return null
+
+static func _dns_record(name: String) -> String:
+	for d in Game.all_devices():
+		var recs: Dictionary = d.services.get("dns", {}).get("records", {})
+		if recs.has(name):
+			return recs[name]
+	return ""
+
+static func _client_resolves(name: String) -> bool:
+	for d in Game.all_devices():
+		if d.type == "server" and d.resolver != "" and not d.services.has("dns"):
+			if Sim.resolve(d, name) != "":
+				return true
+	return false
+
+static func _client_pings_name(name: String) -> bool:
+	for d in Game.all_devices():
+		if d.type == "server" and d.resolver != "" and not d.services.has("dns"):
+			var ip := Sim.resolve(d, name)
+			if ip != "" and Sim.ping(d, ip)["ok"]:
 				return true
 	return false
 

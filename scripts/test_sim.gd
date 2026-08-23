@@ -155,6 +155,29 @@ static func run() -> int:
 	check(not Game.try_complete_contract(cs[0]), "contracts: no double collection")
 	check(Game.money == money0 + 900, "contracts: rewards paid once")
 
+	# --- DHCP + DNS ---
+	var r2: Net.Rack = Game.racks[0]
+	var dhcp_srv := Game.new_device("server")
+	var client := Game.new_device("server")
+	r2.slots[6] = dhcp_srv
+	r2.slots[7] = client
+	var sw_c := _dev_named(sw.name)
+	Game.connect_ifaces(dhcp_srv.ifaces[0], sw_c.ifaces[4])
+	Game.connect_ifaces(client.ifaces[0], sw_c.ifaces[5])
+	var dls := CLI.new_session(dhcp_srv)
+	dls.exec("ip addr add 10.2.0.5/24 dev eth0")
+	dls.exec("dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.5 10.2.0.5")
+	dls.exec("dns add www.delta.hu 10.2.0.10")
+	var cls_ := CLI.new_session(client)
+	var lease_out: String = cls_.exec("dhclient eth0")
+	check("bound to 10.2.0.10/24" in lease_out, "dhcp: client got the first lease (got: %s)" % lease_out.strip_edges())
+	check(client.resolver == "10.2.0.5", "dhcp: lease delivered the DNS resolver")
+	check(Sim.ping(client, "10.2.0.5")["ok"], "dhcp: leased address is routable")
+	check(cls_.exec("dhclient eth0").contains("10.2.0.10"), "dhcp: same MAC keeps its lease")
+	check(Sim.resolve(client, "www.delta.hu") == "10.2.0.10", "dns: client resolves via the network")
+	check(cls_.exec("ping www.delta.hu").contains("3 received"), "dns: ping by name works (client owns the A record)")
+	check(cls_.exec("nslookup nope.example").contains("can't find"), "dns: unknown name fails cleanly")
+
 	# --- SLA recurring revenue ---
 	var m1 := Game.money
 	Game.sla_tick()

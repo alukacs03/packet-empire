@@ -7,8 +7,11 @@ static func new_session(dev: Net.NDevice) -> Session:
 	return EOS.new(dev) if dev.type in ["switch", "router"] else Linux.new(dev)
 
 static func fmt_ping(dev: Net.NDevice, target: String) -> String:
-	var r := Sim.ping(dev, target)
-	var out := "PING %s\n" % target
+	var ip := Sim.resolve(dev, target)
+	if ip == "":
+		return "ping: %s: Name or service not known\n" % target
+	var r := Sim.ping(dev, ip)
+	var out := "PING %s (%s)\n" % [target, ip]
 	if r["ok"]:
 		for seq in [1, 2, 3]:
 			out += "64 bytes from %s: icmp_seq=%d ttl=64 time=0.0%d ms\n" % [r["from"], seq, seq + 3]
@@ -20,9 +23,12 @@ static func fmt_ping(dev: Net.NDevice, target: String) -> String:
 	return out + "ping: %s\n" % r["detail"]
 
 static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
-	var out := "traceroute to %s, 16 hops max\n" % target
+	var ip := Sim.resolve(dev, target)
+	if ip == "":
+		return "traceroute: %s: Name or service not known\n" % target
+	var out := "traceroute to %s (%s), 16 hops max\n" % [target, ip]
 	var n := 1
-	for hop in Sim.traceroute(dev, target):
+	for hop in Sim.traceroute(dev, ip):
 		out += "%2d  %s\n" % [n, hop]
 		n += 1
 	return out
@@ -456,7 +462,7 @@ class Linux extends Session:
 			return ""
 		match t[0]:
 			"help":
-				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip>   traceroute <ip>   hostname <name>   tcpdump\n"
+				return "  ip addr [add|del <cidr> dev <if>]\n  ip link set <if> up|down\n  ip route [add <cidr>|default via <gw>] [del <cidr>|default]\n  ping <ip|name>   traceroute <ip|name>   hostname <name>   tcpdump\n  dhclient <if>                        get an address automatically\n  dhcpd <if> <first> <last> <plen> [gw] [dns]   serve DHCP leases\n  dns add <name> <ip> | dns list       host DNS records\n  nslookup <name>   nameserver <ip>\n"
 			"hostname":
 				if t.size() == 1:
 					return dev.name + "\n"
@@ -467,6 +473,54 @@ class Linux extends Session:
 				return CLI.fmt_traceroute(dev, t[1]) if t.size() == 2 else "usage: traceroute <ip>\n"
 			"ip":
 				return _ip(t.slice(1))
+			"dhclient":
+				if t.size() != 2:
+					return "usage: dhclient <iface>\n"
+				var ifc := _iface(t[1])
+				if ifc == null:
+					return "Cannot find device \"%s\"\n" % t[1]
+				var lease := Sim.dhcp_request(dev, ifc)
+				if lease.is_empty():
+					return "dhclient: no DHCP server responded on %s\n" % t[1]
+				return "bound to %s/%d  (gw %s, dns %s)\n" % [lease["ip"], int(lease["plen"]),
+					lease.get("gw", "-"), lease.get("dns", "-")]
+			"dhcpd":
+				if t.size() < 5 or _iface(t[1]) == null or not Net.valid_cidr(t[2] + "/" + t[4]):
+					return "usage: dhcpd <iface> <first-ip> <last-ip> <plen> [gw] [dns]\n     e.g. dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1 10.2.0.5\n"
+				dev.services["dhcp"] = {"iface": t[1], "start": t[2], "end": t[3],
+					"plen": int(t[4]), "gw": t[5] if t.size() > 5 else "",
+					"dns": t[6] if t.size() > 6 else "", "leases": {}}
+				Game.topology_changed.emit()
+				return "dhcpd: serving %s–%s/%s on %s\n" % [t[2], t[3], t[4], t[1]]
+			"dns":
+				if t.size() == 4 and t[1] == "add" and String(t[3]).is_valid_ip_address():
+					if not dev.services.has("dns"):
+						dev.services["dns"] = {"records": {}}
+					dev.services["dns"]["records"][t[2]] = t[3]
+					Game.topology_changed.emit()
+					return ""
+				if t.size() == 2 and t[1] == "list":
+					var recs: Dictionary = dev.services.get("dns", {}).get("records", {})
+					if recs.is_empty():
+						return "(no records — this host is not a DNS server yet)\n"
+					var out := ""
+					for k in recs:
+						out += "%-20s A  %s\n" % [k, recs[k]]
+					return out
+				return "usage: dns add <name> <ip> | dns list\n"
+			"nslookup":
+				if t.size() != 2:
+					return "usage: nslookup <name>\n"
+				var addr := Sim.resolve(dev, t[1])
+				if addr == "":
+					return "** server can't find %s (resolver: %s)\n" % [t[1], dev.resolver if dev.resolver else "none set"]
+				return "Server:  %s\nName:    %s\nAddress: %s\n" % [dev.resolver, t[1], addr]
+			"nameserver":
+				if t.size() != 2 or not String(t[1]).is_valid_ip_address():
+					return "usage: nameserver <ip>   (sets this host's DNS resolver)\n"
+				dev.resolver = t[1]
+				Game.topology_changed.emit()
+				return ""
 			"tcpdump":
 				if dev.capture.is_empty():
 					return "tcpdump: 0 packets captured (generate some traffic)\n"
@@ -550,7 +604,7 @@ class Linux extends Session:
 		var opts: Array = []
 		match toks.size():
 			0:
-				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "help"]
+				opts = ["ip", "ping", "traceroute", "hostname", "tcpdump", "dhclient", "dhcpd", "dns", "nslookup", "nameserver", "help"]
 			1:
 				if toks[0] == "ip":
 					opts = ["addr", "link", "route"]
