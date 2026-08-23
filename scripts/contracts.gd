@@ -195,6 +195,18 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "one_switch_two_nets",
+			"title": "Collapse the core",
+			"customer": "Alfa Ltd",
+			"reward": 2400,
+			"brief": "Alfa's two VLANs each need a router leg, and you are running out of router ports. An Arivista 7024 is an L3 switch: it can route between VLANs itself with SVIs (virtual interfaces bound to a VLAN). Buy one, create VLANs 40 and 50 with a server in each (10.80.40.10/24 and 10.80.50.10/24), then 'interface Vlan40' + 'ip address 10.80.40.1/24' and the same for Vlan50. Point each server's default gateway at its SVI. The two servers must reach each other through the switch alone, no router involved.",
+			"reqs": [
+				{"d": "An L3 switch with SVIs for two VLANs", "t": func() -> bool: return _l3_switch_svis() >= 2},
+				{"d": "Servers own 10.80.40.10 and 10.80.50.10", "t": func() -> bool: return _owner("10.80.40.10") != null and _owner("10.80.50.10") != null},
+				{"d": "They route to each other via the switch", "t": func() -> bool: return _ping("10.80.40.10", "10.80.50.10", true) and _ping("10.80.50.10", "10.80.40.10", true)},
+			],
+		},
+		{
 			"id": "bandwidth_crunch",
 			"title": "Bandwidth crunch",
 			"customer": "Everyone at once",
@@ -261,6 +273,18 @@ static func _vip_pings() -> bool:
 				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
 					return true
 	return false
+
+static func _l3_switch_svis() -> int:
+	var best := 0
+	for d in Game.all_devices():
+		if not Game.is_l3_switch(d):
+			continue
+		var n := 0
+		for i: Net.Iface in d.ifaces:
+			if i.name.begins_with("Vlan") and not i.ips.is_empty():
+				n += 1
+		best = maxi(best, n)
+	return best
 
 static func _bundle_links() -> Array:
 	for l in Game.links:

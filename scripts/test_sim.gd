@@ -803,6 +803,45 @@ static func run() -> int:
 	check(mkt_sw.ifaces[2].lag > 0 and mkt_sw.ifaces[2].lag == mkt_sw.ifaces[3].lag,
 		"lag: RouterOS bonding maps to the same model")
 
+	# --- L3 switch: inter-VLAN routing with SVIs ---
+	var l3 := Game.new_device("sw-24")
+	var h40 := Game.new_device("srv-1")
+	var h50 := Game.new_device("srv-1")
+	var r8 := Game.add_rack(Vector2i(4, 1))
+	r8.slots[0] = l3
+	r8.slots[1] = h40
+	r8.slots[2] = h50
+	Game.connect_ifaces(h40.ifaces[0], l3.ifaces[0])
+	Game.connect_ifaces(h50.ifaces[0], l3.ifaces[1])
+	Game.add_ip(h40.ifaces[0], "10.80.40.10/24")
+	Game.add_ip(h50.ifaces[0], "10.80.50.10/24")
+	var l3s := CLI.new_session(l3)
+	l3s.exec("en")
+	l3s.exec("conf t")
+	l3s.exec("vlan 40")
+	l3s.exec("vlan 50")
+	l3s.exec("interface Ethernet1")
+	l3s.exec("switchport access vlan 40")
+	l3s.exec("interface Ethernet2")
+	l3s.exec("switchport access vlan 50")
+	check(not Sim.ping(h40, "10.80.50.10")["ok"], "svi: different VLANs cannot talk before routing")
+	check(l3s.exec("interface Vlan40").is_empty(), "svi: 'interface Vlan40' enters SVI config")
+	l3s.exec("ip address 10.80.40.1/24")
+	l3s.exec("interface Vlan50")
+	l3s.exec("ip address 10.80.50.1/24")
+	l3s.exec("end")
+	Game.add_static_route(h40, "0.0.0.0", 0, "10.80.40.1")
+	Game.add_static_route(h50, "0.0.0.0", 0, "10.80.50.1")
+	check(Sim.ping(h40, "10.80.40.1")["ok"], "svi: hosts can ping their SVI gateway")
+	check(Sim.ping(h40, "10.80.50.10")["ok"] and Sim.ping(h50, "10.80.40.10")["ok"],
+		"svi: the L3 switch routes between VLANs with no router")
+	check(l3s.exec("sh run").contains("interface Vlan40"), "svi: rendered in running-config")
+	var l2sw := CLI.new_session(sw_a)
+	l2sw.exec("en")
+	l2sw.exec("conf t")
+	check(l2sw.exec("interface Vlan40").contains("no L3 switching"), "svi: budget switches refuse SVIs")
+	check(Game.try_complete_contract(_contract("one_switch_two_nets")), "svi: collapse-the-core contract verifies")
+
 	# --- DHCP relay ---
 	var rel_r := Game.new_device("rtr-edge")
 	var rel_srv := Game.new_device("server")

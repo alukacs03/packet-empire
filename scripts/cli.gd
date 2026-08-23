@@ -334,6 +334,15 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "usage: interface <name>\n"
 		var want := String(r[0]).to_lower()
+		if want.begins_with("vl") and want.trim_prefix("vlan").trim_prefix("vl").is_valid_int():
+			var vid := int(want.trim_prefix("vlan").trim_prefix("vl"))
+			if not Game.is_l3_switch(dev):
+				return "% this model has no L3 switching (SVIs need an Arivista-class switch)\n"
+			if not dev.vlans.has(vid):
+				return "%% VLAN %d does not exist yet: 'vlan %d' first\n" % [vid, vid]
+			ctx_if = Game.add_svi(dev, vid)
+			mode = "if"
+			return ""
 		for i: Net.Iface in dev.ifaces:
 			var full := i.name.to_lower()
 			var digits := i.name.lstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
@@ -387,7 +396,8 @@ class EOS extends Session:
 		return ""
 
 	func _if_ip(r: Array) -> String:
-		if dev.type == "switch" and not ctx_if.name.begins_with("Management"):
+		if dev.type == "switch" and not ctx_if.name.begins_with("Management") \
+				and not ctx_if.name.begins_with("Vlan"):
 			return "% SVIs are not supported yet: use the Management1 port or a router\n"
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len>\n"
@@ -789,6 +799,8 @@ class EOS extends Session:
 				out += "   network %s\n" % net
 			out += "!\n"
 		for i: Net.Iface in dev.ifaces:
+			if i.name == "lo":
+				continue
 			out += "interface %s\n" % i.name
 			if i.mode == "trunk":
 				out += "   switchport mode trunk\n"

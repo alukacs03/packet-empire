@@ -433,6 +433,9 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		return
 	if not iface.enabled or iface.dev.status != "active":
 		return
+	if iface.name.begins_with("Vlan"):
+		_svi_tx(iface.dev, iface, frame)
+		return
 	var l := Game.link_at(iface)
 	if l == null:
 		return
@@ -451,6 +454,45 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		_host_rx(peer.dev, peer, frame)
 	_depth -= 1
 
+static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void:
+	## send a frame from an SVI into its VLAN: to the learned port, else flood
+	var vlan := int(svi.name.trim_prefix("Vlan"))
+	var table: Dictionary = dev.mac_table.get(vlan, {})
+	var known: Net.Iface = table.get(frame["dst"])
+	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
+	var lags_done := {}
+	for o: Net.Iface in outs:
+		if o == svi or o.name.begins_with("Vlan") or o.name == "lo" or stp_blocked(o):
+			continue
+		if o.lag > 0:
+			if lags_done.has(o.lag):
+				continue
+			lags_done[o.lag] = true
+		var f := frame.duplicate(true)
+		if o.mode == "access":
+			if o.untagged_vlan != vlan:
+				continue
+			f["vlan"] = 0
+		elif o.mode == "trunk":
+			if not o.tagged_vlans.is_empty() and vlan not in o.tagged_vlans:
+				continue
+			f["vlan"] = vlan
+		else:
+			continue
+		_depth += 1
+		var l := Game.link_at(o)
+		if l and o.enabled:
+			var peer: Net.Iface = l.other(o)
+			if peer.enabled and peer.dev.status == "active":
+				o.tx_frames += 1
+				peer.rx_frames += 1
+				_cap(peer.dev, peer, f)
+				if peer.dev.type == "switch" and not peer.name.begins_with("Management"):
+					_switch_rx(peer.dev, peer, f)
+				else:
+					_host_rx(peer.dev, peer, f)
+		_depth -= 1
+
 static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> void:
 	if stp_blocked(in_if):
 		return  # spanning tree: discarding state
@@ -468,6 +510,16 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	if not dev.mac_table.has(vlan):
 		dev.mac_table[vlan] = {}
 	dev.mac_table[vlan][frame["src"]] = in_if
+	for svi: Net.Iface in dev.ifaces:
+		if not svi.name.begins_with("Vlan") or not svi.enabled:
+			continue
+		if int(svi.name.trim_prefix("Vlan")) != vlan:
+			continue
+		if frame["dst"] == svi.mac:
+			_host_rx(dev, svi, frame)  # unicast to us: consumed here
+			return
+		if frame["dst"] == BCAST:
+			_host_rx(dev, svi, frame)  # e.g. ARP for the gateway; still flooded below
 	var known: Net.Iface = dev.mac_table[vlan].get(frame["dst"])
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
 	var lags_done := {}

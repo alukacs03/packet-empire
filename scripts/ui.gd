@@ -657,6 +657,15 @@ func _refresh_ports() -> void:
 				14, Color(0.55, 0.85, 0.65)))
 	if conn_list.get_child_count() == 0:
 		conn_list.add_child(_label("  no cables connected", 14, Color(0.45, 0.5, 0.6)))
+	for i: Net.Iface in cur_dev.ifaces:
+		if i.name.begins_with("Vlan"):
+			var b := Button.new()
+			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			b.add_theme_font_override("font", mono)
+			b.text = "  %s (SVI)   %s" % [i.name,
+				", ".join(PackedStringArray(i.ips)) if not i.ips.is_empty() else "no address"]
+			b.pressed.connect(open_iface.bind(i))
+			conn_list.add_child(b)
 	var svc_bits: Array = []
 	if cur_dev.services.has("dhcp"):
 		var svc: Dictionary = cur_dev.services["dhcp"]

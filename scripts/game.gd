@@ -9,7 +9,7 @@ signal money_changed
 const MODELS := {
 	"sw-lite": {"speed": 1000, "tier": 0, "type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
 	"sw-8": {"speed": 1000, "tier": 1, "type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
-	"sw-24": {"speed": 10000, "tier": 2, "type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900},
+	"sw-24": {"speed": 10000, "tier": 2, "type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900, "l3": true},
 	"srv-1": {"speed": 1000, "tier": 0, "type": "server", "ports": 1, "label": "Dill R110", "price": 400},
 	"srv-2": {"speed": 10000, "tier": 1, "type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
 	"rtr-lite": {"speed": 1000, "tier": 0, "type": "router", "ports": 4, "label": "PacketTik R4", "price": 350, "os": "ros", "if_prefix": "ether"},
@@ -102,6 +102,23 @@ func cooling_capacity() -> int:
 
 func overheating() -> bool:
 	return stage >= 1 and power_draw() > cooling_capacity()
+
+func is_l3_switch(dev: Net.NDevice) -> bool:
+	return dev.type == "switch" and bool(MODELS.get(dev.model, {}).get("l3", false))
+
+func add_svi(dev: Net.NDevice, vid: int) -> Net.Iface:
+	## a virtual routed interface for VLAN vid on an L3 switch
+	if not is_l3_switch(dev) or not dev.vlans.has(vid):
+		return null
+	for i: Net.Iface in dev.ifaces:
+		if i.name == "Vlan%d" % vid:
+			return i
+	var svi := Net.Iface.new(dev, "Vlan%d" % vid, _new_mac())
+	svi.mode = "routed"
+	dev.ifaces.append(svi)
+	dev.ip_forwarding = true  # an L3 switch routes between its SVIs
+	topology_changed.emit()
+	return svi
 
 func iface_speed(i: Net.Iface) -> int:
 	## Mbps; management ports are 100M service ports
@@ -513,7 +530,7 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 		if d == exclude:
 			continue
 		for i in d.ifaces:
-			if link_at(i) == null and i.name != "lo":
+			if link_at(i) == null and i.name != "lo" and not i.name.begins_with("Vlan"):
 				out.append(i)
 	return out
 
