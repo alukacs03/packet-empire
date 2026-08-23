@@ -21,6 +21,7 @@ func _ready() -> void:
 		return
 	ui = UILayer.new()
 	add_child(ui)
+	add_child(Techs.new())
 	get_tree().root.content_scale_factor = Prefs.ui_scale
 	Game.topology_changed.connect(queue_redraw)
 	if OS.get_environment("PACKET_SHOT") != "":
@@ -83,6 +84,7 @@ func _shoot_all() -> void:
 			dev = d
 		if d.type == "switch" and sw == null:
 			sw = d
+	add_child(Techs.new())
 	var shots: Array = [
 		["title", func() -> void: show_title()],
 		["title_slots", func() -> void: title.show_slots()],
