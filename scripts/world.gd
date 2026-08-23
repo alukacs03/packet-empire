@@ -157,6 +157,8 @@ func _notification(what: int) -> void:
 func _process(dt: float) -> void:
 	if ui == null:
 		return
+	if not Game.last_link_load.is_empty():
+		queue_redraw()  # traffic on the cables is animated, so keep painting
 	if not _anims.is_empty():
 		_anim_clock += dt
 		queue_redraw()
@@ -272,7 +274,12 @@ func _draw() -> void:
 		for i in 17:
 			pts.append(_tray(p0 + perp, p1 + perp, i / 16.0))
 		draw_polyline(pts, Color(0, 0, 0, 0.25), 3.5)  # shadow line
-		draw_polyline(pts, Color(1.0, 0.62, 0.2, 0.9), 2.0)
+		var blocked := Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b)
+		draw_polyline(pts, Color(0.55, 0.35, 0.3, 0.75) if blocked
+			else Color(1.0, 0.62, 0.2, 0.9), 2.0)
+		if not blocked:
+			_cable_flow(p0 + perp, p1 + perp, int(Game.last_link_load.get(l, 0)),
+				Game.link_capacity(l))
 	# packets in flight
 	const DUR := 0.3
 	for a in _anims:
@@ -282,3 +289,16 @@ func _draw() -> void:
 		var pos := _tray(a["p0"], a["p1"], t)
 		draw_circle(pos, 9.0, Color(a["col"], 0.25))
 		draw_circle(pos, 4.5, a["col"])
+
+func _cable_flow(p0: Vector2, p1: Vector2, load: int, cap: int) -> void:
+	## a trickle of light along a cable that is carrying something, denser the
+	## busier it is. A blocked or idle link shows nothing, which is the point.
+	if load <= 0 or cap <= 0:
+		return
+	var share := clampf(float(load) / float(cap), 0.03, 1.0)
+	var dots := 1 + int(share * 4.0)
+	var clock := Time.get_ticks_msec() / 1000.0
+	var col := Color(1.0, 0.85, 0.5) if share < 0.85 else Color(1.0, 0.45, 0.35)
+	for k in dots:
+		var f := fmod(clock * (0.15 + share * 0.35) + float(k) / dots, 1.0)
+		draw_circle(_tray(p0, p1, f), 2.8, Color(col, 0.85))

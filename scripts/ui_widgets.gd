@@ -177,6 +177,8 @@ class TopoMap extends Control:
 							Color(0.9, 0.4, 0.35, 0.9), 2.0)
 			else:
 				draw_line(pa, pb, col, 2.0)
+			if not blocked:
+				_flow(pa, pb, col, int(Game.last_link_load.get(l, 0)), Game.link_capacity(l))
 		# nodes on top
 		for dev: Net.NDevice in _nodes:
 			var rect: Rect2 = _nodes[dev]
@@ -187,8 +189,22 @@ class TopoMap extends Control:
 			draw_string(_mono, rect.position + Vector2(8, 29), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col.lightened(0.3))
 		# legend
 		var ly := size.y - 26
-		draw_string(_mono, Vector2(30, ly), "- host link  : trunk/inter-switch   ┄ STP blocked  : management",
+		draw_string(_mono, Vector2(30, ly),
+			"- host link  : trunk/inter-switch   ┄ STP blocked (no traffic: that is the point)  : management",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.55, 0.65))
+
+	func _flow(pa: Vector2, pb: Vector2, col: Color, load: int, cap: int) -> void:
+		## dots travelling the link, more of them the busier it is. A link
+		## carrying nothing shows nothing, which is a diagnosis in itself.
+		if load <= 0 or cap <= 0:
+			return
+		var share := clampf(float(load) / float(cap), 0.03, 1.0)
+		var dots := 1 + int(share * 5.0)
+		var speed := 0.18 + share * 0.5  # laps per second
+		var t := Time.get_ticks_msec() / 1000.0
+		for k in dots:
+			var f := fmod(t * speed + float(k) / dots, 1.0)
+			draw_circle(pa.lerp(pb, f), 2.6, Color(col.lightened(0.45), 0.9))
 
 # ================================================================ RackSlot ==
 

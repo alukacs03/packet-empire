@@ -180,6 +180,7 @@ static func ui_smoke(world: Node2D) -> int:
 	Sfx.play("bad")  # muted: must not raise
 	Sfx.muted = false
 	Sfx.play("no-such-cue")  # unknown: must not raise
+	world._draw()  # the cable-flow painter, with whatever load the cycle left
 	var crew := Techs.new()
 	world.add_child(crew)
 	check(crew.people.size() >= 2, "floor: the room is never empty of people")
