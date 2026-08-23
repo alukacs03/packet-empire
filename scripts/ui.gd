@@ -190,7 +190,8 @@ func _refresh_money() -> void:
 		if Game.overheating():
 			power += " 🔥"
 	var debt_s := ("  (debt $%d)" % Game.debt) if Game.debt > 0 else ""
-	money_lbl.text = "$%d%s  ♦%d%s" % [Game.money, debt_s, Game.reputation, power]
+	money_lbl.text = "%s$%d%s  ♦%d%s" % ["SANDBOX  " if Game.sandbox else "",
+		Game.money, debt_s, Game.reputation, power]
 	money_lbl.tooltip_text = "Cash%s · reputation %d · power and cooling" % [
 		"" if Game.debt == 0 else " (debt $%d)" % Game.debt, Game.reputation]
 	money_lbl.tooltip_text = "Money · Reputation (drives customer budgets) · Power/Cooling"
@@ -510,6 +511,24 @@ func _build_rack_overlay() -> void:
 	var info := _label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info_row.add_child(info)
+	var bp_btn := Button.new()
+	bp_btn.text = "Blueprints"
+	bp_btn.tooltip_text = "Save this rack's layout, or build a saved one into an empty rack"
+	bp_btn.pressed.connect(func() -> void:
+		var opts: Array = ["Save this rack as a blueprint…"]
+		var usable: Array = []
+		for b: Dictionary in Game.blueprints:
+			opts.append("Build '%s'   ($%d of hardware)" % [b["name"], Game.blueprint_price(b)])
+			usable.append(b)
+		_menu(bp_btn, opts, func(id: int) -> void:
+			if id == 0:
+				var err: String = Game.save_blueprint(cur_rack, "rack %s layout" % cur_rack.name)
+				hud_toast(err if err != "" else "Blueprint saved.", err == "")
+			else:
+				var err2: String = Game.apply_blueprint(cur_rack, usable[id - 1])
+				hud_toast(err2 if err2 != "" else "Rack built from the blueprint.", err2 == "")
+			_refresh_slots()))
+	info_row.add_child(bp_btn)
 	var sell := Button.new()
 	sell.text = "Sell rack ($%d)" % (Game.RACK_PRICE / 2)
 	sell.tooltip_text = "Only empty racks can be sold"
@@ -1453,6 +1472,17 @@ func _build_menu() -> void:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(Game.save_path))
 			get_tree().reload_current_scene()))
 	v.add_child(newg)
+	var sandbox_btn := Button.new()
+	sandbox_btn.text = "Sandbox mode"
+	sandbox_btn.tooltip_text = "Free hardware, no bills, no events: somewhere to try an idea"
+	sandbox_btn.pressed.connect(func() -> void:
+		Game.sandbox = not Game.sandbox
+		Game.log_event("SANDBOX: %s." % ("on, nothing costs anything" if Game.sandbox
+			else "off, the business is running again"))
+		menu_overlay.visible = false
+		hud_toast("Sandbox mode %s." % ("on" if Game.sandbox else "off"), Game.sandbox)
+		_refresh_money())
+	v.add_child(sandbox_btn)
 	var prefs_btn := Button.new()
 	prefs_btn.text = "Settings…"
 	prefs_btn.pressed.connect(func() -> void:

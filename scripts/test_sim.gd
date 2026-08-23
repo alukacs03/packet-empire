@@ -17,6 +17,9 @@ static func _contract(id: String) -> Dictionary:
 			return c
 	return {}
 
+static func money_way_too_much() -> int:
+	return Game.money + 1_000_000
+
 static func check_silent(cond: bool) -> void:
 	if not cond:
 		fails += 1
@@ -1441,6 +1444,31 @@ static func run() -> int:
 		racks_per_site.append(Game.racks_on(i).size())
 	check(racks_per_site.reduce(func(acc, v): return acc + v, 0) == Game.racks.size(),
 		"save2: every rack landed back on a site")
+
+	# --- sandbox mode and rack blueprints ---
+	Game.sandbox = true
+	var poor := Game.money
+	Game.money = 0
+	check(Game.try_spend(999999), "sandbox: hardware costs nothing")
+	var cyc_before := Game.cycle
+	Game.sla_tick()
+	check(Game.cycle == cyc_before + 1 and Game.money == 0,
+		"sandbox: time passes but nothing is billed")
+	Game.sandbox = false
+	Game.money = poor
+	check(not Game.try_spend(money_way_too_much()), "sandbox: off again, money matters")
+	Game.blueprints = []
+	var bp_src := Game.add_rack(Vector2i(27, 1))
+	bp_src.slots[0] = Game.new_device("sw-8")
+	bp_src.slots[1] = Game.new_device("srv-1")
+	check(Game.save_blueprint(bp_src, "access pod").is_empty(), "blueprint: a rack layout can be saved")
+	var bp: Dictionary = Game.blueprints[0]
+	check(Game.blueprint_price(bp) == 250 + 400, "blueprint: it prices the hardware it needs")
+	var bp_dst := Game.add_rack(Vector2i(28, 1))
+	Game.money = 100000
+	check(Game.apply_blueprint(bp_dst, bp).is_empty(), "blueprint: it builds into an empty rack")
+	check(bp_dst.slots[0] != null and bp_dst.slots[1] != null, "blueprint: the hardware arrives")
+	check(not Game.apply_blueprint(bp_dst, bp).is_empty(), "blueprint: it refuses an occupied rack")
 
 	# --- ageing, insurance and marketing ---
 	Game.insured = false

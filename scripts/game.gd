@@ -183,6 +183,7 @@ var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
 var templates: Array = []  # golden configs: {name, type, cfg}
+var blueprints: Array = []  # rack layouts: {name, slots: [model|null]}
 var maintenance_until := -1  # cycle up to which planned work is excused
 var maintenance_used := 0  # windows taken this quarter: customers notice
 var incidents: Array = []  # things worth reviewing afterwards
@@ -190,6 +191,7 @@ var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
 var scrubbing := false  # upstream scrubbing service, billed per cycle
 var insured := false  # insurance against hardware failure, billed per cycle
 var marketing := 0  # spend per cycle to bring more work in
+var sandbox := false  # free hardware, no bills, no events: a place to try things
 const INSURANCE_FEE := 140
 const MARKETING_STEP := 150
 const SCRUB_FEE := 220
@@ -1250,6 +1252,9 @@ func sla_tick() -> void:
 	## their requirements still hold. Break the network, lose the revenue.
 	if drill_active:
 		return  # the economy pauses while you run a drill
+	if sandbox:
+		cycle += 1  # time passes, but nothing is billed and nothing breaks
+		return
 	cycle += 1
 	var earned := 0
 	last_pl = {}
@@ -1431,6 +1436,8 @@ func sla_tick() -> void:
 # ---------- money ----------
 
 func try_spend(amount: int) -> bool:
+	if sandbox:
+		return true  # nothing costs anything in a sandbox
 	if money < amount:
 		return false
 	money -= amount
@@ -1705,6 +1712,7 @@ func _serialize() -> Dictionary:
 		"market_intel": market_intel, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates, "reports": reports,
 		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
+		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"incidents": incidents,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -1719,6 +1727,50 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	cfg.erase("startup")
 	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
 	return cfg
+
+func save_blueprint(r: Net.Rack, name: String) -> String:
+	name = name.strip_edges()
+	if name == "":
+		return "a blueprint needs a name"
+	var slots: Array = []
+	var any := false
+	for d in r.slots:
+		slots.append(d.model if d != null else null)
+		if d != null:
+			any = true
+	if not any:
+		return "there is nothing in that rack to copy"
+	for b in blueprints:
+		if b["name"] == name:
+			blueprints.erase(b)
+			break
+	blueprints.append({"name": name, "slots": slots})
+	log_event("BLUEPRINT: saved '%s' from rack %s." % [name, r.name])
+	return ""
+
+func blueprint_price(b: Dictionary) -> int:
+	var total := 0
+	for m in b["slots"]:
+		if m != null:
+			total += int(MODELS[String(m)]["price"])
+	return total
+
+func apply_blueprint(r: Net.Rack, b: Dictionary) -> String:
+	for d in r.slots:
+		if d != null:
+			return "that rack is not empty"
+	var price := blueprint_price(b)
+	if not try_spend(price):
+		return "the hardware for '%s' costs $%d and you have $%d" % [b["name"], price, money]
+	for idx in mini(r.slots.size(), b["slots"].size()):
+		var m = b["slots"][idx]
+		if m != null:
+			r.slots[idx] = new_device(String(m))
+	if r.visual:
+		r.visual.queue_redraw()
+	log_event("BLUEPRINT: built '%s' into rack %s for $%d." % [b["name"], r.name, price])
+	topology_changed.emit()
+	return ""
 
 func save_template(d: Net.NDevice, name: String) -> String:
 	name = name.strip_edges()
@@ -1937,6 +1989,8 @@ func _apply(data: Dictionary) -> void:
 	scrubbing = bool(data.get("scrubbing", false))
 	insured = bool(data.get("insured", false))
 	marketing = int(data.get("marketing", 0))
+	sandbox = bool(data.get("sandbox", false))
+	blueprints = data.get("blueprints", [])
 	templates = data.get("templates", [])
 	monitors = data.get("monitors", [])
 	history = data.get("history", [])
