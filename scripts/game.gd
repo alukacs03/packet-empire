@@ -142,6 +142,36 @@ func add_svi(dev: Net.NDevice, vid: int) -> Net.Iface:
 	topology_changed.emit()
 	return svi
 
+const RANKS := [
+	["Cable monkey", 0],
+	["Junior NOC operator", 3000],
+	["Network engineer", 12000],
+	["Senior network engineer", 30000],
+	["Datacenter architect", 70000],
+	["Packet Emperor", 150000],
+]
+
+func rank_score() -> int:
+	## lifetime earnings, weighted by the scale and quality of the operation
+	var base: int = int(stats.get("earned", 0))
+	var bonus: int = int(stats.get("contracts", 0)) * 500 + int(stats.get("deals", 0)) * 250 \
+		+ stage * 4000 + (reputation - 50) * 40
+	return maxi(0, base + bonus)
+
+func rank() -> String:
+	var name: String = RANKS[0][0]
+	for r in RANKS:
+		if rank_score() >= int(r[1]):
+			name = r[0]
+	return name
+
+func next_rank() -> Array:
+	## -> [name, points_needed] or [] when at the top
+	for r in RANKS:
+		if rank_score() < int(r[1]):
+			return [r[0], int(r[1]) - rank_score()]
+	return []
+
 func config_dirty(d: Net.NDevice) -> bool:
 	## running config differs from what a reboot would restore
 	if d.type in ["server", "uplink", "cooling"]:

@@ -1092,5 +1092,17 @@ static func run() -> int:
 	check(Game.deals.is_empty(), "economy: undelivered customers eventually walk")
 	check(Game.reputation < rep_broken, "economy: failure costs reputation (%d -> %d)" % [rep_broken, Game.reputation])
 
+	# --- career rank ---
+	Game.stats["earned"] = 0
+	Game.stats["contracts"] = 0
+	Game.stats["deals"] = 0
+	Game.stage = 0
+	Game.reputation = 50
+	check(Game.rank() == "Cable monkey", "rank: a fresh operator starts at the bottom")
+	check(Game.next_rank()[0] == "Junior NOC operator", "rank: next step is named")
+	Game.stats["earned"] = 200000
+	check(Game.rank() == "Packet Emperor", "rank: a rich empire tops out")
+	check(Game.next_rank().is_empty(), "rank: nothing left above the top")
+
 	print("---- %d failures" % fails)
 	return fails
