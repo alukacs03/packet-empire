@@ -913,12 +913,35 @@ func _cable_action() -> void:
 	if targets.is_empty():
 		_menu(if_cable_btn, ["(no free ports anywhere else)"], func(_id: int) -> void: pass)
 		return
-	var labels: Array = []
+	# group by device: one submenu per device, so a rack of 24-port switches
+	# does not become a hundred-row flat list
+	var by_dev := {}
 	for t: Net.Iface in targets:
-		labels.append("%-4s %-8s %s" % [Game.rack_of(t.dev).name, t.dev.name, t.name])
-	_menu(if_cable_btn, labels, func(id: int) -> void:
-		Game.connect_ifaces(cur_if, targets[id])
-		_refresh_iface())
+		if not by_dev.has(t.dev):
+			by_dev[t.dev] = []
+		by_dev[t.dev].append(t)
+	var root := PopupMenu.new()
+	root.add_theme_font_override("font", mono)
+	add_child(root)
+	root.popup_hide.connect(root.queue_free)
+	for dev: Net.NDevice in by_dev:
+		var ports: Array = by_dev[dev]
+		var sub := PopupMenu.new()
+		sub.add_theme_font_override("font", mono)
+		sub.name = "sub_%s" % dev.name
+		for t: Net.Iface in ports:
+			sub.add_item(t.name)
+		sub.id_pressed.connect(func(id: int) -> void:
+			Game.connect_ifaces(cur_if, ports[id])
+			root.hide()
+			_refresh_iface())
+		root.add_child(sub)
+		var names: Array = []
+		for t: Net.Iface in ports:
+			names.append(t.name)
+		root.add_submenu_item("%-4s %-8s %2d free: %s" % [Game.rack_of(dev).name, dev.name,
+			ports.size(), compress_ports(names)], sub.name)
+	root.popup(Rect2i(Vector2i(if_cable_btn.get_screen_position() + Vector2(0, if_cable_btn.size.y + 4)), Vector2i.ZERO))
 
 # ---------- encyclopedia ----------
 
