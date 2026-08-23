@@ -175,6 +175,17 @@ static func all() -> Array:
 			],
 		},
 		{
+			"id": "bandwidth_crunch",
+			"title": "Bandwidth crunch",
+			"customer": "Everyone at once",
+			"reward": 3500,
+			"brief": "Success has a price: customers report slowdowns, and the Map shows red links: their combined load exceeds your 1G gear. The fix is capacity planning: 10-gig hardware (Arivista 7024 switches, Junivista MX8 routers) on the hot paths. Deliver a 10G-capable link between two pieces of core gear (both ends 10G models) and have zero congested deals.",
+			"reqs": [
+				{"d": "A 10G link in the core (both ends 10G-capable)", "t": func() -> bool: return _has_10g_link()},
+				{"d": "No customer deal is congested", "t": func() -> bool: return _no_congestion()},
+			],
+		},
+		{
 			"id": "big_client",
 			"title": "The big client",
 			"customer": "Omega Holding",
@@ -230,6 +241,18 @@ static func _vip_pings() -> bool:
 				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
 					return true
 	return false
+
+static func _has_10g_link() -> bool:
+	for l in Game.links:
+		if Game.link_capacity(l) >= 10000:
+			return true
+	return false
+
+static func _no_congestion() -> bool:
+	for deal in Game.deals:
+		if deal.get("degraded", false):
+			return false
+	return true
 
 static func _vlan_with_server(vid: int) -> bool:
 	for d in Game.all_devices():

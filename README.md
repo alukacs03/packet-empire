@@ -21,6 +21,9 @@ macOS: `/Applications/Godot.app/Contents/MacOS/Godot --path .`
 - Click a device → front panel; click a port → interface editor / run cables
 - Every device has a working console (**Open console**), with tab completion
   and command history
+- **Map (M)** shows the logical topology: trunks, STP-blocked links,
+  congestion; **Learn** opens the in-game encyclopedia; **ssh** between
+  devices from any console; **?** lists possibilities Cisco-style
 - **Contracts** (top bar) drives the campaign: each mission's brief teaches the
   commands it needs. Marketplace customers arrive with needs and hidden
   budgets: quote a price per revenue cycle; delivery is verified against the
@@ -35,9 +38,12 @@ macOS: `/Applications/Godot.app/Contents/MacOS/Godot --path .`
 - **Dynamic routing**: eBGP-lite to an ISP handoff (transit fees, prefix
   announcements, default via BGP) and single-area OSPF
 - **Services**: DHCP over real broadcast, DNS with A records and resolvers
+- **HA & scale**: VRRP virtual gateways with priority election and failover,
+  link speeds (1G/10G/100M) with per-cycle load placement and congestion
 - **Ops**: power draw and cooling capacity (overheating trips gear), SLA
   re-verification, security incidents when customer machines can reach your
-  management addresses, reputation that moves customer budgets
+  management addresses (switches have OOB Management ports), on-call field
+  faults, reputation that moves customer budgets, bank loans with interest
 
 ## Vendor dialects
 

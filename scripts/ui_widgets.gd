@@ -89,7 +89,13 @@ class TopoMap extends Control:
 				blocked = Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b)
 			if l.a.name.begins_with("Management") or l.b.name.begins_with("Management"):
 				col = Color(0.75, 0.55, 0.95, 0.85)
-			if blocked:
+			var over: bool = Game.last_link_load.get(l, 0) > Game.link_capacity(l)
+			if over:
+				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.9), 5.0)
+				draw_string(_mono, (pa + pb) / 2.0 + Vector2(4, -4),
+					"%d/%d Mbps" % [Game.last_link_load.get(l, 0), Game.link_capacity(l)],
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.5, 0.45))
+			elif blocked:
 				var n := 14
 				for k in n:
 					if k % 2 == 0:

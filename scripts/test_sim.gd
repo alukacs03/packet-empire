@@ -668,6 +668,8 @@ static func run() -> int:
 	cap_deal["load"] = 200
 	Game.sla_tick()
 	check(not cap_deal.get("degraded", true), "capacity: modest load fits, deal recovers")
+	Game.connect_ifaces(vr1.ifaces[1], vr2.ifaces[1])  # 10G Junivista-to-Junivista core link
+	check(Game.try_complete_contract(_contract("bandwidth_crunch")), "capacity: bandwidth-crunch contract verifies")
 	Game.deals.erase(cap_deal)
 
 	print("---- %d failures" % fails)

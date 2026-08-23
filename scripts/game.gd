@@ -135,6 +135,7 @@ func try_complete_contract(c: Dictionary) -> bool:
 const SLA_PERIOD := 45.0  # seconds per billing cycle
 
 var sla_status := {}  # contract id -> bool (last billing check passed)
+var last_link_load := {}  # Link -> Mbps, from the latest cycle
 var cycle_timer: Timer
 
 func _ready() -> void:
@@ -295,6 +296,7 @@ func sla_tick() -> void:
 			deal_links[deal["id"]] = used
 			for l in used:
 				link_load[l] = link_load.get(l, 0) + int(deal.get("load", 200))
+	last_link_load = link_load
 	for deal in deals:
 		if not deal["healthy"]:
 			reputation = maxi(0, reputation - 3)
