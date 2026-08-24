@@ -2411,6 +2411,12 @@ func _next_job() -> Dictionary:
 			return c
 	return {}
 
+func _next_waiting_customer() -> Dictionary:
+	for deal: Dictionary in Game.deals:
+		if not bool(deal.get("healthy", false)):
+			return deal
+	return {}
+
 func _refresh_tutorial() -> void:
 	if tutorial_panel == null:
 		return
@@ -2418,6 +2424,22 @@ func _refresh_tutorial() -> void:
 		tutorial_panel.visible = false
 		return
 	if "rackup" in Game.contracts_done:
+		var waiting := _next_waiting_customer()
+		if not waiting.is_empty():
+			tutorial_panel.visible = true
+			for old in tutorial_box.get_children():
+				old.queue_free()
+			tutorial_box.add_child(_tutorial_head("DELIVER  /  %s" % String(waiting["customer"]).to_upper()))
+			var promise := _wrap("○  Promise sold: %s" % String(waiting["brief"]), 13,
+				UIW.colour("text"), 290)
+			tutorial_box.add_child(promise)
+			tutorial_box.add_child(_label("○  Prove the live service, then let one billing cycle run.",
+				12, UIW.colour("muted")))
+			var desk_btn := Button.new()
+			desk_btn.text = "Open customer delivery brief"
+			desk_btn.pressed.connect(open_contracts)
+			tutorial_box.add_child(desk_btn)
+			return
 		# past the opening steps, the panel becomes a live checklist for
 		# whatever job is currently open, so there is always a next thing
 		var job := _next_job()
@@ -3110,6 +3132,9 @@ func _build_business_tab() -> void:
 	# (market moved to its own tab)
 
 func _build_market_tab() -> void:
+	var pipeline_anchor := VBoxContainer.new()
+	pipeline_anchor.add_theme_constant_override("separation", UIW.space("sm"))
+	contracts_box.add_child(pipeline_anchor)
 	if not Game.references.is_empty():
 		contracts_box.add_child(_wrap("Willing to be a reference: %s. Customers who have been happy for a long time are worth more than any advertising."
 			% ", ".join(PackedStringArray(Game.references)), 13, Color(0.65, 0.88, 0.72), 560))
@@ -3148,20 +3173,21 @@ func _build_market_tab() -> void:
 	if Game.sold_out:
 		contracts_box.add_child(_wrap("You sold the company. Everything still runs, and none of it is yours.",
 			14, Color(0.7, 0.75, 0.85), 560))
-	contracts_box.add_child(_section("PIPELINE"))
+	pipeline_anchor.add_child(_section("PIPELINE"))
 	if Game.leads.is_empty():
 		var pipeline_empty := UIW.make_empty_state(
 			"Nothing in the pipeline. Bigger work arrives through people talking about you, so reputation, references and marketing all feed this.")
 		pipeline_empty.custom_minimum_size.x = 560
-		contracts_box.add_child(pipeline_empty)
+		pipeline_anchor.add_child(pipeline_empty)
 	for lead: Dictionary in Game.leads.duplicate():
 		var card := PanelContainer.new()
 		UIW.style_panel(card, "positive", "md")
-		contracts_box.add_child(card)
+		pipeline_anchor.add_child(card)
 		var lv := VBoxContainer.new()
 		lv.add_theme_constant_override("separation", 6)
 		card.add_child(lv)
-		lv.add_child(_label("%s   ·   %s   ·   %s" % [lead["customer"],
+		lv.add_child(_label("%s   ·   %s   ·   %s   ·   %s" % [lead["customer"],
+			Market.TYPES.get(String(lead.get("ctype", "enterprise")), {}).get("label", "customer"),
 			Market.label_for(lead["kind"]),
 			"a lead" if lead["stage"] == "lead" else "out to tender"], 16, Color.WHITE))
 		if String(lead["stage"]) == "lead":
@@ -3181,13 +3207,31 @@ func _build_market_tab() -> void:
 			continue
 		lv.add_child(_wrap("They want: %s." % Market.rfp_requirements(lead), 13,
 			Color(0.78, 0.83, 0.9)))
+		var serve := Market.cost_to_serve(lead)
+		var qualify_facts := HBoxContainer.new()
+		qualify_facts.add_theme_constant_override("separation", UIW.space("sm"))
+		lv.add_child(qualify_facts)
+		qualify_facts.add_child(_offer_fact("EXPECTED LOAD", "~%d Mbps\nPays %d cycle%s after invoice" % [
+			int(lead["load"]), Game.payment_terms(lead), "" if Game.payment_terms(lead) == 1 else "s"], "info"))
+		qualify_facts.add_child(_offer_fact("COST TO SERVE",
+			"$%d setup  ·  $%d/cycle\n~$%d/cycle break-even over %d cycles" % [
+				int(serve["setup"]), int(serve["running"]), int(serve["floor"]), int(serve["term"])], "warning"))
+		qualify_facts.add_child(_offer_fact("COMPETITION",
+			"Budget confidential. Reputation and references let you charge above the cheapest bid.", "warm"))
+		if lead.has("coach"):
+			var coaching := UIW.style_panel(PanelContainer.new(), "warning", "sm")
+			var coaching_text := _wrap("PROPOSAL REVIEW  /  %s. Revise and send it again—this first customer will wait."
+				% String(lead["coach"]).capitalize(), 12, UIW.colour("text_strong"), 600)
+			coaching.add_child(coaching_text)
+			lv.add_child(coaching)
 		lv.add_child(_label("Tender closes in %d cycle(s)." % int(lead["ttl"]), 12, MUTED))
 		var prow := HBoxContainer.new()
 		prow.add_theme_constant_override("separation", 8)
 		lv.add_child(prow)
 		prow.add_child(_label("Your price:  $", 14))
 		var pprice := _mono_edit(90)
-		pprice.placeholder_text = str(int(lead["size"]))
+		pprice.placeholder_text = str(int(serve["floor"]) + 18)
+		pprice.tooltip_text = "A starting point above estimated break-even—not the customer's hidden budget."
 		prow.add_child(pprice)
 		prow.add_child(_label("/cycle   commit to ", 14))
 		var sla_opt := OptionButton.new()
@@ -3208,11 +3252,29 @@ func _build_market_tab() -> void:
 			_refresh_contracts()
 			if res.begins_with("lost:"):
 				_toast("Lost: %s." % res.trim_prefix("lost:"))
+			elif res.begins_with("retry:"):
+				_toast("Not signed yet: %s. Kiskacsa will let you revise this first proposal."
+					% res.trim_prefix("retry:"))
 			elif res != "":
 				_toast(res)
 			else:
 				hud_toast("%s is yours." % lead["customer"], true))
 		prow.add_child(sbtn)
+		var margin_lbl := _label("", 11, MUTED)
+		margin_lbl.add_theme_font_override("font", mono)
+		lv.add_child(margin_lbl)
+		var refresh_margin := func(raw_price: String) -> void:
+			var quote := int(serve["floor"]) + 18
+			if raw_price.strip_edges().is_valid_int():
+				quote = int(raw_price.strip_edges())
+			var per_cycle := quote - int(serve["floor"])
+			var direction := "above" if per_cycle >= 0 else "below"
+			var term_shape := absi(per_cycle * int(serve["term"]))
+			var term_word := "margin" if per_cycle >= 0 else "shortfall"
+			margin_lbl.text = "PRICE SHAPE  /  $%d %s estimated break-even each cycle  ·  ~$%d %s over the initial %d-cycle term before incidents" % [
+				absi(per_cycle), direction, term_shape, term_word, int(serve["term"])]
+		pprice.text_changed.connect(refresh_margin)
+		refresh_margin.call("")
 	contracts_box.add_child(_section("THE COMPETITION"))
 	for r: Dictionary in Game.rivals:
 		if not Rivals.alive(r):

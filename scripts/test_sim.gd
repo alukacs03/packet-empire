@@ -3360,7 +3360,29 @@ static func run() -> int:
 	# --- the sales pipeline ---
 	var pl_saved := Game.deals.duplicate()
 	var pl_money := Game.money
+	var pl_stats := Game.stats.duplicate(true)
+	var pl_contracts := Game.contracts_done.duplicate()
 	Game.money = 100000
+	Game.leads = []
+	Game.deals = []
+	Game.contracts_done = ["guided_a", "guided_b", "guided_c"]
+	Game.stats["guided_first_lead_seen"] = false
+	Game.lead_tick()
+	check(Game.leads.size() == 1 and bool(Game.leads[0].get("guided", false)),
+		"guided sales: the first pipeline lead is deterministic after three jobs")
+	var guided: Dictionary = Game.leads[0]
+	check(guided["customer"] == "Kiskacsa Kft", "guided sales: the first customer is a named story")
+	var serve := Market.cost_to_serve(guided)
+	check(int(serve["setup"]) > 0 and int(serve["floor"]) > 0,
+		"guided sales: cost-to-serve exposes setup and an amortised floor, not the hidden budget")
+	check(Game.qualify_lead(guided) == "" and guided["stage"] == "rfp",
+		"guided sales: the teaching lead cannot vanish during qualification")
+	var retry := Game.submit_proposal(guided, int(guided["size"]) * 5, int(guided["sla"]))
+	check(retry.begins_with("retry:") and Game.leads.has(guided),
+		"guided sales: a first bad proposal is coached and remains recoverable")
+	check(Game.submit_proposal(guided, 1, int(guided["sla"])) == "" and not Game.deals.is_empty(),
+		"guided sales: a revised compliant proposal signs a live delivery deal")
+	Game.deals = []
 	Game.leads = []
 	var lead := Market.gen_lead()
 	Game.leads = [lead]
@@ -3397,6 +3419,8 @@ static func run() -> int:
 	check(Game.leads.is_empty(), "pipeline: and leaves the pipeline")
 	Game.deals = pl_saved
 	Game.money = pl_money
+	Game.stats = pl_stats
+	Game.contracts_done = pl_contracts
 
 	# --- customers who grow, and what people say about you ---
 	var gr_deal := {"id": "grow1", "customer": "Growing Kft", "kind": "hosting",

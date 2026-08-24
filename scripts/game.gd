@@ -1877,6 +1877,14 @@ func lead_tick() -> void:
 		if int(l["ttl"]) <= 0:
 			leads.erase(l)
 			log_event("PIPELINE: %s went quiet. Somebody else got there first." % l["customer"])
+	# The first pipeline lead is a named teaching story; once it has appeared,
+	# the normal uncertain word-of-mouth market takes over permanently.
+	if contracts_done.size() >= 3 and not bool(stats.get("guided_first_lead_seen", false)) \
+			and leads.is_empty() and deals.is_empty():
+		leads.append(Market.guided_first_lead())
+		stats["guided_first_lead_seen"] = true
+		log_event("PIPELINE: Kiskacsa Kft was referred by your first customers. Go and learn what they need.")
+		return
 	# bigger work arrives through people talking, not through a web form
 	var cap := 2 + int(marketing / MARKETING_STEP) + references.size()
 	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35:
@@ -1889,7 +1897,7 @@ func qualify_lead(lead: Dictionary) -> String:
 		return "you have already been out to see them"
 	if not try_spend(Market.LEAD_QUALIFY_COST):
 		return "a site visit costs $%d" % Market.LEAD_QUALIFY_COST
-	if biz_roll() < 0.22:
+	if not bool(lead.get("guided", false)) and biz_roll() < 0.22:
 		leads.erase(lead)
 		log_event("PIPELINE: %s turned out to have no budget. That is the job."
 			% lead["customer"])
@@ -1907,11 +1915,19 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 	if blocked != "":
 		return blocked
 	var result := Market.score_proposal(lead, price, committed_sla, reputation, references.size())
-	leads.erase(lead)
 	if not bool(result["won"]):
 		market_intel += 1
+		if bool(lead.get("guided", false)):
+			lead["attempts"] = int(lead.get("attempts", 0)) + 1
+			lead["ttl"] = 5
+			lead["coach"] = String(result["why"])
+			log_event("PROPOSAL REVIEW: Kiskacsa did not sign yet: %s. Revise and resubmit."
+				% String(result["why"]).capitalize())
+			return "retry:" + String(result["why"])
+		leads.erase(lead)
 		log_event("LOST TENDER: %s. %s." % [lead["customer"], String(result["why"]).capitalize()])
 		return "lost:" + String(result["why"])
+	leads.erase(lead)
 	var deal := {
 		"id": "rfp_%d%s" % [cycle, String(lead["customer"]).substr(0, 3)],
 		"customer": lead["customer"], "kind": lead["kind"], "params": lead["params"],

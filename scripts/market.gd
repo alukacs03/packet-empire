@@ -164,6 +164,48 @@ static func gen_lead() -> Dictionary:
 		"ttl": 6,
 	}
 
+static func guided_first_lead() -> Dictionary:
+	## A stable first sales story: friendly, small enough for the starter room,
+	## and recoverable while the player learns what a proposal is made of.
+	return {
+		"id": "lead_guided_kiskacsa",
+		"customer": "Kiskacsa Kft",
+		"kind": "hosting",
+		"ctype": "startup",
+		"stage": "lead",
+		"heard": "they have a real application, little infrastructure, and need someone patient",
+		"size": 118,
+		"sla": 0,
+		"params": {"ip": "10.42.18.10"},
+		"load": 150,
+		"public": false,
+		"ttl": 8,
+		"guided": true,
+		"attempts": 0,
+	}
+
+static func cost_to_serve(lead: Dictionary) -> Dictionary:
+	## An honest estimate, not an oracle. It amortises unavoidable hardware over
+	## the initial 18-cycle term and leaves the customer's hidden budget hidden.
+	var setup := 0
+	var watts := 0
+	match String(lead.get("kind", "")):
+		"hosting", "dhcp_pool", "own_vlan", "managed_switch":
+			setup = 400
+			watts = 150
+		"secure_host":
+			setup = 1200
+			watts = 220
+		"public_hosting":
+			setup = 1400
+			watts = 260
+		"redundant_gw":
+			setup = 1200
+			watts = 160
+	var running := 0 if Game.stage < 1 else int(ceil(float(watts) * Game.efficiency_factor() * Game.energy_rate()))
+	var floor_price := int(ceil(float(setup) / 18.0)) + running
+	return {"setup": setup, "running": running, "floor": floor_price, "term": 18}
+
 static func rfp_requirements(lead: Dictionary) -> String:
 	var bits: Array = []
 	var t := tier(int(lead["sla"]))

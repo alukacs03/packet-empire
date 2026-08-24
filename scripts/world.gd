@@ -149,11 +149,31 @@ func _shoot_all() -> void:
 			ui._toggle_cli()
 			ui._cli_submit("/interface print")],
 		["iface", func() -> void: ui.open_iface(sw.ifaces[0])],
-		["contracts", func() -> void:
+		["guided_lead", func() -> void:
 			ui.close_iface()
 			ui.close_dev()
 			ui.close_rack()
+			var guided := Market.guided_first_lead()
+			guided["stage"] = "rfp"
+			Game.leads = [guided]
+			ui.contracts_tab = "Market"
 			ui.open_contracts()],
+		["guided_lead_retry", func() -> void:
+			Game.leads[0]["coach"] = "your price was well over their budget"
+			ui._refresh_contracts()],
+		["guided_delivery", func() -> void:
+			Game.leads = []
+			Game.deals = [{"id": "guided_delivery", "customer": "Kiskacsa Kft",
+				"kind": "hosting", "params": {"ip": "10.42.18.10"}, "fee": 72,
+				"brief": "best effort is acceptable, about 150 Mbps", "healthy": false,
+				"cycles": 0, "up_cycles": 0, "term": 18, "sla": 0,
+				"ctype": "startup", "load": 150, "public": false}]
+			ui.close_contracts()
+			ui._refresh_tutorial()],
+		["contracts", func() -> void:
+			ui.open_contracts()
+			ui.contracts_tab = "Jobs"
+			ui._refresh_contracts()],
 		["map", func() -> void:
 			ui.close_contracts()
 			ui.toggle_map()],
