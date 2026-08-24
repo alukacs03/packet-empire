@@ -1307,8 +1307,18 @@ func _refresh_iface() -> void:
 		if_cable_btn.tooltip_text = "For devices in this rack, close to the rack view and drag directly between free ports."
 		if_peer_btn.visible = false
 	else:
-		if_cable_lbl.text = "Cable: ⇄  " + peer
-		if_cable_btn.text = "Disconnect"
+		var link := Game.link_at(cur_if)
+		var far_iface: Net.Iface = link.other(cur_if)
+		var local_rack := Game.rack_of(cur_if.dev)
+		var same_rack := local_rack != null and Game.rack_of(far_iface.dev) == local_rack
+		if same_rack:
+			if_cable_lbl.text = "Physical patch: ⇄  " + peer
+			if_cable_btn.text = "Open rack elevation"
+			if_cable_btn.tooltip_text = "Pull the fitted plug from its jack to repatch or unplug it"
+		else:
+			if_cable_lbl.text = "Remote link: ⇄  " + peer
+			if_cable_btn.text = "Disconnect"
+			if_cable_btn.tooltip_text = "Remove this remote or circuit-backed link"
 		if_peer_btn.visible = true
 
 func _iface_state_line(caption: String, value: String, semantic: String) -> HBoxContainer:
@@ -1325,7 +1335,14 @@ func _iface_state_line(caption: String, value: String, semantic: String) -> HBox
 	return row
 
 func _cable_action() -> void:
-	if Game.link_at(cur_if):
+	var fitted := Game.link_at(cur_if)
+	if fitted:
+		var far_iface: Net.Iface = fitted.other(cur_if)
+		var local_rack := Game.rack_of(cur_if.dev)
+		if local_rack != null and Game.rack_of(far_iface.dev) == local_rack:
+			close_iface()
+			open_rack(local_rack)
+			return
 		Game.disconnect_iface(cur_if)
 		_refresh_iface()
 		return
