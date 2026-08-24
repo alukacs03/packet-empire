@@ -282,6 +282,26 @@ const TYPE_COLORS := {
 	"console": Color("e4c891"),
 }
 
+const MODEL_VISUALS := {
+	"sw-lite": {"base": Color("d7d2c4"), "accent": Color("70b85c"), "ink": Color("24313a"), "mark": "packet"},
+	"rtr-lite": {"base": Color("d7d2c4"), "accent": Color("e0a34d"), "ink": Color("24313a"), "mark": "packet"},
+	"sw-8": {"base": Color("293743"), "accent": Color("57c9cb"), "ink": Color("e7f0f2"), "mark": "open"},
+	"sw-24": {"base": Color("17334b"), "accent": Color("39d9d0"), "ink": Color("eef9fa"), "mark": "arivista"},
+	"srv-1": {"base": Color("353e49"), "accent": Color("719cff"), "ink": Color("edf1f7"), "mark": "dill"},
+	"srv-2": {"base": Color("303b4c"), "accent": Color("8cb1ff"), "ink": Color("edf1f7"), "mark": "dill"},
+	"rtr-edge": {"base": Color("30294a"), "accent": Color("b58cff"), "ink": Color("f3ecff"), "mark": "junivista"},
+	"fw-1": {"base": Color("482b31"), "accent": Color("ff6f68"), "ink": Color("fff0ed"), "mark": "shield"},
+	"lb-1": {"base": Color("233e39"), "accent": Color("69e39a"), "ink": Color("effff5"), "mark": "balance"},
+	"ap-1": {"base": Color("45402d"), "accent": Color("ffe079"), "ink": Color("fff9df"), "mark": "radio"},
+	"isp-uplink": {"base": Color("332b48"), "accent": Color("b58cff"), "ink": Color("f5efff"), "mark": "uplink"},
+	"con-1": {"base": Color("403b32"), "accent": Color("e4c891"), "ink": Color("fff8e8"), "mark": "console"},
+	"crac-1": {"base": Color("233c4b"), "accent": Color("70c8ff"), "ink": Color("edfaff"), "mark": "cooling"},
+}
+
+static func model_visual(model: String) -> Dictionary:
+	return MODEL_VISUALS.get(model, {"base": colour("surface_raised"),
+		"accent": colour("info"), "ink": colour("text_strong"), "mark": "open"})
+
 static var _mono_shared: SystemFont
 static var _sans_shared: SystemFont
 
@@ -598,17 +618,19 @@ class RackSlot extends Control:
 					"+ INSTALL HARDWARE", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("accent"))
 			return
 		# device faceplate
-		var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
+		var visual := UIW.model_visual(dev.model)
+		var col: Color = visual["accent"]
+		var face: Color = visual["base"]
 		if dev.status != "active":
 			col = Color(0.4, 0.33, 0.33)
-		var face := col.darkened(0.52)
+			face = Color(0.22, 0.20, 0.21)
 		if hovered:
-			face = col.darkened(0.40)
+			face = face.lightened(0.10)
 		draw_rect(inner, face)
-		draw_rect(inner, col.darkened(0.1) if hovered else col.darkened(0.3), false, 1.5)
+		draw_rect(inner, col.lightened(0.1) if hovered else col.darkened(0.2), false, 1.5)
 		draw_rect(Rect2(inner.position, Vector2(6, inner.size.y)), col)  # vendor stripe
 		draw_string(_mono, inner.position + Vector2(14, 18), dev.name,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.92, 0.95, 1.0))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, visual["ink"])
 		draw_string(_mono, inner.position + Vector2(14, 33), Game.MODELS[dev.model]["label"],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col.lightened(0.25))
 		# mini port squares, lit when linked
@@ -708,13 +730,15 @@ class Faceplate extends Control:
 		queue_redraw()  # link LEDs blink
 
 	func _draw() -> void:
-		var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
+		var visual := UIW.model_visual(dev.model)
+		var col: Color = visual["accent"]
+		var ink: Color = visual["ink"]
 		# brushed panel
 		var panel := Rect2(Vector2.ZERO, size)
-		draw_rect(panel, Color("1b304a"))
+		draw_rect(panel, visual["base"])
 		for k in int(size.y / 3):
-			draw_line(Vector2(1, k * 3), Vector2(size.x - 1, k * 3), Color(1, 1, 1, 0.012))
-		draw_rect(panel, UIW.colour("border_strong"), false, 1.5)
+			draw_line(Vector2(1, k * 3), Vector2(size.x - 1, k * 3), Color(1, 1, 1, 0.018))
+		draw_rect(panel, col.darkened(0.28), false, 1.5)
 		draw_rect(Rect2(0, 0, size.x, 5), col)  # vendor accent strip
 		# corner screws
 		for sx in [10.0, size.x - 10.0]:
@@ -722,12 +746,19 @@ class Faceplate extends Control:
 				draw_circle(Vector2(sx, sy), 3.5, UIW.colour("console"))
 				draw_circle(Vector2(sx, sy), 3.5, UIW.colour("border_strong"), false, 1.0)
 				draw_line(Vector2(sx - 2, sy), Vector2(sx + 2, sy), UIW.colour("border_strong"), 1.0)
-		# silk-screen branding
-		draw_string(_mono, Vector2(24, size.y / 2.0 - 4), Game.MODELS[dev.model]["label"].split(" ")[0],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, col.lightened(0.2))
+		# Model-specific logo mark and silk-screen branding. These are fictional
+		# vendors, but each has a consistent visual grammar across device tiers.
+		_draw_vendor_mark(String(visual["mark"]), Vector2(28, size.y / 2.0), col, ink)
+		draw_string(_mono, Vector2(58, size.y / 2.0 - 4), Game.MODELS[dev.model]["label"].split(" ")[0],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, ink)
 		draw_string(_mono, Vector2(24, size.y / 2.0 + 13),
 			" ".join(PackedStringArray(Array(Game.MODELS[dev.model]["label"].split(" ")).slice(1))),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.68))
+		if dev.type == "server":
+			for bay in 3:
+				var bx := 104.0 + bay * 12.0
+				draw_rect(Rect2(bx, size.y * 0.5 - 9, 9, 18), visual["base"].darkened(0.35))
+				draw_line(Vector2(bx + 2, size.y * 0.5 + 5), Vector2(bx + 7, size.y * 0.5 + 5), col, 1.0)
 		# port jacks
 		var t := Time.get_ticks_msec() / 1000.0
 		for idx in _ports.size():
@@ -760,4 +791,36 @@ class Faceplate extends Control:
 			var below := (idx % 2 == 1) if _ports.size() > 6 else true
 			var ty := r.end.y + 13 if below else r.position.y - 6
 			draw_string(_mono, Vector2(r.position.x + r.size.x / 2.0 - 6, ty), num if num != "" else i.name,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.72))
+
+	func _draw_vendor_mark(mark: String, p: Vector2, col: Color, ink: Color) -> void:
+		match mark:
+			"packet":
+				draw_line(p + Vector2(-9, 6), p + Vector2(1, -6), col, 4.0)
+				draw_line(p + Vector2(0, 6), p + Vector2(10, -6), col.darkened(0.18), 4.0)
+			"arivista":
+				for y in 2:
+					for x in 2:
+						draw_rect(Rect2(p + Vector2(-9 + x * 10, -9 + y * 10), Vector2(7, 7)), col)
+			"dill":
+				draw_circle(p, 10, Color(col, 0.18))
+				draw_circle(p, 8, col, false, 3.0)
+				draw_line(p + Vector2(0, -7), p + Vector2(0, 7), col, 2.0)
+			"junivista":
+				draw_polyline(PackedVector2Array([p + Vector2(-10, 7), p + Vector2(-3, -7),
+					p + Vector2(2, 2), p + Vector2(7, -5), p + Vector2(11, 7)]), col, 2.5)
+			"shield":
+				draw_polyline(PackedVector2Array([p + Vector2(0, -10), p + Vector2(9, -6),
+					p + Vector2(7, 5), p + Vector2(0, 11), p + Vector2(-7, 5),
+					p + Vector2(-9, -6), p + Vector2(0, -10)]), col, 2.0)
+			"balance":
+				draw_line(p + Vector2(-10, 0), p + Vector2(10, 0), col, 2.0)
+				draw_circle(p + Vector2(-7, -4), 4, col)
+				draw_circle(p + Vector2(7, 4), 4, col)
+			"radio":
+				for radius in [5.0, 9.0]:
+					draw_arc(p, radius, PI * 1.15, PI * 1.85, 10, col, 2.0)
+				draw_circle(p + Vector2(0, 5), 2.5, col)
+			_:
+				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), Color(ink, 0.12))
+				draw_rect(Rect2(p - Vector2(8, 8), Vector2(16, 16)), col, false, 2.0)

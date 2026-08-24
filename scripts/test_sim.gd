@@ -43,11 +43,13 @@ static func demo_world() -> void:
 	var srv1 := Game.new_device("srv-1")
 	var srv2 := Game.new_device("srv-2")
 	var fw := Game.new_device("fw-1")
+	var packet_sw := Game.new_device("sw-lite")
 	r1.slots[7] = sw
 	r1.slots[6] = srv1
 	r1.slots[5] = srv2
 	r2.slots[7] = rtr
 	r2.slots[6] = fw
+	r2.slots[5] = packet_sw
 	Game.connect_ifaces(srv1.ifaces[0], sw.ifaces[0])
 	Game.connect_ifaces(srv2.ifaces[0], sw.ifaces[1])
 	Game.connect_ifaces(rtr.ifaces[0], sw.ifaces[4])
@@ -88,6 +90,11 @@ static func ui_smoke(world: Node2D) -> int:
 		and empty_state.get_theme_font_size("font_size") == UIW.type_size("small"),
 		"ui foundation: empty states use shared wrapping and type tokens")
 	var shared_theme := UIW.make_theme()
+	var packet_visual := UIW.model_visual("sw-lite")
+	var arivista_visual := UIW.model_visual("sw-24")
+	check(packet_visual["base"] != arivista_visual["base"]
+		and packet_visual["mark"] == "packet" and arivista_visual["mark"] == "arivista",
+		"ui foundation: PacketTik and Arivista have distinct hardware identities")
 	check(shared_theme.has_stylebox("panel", "TooltipPanel") \
 		and shared_theme.has_stylebox("focus", "LineEdit"),
 		"ui foundation: tooltips and text inputs consume the shared theme")

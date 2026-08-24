@@ -81,11 +81,14 @@ func _shoot_all() -> void:
 	var r: Net.Rack = Game.racks[0]
 	var dev: Net.NDevice = null
 	var sw: Net.NDevice = null
+	var packet_sw: Net.NDevice = null
 	for d in Game.all_devices():
 		if d.type == "server" and dev == null:
 			dev = d
 		if d.type == "switch" and sw == null:
 			sw = d
+		if d.model == "sw-lite":
+			packet_sw = d
 	add_child(Techs.new())
 	var shots: Array = [
 		["title", func() -> void: show_title()],
@@ -96,9 +99,10 @@ func _shoot_all() -> void:
 			ui.visible = true],
 		["rack", func() -> void: ui.open_rack(r)],
 		["device", func() -> void: ui.open_dev(sw)],
+		["device_packet", func() -> void: ui.close_dev(); ui.open_dev(packet_sw)],
 		["console", func() -> void:
 			ui._toggle_cli()
-			ui._cli_submit("show interfaces")],
+			ui._cli_submit("/interface print")],
 		["iface", func() -> void: ui.open_iface(sw.ifaces[0])],
 		["contracts", func() -> void:
 			ui.close_iface()
