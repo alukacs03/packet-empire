@@ -1183,7 +1183,7 @@ func _build_pedia() -> void:
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.pressed.connect(func() -> void:
 			pedia_body.clear()
-			pedia_body.append_text("[b]%s[/b]\n\n%s" % [entry[0], entry[1]]))
+			pedia_body.append_text("[b]%s[/b]\n\n%s" % [entry[0], Pedia.article_text(entry)]))
 		topics.add_child(b)
 	pedia_body.bbcode_enabled = true
 	pedia_body.append_text("[b]Networkopedia[/b]\n\nPick a topic on the left. Every article ends with the exact in-game commands to try it yourself.")
@@ -3168,7 +3168,8 @@ func _refresh_contracts() -> void:
 			var ok: bool = r["t"].call()
 			cv.add_child(_label(("●  " if ok else "○  ") + r["d"], 14,
 				Color(0.5, 0.95, 0.6) if ok else Color(0.65, 0.6, 0.55)))
-		if String(c.get("hint", "")) != "":
+		var contract_hint := Contracts.hint_for(c)
+		if contract_hint != "":
 			var hint_lbl := _label("", 13, Color(0.62, 0.75, 0.85))
 			hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			hint_lbl.custom_minimum_size = Vector2(560, 0)
@@ -3176,7 +3177,7 @@ func _refresh_contracts() -> void:
 			var hint_btn := Button.new()
 			hint_btn.text = "Stuck? Show me the commands"
 			hint_btn.pressed.connect(func() -> void:
-				hint_lbl.text = String(c["hint"])
+				hint_lbl.text = contract_hint
 				hint_lbl.visible = true
 				hint_btn.visible = false)
 			cv.add_child(hint_btn)

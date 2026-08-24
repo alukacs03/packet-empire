@@ -6,6 +6,133 @@ class_name Contracts
 ## a completed contract retires an earlier one it makes impossible
 const SUPERSEDES := {"two_tenants": "first_ping"}
 
+## The opening jobs are played on whichever equipment the player actually
+## bought.  Keep the concept and the commands separate so a PacketTik starter
+## rack is never handed an EOS answer sheet (and a mixed rack can show both).
+const DIALECT_HINTS := {
+	"two_tenants": {
+		"device_type": "switch",
+		"intro": "Create VLANs 10 and 20, then put the port facing 10.0.0.1 in VLAN 10 and the port facing 10.0.0.2 in VLAN 20. The ping failing afterwards is the point: the tenants are isolated.",
+		"after": "Use the interface names that are actually cabled to the two servers.",
+		"ros": [
+			"/interface bridge vlan add vlan-ids=10",
+			"/interface bridge vlan add vlan-ids=20",
+			"/interface set ether1 pvid=10",
+			"/interface set ether2 pvid=20",
+			"/interface bridge vlan print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"vlan 10",
+			"vlan 20",
+			"interface Ethernet1",
+			"switchport access vlan 10",
+			"interface Ethernet2",
+			"switchport access vlan 20",
+			"show vlan",
+		],
+	},
+	"stretch_vlans": {
+		"device_type": "switch",
+		"intro": "The link between the switches must be a trunk on BOTH ends so tagged VLAN 10 can cross it. Create VLAN 10 on the second switch, trunk the cabled inter-switch port on each switch, then attach 10.0.0.3/24 to a VLAN 10 access port on the second switch.",
+		"after": "Run the switch commands on both ends of the inter-switch cable, substituting its real port name. On the new server use: ip addr add 10.0.0.3/24 dev eth0",
+		"ros": [
+			"/interface bridge vlan add vlan-ids=10",
+			"/interface set ether5 mode=trunk",
+			"/interface bridge vlan print",
+			"/interface bridge port print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"vlan 10",
+			"interface Ethernet8",
+			"switchport mode trunk",
+			"show interfaces trunk",
+		],
+	},
+	"redundant_core": {
+		"device_type": "switch",
+		"intro": "Run a second cable between the switches. Spanning tree should keep one path forwarding and hold the other in discarding state so the loop cannot melt the network. Inspect the port states, then disable the forwarding link to watch the spare take over.",
+		"after": "Substitute the real forwarding port when testing failover, and re-enable it afterwards.",
+		"ros": [
+			"/interface bridge port print",
+			"/interface set ether4 disabled=yes",
+			"/interface set ether4 disabled=no",
+		],
+		"eos": [
+			"show spanning-tree",
+			"configure terminal",
+			"interface Ethernet4",
+			"shutdown",
+			"no shutdown",
+		],
+	},
+	"two_offices": {
+		"device_type": "router",
+		"intro": "Give one router leg an address in each office subnet, then point each server default route at the address on its own subnet. Traceroute should stop at the last working hop if an address, cable, or gateway is wrong.",
+		"after": "On the two Linux servers use: ip route add default via 192.168.1.1 and ip route add default via 192.168.2.1",
+		"ros": [
+			"/ip address add address=192.168.1.1/24 interface=ether1",
+			"/ip address add address=192.168.2.1/24 interface=ether2",
+			"/ip address print",
+			"/ip route print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet1",
+			"ip address 192.168.1.1/24",
+			"interface Ethernet2",
+			"ip address 192.168.2.1/24",
+			"show ip interface brief",
+			"show ip route",
+		],
+	},
+}
+
+static func dialects_for(device_type: String) -> Array[String]:
+	var out: Array[String] = []
+	for d: Net.NDevice in Game.all_devices():
+		if d.type != device_type:
+			continue
+		var spec: Dictionary = Game.MODELS.get(d.model, {})
+		var dialect := String(spec.get("os", "eos"))
+		if dialect not in out:
+			out.append(dialect)
+	# Before the relevant box is bought, guide towards the affordable starter
+	# model the opening campaign actually offers.
+	if out.is_empty() and device_type in ["switch", "router"]:
+		out.append("ros")
+	return out
+
+static func hint_commands(contract_id: String, dialect: String) -> Array[String]:
+	var cfg: Dictionary = DIALECT_HINTS.get(contract_id, {})
+	var commands: Array[String] = []
+	for command in cfg.get(dialect, []):
+		commands.append(String(command))
+	return commands
+
+static func _command_block(label: String, commands: Array[String]) -> String:
+	var lines: Array[String] = [label]
+	for command in commands:
+		lines.append("  " + command)
+	return "\n".join(lines)
+
+static func hint_for(contract: Dictionary) -> String:
+	var id := String(contract.get("id", ""))
+	if not DIALECT_HINTS.has(id):
+		return String(contract.get("hint", ""))
+	var cfg: Dictionary = DIALECT_HINTS[id]
+	var dialects := dialects_for(String(cfg["device_type"]))
+	var blocks: Array[String] = []
+	if "ros" in dialects:
+		blocks.append(_command_block("PacketTik RouterOS", hint_commands(id, "ros")))
+	if "eos" in dialects:
+		blocks.append(_command_block("OpenRack / Arivista / Junivista EOS", hint_commands(id, "eos")))
+	return "%s\n\n%s\n\n%s" % [String(cfg["intro"]), "\n\n".join(blocks), String(cfg["after"])]
+
 static func retired(id: String) -> bool:
 	for successor in SUPERSEDES:
 		if SUPERSEDES[successor] == id and successor in Game.contracts_done:

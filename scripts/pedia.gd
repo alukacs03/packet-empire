@@ -2,6 +2,57 @@ class_name Pedia
 ## In-game encyclopedia. Every article ends with the commands that make the
 ## concept real in this game. Keep articles short and honest.
 
+const DIALECT_EXAMPLES := {
+	"Switches & MAC learning": {
+		"device_type": "switch",
+		"ros": ["ping something", "/interface bridge host print"],
+		"eos": ["ping something", "show mac address-table"],
+	},
+	"VLANs": {
+		"device_type": "switch",
+		"ros": ["/interface bridge vlan add vlan-ids=10", "/interface set ether2 pvid=10"],
+		"eos": ["vlan 10", "interface Ethernet2", "switchport access vlan 10"],
+	},
+	"Trunks": {
+		"device_type": "switch",
+		"ros": ["/interface set ether5 mode=trunk", "/interface bridge port print"],
+		"eos": ["interface Ethernet8", "switchport mode trunk", "show interfaces trunk"],
+	},
+	"Spanning tree": {
+		"device_type": "switch",
+		"ros": ["/interface bridge port print", "/interface set ether4 disabled=yes"],
+		"eos": ["show spanning-tree", "interface Ethernet4", "shutdown"],
+	},
+	"Routing & gateways": {
+		"device_type": "router",
+		"ros": ["/ip address add address=10.0.0.1/24 interface=ether1", "/ip route print"],
+		"eos": ["interface Ethernet1", "ip address 10.0.0.1/24", "show ip route"],
+	},
+}
+
+static func _example_block(label: String, commands: Array) -> String:
+	var lines: Array[String] = [label]
+	for command in commands:
+		lines.append("  " + String(command))
+	return "\n".join(lines)
+
+static func article_text(entry: Array) -> String:
+	var title := String(entry[0])
+	var body := String(entry[1])
+	if not DIALECT_EXAMPLES.has(title):
+		return body
+	var marker := body.find("\n\nTry:")
+	if marker >= 0:
+		body = body.left(marker)
+	var cfg: Dictionary = DIALECT_EXAMPLES[title]
+	var blocks: Array[String] = []
+	for dialect in Contracts.dialects_for(String(cfg["device_type"])):
+		if dialect == "ros":
+			blocks.append(_example_block("Try on PacketTik RouterOS", cfg["ros"]))
+		elif dialect == "eos":
+			blocks.append(_example_block("Try on OpenRack / Arivista / Junivista EOS", cfg["eos"]))
+	return body + "\n\n" + "\n\n".join(blocks)
+
 const TOPICS := [
 	["IP addresses & subnets", "An IP address identifies a host; the prefix length (/24) says which part names the NETWORK. Hosts in the same subnet talk directly (via switches); different subnets need a router.\n\n10.0.0.5/24 means: network 10.0.0.0, hosts .1–.254. Two machines in 10.0.0.0/24 reach each other with no router. 10.0.0.5 and 10.1.0.5 do not: no matter how they're cabled.\n\nTry: 'ip addr add 10.0.0.5/24 dev eth0' on a server, then 'ping'."],
 	["ARP", "IP needs MAC addresses to actually deliver frames on a LAN. ARP asks 'who has 10.0.0.2?' by broadcast; the owner answers with its MAC; the asker caches it.\n\nWhen ping fails with 'no ARP reply', the target isn't in your broadcast domain: wrong VLAN, wrong subnet, dead cable.\n\nTry: 'ip neigh' (Linux), 'show arp' (EOS), '/ip arp print' (RouterOS), and watch ARP in 'tcpdump'."],
