@@ -133,6 +133,7 @@ func _ready() -> void:
 	Game.money_changed.connect(_money_flash)
 	Game.customer_service_changed.connect(_customer_service_feedback)
 	Game.customer_cash_changed.connect(_customer_cash_feedback)
+	Game.guided_outage_changed.connect(_refresh_tutorial)
 	get_viewport().size_changed.connect(_refresh_hud_layout)
 	_refresh_money()
 	_refresh_hud_layout()
@@ -2520,11 +2521,117 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 		_refresh_tutorial())
 	tutorial_box.add_child(continue_btn)
 
+func _incident_button(text: String, action: Callable, accent := false) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size.y = 38
+	if accent:
+		_accent(button)
+	button.pressed.connect(action)
+	return button
+
+func _render_guided_outage() -> void:
+	tutorial_panel.visible = true
+	for old in tutorial_box.get_children():
+		old.queue_free()
+	var incident: Dictionary = Game.guided_outage
+	var state := String(incident.get("state", "alert"))
+	var headline := "CUSTOMER DOWN  /  KISKACSA"
+	if state == "recovered":
+		headline = "INCIDENT RECOVERED  /  KISKACSA"
+	elif state == "choice":
+		headline = "HARDEN  /  KISKACSA"
+	tutorial_box.add_child(_tutorial_head(headline))
+	if state == "alert":
+		tutorial_box.add_child(_wrap("MONITOR ALERT  /  The service at %s stopped answering. Pause, take ownership, then communicate before changing anything."
+			% incident.get("target_ip", "the customer address"), 12, Prefs.bad_colour(), 290))
+		tutorial_box.add_child(_incident_button("Acknowledge incident", func() -> void:
+			Game.acknowledge_guided_outage(), true))
+		return
+	if state == "acknowledged":
+		tutorial_box.add_child(_label("●  Alert owned by you", 12, Color(0.48, 0.9, 0.62)))
+		tutorial_box.add_child(_wrap("CUSTOMER COMMS  /  Say what is affected, that you are investigating, and when you will update them again.",
+			12, UIW.colour("text"), 290))
+		tutorial_box.add_child(_wrap("Posting now makes the reputation loss visible and smaller: −2 instead of −4 per outage cycle.",
+			11, UIW.colour("warm"), 290))
+		tutorial_box.add_child(_incident_button("Open status page", func() -> void:
+			contracts_tab = "Log"
+			_refresh_contracts()
+			_show_overlay(contracts_overlay), true))
+		return
+	if state in ["communicated", "investigating", "diagnosed", "repairing"]:
+		tutorial_box.add_child(_label("●  Customer updated  ·  reputation protected", 12,
+			Color(0.48, 0.9, 0.62)))
+		var evidence: Array = incident.get("evidence", [])
+		var ladder := [
+			["monitor", "MONITOR", "Confirm scope from the failed check"],
+			["physical", "PHYSICAL", "Verify that the patch is seated"],
+			["l2", "L2", "Inspect the access-port state"],
+		]
+		for step: Array in ladder:
+			var done: bool = String(step[0]) in evidence
+			tutorial_box.add_child(_label("%s  %-10s %s" % ["●" if done else "○", step[1], step[2]],
+				11, Color(0.48, 0.9, 0.62) if done else UIW.colour("muted")))
+		if state not in ["diagnosed", "repairing"]:
+			var next_layer := String(ladder[evidence.size()][0])
+			tutorial_box.add_child(_incident_button("Gather next evidence", func() -> void:
+				var err := Game.guided_outage_probe(next_layer)
+				if err != "": _toast(err)
+				_refresh_tutorial(), true))
+			return
+		tutorial_box.add_child(_wrap("ROOT CAUSE  /  %s %s is administratively disabled. The cable and addressing remain intact; routing and policy are not implicated."
+			% [incident.get("device", "device"), incident.get("iface", "port")],
+			12, UIW.colour("warm"), 290))
+		var affected := Game.guided_outage_iface()
+		if affected != null:
+			var ros: bool = String(Game.MODELS[affected.dev.model].get("os", "")) == "ros"
+			var command := "/interface set %s disabled=no" % affected.name if ros else \
+				"interface %s  →  no shutdown" % affected.name
+			tutorial_box.add_child(_wrap("REPAIR IN CONSOLE  /  %s" % command, 11,
+				UIW.colour("text_strong"), 290))
+			tutorial_box.add_child(_incident_button("Open affected port", func() -> void:
+				_goto_device(affected.dev)
+				open_iface(affected), true))
+		tutorial_box.add_child(_label("○  Run one cycle after repair to verify recovery",
+			11, UIW.colour("muted")))
+		var give_up := _incident_button("Use teaching restore point", func() -> void:
+			var err := Game.give_up_guided_outage()
+			if err != "": _toast(err)
+			_refresh_tutorial())
+		give_up.tooltip_text = "Re-enables only the tutorial access port. No customer or topology is deleted."
+		tutorial_box.add_child(give_up)
+		return
+	if state == "recovered":
+		tutorial_box.add_child(_label("●  SERVICE RESTORED  ·  BILLING RESUMED", 12,
+			Color(0.48, 0.9, 0.62)))
+		tutorial_box.add_child(_section("INCIDENT TIMELINE"))
+		for note: String in incident.get("timeline", []):
+			tutorial_box.add_child(_wrap("•  " + note, 10, UIW.colour("muted"), 290))
+		tutorial_box.add_child(_incident_button("Review and harden", func() -> void:
+			Game.debrief_guided_outage(), true))
+		return
+	if state == "choice":
+		tutorial_box.add_child(_wrap("WHAT CHANGES AFTER TONIGHT?  Pick one small resilience improvement. The customer and working topology remain yours.",
+			12, UIW.colour("text"), 290))
+		for option: Array in [
+			["spare", "Put matching hardware on the spare shelf"],
+			["monitor", "Keep a permanent reachability monitor"],
+			["config", "Save the affected device configuration"],
+		]:
+			tutorial_box.add_child(_incident_button(String(option[1]), func() -> void:
+				var err := Game.choose_guided_resilience(String(option[0]))
+				if err != "": _toast(err)
+				else: hud_toast("First outage closed. The network is stronger for it.", true)
+				_refresh_tutorial()))
+
 func _refresh_tutorial() -> void:
 	if tutorial_panel == null:
 		return
 	if tutorial_hidden:
 		tutorial_panel.visible = false
+		return
+	if Game.guided_outage_active():
+		_render_guided_outage()
 		return
 	if "rackup" in Game.contracts_done:
 		var guided := Game.guided_customer_deal()

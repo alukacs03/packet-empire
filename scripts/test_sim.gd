@@ -3380,6 +3380,11 @@ static func run() -> int:
 	var pl_last_delta := Game.last_cycle_delta
 	var pl_quarter_profit := Game.quarter_profit
 	var pl_quarter_depreciation := Game.quarter_depreciation
+	var pl_guided_outage := Game.guided_outage.duplicate(true)
+	var pl_status_posts := Game.status_posts.duplicate(true)
+	var pl_spares := Game.spares.duplicate(true)
+	var pl_monitors := Game.monitors.duplicate(true)
+	var pl_incidents := Game.incidents.duplicate(true)
 	Game.money = 100000
 	Game.leads = []
 	Game.deals = []
@@ -3449,6 +3454,55 @@ static func run() -> int:
 	check(bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "billing" \
 			and int(Game.last_business["invoiced"]) > 0,
 		"guided delivery: restoring the same topology resumes billing without replacing the customer")
+	# The next lesson trips one reversible access port on that same customer.
+	# It rewards communication and evidence, then leaves the working service in place.
+	Game.guided_outage = {}
+	Game.status_posts = []
+	Game.monitors = []
+	Game.stats["guided_delivery_acknowledged"] = 1
+	Game.stats["guided_outage_complete"] = 0
+	Game.sla_tick()
+	check(String(Game.guided_outage.get("state", "")) == "alert" \
+			and Game.guided_outage_iface() != null and not Game.guided_outage_iface().enabled,
+		"guided outage: a deterministic reversible access-port fault raises the first alert")
+	check(not bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "suspended",
+		"guided outage: the real customer notices and billing stops")
+	check(Game.acknowledge_guided_outage() == "" \
+			and Game.guided_outage_probe("monitor") != "",
+		"guided outage: ownership comes first and diagnosis waits for customer communication")
+	var rep_before_status_cycle := Game.reputation
+	check(Game.post_status("Kiskacsa hosting is unavailable; investigating the access path. Next update this cycle.") == "",
+		"guided outage: the operator can post a plain-language status update")
+	Game.sla_tick()
+	var guided_rep_loss := rep_before_status_cycle - Game.reputation
+	check(int(Game.guided_outage.get("reputation_saved", 0)) == 2 \
+			and Game.status_posted_recently() and guided_rep_loss <= 4,
+		"guided outage: an honest update visibly halves its outage penalty even alongside other business effects")
+	check(Game.guided_outage_probe("monitor") == "" \
+			and Game.guided_outage_probe("physical") == "" \
+			and Game.guided_outage_probe("l2") == "",
+		"guided outage: evidence is followed monitor to physical to L2")
+	check(String(Game.guided_outage.get("state", "")) == "diagnosed" \
+			and bool(Game.guided_outage.get("downstream_clear", false)),
+		"guided outage: the known L2 cause clears addressing, routing and policy from suspicion")
+	var diagnosed_outage := Game.guided_outage.duplicate(true)
+	check(Game.give_up_guided_outage() == "" and Game.guided_outage_iface().enabled,
+		"guided outage: giving up restores only the teaching fault instead of ending the campaign")
+	Game.guided_outage = diagnosed_outage
+	Game.guided_outage_iface().enabled = true  # the normal CLI repair reaches the same state
+	Game.topology_changed.emit()
+	Game.sla_tick()
+	check(String(Game.guided_outage.get("state", "")) == "recovered" \
+			and bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "billing",
+		"guided outage: repair verification restores delivery and customer payment")
+	check(Game.guided_outage.get("timeline", []).size() >= 6 \
+			and Game.debrief_guided_outage() == "",
+		"guided outage: recovery produces a concise operator timeline and debrief")
+	check(Game.choose_guided_resilience("monitor") == "" and Game.monitors.size() == 1 \
+			and int(Game.stats.get("guided_outage_complete", 0)) == 1,
+		"guided outage: the resilience choice leaves a permanent useful improvement")
+	check(Game.deals.has(guided_deal) and Game.links.has(Game.link_at(delivery_server.ifaces[0])),
+		"guided outage: completion keeps the customer and reusable topology intact")
 	Game.deals = []
 	Game.leads = []
 	Game.money = 100000
@@ -3507,6 +3561,11 @@ static func run() -> int:
 	Game.last_cycle_delta = pl_last_delta
 	Game.quarter_profit = pl_quarter_profit
 	Game.quarter_depreciation = pl_quarter_depreciation
+	Game.guided_outage = pl_guided_outage
+	Game.status_posts = pl_status_posts
+	Game.spares = pl_spares
+	Game.monitors = pl_monitors
+	Game.incidents = pl_incidents
 	Game.topology_changed.emit()
 
 	# --- customers who grow, and what people say about you ---

@@ -196,6 +196,36 @@ func _shoot_all() -> void:
 			Game.invoices = []
 			ui.close_contracts()
 			ui._refresh_tutorial()],
+		["incident_alert", func() -> void:
+			Game.stats["guided_delivery_acknowledged"] = 1
+			Game.guided_outage = {"state": "alert", "deal": "guided_delivery",
+				"customer": "Kiskacsa Kft", "device": sw.name, "iface": sw.ifaces[0].name,
+				"peer_device": dev.name, "peer_iface": dev.ifaces[0].name,
+				"monitor_from": "srv2", "target_ip": "10.42.18.10",
+				"started_cycle": Game.cycle, "evidence": [],
+				"timeline": ["cycle %d · service monitor raised an availability alert" % Game.cycle]}
+			sw.ifaces[0].enabled = false
+			ui._refresh_tutorial()],
+		["incident_diagnosis", func() -> void:
+			Game.guided_outage["state"] = "diagnosed"
+			Game.guided_outage["evidence"] = ["monitor", "physical", "l2"]
+			Game.guided_outage["diagnosis"] = "access port administratively down"
+			Game.guided_outage["downstream_clear"] = true
+			Game.guided_outage["reputation_saved"] = 2
+			ui._refresh_tutorial()],
+		["incident_recovered", func() -> void:
+			sw.ifaces[0].enabled = true
+			Game.guided_outage["state"] = "recovered"
+			Game.guided_outage["timeline"] = [
+				"cycle 18 · service monitor raised an availability alert",
+				"cycle 18 · alert acknowledged; investigation owner established",
+				"cycle 18 · customer update posted; reputation loss reduced",
+				"cycle 18 · physical cable seated; L2 access port found down",
+				"cycle 19 · monitor green; delivery and billing restored"]
+			ui._refresh_tutorial()],
+		["incident_resilience", func() -> void:
+			Game.guided_outage["state"] = "choice"
+			ui._refresh_tutorial()],
 		["business_cashflow", func() -> void:
 			Game.last_business = {"revenue": 162, "invoiced": 72, "collected": 72,
 				"power": 34, "transit": 18}

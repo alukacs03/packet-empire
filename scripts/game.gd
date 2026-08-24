@@ -7,6 +7,7 @@ signal topology_changed
 signal money_changed
 signal customer_service_changed(customer: String, state: String, fee: int)
 signal customer_cash_changed(customer: String, state: String, amount: int)
+signal guided_outage_changed
 
 # Hardware catalog: fictional vendors, real tiers. New model = new entry.
 const MODELS := {
@@ -102,6 +103,7 @@ var achievements: Array = []  # ids already earned
 var last_customer_outage_cycle := 0
 var best_outage_streak := 0
 var customer_outage_active := false
+var guided_outage := {}  # deterministic opening incident and its evidence timeline
 
 const ACHIEVEMENTS := [
 	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
@@ -1716,6 +1718,13 @@ func post_status(text: String) -> String:
 	if status_posts.size() > 12:
 		status_posts.pop_back()
 	log_event("STATUS PAGE: \"%s\"" % text.strip_edges())
+	if guided_outage_active() and String(guided_outage.get("state", "")) in ["acknowledged", "investigating"]:
+		guided_outage["state"] = "communicated"
+		guided_outage["status_cycle"] = cycle
+		guided_outage["reputation_saved"] = 2
+		_guided_outage_note("cycle %d · customer update posted; reputation loss reduced by 2 each outage cycle" % cycle)
+		log_event("CUSTOMER COMMS: Kiskacsa sees the honest update. Outage reputation loss is now -2/cycle instead of -4.")
+		guided_outage_changed.emit()
 	return ""
 
 func status_posted_recently() -> bool:
@@ -1723,6 +1732,190 @@ func status_posted_recently() -> bool:
 		if cycle - int(p["cycle"]) <= 2:
 			return true
 	return false
+
+func guided_outage_active() -> bool:
+	return not guided_outage.is_empty() and String(guided_outage.get("state", "")) not in ["", "complete"]
+
+func _guided_outage_note(text: String) -> void:
+	var notes: Array = guided_outage.get("timeline", [])
+	notes.append(text)
+	guided_outage["timeline"] = notes
+
+func _named_iface(dev_name: String, iface_name: String) -> Net.Iface:
+	for d in all_devices():
+		if d.name != dev_name:
+			continue
+		for iface: Net.Iface in d.ifaces:
+			if iface.name == iface_name:
+				return iface
+	return null
+
+func guided_outage_iface() -> Net.Iface:
+	return _named_iface(String(guided_outage.get("device", "")),
+		String(guided_outage.get("iface", "")))
+
+func _maybe_start_guided_outage() -> void:
+	if int(stats.get("guided_delivery_acknowledged", 0)) == 0 \
+			or int(stats.get("guided_outage_complete", 0)) != 0 or not guided_outage.is_empty():
+		return
+	var deal := guided_customer_deal()
+	if deal.is_empty() or not bool(deal.get("healthy", false)):
+		return
+	var host := Contracts._owner(String(deal["params"].get("ip", "")))
+	if host == null:
+		return
+	# Trip the access port opposite the tutorial host. It is deterministic,
+	# reversible, and never rewrites addressing, VLANs, routes, or player cables.
+	var chosen: Net.Iface = null
+	var host_iface: Net.Iface = null
+	for iface: Net.Iface in host.ifaces:
+		var link := link_at(iface)
+		if link == null or not iface.enabled:
+			continue
+		var far := link.other(iface)
+		if not far.enabled:
+			continue
+		var carries_other_customer := false
+		for other: Dictionary in deals:
+			if other == deal or not bool(other.get("healthy", false)):
+				continue
+			if link in _deal_path_links(other):
+				carries_other_customer = true
+				break
+		if carries_other_customer:
+			continue  # the teaching fault is never allowed collateral damage
+		chosen = far
+		host_iface = iface
+		break
+	if chosen == null:
+		return
+	var source := ""
+	var target_ip := String(deal["params"].get("ip", ""))
+	for d in all_devices():
+		if d != host and Sim.ping(d, target_ip)["ok"]:
+			source = d.name
+			break
+	guided_outage = {"state": "alert", "deal": String(deal["id"]),
+		"customer": String(deal["customer"]), "device": chosen.dev.name,
+		"iface": chosen.name, "peer_device": host.name, "peer_iface": host_iface.name,
+		"monitor_from": source, "target_ip": target_ip, "started_cycle": cycle,
+		"evidence": [], "timeline": []}
+	chosen.enabled = false
+	_guided_outage_note("cycle %d · service monitor raised an availability alert" % cycle)
+	log_event("FIRST OUTAGE: Kiskacsa is unreachable. A known-safe access port tripped; acknowledge the alert and diagnose from evidence.")
+	record_incident("guided-outage", "Kiskacsa lost service when an access port tripped")
+	topology_changed.emit()
+	guided_outage_changed.emit()
+
+func acknowledge_guided_outage() -> String:
+	if String(guided_outage.get("state", "")) != "alert":
+		return "there is no unacknowledged tutorial alert"
+	guided_outage["state"] = "acknowledged"
+	guided_outage["acknowledged_cycle"] = cycle
+	_guided_outage_note("cycle %d · alert acknowledged; investigation owner established" % cycle)
+	log_event("INCIDENT ACKNOWLEDGED: Kiskacsa has an owner. Post a plain-language status update before touching the network.")
+	guided_outage_changed.emit()
+	return ""
+
+func guided_outage_probe(layer: String) -> String:
+	if not guided_outage_active():
+		return "there is no guided outage to investigate"
+	if String(guided_outage.get("state", "")) not in ["communicated", "investigating", "diagnosed"]:
+		return "acknowledge the alert and update the customer first"
+	var order := ["monitor", "physical", "l2"]
+	if layer not in order:
+		return "that evidence layer is not part of this incident"
+	var evidence: Array = guided_outage.get("evidence", [])
+	var idx := order.find(layer)
+	if idx > evidence.size():
+		return "follow the evidence in order"
+	if layer in evidence:
+		return ""
+	var iface := guided_outage_iface()
+	match layer:
+		"monitor":
+			_guided_outage_note("cycle %d · monitor confirms %s is unreachable from %s" % [cycle,
+				guided_outage.get("target_ip", "the service"),
+				guided_outage.get("monitor_from", "the network")])
+		"physical":
+			_guided_outage_note("cycle %d · physical cable is seated at both ends" % cycle)
+		"l2":
+			_guided_outage_note("cycle %d · L2 evidence: %s %s is administratively down" % [cycle,
+				guided_outage.get("device", "device"), guided_outage.get("iface", "port")])
+			guided_outage["state"] = "diagnosed"
+			guided_outage["diagnosis"] = "access port administratively down"
+			guided_outage["downstream_clear"] = iface != null and not iface.enabled
+	evidence.append(layer)
+	guided_outage["evidence"] = evidence
+	if String(guided_outage.get("state", "")) != "diagnosed":
+		guided_outage["state"] = "investigating"
+	guided_outage_changed.emit()
+	return ""
+
+func _guided_outage_check_recovery() -> void:
+	if not guided_outage_active() or String(guided_outage.get("state", "")) in ["recovered", "choice"]:
+		return
+	var deal := deal_by_id(String(guided_outage.get("deal", "")))
+	if deal.is_empty() or not bool(deal.get("healthy", false)):
+		return
+	guided_outage["state"] = "recovered"
+	guided_outage["recovered_cycle"] = cycle
+	_guided_outage_note("cycle %d · monitor green; customer delivery and billing restored" % cycle)
+	log_event("INCIDENT RECOVERED: Kiskacsa is reachable and billing has resumed. Review the short timeline, then harden one weak spot.")
+	guided_outage_changed.emit()
+
+func debrief_guided_outage() -> String:
+	if String(guided_outage.get("state", "")) != "recovered":
+		return "restore and verify the service first"
+	guided_outage["state"] = "choice"
+	guided_outage_changed.emit()
+	return ""
+
+func choose_guided_resilience(choice: String) -> String:
+	if String(guided_outage.get("state", "")) != "choice":
+		return "finish the incident debrief first"
+	var iface := guided_outage_iface()
+	if iface == null:
+		return "the affected device is no longer installed"
+	match choice:
+		"spare":
+			spares[iface.dev.model] = int(spares.get(iface.dev.model, 0)) + 1
+			_guided_outage_note("resilience · one %s placed on the spare shelf" % MODELS[iface.dev.model]["label"])
+		"monitor":
+			var source := String(guided_outage.get("monitor_from", ""))
+			if source == "":
+				return "no independent monitoring source is available"
+			var err := add_monitor("ping", source, String(guided_outage.get("target_ip", "")))
+			if err != "" and err != "that check already exists":
+				return err
+			_guided_outage_note("resilience · permanent customer reachability monitor installed")
+		"config":
+			iface.dev.startup = device_config(iface.dev)
+			_guided_outage_note("resilience · affected device configuration saved for recovery")
+		_:
+			return "choose a spare, monitor, or saved configuration"
+	guided_outage["choice"] = choice
+	guided_outage["state"] = "complete"
+	stats["guided_outage_complete"] = 1
+	log_event("FIRST OUTAGE COMPLETE: calm diagnosis kept Kiskacsa and left the network more resilient.")
+	topology_changed.emit()
+	guided_outage_changed.emit()
+	return ""
+
+func give_up_guided_outage() -> String:
+	if not guided_outage_active():
+		return "there is no guided outage to restore"
+	var iface := guided_outage_iface()
+	if iface == null:
+		return "the guided restore point cannot find its port"
+	iface.enabled = true
+	guided_outage["assisted"] = true
+	guided_outage["state"] = "repairing"
+	_guided_outage_note("cycle %d · assisted restore re-enabled the known-safe access port" % cycle)
+	log_event("ASSISTED RESTORE: the access port is back up. Run one cycle to verify customer recovery; the campaign continues.")
+	topology_changed.emit()
+	guided_outage_changed.emit()
+	return ""
 
 func buy_spare(model: String) -> String:
 	if not MODELS.has(model):
@@ -2557,6 +2750,7 @@ func sla_tick() -> void:
 	last_pl = {}
 	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
 		"power": 0, "transit": 0}
+	_maybe_start_guided_outage()
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -2723,6 +2917,7 @@ func sla_tick() -> void:
 				load += int(atk["mbps"])  # the flood rides the same path
 			for l in used:
 				link_load[l] = link_load.get(l, 0) + load
+	_guided_outage_check_recovery()
 	last_link_load = link_load
 	var protected := _qos_protect(link_load, deal_links)
 	_renewals_tick()
@@ -3296,6 +3491,7 @@ func _serialize() -> Dictionary:
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"status_posts": status_posts, "spares": spares,
+		"guided_outage": guided_outage,
 		"incidents": incidents,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
@@ -3616,6 +3812,7 @@ func _apply(data: Dictionary) -> void:
 	incidents = data.get("incidents", [])
 	status_posts = data.get("status_posts", [])
 	spares = data.get("spares", {})
+	guided_outage = data.get("guided_outage", {})
 	attacks = data.get("attacks", [])
 	scrubbing = bool(data.get("scrubbing", false))
 	insured = bool(data.get("insured", false))
