@@ -13,6 +13,7 @@ var mode_btns := {}
 var rack_overlay: Control
 var rack_title: Label
 var slot_box: VBoxContainer
+var rack_metric_values := {}
 
 var dev_overlay: Control
 var dev_title: Label
@@ -564,8 +565,14 @@ func update_mode(m: int) -> void:
 
 func _build_rack_overlay() -> void:
 	rack_overlay = _overlay()
-	var v := _card(rack_overlay, 560)
+	var v := _card(rack_overlay, 640)
 	rack_title = _header(v, close_rack)
+	var rack_metrics := HBoxContainer.new()
+	rack_metrics.add_theme_constant_override("separation", UIW.space("sm"))
+	v.add_child(rack_metrics)
+	rack_metrics.add_child(_rack_metric("CABINET LOAD", "units", "accent"))
+	rack_metrics.add_child(_rack_metric("POWER", "power", "warm"))
+	rack_metrics.add_child(_rack_metric("FEED BALANCE", "feeds", "success"))
 	var info_row := HBoxContainer.new()
 	v.add_child(info_row)
 	var info := _label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED)
@@ -606,6 +613,21 @@ func _build_rack_overlay() -> void:
 	slot_box.add_theme_constant_override("separation", 3)
 	cabinet.add_child(slot_box)
 
+func _rack_metric(caption: String, key: String, semantic: String) -> PanelContainer:
+	var panel := UIW.style_panel(PanelContainer.new(), "console", "sm")
+	panel.custom_minimum_size = Vector2(190, 60)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UIW.space("xs"))
+	panel.add_child(box)
+	var cap := _section(caption)
+	box.add_child(cap)
+	var value := _label("—", 13, UIW.colour(semantic))
+	value.add_theme_font_override("font", mono)
+	box.add_child(value)
+	rack_metric_values[key] = value
+	return panel
+
 func open_rack(r: Net.Rack) -> void:
 	cur_rack = r
 	dev_overlay.visible = false
@@ -620,6 +642,24 @@ func close_rack() -> void:
 func _refresh_slots() -> void:
 	for c in slot_box.get_children():
 		c.queue_free()
+	var occupied := 0
+	var feed_a := 0
+	var feed_b := 0
+	var dual := 0
+	for rack_i in Net.Rack.SLOTS:
+		var rack_dev: Net.NDevice = cur_rack.slots[rack_i]
+		if rack_dev:
+			occupied += Game.model_height(rack_dev.model)
+			match rack_dev.psu:
+				"A": feed_a += 1
+				"B": feed_b += 1
+				"AB": dual += 1
+	var rack_watts := Game.rack_watts(cur_rack)
+	(rack_metric_values["units"] as Label).text = "%02d / %02d U OCCUPIED" % [occupied, Net.Rack.SLOTS]
+	(rack_metric_values["power"] as Label).text = ("%d W  ·  INCLUDED" % rack_watts if Game.stage < 1 else
+		"%d W  ·  ~$%d/CYCLE" % [rack_watts, int(round(float(rack_watts) *
+			Game.efficiency_factor() * Game.energy_rate()))])
+	(rack_metric_values["feeds"] as Label).text = "A %02d  /  B %02d  /  DUAL %02d" % [feed_a, feed_b, dual]
 	for i in range(Net.Rack.SLOTS - 1, -1, -1):  # top of rack first
 		var dev: Net.NDevice = cur_rack.slots[i]
 		var slot := UIW.RackSlot.new()
