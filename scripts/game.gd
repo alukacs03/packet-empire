@@ -1214,6 +1214,23 @@ func _switch_link_for(dev: Net.NDevice) -> Dictionary:
 			return {"local": iface, "switch": far.dev, "port": far}
 	return {}
 
+func _parallel_switch_group() -> Array:
+	var groups := {}
+	for link: Net.Link in links:
+		if link.a.dev.type != "switch" or link.b.dev.type != "switch":
+			continue
+		var names := [link.a.dev.name, link.b.dev.name]
+		names.sort()
+		var key := "%s|%s" % names
+		if not groups.has(key):
+			groups[key] = []
+		groups[key].append(link)
+	var best: Array = []
+	for key in groups:
+		if groups[key].size() > best.size():
+			best = groups[key]
+	return best if best.size() >= 2 else []
+
 func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 	var cid := String(c["id"])
 	var base := {"id": cid, "title": String(c["title"]), "customer": String(c["customer"]),
@@ -1283,6 +1300,62 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 			base["practice"] = "/interface bridge vlan print" if String(MODELS[sw.model].get("os", "")) == "ros" else "show vlan"
 			base["avoided"] = "Sharing an IPv4 prefix did not punch through the VLAN boundary."
 			base["mastery"] = "Add 10.0.0.3 to VLAN 10 while keeping VLAN 20 isolated."
+		"stretch_vlans":
+			var trunk: Net.Link = null
+			for link: Net.Link in links:
+				if link.a.dev.type == "switch" and link.b.dev.type == "switch" \
+						and link.a.mode == "trunk" and link.b.mode == "trunk":
+					trunk = link; break
+			if trunk == null:
+				return {}
+			var commands: Array = []
+			for trunk_dev: Net.NDevice in [trunk.a.dev, trunk.b.dev]:
+				commands.append("%s: %s" % [trunk_dev.name,
+					"/interface bridge port print" if String(MODELS[trunk_dev.model].get("os", "")) == "ros"
+					else "show interfaces trunk"])
+			base["proof"] = ["Tagged path: %s %s  ⇄  %s %s; both ends are trunks." % [trunk.a.dev.name,
+				trunk.a.name, trunk.b.dev.name, trunk.b.name],
+				"10.0.0.3 reaches 10.0.0.1 across that link while 10.0.0.2 remains isolated."]
+			base["concept"] = "802.1Q trunks carry several VLANs"
+			base["practice"] = "  ·  ".join(PackedStringArray(commands))
+			base["avoided"] = "Both trunk ends agree; a one-sided trunk would silently drop tagged traffic."
+			base["mastery"] = "Prune every inter-switch trunk to VLANs 10 and 20 only."
+		"redundant_core":
+			var pair_links := _parallel_switch_group()
+			if pair_links.size() < 2:
+				return {}
+			var paths: Array = []
+			var blocked := ""
+			for link: Net.Link in pair_links:
+				paths.append("%s %s ⇄ %s %s" % [link.a.dev.name, link.a.name, link.b.dev.name, link.b.name])
+				if Sim.stp_blocked(link.a):
+					blocked = "%s %s" % [link.a.dev.name, link.a.name]
+				elif Sim.stp_blocked(link.b):
+					blocked = "%s %s" % [link.b.dev.name, link.b.name]
+			var observe_dev: Net.NDevice = pair_links[0].a.dev
+			base["proof"] = ["Parallel paths: %s." % "  /  ".join(PackedStringArray(paths)),
+				"Spanning tree placed %s in discarding state; Alfa still has one forwarding path." % blocked]
+			base["concept"] = "A loop-free spare path"
+			base["practice"] = "/interface bridge port print" if String(MODELS[observe_dev.model].get("os", "")) == "ros" else "show spanning-tree"
+			base["avoided"] = "The second cable did not create a broadcast storm."
+			base["mastery"] = "Disable the forwarding member and prove Alfa still crosses the spare."
+		"two_offices":
+			var office_a := _iface_with_ip("192.168.1.10")
+			var office_b := _iface_with_ip("192.168.2.10")
+			var gw_a := _iface_with_ip("192.168.1.1")
+			var gw_b := _iface_with_ip("192.168.2.1")
+			if office_a == null or office_b == null or gw_a == null or gw_b == null \
+					or gw_a.dev != gw_b.dev:
+				return {}
+			var router := gw_a.dev
+			base["proof"] = ["%s %s (192.168.1.10)  →  gateway %s %s (192.168.1.1)." % [
+				office_a.dev.name, office_a.name, router.name, gw_a.name],
+				"%s routes into %s (192.168.2.1)  →  %s %s (192.168.2.10); replies return through the same router." % [
+					router.name, gw_b.name, office_b.dev.name, office_b.name]]
+			base["concept"] = "A router joins different IP subnets"
+			base["practice"] = "/tool traceroute 192.168.2.10" if String(MODELS[router.model].get("os", "")) == "ros" else "traceroute 192.168.2.10"
+			base["avoided"] = "The hosts do not pretend remote addresses are on their local wire."
+			base["mastery"] = "Save the working configuration on %s." % router.name
 		_:
 			return {}
 	return base
@@ -1304,6 +1377,34 @@ func contract_mastery_met(cid: String) -> bool:
 			return Contracts._owner("10.0.0.3") != null \
 				and Sim.ping(Contracts._owner("10.0.0.3"), "10.0.0.1")["ok"] \
 				and not Sim.ping(Contracts._owner("10.0.0.3"), "10.0.0.2")["ok"]
+		"stretch_vlans":
+			var any := false
+			for link: Net.Link in links:
+				if link.a.dev.type != "switch" or link.b.dev.type != "switch" \
+						or link.a.mode != "trunk" or link.b.mode != "trunk":
+					continue
+				any = true
+				for end: Net.Iface in [link.a, link.b]:
+					var allowed := end.tagged_vlans.duplicate()
+					allowed.sort()
+					if allowed != [10, 20]:
+						return false
+			return any
+		"redundant_core":
+			var pair_links := _parallel_switch_group()
+			if pair_links.size() < 2:
+				return false
+			var disabled_member := false
+			for link: Net.Link in pair_links:
+				if not link.a.enabled or not link.b.enabled:
+					disabled_member = true
+			var alfa := Contracts._owner("10.0.0.1")
+			return disabled_member and alfa != null and Sim.ping(alfa, "10.0.0.3")["ok"]
+		"two_offices":
+			var gw_a := _iface_with_ip("192.168.1.1")
+			var gw_b := _iface_with_ip("192.168.2.1")
+			return gw_a != null and gw_b != null and gw_a.dev == gw_b.dev \
+				and not gw_a.dev.startup.is_empty()
 	return false
 
 func check_contract_mastery(cid: String) -> String:

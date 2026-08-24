@@ -1165,6 +1165,23 @@ static func run() -> int:
 		"mastery: extending VLAN 10 while preserving isolation completes the optional challenge")
 	check(Game.try_complete_contract(_contract("stretch_vlans")),
 		"walkthrough: contract 4 pays (trunk built from both dialects)")
+	var trunk_debrief: Dictionary = Game.contract_debriefs.get("stretch_vlans", {})
+	check(w_sw.name in String(trunk_debrief["proof"][0]) and w_sw2.name in String(trunk_debrief["proof"][0]) \
+			and "/interface bridge port print" in String(trunk_debrief["practice"]) \
+			and "show interfaces trunk" in String(trunk_debrief["practice"]),
+		"debrief: the tagged path names both real switches and both vendor dialects")
+	check(Game.check_contract_mastery("stretch_vlans") != "",
+		"mastery: a trunk carrying every VLAN is complete but not yet disciplined")
+	check(w_ros.exec("/interface set ether3 tagged=10,20") == "",
+		"routeros: a PacketTik trunk can be pruned from its own CLI")
+	w_eos.exec("configure terminal")
+	w_eos.exec("interface Ethernet8")
+	w_eos.exec("switchport trunk allowed vlan 10,20")
+	w_eos.exec("end")
+	check(Game.check_contract_mastery("stretch_vlans") == "" and "stretch_vlans" in Game.mastered_contracts,
+		"mastery: pruning both real trunk ends to the intended VLANs is recognized")
+	check("tagged=10,20" in w_ros.exec("/export"),
+		"routeros: PacketTik exports preserve the mastered trunk pruning")
 	Game.connect_ifaces(w_sw.ifaces[3], w_sw2.ifaces[6])  # the spare link
 	w_ros.exec("/interface set ether4 mode=trunk")
 	w_eos.exec("configure terminal")
@@ -1174,6 +1191,26 @@ static func run() -> int:
 	Sim.flush_learned_state()
 	check(Game.try_complete_contract(_contract("redundant_core")),
 		"walkthrough: contract 5 pays (spanning tree blocks the spare link)")
+	var stp_debrief: Dictionary = Game.contract_debriefs.get("redundant_core", {})
+	check("discarding" in String(stp_debrief["proof"][1]) \
+			and (w_sw.name in String(stp_debrief["proof"][0])) \
+			and (w_sw2.name in String(stp_debrief["proof"][0])),
+		"debrief: redundancy snapshots both physical paths and the actually blocked port")
+	var forwarding_link: Net.Link = null
+	for candidate: Net.Link in Game.links:
+		if candidate.a.dev in [w_sw, w_sw2] and candidate.b.dev in [w_sw, w_sw2] \
+				and not Sim.stp_blocked(candidate.a) and not Sim.stp_blocked(candidate.b):
+			forwarding_link = candidate
+			break
+	check(forwarding_link != null, "mastery: the forwarding inter-switch member is observable")
+	if forwarding_link != null:
+		forwarding_link.a.enabled = false
+		Game.topology_changed.emit()
+		check(Game.check_contract_mastery("redundant_core") == "" \
+				and "redundant_core" in Game.mastered_contracts,
+			"mastery: live traffic crosses the STP spare when the forwarding member is disabled")
+		forwarding_link.a.enabled = true
+		Game.topology_changed.emit()
 	var w_rtr := Game.new_device("rtr-lite")
 	var w_o1 := Game.new_device("srv-1")
 	var w_o2 := Game.new_device("srv-1")
@@ -1199,6 +1236,16 @@ static func run() -> int:
 	w_o2cli.exec("ip route add default via 192.168.2.1")
 	check(Game.try_complete_contract(_contract("two_offices")),
 		"walkthrough: contract 6 pays (two offices routed together)")
+	var route_debrief: Dictionary = Game.contract_debriefs.get("two_offices", {})
+	check(w_o1.name in String(route_debrief["proof"][0]) and w_rtr.name in String(route_debrief["proof"][0]) \
+			and w_o2.name in String(route_debrief["proof"][1]) \
+			and String(route_debrief["practice"]) == "/tool traceroute 192.168.2.10",
+		"debrief: first routing records the actual endpoints, router legs and PacketTik command")
+	check(Game.check_contract_mastery("two_offices") != "",
+		"mastery: a live but unsaved router is not yet operationally complete")
+	w_rcli.exec("/system backup save")
+	check(Game.check_contract_mastery("two_offices") == "" and "two_offices" in Game.mastered_contracts,
+		"mastery: saving the working routed configuration completes the optional challenge")
 	Game.demo = true
 	check(Demo.complete(), "walkthrough: the whole demo arc is completable from a fresh start")
 	Game.demo = false

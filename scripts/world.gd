@@ -261,6 +261,35 @@ func _shoot_all() -> void:
 			Game.active_contract_debrief = Game._opening_contract_debrief(Contracts.all()[2])
 			Game.contract_debriefs["two_tenants"] = Game.active_contract_debrief
 			ui._refresh_contracts()],
+		["debrief_trunk", func() -> void:
+			Game.active_contract_debrief = {"id": "stretch_vlans", "title": "Growing pains",
+				"customer": "Alfa Ltd & Beta Kft", "reward": 1000,
+				"proof": ["Tagged path: sw1 ether3 ⇄ sw2 Ethernet8; both ends are trunks.",
+					"10.0.0.3 reaches 10.0.0.1 across that link while 10.0.0.2 remains isolated."],
+				"concept": "802.1Q trunks carry several VLANs",
+				"practice": "sw1: /interface bridge port print · sw2: show interfaces trunk",
+				"avoided": "Both trunk ends agree; a one-sided trunk would drop tagged traffic.",
+				"mastery": "Prune every inter-switch trunk to VLANs 10 and 20 only."}
+			ui._refresh_contracts()],
+		["debrief_failover", func() -> void:
+			Game.active_contract_debrief = {"id": "redundant_core", "title": "One cable from disaster",
+				"customer": "Alfa Ltd (again)", "reward": 1100,
+				"proof": ["Parallel paths: sw1 ether3 ⇄ sw2 Ethernet8 / sw1 ether4 ⇄ sw2 Ethernet7.",
+					"Spanning tree placed sw2 Ethernet7 in discarding state; Alfa still has one forwarding path."],
+				"concept": "A loop-free spare path", "practice": "show spanning-tree",
+				"avoided": "The second cable did not create a broadcast storm.",
+				"mastery": "Disable the forwarding member and prove Alfa still crosses the spare."}
+			ui._refresh_contracts()],
+		["debrief_routing", func() -> void:
+			Game.active_contract_debrief = {"id": "two_offices", "title": "Connect two offices",
+				"customer": "Gamma Corp", "reward": 1200,
+				"proof": ["office1 eth0 (192.168.1.10) → gateway rtr1 ether1 (192.168.1.1).",
+					"rtr1 routes into ether2 (192.168.2.1) → office2 eth0 (192.168.2.10); replies return through the same router."],
+				"concept": "A router joins different IP subnets",
+				"practice": "/tool traceroute 192.168.2.10",
+				"avoided": "Hosts do not pretend remote addresses are on their local wire.",
+				"mastery": "Save the working configuration on rtr1."}
+			ui._refresh_contracts()],
 		["business_cashflow", func() -> void:
 			Game.last_business = {"revenue": 162, "invoiced": 72, "collected": 72,
 				"power": 34, "transit": 18}

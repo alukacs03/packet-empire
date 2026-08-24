@@ -120,7 +120,7 @@ func exec(line: String) -> String:
 			return out
 		"interface set":
 			if args.is_empty() or _iface(args[0]) == null:
-				return "usage: /interface set <name> disabled=yes|no mtu=N pvid=N mode=access|trunk bfd=yes|no\n"
+				return "usage: /interface set <name> disabled=yes|no mtu=N pvid=N mode=access|trunk tagged=10,20|all bfd=yes|no\n"
 			var i := _iface(args[0])
 			if p.has("disabled"):
 				i.enabled = p["disabled"] != "yes"
@@ -144,6 +144,18 @@ func exec(line: String) -> String:
 				if dev.type != "switch":
 					return "mode is for switch ports\n"
 				i.mode = p["mode"]
+			if p.has("tagged"):
+				if dev.type != "switch" or i.mode != "trunk":
+					return "tagged VLAN pruning is for switch trunk ports\n"
+				if String(p["tagged"]) == "all":
+					i.tagged_vlans = []
+				else:
+					var tagged_vids: Array = []
+					for raw_vid in String(p["tagged"]).split(",", false):
+						if not raw_vid.is_valid_int() or int(raw_vid) < 1 or int(raw_vid) > 4094:
+							return "failure: tagged= expects VLAN IDs 1-4094 or all\n"
+						tagged_vids.append(int(raw_vid))
+					i.tagged_vlans = tagged_vids
 			Game.topology_changed.emit()
 			return ""
 		"interface bonding add":
@@ -413,6 +425,9 @@ func _export() -> String:
 			out += "/interface set %s pvid=%d\n" % [i.name, i.untagged_vlan]
 		if dev.type == "switch" and i.mode == "trunk":
 			out += "/interface set %s mode=trunk\n" % i.name
+			if not i.tagged_vlans.is_empty():
+				out += "/interface set %s tagged=%s\n" % [i.name,
+					",".join(i.tagged_vlans.map(func(v): return str(v)))]
 		if not i.enabled:
 			out += "/interface set %s disabled=yes\n" % i.name
 		for cidr in i.ips:
