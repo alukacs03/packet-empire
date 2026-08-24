@@ -408,49 +408,101 @@ class TopoMap extends Control:
 	func _draw() -> void:
 		_nodes.clear()
 		draw_rect(Rect2(Vector2.ZERO, size), UIW.colour("console"))
-		var title_c := UIW.colour("accent")
-		draw_string(_mono, Vector2(30, 100), "LOGICAL TOPOLOGY", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, title_c)
-		draw_string(_mono, Vector2(30, 122), "click a device to open it · M or Esc to close",
+		# A dim plotting grid makes this feel like an active NOC surface instead of
+		# a collection of controls floating over an empty canvas.
+		for x in range(24, int(size.x), 32):
+			draw_line(Vector2(x, 74), Vector2(x, size.y - 58),
+				Color(UIW.colour("border"), 0.10), 1.0)
+		for y in range(74, int(size.y - 58), 32):
+			draw_line(Vector2(0, y), Vector2(size.x, y),
+				Color(UIW.colour("border"), 0.10), 1.0)
+		# Command rail.
+		draw_rect(Rect2(0, 0, size.x, 74), Color("0d1d31"))
+		draw_line(Vector2(0, 73), Vector2(size.x, 73), Color(UIW.colour("accent"), 0.55), 1.0)
+		draw_rect(Rect2(30, 18, 4, 38), UIW.colour("accent"))
+		draw_string(_mono, Vector2(48, 31), "NETWORK MAP  /  LIVE ESTATE",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("accent"))
+		draw_string(_mono, Vector2(48, 55), "LOGICAL TOPOLOGY",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UIW.colour("text_strong"))
+		draw_string(_mono, Vector2(size.x - 176, 45), "M / ESC  CLOSE",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("muted"))
-		# pack rack boxes into a grid that fills the window, floor order preserved
-		const COL_W := 250.0
-		const TOP := 145.0
-		var cols: int = maxi(1, int((size.x - 60.0) / COL_W))
+
+		var dev_count := Game.all_devices().size()
+		var down_count := 0
+		for dev: Net.NDevice in Game.all_devices():
+			if dev.status != "active":
+				down_count += 1
+		var metrics := "%02d RACKS    %02d DEVICES    %02d LINKS    %s" % [Game.racks.size(),
+			dev_count, Game.links.size(), "ALL SYSTEMS NOMINAL" if down_count == 0 else "%02d DEVICE ALERTS" % down_count]
+		draw_string(_mono, Vector2(48, 108), metrics, HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+			UIW.colour("success") if down_count == 0 else UIW.colour("warning"))
+		draw_string(_mono, Vector2(size.x - 292, 108), "SELECT A DEVICE TO INSPECT",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
+
+		# Pack uniform rack bays around the centre of the plotting surface.
+		const CARD_W := 300.0
+		const GAP_X := 54.0
+		const GAP_Y := 34.0
+		const TOP := 142.0
 		var racks := Game.racks.duplicate()
 		racks.sort_custom(func(x, y): return x.tile.x + x.tile.y * 100 < y.tile.x + y.tile.y * 100)
-		var row_h := 0.0
-		var col_i := 0
-		var row_y := TOP
-		for r in racks:
+		var cols: int = mini(maxi(1, int((size.x - 96.0 + GAP_X) / (CARD_W + GAP_X))),
+			maxi(1, racks.size()))
+		var max_devices := 1
+		for rack in racks:
+			var n := 0
+			for slot in rack.slots:
+				if slot:
+					n += 1
+			max_devices = maxi(max_devices, n)
+		var card_h := 54.0 + max_devices * 48.0 + 12.0
+		var rows: int = maxi(1, ceili(float(racks.size()) / float(cols)))
+		var plot_h := size.y - TOP - 76.0
+		var total_h := rows * card_h + (rows - 1) * GAP_Y
+		var start_y := TOP + maxf(0.0, (plot_h - total_h) * 0.42)
+		for rack_i in racks.size():
+			var r = racks[rack_i]
 			var filled: Array = []
 			for d in r.slots:
 				if d:
 					filled.append(d)
-			var box_h := 34 + filled.size() * 40 + 8
-			if col_i >= cols:
-				col_i = 0
-				row_y += row_h + 24
-				row_h = 0.0
-			var origin := Vector2(30 + col_i * COL_W, row_y)
-			col_i += 1
-			row_h = maxf(row_h, box_h)
-			var box := Rect2(origin, Vector2(215, box_h))
+			var row_i: int = rack_i / cols
+			var col_i: int = rack_i % cols
+			var row_count: int = mini(cols, racks.size() - row_i * cols)
+			var row_w := row_count * CARD_W + (row_count - 1) * GAP_X
+			var row_x := (size.x - row_w) * 0.5
+			var origin := Vector2(row_x + col_i * (CARD_W + GAP_X),
+				start_y + row_i * (card_h + GAP_Y))
+			var box := Rect2(origin, Vector2(CARD_W, card_h))
 			draw_rect(box, UIW.colour("surface"))
-			draw_rect(Rect2(box.position, Vector2(4, box.size.y)), UIW.colour("accent"))
-			draw_rect(box, UIW.colour("border"), false, 1.0)
+			draw_rect(Rect2(box.position, Vector2(5, box.size.y)), UIW.colour("accent"))
+			draw_rect(Rect2(box.position, Vector2(box.size.x, 42)), Color("203854"))
+			draw_rect(box, UIW.colour("border_strong"), false, 1.0)
+			draw_line(origin + Vector2(18, 42), origin + Vector2(CARD_W - 18, 42),
+				Color(UIW.colour("accent"), 0.42), 1.0)
 			var site_tag: String = "" if Game.site_count() <= 1 else "  ·  " + Game.site_name(r.site)
-			draw_string(_mono, origin + Vector2(10, 22), "▤ " + r.name + site_tag,
+			draw_string(_mono, origin + Vector2(18, 27), "RACK  /  " + r.name + site_tag,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIW.colour("text_strong"))
-			var y := origin.y + 34
+			draw_string(_mono, origin + Vector2(CARD_W - 78, 27), "%02d NODES" % filled.size(),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("muted"))
+			var y := origin.y + 52
 			for d in filled:
-				_nodes[d] = Rect2(origin.x + 8, y, 199, 36)
-				y += 40
+				_nodes[d] = Rect2(origin.x + 12, y, CARD_W - 24, 40)
+				y += 48
 		# links under nodes
 		for l in Game.links:
 			if not _nodes.has(l.a.dev) or not _nodes.has(l.b.dev):
 				continue
-			var pa: Vector2 = _nodes[l.a.dev].get_center()
-			var pb: Vector2 = _nodes[l.b.dev].get_center()
+			var ra: Rect2 = _nodes[l.a.dev]
+			var rb: Rect2 = _nodes[l.b.dev]
+			var pa: Vector2 = ra.get_center()
+			var pb: Vector2 = rb.get_center()
+			if absf(pb.x - pa.x) > absf(pb.y - pa.y):
+				pa.x = ra.end.x if pb.x > pa.x else ra.position.x
+				pb.x = rb.position.x if pb.x > pa.x else rb.end.x
+			else:
+				pa.y = ra.end.y if pb.y > pa.y else ra.position.y
+				pb.y = rb.position.y if pb.y > pa.y else rb.end.y
 			var col := Color(0.35, 0.7, 0.65, 0.8)
 			var blocked := false
 			if l.a.dev.type == "switch" and l.b.dev.type == "switch":
@@ -463,7 +515,8 @@ class TopoMap extends Control:
 				col = Color(0.4, 0.9, 1.0, 0.9)  # rides a WAN circuit
 			var over: bool = Game.last_link_load.get(l, 0) > Game.link_capacity(l)
 			if over:
-				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.9), 5.0)
+				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.22), 8.0)
+				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.9), 3.0)
 				draw_string(_mono, (pa + pb) / 2.0 + Vector2(4, -4),
 					"%d/%d Mbps" % [Game.last_link_load.get(l, 0), Game.link_capacity(l)],
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.5, 0.45))
@@ -474,22 +527,31 @@ class TopoMap extends Control:
 						draw_line(pa.lerp(pb, float(k) / n), pa.lerp(pb, float(k + 1) / n),
 							Color(0.9, 0.4, 0.35, 0.9), 2.0)
 			else:
+				draw_line(pa, pb, Color(col, 0.16), 7.0)
 				draw_line(pa, pb, col, 2.0)
 			if not blocked:
 				_flow(pa, pb, col, int(Game.last_link_load.get(l, 0)), Game.link_capacity(l))
 		# nodes on top
 		for dev: Net.NDevice in _nodes:
 			var rect: Rect2 = _nodes[dev]
-			var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
-			draw_rect(rect, col.darkened(0.56))
-			draw_rect(Rect2(rect.position, Vector2(4, rect.size.y)), col)
+			var identity: Dictionary = UIW.model_visual(dev.model)
+			var col: Color = identity["accent"]
+			draw_rect(rect, Color(identity["base"]).darkened(0.30))
+			draw_rect(Rect2(rect.position, Vector2(5, rect.size.y)), col)
 			draw_rect(rect, col if dev.status == "active" else UIW.colour("danger"), false, 1.5)
-			draw_string(_mono, rect.position + Vector2(8, 15), dev.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
-			draw_string(_mono, rect.position + Vector2(8, 29), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col.lightened(0.3))
+			draw_circle(rect.position + Vector2(rect.size.x - 16, 14), 3.5,
+				UIW.colour("success") if dev.status == "active" else UIW.colour("danger"))
+			var ink: Color = identity["ink"]
+			draw_string(_mono, rect.position + Vector2(13, 17), dev.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ink)
+			draw_string(_mono, rect.position + Vector2(13, 32), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
+				ink.darkened(0.20) if ink.get_luminance() > 0.55 else ink.lightened(0.35))
 		# legend
-		var ly := size.y - 26
+		draw_rect(Rect2(0, size.y - 58, size.x, 58), Color("0d1d31"))
+		draw_line(Vector2(0, size.y - 58), Vector2(size.x, size.y - 58),
+			Color(UIW.colour("border"), 0.75), 1.0)
+		var ly := size.y - 24
 		draw_string(_mono, Vector2(30, ly),
-			"- host link  : trunk/inter-switch   ┄ STP blocked (no traffic: that is the point)  : management",
+			"— HOST LINK     — TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
 
 	func _flow(pa: Vector2, pb: Vector2, col: Color, load: int, cap: int) -> void:
