@@ -3541,7 +3541,7 @@ func _build_jobs_tab() -> void:
 		cv.add_child(btn)
 
 func _offer_fact(caption: String, value: String, semantic: String) -> PanelContainer:
-	var panel := UIW.style_panel(PanelContainer.new(), "overlay", "sm")
+	var panel := UIW.style_panel(PanelContainer.new(), "console", "sm")
 	panel.custom_minimum_size = Vector2(198, 76)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
