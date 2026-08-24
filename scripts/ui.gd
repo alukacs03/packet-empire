@@ -313,7 +313,7 @@ func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
 		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible \
-		or ops_overlay.visible or search_overlay.visible
+		or ops_overlay.visible or search_overlay.visible or demo_overlay.visible
 
 # ---------- theme / widget helpers ----------
 
@@ -2383,30 +2383,41 @@ var demo_overlay: Control
 
 func _build_demo_end() -> void:
 	demo_overlay = _overlay()
-	var v := _card(demo_overlay, 640)
+	var v := _card(demo_overlay, 760)
 	var t := _header(v, func() -> void: demo_overlay.visible = false)
-	t.text = "That is the demo"
-	var body := _label("You started with an empty rack and a colo contract. You now have two switches, a redundant core that survives a cut cable, tenants who cannot see each other, and two offices routed together. Every bit of that ran on a real simulation: MAC learning, VLAN tagging, spanning tree and longest-prefix routing.\n\nThe demo stops here. The full game carries straight on from this point.", 15, Color(0.82, 0.87, 0.93))
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.custom_minimum_size = Vector2(580, 0)
+	t.text = "Shift complete"
+	var status := _section("OPENING ARC  /  NETWORK ONLINE  /  HANDOVER READY")
+	status.add_theme_color_override("font_color", UIW.colour("success"))
+	v.add_child(status)
+	var body := _wrap("You walked into an empty cage. You leave behind a routed, redundant tenant network—and every packet reached its destination for a real reason.",
+		17, UIW.colour("text_strong"), 700)
 	v.add_child(body)
-	var gap_demo := Control.new()
-	gap_demo.custom_minimum_size = Vector2(0, 6)
-	v.add_child(gap_demo)
-	v.add_child(_section("WHAT IS BEYOND THIS"))
-	for line: String in Demo.BEYOND:
-		v.add_child(_label("  •  " + line, 14, Color(0.72, 0.8, 0.88)))
+	var achieved := HBoxContainer.new()
+	achieved.add_theme_constant_override("separation", UIW.space("md"))
+	v.add_child(achieved)
+	achieved.add_child(_welcome_module("✓", "YOU BUILT",
+		"Two switches, isolated tenants, a resilient core and two offices routed together.", "success"))
+	achieved.add_child(_welcome_module("✓", "YOU OPERATED",
+		"Real MAC learning, VLAN tagging, spanning tree and longest-prefix routing.", "accent"))
+	achieved.add_child(_welcome_module("→", "NEXT SHIFT",
+		"Own the room. Pay for power. Hire a crew. Reach the internet—and survive it.", "warm"))
+	var beyond := UIW.style_panel(PanelContainer.new(), "console", "md")
+	v.add_child(beyond)
+	var beyond_copy := _wrap("FULL CAMPAIGN  /  DHCP · DNS · NAT · BGP · IPv6 · OSPF · VRRP · MLAG · WIREGUARD · 802.1X · MULTI-SITE WAN",
+		12, UIW.colour("muted"), 700)
+	beyond_copy.add_theme_font_override("font", mono)
+	beyond.add_child(beyond_copy)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(row)
 	var keep := Button.new()
-	keep.text = "Keep poking at it"
+	keep.text = "STAY ON THE FLOOR"
 	keep.tooltip_text = "The world stays exactly as it is; nothing new unlocks"
 	keep.pressed.connect(func() -> void: demo_overlay.visible = false)
 	_accent(keep)
 	row.add_child(keep)
 	var back := Button.new()
-	back.text = "Back to the title screen"
+	back.text = "RETURN TO TITLE"
 	back.pressed.connect(func() -> void:
 		Game.save_game()
 		demo_overlay.visible = false
