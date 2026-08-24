@@ -41,6 +41,7 @@ class Iface:
 	var tx_frames := 0  # runtime counters
 	var rx_frames := 0
 	var ips: Array = []  # CIDR strings, e.g. "10.0.0.5/24"
+	var note := {}  # player-authored {text, cycle}; never interpreted by the simulation
 	func _init(d: NDevice, n: String, m: String) -> void:
 		dev = d
 		name = n

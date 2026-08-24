@@ -446,6 +446,7 @@ static func run() -> int:
 	Game.racks[0].blanked[6] = true
 	Game.set_note(Game.racks[0], "Temporary patch during the migration")
 	Game.set_note(a, "Do not reboot before the handover")
+	Game.set_note(a.ifaces[0], "Customer handoff — do not repatch")
 	Game.save_game()
 	var money_before := Game.money
 	Game.money = 1
@@ -466,10 +467,13 @@ static func run() -> int:
 			a_l = d
 	check(a_l != null and a_l.note.get("text", "") == "Do not reboot before the handover",
 		"save: player-authored device notes travel with the device")
+	check(a_l != null and a_l.ifaces[0].note.get("text", "") == "Customer handoff — do not repatch",
+		"save: player-authored port tags travel with the physical interface")
 	check(a_l != null and Sim.ping(a_l, "10.1.0.2")["ok"], "save: reloaded topology still routes end-to-end")
 	var note_cycle := Game.cycle
 	Game.cycle += 13
 	check(Game.note_age(a_l) == 13, "notes: age is derived without interpreting the player's text")
+	check(Game.note_age(a_l.ifaces[0]) == 13, "notes: port tag age uses the same opaque cycle metadata")
 	Game.cycle = note_cycle
 
 	# --- trunk allowed-vlan pruning (uses reloaded devices) ---

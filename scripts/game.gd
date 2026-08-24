@@ -3423,7 +3423,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
-			"ips": i.ips})
+			"ips": i.ips, "note": i.note})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
 		"note": d.note,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
@@ -3596,6 +3596,7 @@ func _apply(data: Dictionary) -> void:
 			i.parent = si.get("parent", "")
 			i.dot1q = int(si.get("dot1q", 0))
 			i.ips = si["ips"]
+			i.note = si.get("note", {}).duplicate(true)
 			d.ifaces.append(i)
 		if d.type == "switch":
 			var has_mgmt := false

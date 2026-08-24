@@ -826,6 +826,10 @@ class RackSlot extends Control:
 			draw_rect(Rect2(port_rect.position + Vector2(3, 3), port_rect.size - Vector2(6, 5)), pc)
 			draw_line(port_rect.position + Vector2(4, 2), port_rect.position + Vector2(10, 2),
 				Color("aeb7bc"), 1.0)
+			if not i.note.is_empty():
+				# A sliver of labeling tape stays legible beside even the dense 24-port bank.
+				draw_rect(Rect2(port_rect.position + Vector2(1, -3), Vector2(port_rect.size.x - 2, 2)),
+					Color("e8c96f"))
 			if not linked and hovered:
 				draw_rect(port_rect.grow(2), Color(UIW.colour("accent"), 0.72), false, 1.0)
 		if Game.config_dirty(dev):  # unsaved configuration: amber dot by the status LED
@@ -1185,6 +1189,11 @@ class Faceplate extends Control:
 			# RJ45 tab notch
 			draw_rect(Rect2(r.position.x + r.size.x * 0.3, r.end.y - 5, r.size.x * 0.4, 4), body.lightened(0.15))
 			draw_rect(Rect2(r.position.x + 4, r.position.y + 3, r.size.x - 8, 3), Color(0.75, 0.62, 0.3, 0.5))  # pins
+			if not i.note.is_empty():
+				var tape := Rect2(r.position + Vector2(2, -7), Vector2(r.size.x - 4, 5))
+				draw_rect(tape, Color("e8c96f"))
+				draw_line(tape.position + Vector2(4, 2), tape.end - Vector2(4, 3),
+					Color("67552c"), 1.0)
 			# link LED blinks
 			var led := Color(0.2, 0.22, 0.26)
 			if not i.enabled:

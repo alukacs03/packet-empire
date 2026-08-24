@@ -47,6 +47,8 @@ var dev_note_btn: Button
 
 var if_overlay: Control
 var if_title: Label
+var if_note_ui := {}
+var if_note_btn: Button
 var if_mac: Label
 var if_vrrp_lbl: Label
 var if_state_box: VBoxContainer
@@ -1221,6 +1223,10 @@ func _build_if_overlay() -> void:
 	if_overlay = _overlay()
 	var v := _card(if_overlay, 600)
 	if_title = _header(v, close_iface)
+	if_note_ui = _note_card(v, func(text: String) -> void:
+		Game.set_note(cur_if, text)
+		_refresh_note_card(if_note_ui, cur_if, if_note_btn)
+		_refresh_ports())
 	var eyebrow := _section("PORT INSPECTOR  /  READ-ONLY LOGICAL STATE")
 	eyebrow.add_theme_color_override("font_color", UIW.colour("accent"))
 	v.add_child(eyebrow)
@@ -1257,6 +1263,11 @@ func _build_if_overlay() -> void:
 	if_cable_lbl = _label("", 14)
 	if_cable_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cable_row.add_child(if_cable_lbl)
+	if_note_btn = Button.new()
+	if_note_btn.text = "✎ TAG PORT"
+	if_note_btn.tooltip_text = "Leave physical handover context on this jack"
+	if_note_btn.pressed.connect(func() -> void: _open_note_card(if_note_ui))
+	cable_row.add_child(if_note_btn)
 	if_peer_btn = Button.new()
 	if_peer_btn.text = "Go to other end ⇄"
 	if_peer_btn.pressed.connect(func() -> void:
@@ -1275,6 +1286,7 @@ func _build_if_overlay() -> void:
 
 func open_iface(i: Net.Iface) -> void:
 	cur_if = i
+	_refresh_note_card(if_note_ui, i, if_note_btn)
 	_refresh_iface()
 	_show_overlay(if_overlay)
 
