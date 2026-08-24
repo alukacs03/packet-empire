@@ -119,6 +119,12 @@ func _shoot_all() -> void:
 				if Game.rack_of(link.a.dev) == r and Game.rack_of(link.b.dev) == r:
 					ui.rack_cable_layer.confirm(link.a, link.b)
 					break],
+		["rack_cable_rejected", func() -> void:
+			var loose: Net.Iface = sw.ifaces[2]
+			var jack := ui._rack_port_position(loose)
+			ui.rack_cable_layer.begin(jack, loose)
+			ui.rack_cable_layer.finish()
+			ui.rack_cable_layer.reject(jack + Vector2(-72, 48), "FREE JACK REQUIRED")],
 		["rack_tidy", func() -> void:
 			for slot_i in Net.Rack.SLOTS:
 				if Game.slot_free(r, slot_i):

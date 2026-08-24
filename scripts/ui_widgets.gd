@@ -849,6 +849,10 @@ class CablePull extends Control:
 	var feedback_a: Net.Iface
 	var feedback_b: Net.Iface
 	var feedback_elapsed := -1.0
+	var reject_from := Vector2.ZERO
+	var reject_to := Vector2.ZERO
+	var reject_elapsed := -1.0
+	var reject_reason := ""
 	var _mono: SystemFont
 	const CABLE_COLOURS := [Color("f2b84b"), Color("4dd5c8"), Color("75a7ff"),
 		Color("e7748f"), Color("a78bfa"), Color("8ed081")]
@@ -890,6 +894,14 @@ class CablePull extends Control:
 		feedback_elapsed = 0.0
 		queue_redraw()
 
+	func reject(screen_to: Vector2, reason: String) -> void:
+		reject_from = from - global_position
+		reject_to = screen_to - global_position
+		reject_reason = reason
+		reject_elapsed = 0.0
+		Sfx.play("bad")
+		queue_redraw()
+
 	func _process(dt: float) -> void:
 		if feedback_elapsed >= 0.0:
 			feedback_elapsed += dt
@@ -898,6 +910,12 @@ class CablePull extends Control:
 				feedback_elapsed = -1.0
 				feedback_a = null
 				feedback_b = null
+		if reject_elapsed >= 0.0:
+			reject_elapsed += dt
+			var reject_duration := 0.32 if Prefs.reduced_motion else 0.52
+			if reject_elapsed >= reject_duration:
+				reject_elapsed = -1.0
+				reject_reason = ""
 		if visible:
 			queue_redraw()
 
@@ -991,6 +1009,27 @@ class CablePull extends Control:
 			draw_circle(glint, 6.0, Color(colour, fade * 0.18))
 			draw_circle(glint, 2.3, colour.lightened(0.45))
 
+	func _draw_rejection() -> void:
+		var duration := 0.32 if Prefs.reduced_motion else 0.52
+		var progress := clampf(reject_elapsed / duration, 0.0, 1.0)
+		var fade := 1.0 - progress
+		var danger := Color(Prefs.bad_colour(), fade)
+		var end := reject_to
+		if not Prefs.reduced_motion:
+			# A quick ease-back reads as the loose plug physically refusing the drop.
+			var recoil := 1.0 - pow(1.0 - progress, 2.4)
+			end = reject_to.lerp(reject_from, recoil)
+			var points := _loose_points(reject_from, end)
+			draw_polyline(points, Color(0.005, 0.008, 0.012, fade * 0.8), 7.0, true)
+			draw_polyline(points, danger, 3.5, true)
+		draw_circle(reject_to, 7.0 + progress * 4.0, Color(danger, fade * 0.18))
+		draw_circle(reject_to, 7.0 + progress * 4.0, danger, false, 1.5)
+		draw_line(reject_to + Vector2(-4, -4), reject_to + Vector2(4, 4), danger, 1.4)
+		draw_line(reject_to + Vector2(4, -4), reject_to + Vector2(-4, 4), danger, 1.4)
+		if reject_elapsed < 0.34:
+			draw_string(_mono, reject_to + Vector2(13, -10), reject_reason,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, danger)
+
 	func _draw() -> void:
 		var positions := _port_positions()
 		var drawn := 0
@@ -1004,6 +1043,8 @@ class CablePull extends Control:
 							or (link.a == feedback_b and link.b == feedback_a)):
 						_draw_confirmation(points, colour)
 					drawn += 1
+		if reject_elapsed >= 0.0:
+			_draw_rejection()
 		if active:
 			var a := from - global_position
 			var b := to - global_position

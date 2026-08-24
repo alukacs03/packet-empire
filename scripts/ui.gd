@@ -847,6 +847,17 @@ func _rack_target_at(screen_pos: Vector2) -> Net.Iface:
 func _rack_cable_move(screen_pos: Vector2) -> void:
 	rack_cable_layer.move_to(screen_pos, _rack_target_at(screen_pos) != null)
 
+func _rack_cable_reject_reason(screen_pos: Vector2) -> String:
+	for child in slot_box.get_children():
+		if child is UIW.RackSlot:
+			var candidate: Net.Iface = (child as UIW.RackSlot).port_at_screen(screen_pos)
+			if candidate:
+				if candidate.dev == rack_cable_from.dev:
+					return "OTHER DEVICE REQUIRED"
+				if Game.link_at(candidate):
+					return "JACK ALREADY IN USE"
+	return "FREE JACK REQUIRED"
+
 func _rack_cable_release(screen_pos: Vector2) -> void:
 	if rack_cable_from == null:
 		rack_cable_layer.finish()
@@ -872,6 +883,7 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 			rack_cable_from.name, loose_end.dev.name, loose_end.name], true)
 		_refresh_slots()
 	else:
+		rack_cable_layer.reject(screen_pos, _rack_cable_reject_reason(screen_pos))
 		hud_toast("Drop the cable on a free port in this rack.")
 	rack_cable_from = null
 	rack_cable_old_link = null
