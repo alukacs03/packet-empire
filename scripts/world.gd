@@ -226,6 +226,26 @@ func _shoot_all() -> void:
 		["incident_resilience", func() -> void:
 			Game.guided_outage["state"] = "choice"
 			ui._refresh_tutorial()],
+		["customer_eye_live", func() -> void:
+			Game.guided_outage["state"] = "complete"
+			var deal: Dictionary = Game.deals[0]
+			deal["healthy"] = true
+			deal["ever_healthy"] = true
+			deal["degraded"] = false
+			deal["payment_state"] = "billing"
+			ui.contracts_tab = "Jobs"
+			ui.open_contracts()],
+		["customer_eye_down", func() -> void:
+			var deal: Dictionary = Game.deals[0]
+			deal["healthy"] = false
+			deal["payment_state"] = "suspended"
+			ui._refresh_contracts()],
+		["customer_eye_slow", func() -> void:
+			var deal: Dictionary = Game.deals[0]
+			deal["healthy"] = true
+			deal["payment_state"] = "billing"
+			deal["degraded"] = true
+			ui._refresh_contracts()],
 		["business_cashflow", func() -> void:
 			Game.last_business = {"revenue": 162, "invoiced": 72, "collected": 72,
 				"power": 34, "transit": 18}

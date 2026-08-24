@@ -813,6 +813,50 @@ func day_factor() -> float:
 func day_name() -> String:
 	return DAY_NAMES[day_slot()]
 
+func customer_eye(deal: Dictionary) -> Dictionary:
+	## Translate a real service state into the small human thing it carries.
+	## This is deliberately derived at read time: the UI can never celebrate
+	## orders while the simulation says the customer is down.
+	if String(deal.get("customer", "")) != "Kiskacsa Kft":
+		return {}
+	var delivered := bool(deal.get("ever_healthy", false))
+	var healthy := bool(deal.get("healthy", false))
+	var degraded := bool(deal.get("degraded", false))
+	var current_load := maxi(0, int(round(float(int(deal.get("load", 0))) * day_factor())))
+	var eye := {
+		"name": "KISKACSA / CUSTOMER EYE",
+		"identity": "A small Budapest children's shop. Its web checkout sends each paid order straight to the label printer beside the packing table.",
+		"time": day_name().to_upper(),
+		"state": "waiting",
+		"metric": "NO LIVE ORDERS YET",
+		"activity": "Their team is preparing products and waiting for the promised service.",
+		"voice": "“Tell us when it is ready; we would rather launch once than apologise twice.”",
+	}
+	if not delivered:
+		return eye
+	if not healthy:
+		eye["state"] = "down"
+		eye["metric"] = "CHECKOUT OFFLINE"
+		eye["activity"] = "Shoppers can browse cached pages, but checkout cannot submit an order. The packing table is quiet and new labels are not arriving."
+		eye["voice"] = "“We have paused the promotion. Please keep us updated; people are asking whether their order went through.”"
+		return eye
+	var shoppers := maxi(2, int(round(float(current_load) / 6.0)))
+	var orders := maxi(1, int(round(float(current_load) / 28.0)))
+	if degraded:
+		eye["state"] = "degraded"
+		eye["metric"] = "~%d SHOPPERS / CHECKOUT RETRYING" % shoppers
+		eye["activity"] = "Pages are slow and some shoppers retry payment. Orders reach the packing table in bursts instead of a steady queue."
+		eye["voice"] = "“It is working, but customers are pressing the button twice. Can you steady it?”"
+		return eye
+	eye["state"] = "live"
+	eye["metric"] = "~%d SHOPPERS  ·  ~%d ORDERS/H" % [shoppers, orders]
+	eye["activity"] = "Checkout is accepting orders. Each success becomes a fresh shipping label at the packing table."
+	if String(guided_outage.get("state", "")) in ["recovered", "choice", "complete"]:
+		eye["voice"] = "“The labels are moving again. Thank you for telling us what was happening while you fixed it.”"
+	else:
+		eye["voice"] = "“The next label just printed. That little sound means the shop is working.”"
+	return eye
+
 func peak_factor() -> float:
 	return DAY_CURVE.max()
 

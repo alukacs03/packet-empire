@@ -3642,7 +3642,54 @@ func _build_log_tab() -> void:
 		l.custom_minimum_size = Vector2(580, 0)
 		contracts_box.add_child(l)
 
+func _customer_eye_card(eye: Dictionary) -> PanelContainer:
+	var state := String(eye.get("state", "waiting"))
+	var semantic := "success"
+	if state == "down":
+		semantic = "danger"
+	elif state in ["degraded", "waiting"]:
+		semantic = "warning"
+	var card := UIW.style_panel(PanelContainer.new(), "console", "lg")
+	card.custom_minimum_size = Vector2(0, 188)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UIW.space("md"))
+	card.add_child(box)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", UIW.space("md"))
+	box.add_child(head)
+	var eyebrow := _section(String(eye.get("name", "CUSTOMER EYE")))
+	eyebrow.add_theme_color_override("font_color", UIW.colour("accent"))
+	eyebrow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(eyebrow)
+	head.add_child(UIW.make_chip("%s  /  %s" % [String(eye.get("time", "NOW")), state.to_upper()], semantic))
+	box.add_child(_wrap(String(eye.get("identity", "")), 13, UIW.colour("text"), 760))
+	var pulse := UIW.style_panel(PanelContainer.new(), "surface", "md")
+	box.add_child(pulse)
+	var pulse_box := VBoxContainer.new()
+	pulse_box.add_theme_constant_override("separation", UIW.space("xs"))
+	pulse.add_child(pulse_box)
+	var metric := _label(String(eye.get("metric", "")), 15,
+		Prefs.bad_colour() if state == "down" else UIW.colour("success") if state == "live" else UIW.colour("warm"))
+	metric.add_theme_font_override("font", mono)
+	pulse_box.add_child(metric)
+	pulse_box.add_child(_wrap(String(eye.get("activity", "")), 12, UIW.colour("muted"), 720))
+	var voice := _wrap(String(eye.get("voice", "")), 12, UIW.colour("warm"), 740)
+	voice.add_theme_font_override("font", mono)
+	box.add_child(voice)
+	return card
+
 func _build_jobs_tab() -> void:
+	var customer_windows: Array = []
+	for active_deal: Dictionary in Game.deals:
+		var customer_view := Game.customer_eye(active_deal)
+		if not customer_view.is_empty():
+			customer_windows.append(customer_view)
+	if not customer_windows.is_empty():
+		var live_title := _section("CUSTOMER WINDOW  /  WHAT YOUR NETWORK IS CARRYING")
+		live_title.add_theme_color_override("font_color", UIW.colour("warm"))
+		contracts_box.add_child(live_title)
+		for customer_view: Dictionary in customer_windows:
+			contracts_box.add_child(_customer_eye_card(customer_view))
 	if not Game.offers.is_empty():
 		var desk := _section("BID DESK  /  INCOMING OPPORTUNITIES")
 		desk.add_theme_color_override("font_color", UIW.colour("warm"))

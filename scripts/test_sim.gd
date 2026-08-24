@@ -3503,6 +3503,24 @@ static func run() -> int:
 		"guided outage: the resilience choice leaves a permanent useful improvement")
 	check(Game.deals.has(guided_deal) and Game.links.has(Game.link_at(delivery_server.ifaces[0])),
 		"guided outage: completion keeps the customer and reusable topology intact")
+	var customer_live := Game.customer_eye(guided_deal)
+	check(String(customer_live["state"]) == "live" \
+			and "ORDERS/H" in String(customer_live["metric"]) \
+			and "labels are moving again" in String(customer_live["voice"]),
+		"customer eye: healthy service becomes visible shoppers, work and a remembered recovery")
+	guided_deal["healthy"] = false
+	var customer_down := Game.customer_eye(guided_deal)
+	check(String(customer_down["state"]) == "down" \
+			and "CHECKOUT OFFLINE" in String(customer_down["metric"]) \
+			and "cannot submit" in String(customer_down["activity"]),
+		"customer eye: an outage shows the customer's real consequence, never fake success")
+	guided_deal["healthy"] = true
+	guided_deal["degraded"] = true
+	var customer_slow := Game.customer_eye(guided_deal)
+	check(String(customer_slow["state"]) == "degraded" \
+			and "retry" in String(customer_slow["activity"]).to_lower(),
+		"customer eye: congestion reads as a human symptom rather than only a bandwidth number")
+	guided_deal["degraded"] = false
 	Game.deals = []
 	Game.leads = []
 	Game.money = 100000
