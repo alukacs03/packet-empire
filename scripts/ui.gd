@@ -14,6 +14,8 @@ var rack_overlay: Control
 var rack_title: Label
 var slot_box: VBoxContainer
 var rack_metric_values := {}
+var rack_cable_layer: UIW.CablePull
+var rack_cable_from: Net.Iface
 
 var dev_overlay: Control
 var dev_title: Label
@@ -39,22 +41,8 @@ var cli_toggle: Button
 var if_overlay: Control
 var if_title: Label
 var if_mac: Label
-var if_enabled: CheckButton
-var if_mtu: LineEdit
-var if_nat: OptionButton
 var if_vrrp_lbl: Label
-var if_nat_row: HBoxContainer
-var if_mode: OptionButton
-var if_vlan: OptionButton
-var if_vlan_row: HBoxContainer
-var if_trunk_note: Label
-var if_trunk_edit: LineEdit
-var if_portsec: CheckButton
-var if_qos: CheckButton
-var if_ip_section: VBoxContainer
-var if_ip_box: VBoxContainer
-var if_ip_in: LineEdit
-var if_ip_hint: Label
+var if_state_box: VBoxContainer
 var if_cable_lbl: Label
 var if_cable_btn: Button
 var if_peer_btn: Button
@@ -81,8 +69,6 @@ var contracts_tabs := {}
 var _toast_lbl: Label
 var vlan_section: VBoxContainer
 var vlan_box: VBoxContainer
-var vlan_vid_in: LineEdit
-var vlan_name_in: LineEdit
 
 var cur_rack: Net.Rack
 var cur_dev: Net.NDevice
@@ -408,9 +394,20 @@ func _fit_cards() -> void:
 			continue
 		var content: Control = scroll.get_child(0)
 		var need := content.get_combined_minimum_size()
+		var need_y := need.y
+		if scroll.has_meta("visible_stack"):
+			var stack := scroll.get_meta("visible_stack") as VBoxContainer
+			var visible_count := 0
+			need_y = 0.0
+			for child in stack.get_children():
+				if child is Control and child.visible:
+					need_y += (child as Control).get_combined_minimum_size().y
+					visible_count += 1
+			need_y += maxf(0, visible_count - 1) * stack.get_theme_constant("separation")
+			need_y += UIW.space("sm")
 		scroll.custom_minimum_size = Vector2(
 			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 160.0),
-			minf(need.y, vp.y - 190.0))
+			minf(need_y, vp.y - 190.0))
 
 func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	var h := HBoxContainer.new()
@@ -575,7 +572,7 @@ func _build_rack_overlay() -> void:
 	rack_metrics.add_child(_rack_metric("FEED BALANCE", "feeds", "success"))
 	var info_row := HBoxContainer.new()
 	v.add_child(info_row)
-	var info := _label("Click a device to open it, or an empty slot to install hardware.", 13, MUTED)
+	var info := _label("Click hardware to inspect. Drag free port squares to cable inside this rack.", 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info_row.add_child(info)
 	var bp_btn := Button.new()
@@ -612,6 +609,8 @@ func _build_rack_overlay() -> void:
 	slot_box = VBoxContainer.new()
 	slot_box.add_theme_constant_override("separation", 3)
 	cabinet.add_child(slot_box)
+	rack_cable_layer = UIW.CablePull.new().setup()
+	rack_overlay.add_child(rack_cable_layer)
 
 func _rack_metric(caption: String, key: String, semantic: String) -> PanelContainer:
 	var panel := UIW.style_panel(PanelContainer.new(), "console", "sm")
@@ -673,7 +672,36 @@ func _refresh_slots() -> void:
 		else:
 			var idx := i
 			slot.setup(i + 1, null, func() -> void: _pick_new_device(idx, slot))
+		slot.cable_started.connect(_rack_cable_start)
+		slot.cable_moved.connect(func(screen_pos: Vector2) -> void:
+			rack_cable_layer.move_to(screen_pos))
+		slot.cable_released.connect(_rack_cable_release)
 		slot_box.add_child(slot)
+
+func _rack_cable_start(iface: Net.Iface, screen_pos: Vector2) -> void:
+	rack_cable_from = iface
+	rack_cable_layer.begin(screen_pos)
+
+func _rack_cable_release(screen_pos: Vector2) -> void:
+	rack_cable_layer.finish()
+	if rack_cable_from == null:
+		return
+	var target: Net.Iface
+	for child in slot_box.get_children():
+		if child is UIW.RackSlot:
+			var candidate: Net.Iface = (child as UIW.RackSlot).port_at_screen(screen_pos)
+			if candidate and candidate != rack_cable_from and candidate.dev != rack_cable_from.dev \
+					and Game.link_at(candidate) == null:
+				target = candidate
+				break
+	if target and Game.can_link(rack_cable_from, target):
+		Game.connect_ifaces(rack_cable_from, target)
+		hud_toast("Cable run: %s %s ⇄ %s %s" % [rack_cable_from.dev.name,
+			rack_cable_from.name, target.dev.name, target.name], true)
+		_refresh_slots()
+	else:
+		hud_toast("Drop the cable on a free port in this rack.")
+	rack_cable_from = null
 
 func _pick_new_device(slot: int, at: Control) -> void:
 	var keys := Game.MODELS.keys()
@@ -721,6 +749,7 @@ func _pick_new_device(slot: int, at: Control) -> void:
 func _build_dev_overlay() -> void:
 	dev_overlay = _overlay()
 	var v := _card(dev_overlay, 760)
+	(v.get_parent().get_parent() as ScrollContainer).set_meta("visible_stack", v)
 	dev_title = _header(v, close_dev)
 
 	var name_row := HBoxContainer.new()
@@ -751,7 +780,7 @@ func _build_dev_overlay() -> void:
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)
 
-	v.add_child(_section("FRONT PANEL: CLICK A PORT TO CONFIGURE"))
+	v.add_child(_section("FRONT PANEL  /  CLICK A PORT TO INSPECT OR CABLE"))
 	var plate := PanelContainer.new()
 	var plate_sb := _sb(Color(0.1, 0.11, 0.14), Color(0.4, 0.44, 0.52), 10, 16)
 	plate_sb.border_width_top = 3
@@ -772,25 +801,9 @@ func _build_dev_overlay() -> void:
 	vlan_section = VBoxContainer.new()
 	v.add_child(vlan_section)
 	vlan_section.add_child(HSeparator.new())
-	vlan_section.add_child(_section("VLAN DATABASE (THIS SWITCH)"))
+	vlan_section.add_child(_section("OBSERVED VLAN DATABASE  /  CONFIGURE IN CONSOLE"))
 	vlan_box = VBoxContainer.new()
 	vlan_section.add_child(vlan_box)
-	var vrow := HBoxContainer.new()
-	vlan_section.add_child(vrow)
-	vlan_vid_in = _mono_edit(70)
-	vlan_vid_in.placeholder_text = "VID"
-	vrow.add_child(vlan_vid_in)
-	vlan_name_in = _mono_edit(180)
-	vlan_name_in.placeholder_text = "name (optional)"
-	vrow.add_child(vlan_name_in)
-	var vadd := Button.new()
-	vadd.text = "Add VLAN"
-	vadd.pressed.connect(func() -> void:
-		if vlan_vid_in.text.is_valid_int() \
-				and Game.add_vlan(cur_dev, int(vlan_vid_in.text), vlan_name_in.text):
-			vlan_vid_in.clear()
-			vlan_name_in.clear())
-	vrow.add_child(vadd)
 
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 8)
@@ -805,9 +818,12 @@ func _build_dev_overlay() -> void:
 	cap_toggle.tooltip_text = "Live capture (tcpdump) of this device"
 	cap_toggle.pressed.connect(func() -> void:
 		cap_box.visible = not cap_box.visible
+		cap_out.custom_minimum_size.y = 170 if cap_box.visible else 0
 		_refresh_capture()
 		if cap_box.visible:
-			_scroll_to_bottom.call_deferred())
+			_scroll_to_bottom.call_deferred()
+		else:
+			_fit_cards.call_deferred())
 	btn_row.add_child(cap_toggle)
 	template_btn = Button.new()
 	template_btn.text = "Templates"
@@ -849,7 +865,7 @@ func _build_dev_overlay() -> void:
 	cap_box.visible = false
 	v.add_child(cap_box)
 	cap_out = RichTextLabel.new()
-	cap_out.custom_minimum_size = Vector2(0, 170)
+	cap_out.custom_minimum_size = Vector2.ZERO
 	cap_out.add_theme_font_override("normal_font", mono)
 	cap_out.add_theme_font_size_override("normal_font_size", 12)
 	cap_out.add_theme_color_override("default_color", Color(0.75, 0.85, 0.95))
@@ -861,7 +877,7 @@ func _build_dev_overlay() -> void:
 	cli_box.visible = false
 	v.add_child(cli_box)
 	cli_out = RichTextLabel.new()
-	cli_out.custom_minimum_size = Vector2(0, 220)
+	cli_out.custom_minimum_size = Vector2.ZERO
 	cli_out.scroll_following = true
 	cli_out.add_theme_font_override("normal_font", mono)
 	cli_out.add_theme_font_size_override("normal_font_size", 14)
@@ -888,6 +904,8 @@ func open_dev(d: Net.NDevice) -> void:
 	_refresh_dev_header()
 	cli_box.visible = false
 	cap_box.visible = false
+	cli_out.custom_minimum_size.y = 0
+	cap_out.custom_minimum_size.y = 0
 	cli_toggle.text = "Open console  ▤"
 	_refresh_ports()
 	_show_overlay(dev_overlay)
@@ -987,7 +1005,6 @@ func _refresh_vlans() -> void:
 	var vids := cur_dev.vlans.keys()
 	vids.sort()
 	for vid in vids:
-		var row := HBoxContainer.new()
 		var ports: Array = []
 		for i: Net.Iface in cur_dev.ifaces:
 			if i.mode == "access" and i.untagged_vlan == vid:
@@ -995,129 +1012,43 @@ func _refresh_vlans() -> void:
 		var l := _label("  %-6d %-14s %s" % [vid, cur_dev.vlans[vid], Net.compress_ports(ports)],
 			14, Color(0.7, 0.8, 0.9))
 		l.add_theme_font_override("font", mono)
-		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(l)
-		if vid != 1:
-			var x := Button.new()
-			x.text = "remove"
-			x.pressed.connect(func() -> void: Game.remove_vlan(cur_dev, vid))
-			row.add_child(x)
-		vlan_box.add_child(row)
+		vlan_box.add_child(l)
 
 # ---------- interface editor ----------
 
 func _build_if_overlay() -> void:
 	if_overlay = _overlay()
-	var v := _card(if_overlay, 520)
+	var v := _card(if_overlay, 600)
 	if_title = _header(v, close_iface)
-
+	var eyebrow := _section("PORT INSPECTOR  /  READ-ONLY LOGICAL STATE")
+	eyebrow.add_theme_color_override("font_color", UIW.colour("accent"))
+	v.add_child(eyebrow)
 	if_mac = _label("", 13, MUTED)
 	if_mac.add_theme_font_override("font", mono)
 	v.add_child(if_mac)
 	if_vrrp_lbl = _label("", 13, Color(0.7, 0.85, 0.75))
 	if_vrrp_lbl.add_theme_font_override("font", mono)
 	v.add_child(if_vrrp_lbl)
-
-	var row1 := HBoxContainer.new()
-	v.add_child(row1)
-	if_enabled = CheckButton.new()
-	if_enabled.text = "Enabled"
-	if_enabled.toggled.connect(func(on: bool) -> void:
-		cur_if.enabled = on
-		Game.topology_changed.emit())
-	row1.add_child(if_enabled)
-	if_nat_row = HBoxContainer.new()
-	if_nat_row.add_child(_label("   NAT: ", 14, MUTED))
-	if_nat = OptionButton.new()
-	for opt in ["none", "inside", "outside"]:
-		if_nat.add_item(opt)
-	if_nat.item_selected.connect(func(idx: int) -> void:
-		cur_if.nat = "" if idx == 0 else ["", "inside", "outside"][idx]
-		Game.topology_changed.emit())
-	if_nat_row.add_child(if_nat)
-	row1.add_child(_label("   MTU: ", 14, MUTED))
-	if_mtu = _mono_edit(90)
-	if_mtu.text_submitted.connect(func(t: String) -> void:
-		if t.is_valid_int() and int(t) >= 576 and int(t) <= 9216:
-			cur_if.mtu = int(t)
-		if_mtu.text = str(cur_if.mtu))
-	row1.add_child(if_mtu)
-	row1.add_child(if_nat_row)
-
-	var row2 := HBoxContainer.new()
-	v.add_child(row2)
-	row2.add_child(_label("Mode: ", 14, MUTED))
-	if_mode = OptionButton.new()
-	if_mode.add_item("access")
-	if_mode.add_item("trunk")
-	if_mode.item_selected.connect(func(idx: int) -> void:
-		cur_if.mode = "access" if idx == 0 else "trunk"
-		_refresh_iface())
-	row2.add_child(if_mode)
-	if_vlan_row = HBoxContainer.new()
-	row2.add_child(if_vlan_row)
-	if_vlan_row.add_child(_label("   VLAN: ", 14, MUTED))
-	if_vlan = OptionButton.new()
-	if_vlan.item_selected.connect(func(idx: int) -> void:
-		Game.set_access_vlan(cur_if, if_vlan.get_item_id(idx)))
-	if_vlan_row.add_child(if_vlan)
-	if_qos = CheckButton.new()
-	if_qos.text = "QoS"
-	if_qos.tooltip_text = "When this link is congested, serve strict service levels first"
-	if_qos.toggled.connect(func(on: bool) -> void:
-		cur_if.qos = on
-		Game.topology_changed.emit())
-	row2.add_child(if_qos)
-	if_portsec = CheckButton.new()
-	if_portsec.tooltip_text = "Lock this port to the first device it sees"
-	if_portsec.toggled.connect(func(on: bool) -> void:
-		cur_if.port_security = on
-		if not on:
-			cur_if.secure_mac = ""
-		Game.topology_changed.emit())
-	row2.add_child(if_portsec)
-	if_trunk_note = _label("   allowed VLANs: ", 13, MUTED)
-	row2.add_child(if_trunk_note)
-	if_trunk_edit = _mono_edit(110)
-	if_trunk_edit.placeholder_text = "all"
-	if_trunk_edit.tooltip_text = "Comma-separated VIDs allowed on this trunk; empty = all"
-	if_trunk_edit.text_submitted.connect(func(t: String) -> void:
-		var vids: Array = []
-		for part in t.split(",", false):
-			if part.strip_edges().is_valid_int():
-				vids.append(int(part.strip_edges()))
-		cur_if.tagged_vlans = vids
-		Game.topology_changed.emit())
-	row2.add_child(if_trunk_edit)
-
-	if_ip_section = VBoxContainer.new()
-	v.add_child(if_ip_section)
-	if_ip_section.add_child(HSeparator.new())
-	if_ip_section.add_child(_section("IP ADDRESSES"))
-	if_ip_box = VBoxContainer.new()
-	if_ip_section.add_child(if_ip_box)
-	var ip_row := HBoxContainer.new()
-	if_ip_section.add_child(ip_row)
-	if_ip_in = _mono_edit(200)
-	if_ip_in.placeholder_text = "10.0.0.5/24"
-	if_ip_in.text_submitted.connect(_add_ip)
-	ip_row.add_child(if_ip_in)
-	var dhcp_btn := Button.new()
-	dhcp_btn.text = "DHCP"
-	dhcp_btn.tooltip_text = "Get an address automatically (dhclient)"
-	dhcp_btn.pressed.connect(func() -> void:
-		var lease := Sim.dhcp_request(cur_if.dev, cur_if)
-		if lease.is_empty():
-			if_ip_hint.text = " no DHCP server answered"
-		else:
-			_refresh_iface())
-	ip_row.add_child(dhcp_btn)
-	var add_btn := Button.new()
-	add_btn.text = "Add IP"
-	add_btn.pressed.connect(func() -> void: _add_ip(if_ip_in.text))
-	ip_row.add_child(add_btn)
-	if_ip_hint = _label("", 13, Color(0.9, 0.5, 0.45))
-	ip_row.add_child(if_ip_hint)
+	var state_panel := UIW.style_panel(PanelContainer.new(), "console", "lg")
+	v.add_child(state_panel)
+	if_state_box = VBoxContainer.new()
+	if_state_box.add_theme_constant_override("separation", UIW.space("sm"))
+	state_panel.add_child(if_state_box)
+	var console_note := HBoxContainer.new()
+	console_note.add_theme_constant_override("separation", UIW.space("md"))
+	v.add_child(console_note)
+	var note := _wrap("Addressing, VLANs, MTU and policy are configured at the device console.",
+		13, UIW.colour("muted"), 420)
+	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	console_note.add_child(note)
+	var console_btn := Button.new()
+	console_btn.text = "OPEN DEVICE CONSOLE"
+	_accent(console_btn)
+	console_btn.pressed.connect(func() -> void:
+		if_overlay.visible = false
+		if not cli_box.visible:
+			_toggle_cli())
+	console_note.add_child(console_btn)
 
 	v.add_child(HSeparator.new())
 	var cable_row := HBoxContainer.new()
@@ -1157,45 +1088,28 @@ func _refresh_iface() -> void:
 	var spd := Game.iface_speed(cur_if)
 	if_mac.text = "MAC %s      %s      RX %d / TX %d frames" % [cur_if.mac,
 		("%d Gbit" % (spd / 1000)) if spd >= 1000 else ("%d Mbit" % spd), cur_if.rx_frames, cur_if.tx_frames]
-	if_enabled.set_pressed_no_signal(cur_if.enabled)
-	if_mtu.text = str(cur_if.mtu)
-	var is_switch := cur_if.dev.type == "switch"
-	if_nat_row.visible = cur_if.dev.ip_forwarding and cur_if.dev.type != "uplink"
-	if_nat.select({"": 0, "inside": 1, "outside": 2}[cur_if.nat])
-	if_ip_section.visible = not is_switch or cur_if.name.begins_with("Management")
-	if_mode.get_parent().visible = is_switch
-	if_mode.select(0 if cur_if.mode == "access" else 1)
-	if_vlan_row.visible = is_switch and cur_if.mode == "access"
-	if_trunk_note.visible = is_switch and cur_if.mode == "trunk"
-	if_trunk_edit.visible = if_trunk_note.visible
-	if_qos.set_pressed_no_signal(cur_if.qos)
-	if_portsec.visible = is_switch and cur_if.mode == "access"
-	if_portsec.set_pressed_no_signal(cur_if.port_security)
-	if_portsec.text = "Port security" + ("  (locked to %s)" % cur_if.secure_mac if cur_if.secure_mac else "")
-	if_trunk_edit.text = ",".join(cur_if.tagged_vlans.map(func(v): return str(v)))
-	if_vlan.clear()
-	for vid in cur_if.dev.vlans:
-		if_vlan.add_item("%d (%s)" % [vid, cur_if.dev.vlans[vid]], vid)
-		if vid == cur_if.untagged_vlan:
-			if_vlan.select(if_vlan.item_count - 1)
-	for c in if_ip_box.get_children():
+	for c in if_state_box.get_children():
 		c.queue_free()
-	for cidr in cur_if.ips:
-		var row := HBoxContainer.new()
-		var l := _label("  " + cidr, 14, Color(0.7, 0.9, 0.75))
-		l.add_theme_font_override("font", mono)
-		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(l)
-		var x := Button.new()
-		x.text = "remove"
-		x.pressed.connect(func() -> void:
-			Game.remove_ip(cur_if, cidr)
-			_refresh_iface())
-		row.add_child(x)
-		if_ip_box.add_child(row)
-	if cur_if.ips.is_empty():
-		if_ip_box.add_child(_label("  none", 13, Color(0.45, 0.5, 0.6)))
-	if_ip_hint.text = ""
+	if_state_box.add_child(_iface_state_line("LINK STATE",
+		"UP / ENABLED" if cur_if.enabled else "ADMINISTRATIVELY DISABLED",
+		"success" if cur_if.enabled else "danger"))
+	if_state_box.add_child(_iface_state_line("FRAME SIZE", "MTU %d" % cur_if.mtu, "info"))
+	if cur_if.dev.type == "switch":
+		var switching := "ACCESS  /  VLAN %d" % cur_if.untagged_vlan if cur_if.mode == "access" else \
+			"TRUNK  /  %s" % ("ALL VLANS" if cur_if.tagged_vlans.is_empty() else
+			", ".join(PackedStringArray(cur_if.tagged_vlans.map(func(v): return str(v)))))
+		if_state_box.add_child(_iface_state_line("SWITCHING", switching, "accent"))
+	var address_text := "NONE"
+	if not cur_if.ips.is_empty():
+		address_text = ", ".join(PackedStringArray(cur_if.ips))
+	if_state_box.add_child(_iface_state_line("IP ADDRESSES", address_text,
+		"success" if not cur_if.ips.is_empty() else "muted"))
+	var policies: Array = []
+	if cur_if.nat != "": policies.append("NAT %s" % cur_if.nat.to_upper())
+	if cur_if.qos: policies.append("QOS")
+	if cur_if.port_security: policies.append("PORT SECURITY")
+	if_state_box.add_child(_iface_state_line("POLICY",
+		" / ".join(PackedStringArray(policies)) if not policies.is_empty() else "NONE", "warm"))
 	if cur_if.vrrp.is_empty():
 		if_vrrp_lbl.text = ""
 	else:
@@ -1206,28 +1120,39 @@ func _refresh_iface() -> void:
 	var peer := Game.peer_label(cur_if)
 	if peer == "":
 		if_cable_lbl.text = "Cable: not connected"
-		if_cable_btn.text = "Run cable…"
+		if_cable_btn.text = "Run remote cable…"
+		if_cable_btn.tooltip_text = "For devices in this rack, close to the rack view and drag directly between free ports."
 		if_peer_btn.visible = false
 	else:
 		if_cable_lbl.text = "Cable: ⇄  " + peer
 		if_cable_btn.text = "Disconnect"
 		if_peer_btn.visible = true
 
-func _add_ip(text: String) -> void:
-	if Game.add_ip(cur_if, text):
-		if_ip_in.clear()
-		_refresh_iface()
-	else:
-		if_ip_hint.text = " invalid CIDR or duplicate"
+func _iface_state_line(caption: String, value: String, semantic: String) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UIW.space("md"))
+	var cap := _label(caption, 11, UIW.colour("muted"))
+	cap.add_theme_font_override("font", mono)
+	cap.custom_minimum_size = Vector2(150, 0)
+	row.add_child(cap)
+	var val := _label(value, 13, UIW.colour(semantic))
+	val.add_theme_font_override("font", mono)
+	val.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(val)
+	return row
 
 func _cable_action() -> void:
 	if Game.link_at(cur_if):
 		Game.disconnect_iface(cur_if)
 		_refresh_iface()
 		return
-	var targets := Game.free_ifaces(cur_if.dev)
+	var targets: Array = []
+	var source_rack := Game.rack_of(cur_if.dev)
+	for candidate: Net.Iface in Game.free_ifaces(cur_if.dev):
+		if Game.rack_of(candidate.dev) != source_rack:
+			targets.append(candidate)
 	if targets.is_empty():
-		_menu(if_cable_btn, ["(no free ports anywhere else)"], func(_id: int) -> void: pass)
+		hud_toast("No remote free ports. For this rack, drag a cable between port squares in the rack view.")
 		return
 	# group by device: one submenu per device, so a rack of 24-port switches
 	# does not become a hundred-row flat list
@@ -1951,9 +1876,11 @@ func _build_help() -> void:
 		["VIEWS", ""],
 		["click rack", "open the rack cabinet"],
 		["click device", "open its front panel"],
-		["click port", "interface editor (addresses, VLAN, cabling)"],
+		["drag rack ports", "pull a cable between two devices in the same cabinet"],
+		["click port", "inspect its state or arrange a remote cable run"],
 		["Esc", "back one level"],
 		["CONSOLE", ""],
+		["configuration", "addresses, VLANs, routing and policy live here"],
 		["Tab", "complete the command or list candidates"],
 		["?", "show what is possible at this point"],
 		["Up / Down", "command history"],
@@ -3542,6 +3469,7 @@ func _refresh_open() -> void:
 func _toggle_cli() -> void:
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
+		cli_out.custom_minimum_size.y = 220
 		cli_toggle.text = "Close console  ▤"
 		cli_session = CLI.new_session(cur_dev)
 		cli_stack.clear()
@@ -3553,9 +3481,11 @@ func _toggle_cli() -> void:
 		cli_in.call_deferred("grab_focus")
 		_scroll_to_bottom.call_deferred()
 	else:
+		cli_out.custom_minimum_size.y = 0
 		cli_toggle.text = "Open console  ▤"
 		cli_out.clear()
 		cli_session = null
+		_fit_cards.call_deferred()
 
 func _cli_key(e: InputEvent) -> void:
 	# the LineEdit consumes Escape (and the watchdog would re-grab editing),

@@ -619,12 +619,16 @@ class Bar extends Control:
 # ================================================================ RackSlot ==
 
 class RackSlot extends Control:
+	signal cable_started(iface: Net.Iface, screen_pos: Vector2)
+	signal cable_moved(screen_pos: Vector2)
+	signal cable_released(screen_pos: Vector2)
 	var u_num := 0
 	var upper_half := false  # the second unit of a 2U box, drawn as its top
 	var dev: Net.NDevice
 	var on_click: Callable
 	var hovered := false
 	var _mono: SystemFont
+	var _drag_iface: Net.Iface
 
 	func setup(u: int, d: Net.NDevice, cb: Callable) -> RackSlot:
 		u_num = u
@@ -634,7 +638,7 @@ class RackSlot extends Control:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		_mono = UIW.mono_font()
 		if d:
-			tooltip_text = "%s: open device" % d.name
+			tooltip_text = "%s: click to inspect; drag a free port square to another device in this rack to cable it" % d.name
 			if Game.config_dirty(d):
 				tooltip_text += "   (unsaved configuration)"
 		else:
@@ -650,8 +654,59 @@ class RackSlot extends Control:
 			queue_redraw()
 
 	func _gui_input(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			on_click.call()
+		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+			if e.pressed:
+				var port := port_at(e.position)
+				if port and Game.link_at(port) == null:
+					_drag_iface = port
+					cable_started.emit(port, port_screen_position(port))
+					accept_event()
+				else:
+					on_click.call()
+			else:
+				if _drag_iface:
+					_drag_iface = null
+					cable_released.emit(get_global_mouse_position())
+					accept_event()
+		elif e is InputEventMouseMotion and _drag_iface:
+			cable_moved.emit(get_global_mouse_position())
+			accept_event()
+
+	func _physical_ports() -> Array:
+		var out: Array = []
+		if dev == null:
+			return out
+		for iface: Net.Iface in dev.ifaces:
+			if iface.name == "lo" or iface.name.begins_with("Vlan") \
+					or iface.name.begins_with("Tunnel") or iface.name.begins_with("wg") \
+					or iface.parent != "" or iface.vm != "":
+				continue
+			out.append(iface)
+		return out
+
+	func _port_rect(iface: Net.Iface) -> Rect2:
+		var ports := _physical_ports()
+		var idx := ports.find(iface)
+		if idx < 0:
+			return Rect2()
+		const RAIL := 30.0
+		var inner := Rect2(RAIL + 2, 3, size.x - RAIL * 2 - 4, size.y - 6)
+		var px := inner.position.x + inner.size.x - 26 - idx * 13
+		if px < inner.position.x + 190:
+			return Rect2()
+		return Rect2(px - 6, inner.position.y + inner.size.y / 2.0 - 10, 21, 20)
+
+	func port_at(local_pos: Vector2) -> Net.Iface:
+		for iface: Net.Iface in _physical_ports():
+			if _port_rect(iface).has_point(local_pos):
+				return iface
+		return null
+
+	func port_at_screen(screen_pos: Vector2) -> Net.Iface:
+		return port_at(screen_pos - get_global_rect().position)
+
+	func port_screen_position(iface: Net.Iface) -> Vector2:
+		return get_global_rect().position + _port_rect(iface).get_center()
 
 	func _process(_dt: float) -> void:
 		if dev:
@@ -696,20 +751,17 @@ class RackSlot extends Control:
 		draw_string(_mono, inner.position + Vector2(14, 33), Game.MODELS[dev.model]["label"],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col.lightened(0.25))
 		# mini port squares, lit when linked
-		var n := 0
-		for i: Net.Iface in dev.ifaces:
-			if i.name == "lo" or i.name.begins_with("Vlan") or i.name.begins_with("Tunnel") \
-					or i.name.begins_with("wg") or i.parent != "":
+		for i: Net.Iface in _physical_ports():
+			var port_rect := _port_rect(i)
+			if port_rect.size == Vector2.ZERO:
 				continue
-			var px := inner.position.x + inner.size.x - 26 - n * 13
-			if px < inner.position.x + 190:
-				break
 			var linked := Game.link_at(i) != null
 			var pc := Color(0.35, 0.95, 0.5) if linked else Color(0.2, 0.22, 0.28)
 			if not i.enabled:
 				pc = Color(0.7, 0.3, 0.25)
-			draw_rect(Rect2(px, inner.position.y + inner.size.y / 2.0 - 4, 9, 8), pc)
-			n += 1
+			draw_rect(port_rect.grow(-6), pc)
+			if Game.link_at(i) == null and hovered:
+				draw_rect(port_rect, Color(UIW.colour("accent"), 0.55), false, 1.0)
 		if Game.config_dirty(dev):  # unsaved configuration: amber dot by the status LED
 			draw_circle(inner.position + Vector2(inner.size.x - 24, 10), 2.6, Color(1.0, 0.72, 0.3))
 		# status LED
@@ -718,6 +770,47 @@ class RackSlot extends Control:
 		if dev.status == "active":
 			led = Color(0.4, 1.0, 0.5) if fmod(t * 1.7, 1.0) > 0.3 else Color(0.15, 0.4, 0.2)
 		draw_circle(inner.position + Vector2(inner.size.x - 12, 10), 2.6, led)
+
+class CablePull extends Control:
+	var active := false
+	var from := Vector2.ZERO
+	var to := Vector2.ZERO
+
+	func setup() -> CablePull:
+		set_anchors_preset(Control.PRESET_FULL_RECT)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return self
+
+	func begin(screen_from: Vector2) -> void:
+		active = true
+		from = screen_from
+		to = screen_from
+		queue_redraw()
+
+	func move_to(screen_to: Vector2) -> void:
+		to = screen_to
+		queue_redraw()
+
+	func finish() -> void:
+		active = false
+		queue_redraw()
+
+	func _draw() -> void:
+		if not active:
+			return
+		var a := from - global_position
+		var b := to - global_position
+		var sag := minf(42.0, absf(b.x - a.x) * 0.08 + 14.0)
+		var points := PackedVector2Array()
+		for step in 17:
+			var t := float(step) / 16.0
+			var p := a.lerp(b, t)
+			p.y += sin(t * PI) * sag
+			points.append(p)
+		draw_polyline(points, Color(0.01, 0.02, 0.03, 0.72), 7.0)
+		draw_polyline(points, UIW.colour("warm"), 3.0)
+		draw_circle(a, 5.0, UIW.colour("accent"))
+		draw_circle(b, 5.0, UIW.colour("warm"))
 
 # =============================================================== Faceplate ==
 

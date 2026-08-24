@@ -106,6 +106,13 @@ static func ui_smoke(world: Node2D) -> int:
 	for d in Game.all_devices():
 		if d.type == "server":
 			dev = d
+	var port_slot := UIW.RackSlot.new().setup(1, dev, func() -> void: pass)
+	port_slot.size = Vector2(520, 46)
+	var physical_port: Net.Iface = dev.ifaces[0]
+	var jack_pos := port_slot.port_screen_position(physical_port)
+	check(port_slot.port_at_screen(jack_pos) == physical_port,
+		"rack cabling: physical port squares expose usable drag targets")
+	port_slot.free()
 	ui.show_welcome()
 	ui.welcome_overlay.visible = false
 	ui.open_rack(r)
