@@ -28,6 +28,7 @@ var name_hint: Label
 var status_opt: OptionButton
 var psu_opt: OptionButton
 var port_row: VBoxContainer
+var dev_faceplate: UIW.Faceplate
 var dev_power_lbl: Label
 var conn_list: VBoxContainer
 var svc_lbl: Label
@@ -1042,8 +1043,12 @@ func _build_dev_overlay() -> void:
 	save_cfg_btn.text = "Save config"
 	save_cfg_btn.tooltip_text = "write memory: survive a reboot"
 	save_cfg_btn.pressed.connect(func() -> void:
+		var was_dirty := Game.config_dirty(cur_dev)
 		cur_dev.startup = Game.device_config(cur_dev)
-		_refresh_ports())
+		_refresh_ports()
+		if was_dirty:
+			dev_faceplate.confirm_config_write()
+			Sfx.play("good"))
 	btn_row.add_child(save_cfg_btn)
 	var uninstall := Button.new()
 	uninstall.text = "Uninstall (50% refund)"
@@ -1143,7 +1148,8 @@ func _refresh_ports() -> void:
 	for c in conn_list.get_children():
 		c.queue_free()
 	var center := CenterContainer.new()
-	center.add_child(UIW.Faceplate.new().setup(cur_dev, open_iface))
+	dev_faceplate = UIW.Faceplate.new().setup(cur_dev, open_iface)
+	center.add_child(dev_faceplate)
 	port_row.add_child(center)
 	for i: Net.Iface in cur_dev.ifaces:
 		var connected := Game.link_at(i) != null

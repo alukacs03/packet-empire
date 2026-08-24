@@ -1065,6 +1065,7 @@ class Faceplate extends Control:
 	var dev: Net.NDevice
 	var on_port: Callable  # (Net.Iface)
 	var hover_idx := -1
+	var config_write_elapsed := -1.0
 	var _mono: SystemFont
 	var _ports: Array = []  # visible ifaces
 
@@ -1123,7 +1124,15 @@ class Faceplate extends Control:
 			hover_idx = -1
 			queue_redraw()
 
-	func _process(_dt: float) -> void:
+	func confirm_config_write() -> void:
+		config_write_elapsed = 0.0
+		queue_redraw()
+
+	func _process(dt: float) -> void:
+		if config_write_elapsed >= 0.0:
+			config_write_elapsed += dt
+			if config_write_elapsed >= 0.78:
+				config_write_elapsed = -1.0
 		queue_redraw()  # link LEDs blink
 
 	func _draw() -> void:
@@ -1189,6 +1198,19 @@ class Faceplate extends Control:
 			var ty := r.end.y + 13 if below else r.position.y - 6
 			draw_string(_mono, Vector2(r.position.x + r.size.x / 2.0 - 6, ty), num if num != "" else i.name,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.72))
+		if config_write_elapsed >= 0.0:
+			var p := clampf(config_write_elapsed / 0.78, 0.0, 1.0)
+			var fade := 1.0 - p
+			var saved := Color(UIW.colour("success"), fade)
+			var saved_ink := Color(Color("245f43") if visual["base"].get_luminance() > 0.42 \
+				else UIW.colour("success"), fade)
+			# The chassis edge catches once, like a write/status LED rather than a
+			# detached success banner.
+			draw_rect(panel.grow(-2), Color(saved, fade * 0.12), false, 3.0)
+			draw_circle(Vector2(size.x - 18, 16), 3.0 + p * 2.0, saved)
+			if config_write_elapsed < 0.56:
+				draw_string(_mono, Vector2(size.x - 136, 20), "CONFIG WRITTEN",
+					HORIZONTAL_ALIGNMENT_LEFT, 110, 10, saved_ink)
 
 	func _draw_vendor_mark(mark: String, p: Vector2, col: Color, ink: Color) -> void:
 		match mark:

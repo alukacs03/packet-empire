@@ -142,6 +142,8 @@ func _shoot_all() -> void:
 			ui._refresh_slots()],
 		["device", func() -> void: ui.open_dev(sw)],
 		["device_packet", func() -> void: ui.close_dev(); ui.open_dev(packet_sw)],
+		["device_config_written", func() -> void:
+			ui.dev_faceplate.confirm_config_write()],
 		["console", func() -> void:
 			ui._toggle_cli()
 			ui._cli_submit("/interface print")],
