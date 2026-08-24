@@ -1748,6 +1748,80 @@ func _attack_tick() -> void:
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
 
+# ---------- the sales pipeline ----------
+
+## Background commercial events (leads arriving, customers growing) run on
+## their own random stream. They must not shift the sequence the network
+## simulation draws from, or adding a business feature silently changes the
+## outcome of an unrelated technical test.
+var _biz_rng := RandomNumberGenerator.new()
+var _biz_ready := false
+
+func biz_roll() -> float:
+	if not _biz_ready:
+		_biz_ready = true
+		_biz_rng.seed = 5150218
+	return _biz_rng.randf()
+
+var leads: Array = []
+
+func lead_tick() -> void:
+	for l in leads.duplicate():
+		l["ttl"] = int(l["ttl"]) - 1
+		if int(l["ttl"]) <= 0:
+			leads.erase(l)
+			log_event("PIPELINE: %s went quiet. Somebody else got there first." % l["customer"])
+	# bigger work arrives through people talking, not through a web form
+	var cap := 2 + int(marketing / MARKETING_STEP) + references.size()
+	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35:
+		leads.append(Market.gen_lead())
+
+func qualify_lead(lead: Dictionary) -> String:
+	## Go and find out what they actually want. Some of it turns out to be
+	## nothing, which is what qualifying is for.
+	if String(lead["stage"]) != "lead":
+		return "you have already been out to see them"
+	if not try_spend(Market.LEAD_QUALIFY_COST):
+		return "a site visit costs $%d" % Market.LEAD_QUALIFY_COST
+	if biz_roll() < 0.22:
+		leads.erase(lead)
+		log_event("PIPELINE: %s turned out to have no budget. That is the job."
+			% lead["customer"])
+		return "nothing there"
+	lead["stage"] = "rfp"
+	lead["ttl"] = 5
+	log_event("PIPELINE: %s has put the work out to tender. %s"
+		% [lead["customer"], Market.rfp_requirements(lead)])
+	return ""
+
+func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String:
+	if String(lead["stage"]) != "rfp":
+		return "there is no tender to answer yet"
+	var blocked := can_accept_offer(lead)
+	if blocked != "":
+		return blocked
+	var result := Market.score_proposal(lead, price, committed_sla, reputation, references.size())
+	leads.erase(lead)
+	if not bool(result["won"]):
+		market_intel += 1
+		log_event("LOST TENDER: %s. %s." % [lead["customer"], String(result["why"]).capitalize()])
+		return "lost:" + String(result["why"])
+	var deal := {
+		"id": "rfp_%d%s" % [cycle, String(lead["customer"]).substr(0, 3)],
+		"customer": lead["customer"], "kind": lead["kind"], "params": lead["params"],
+		"fee": price, "brief": Market.rfp_requirements(lead), "healthy": false,
+		"cycles": 0, "up_cycles": 0, "term": 18, "sla": committed_sla,
+		"ctype": lead.get("ctype", "enterprise"), "loyalty": 0.75,
+		"load": int(lead["load"]), "public": bool(lead.get("public", false)),
+	}
+	deals.append(deal)
+	stats["deals"] = int(stats.get("deals", 0)) + 1
+	reputation = mini(100, reputation + 2)
+	log_event("WON TENDER: %s at $%d/cycle on a %s commitment. Now deliver it."
+		% [lead["customer"], price, Market.tier(committed_sla)["label"]])
+	topology_changed.emit()
+	return ""
+
 # ---------- customers who grow, and what people say about you ----------
 
 const UPSELL_AFTER := 8  # cycles of good service before they ask for more
@@ -1763,10 +1837,10 @@ func maybe_upsell() -> void:
 			continue
 		if float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1))) < 0.9:
 			continue
-		if randf() > 0.06:
+		if biz_roll() > 0.06:
 			continue
-		var extra_load := int(float(int(deal.get("load", 200))) * randf_range(0.4, 0.9))
-		var extra_fee := int(float(int(deal["fee"])) * randf_range(0.25, 0.5))
+		var extra_load := int(float(int(deal.get("load", 200))) * (0.4 + biz_roll() * 0.5))
+		var extra_fee := int(float(int(deal["fee"])) * (0.25 + biz_roll() * 0.25))
 		deal["upsell"] = {"load": extra_load, "fee": extra_fee}
 		log_event("GROWTH: %s wants %d Mbps more for $%d/cycle more. Can you carry it?"
 			% [deal["customer"], extra_load, extra_fee])
@@ -2566,6 +2640,7 @@ func sla_tick() -> void:
 	quarter_depreciation += depreciation_this_cycle()
 	maybe_upsell()
 	reference_tick()
+	lead_tick()
 	if cycle % 12 == 0 and cycle > 0:
 		var rep_now := make_report()
 		press_tick(rep_now)
@@ -2916,6 +2991,7 @@ func _serialize() -> Dictionary:
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
 		"buyout_offer": buyout_offer, "sold_out": sold_out, "references": references,
+		"leads": leads,
 		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
 		"efficiency": efficiency, "quarter_profit": quarter_profit,
 		"quarter_depreciation": quarter_depreciation,
@@ -3212,6 +3288,7 @@ func _apply(data: Dictionary) -> void:
 	buyout_offer = data.get("buyout_offer", {})
 	sold_out = bool(data.get("sold_out", false))
 	references = data.get("references", [])
+	leads = data.get("leads", [])
 	accountant = bool(data.get("accountant", false))
 	fixed_tariff = bool(data.get("fixed_tariff", false))
 	efficiency = int(data.get("efficiency", 0))

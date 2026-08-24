@@ -2683,6 +2683,70 @@ func _build_market_tab() -> void:
 	if Game.sold_out:
 		contracts_box.add_child(_wrap("You sold the company. Everything still runs, and none of it is yours.",
 			14, Color(0.7, 0.75, 0.85), 560))
+	contracts_box.add_child(_section("PIPELINE"))
+	if Game.leads.is_empty():
+		contracts_box.add_child(_wrap("  Nothing in the pipeline. Bigger work arrives through people talking about you, so reputation, references and marketing all feed this.",
+			12, MUTED, 560))
+	for lead: Dictionary in Game.leads.duplicate():
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel",
+			_sb(Color(0.10, 0.13, 0.12), Color(0.4, 0.7, 0.55, 0.55), 8, 12))
+		contracts_box.add_child(card)
+		var lv := VBoxContainer.new()
+		lv.add_theme_constant_override("separation", 6)
+		card.add_child(lv)
+		lv.add_child(_label("%s   ·   %s   ·   %s" % [lead["customer"],
+			Market.label_for(lead["kind"]),
+			"a lead" if lead["stage"] == "lead" else "out to tender"], 16, Color.WHITE))
+		if String(lead["stage"]) == "lead":
+			lv.add_child(_wrap("Word is: %s. Nobody has asked them what they actually need yet."
+				% lead["heard"], 13, Color(0.75, 0.8, 0.85)))
+			lv.add_child(_label("Expires in %d cycle(s)." % int(lead["ttl"]), 12, MUTED))
+			var qbtn := Button.new()
+			qbtn.text = "Go and see them  ($%d)" % Market.LEAD_QUALIFY_COST
+			qbtn.tooltip_text = "Some of them turn out to have no budget. That is what qualifying is for."
+			_accent(qbtn)
+			qbtn.pressed.connect(func() -> void:
+				var err := Game.qualify_lead(lead)
+				if err != "":
+					_toast(err if err != "nothing there" else "%s had no budget after all." % lead["customer"])
+				_refresh_contracts())
+			lv.add_child(qbtn)
+			continue
+		lv.add_child(_wrap("They want: %s." % Market.rfp_requirements(lead), 13,
+			Color(0.78, 0.83, 0.9)))
+		lv.add_child(_label("Tender closes in %d cycle(s)." % int(lead["ttl"]), 12, MUTED))
+		var prow := HBoxContainer.new()
+		prow.add_theme_constant_override("separation", 8)
+		lv.add_child(prow)
+		prow.add_child(_label("Your price:  $", 14))
+		var pprice := _mono_edit(90)
+		pprice.placeholder_text = str(int(lead["size"]))
+		prow.add_child(pprice)
+		prow.add_child(_label("/cycle   commit to ", 14))
+		var sla_opt := OptionButton.new()
+		for ti in 3:
+			sla_opt.add_item(Market.tier(ti)["label"])
+		sla_opt.select(int(lead["sla"]))
+		sla_opt.tooltip_text = "Commit to less than they asked for and the proposal is thrown out."
+		prow.add_child(sla_opt)
+		var sbtn := Button.new()
+		sbtn.text = "Submit the proposal"
+		_accent(sbtn)
+		sbtn.pressed.connect(func() -> void:
+			var txt := pprice.text.strip_edges()
+			if not txt.is_valid_int():
+				_toast("put a number on it")
+				return
+			var res := Game.submit_proposal(lead, int(txt), sla_opt.selected)
+			_refresh_contracts()
+			if res.begins_with("lost:"):
+				_toast("Lost: %s." % res.trim_prefix("lost:"))
+			elif res != "":
+				_toast(res)
+			else:
+				hud_toast("%s is yours." % lead["customer"], true))
+		prow.add_child(sbtn)
 	contracts_box.add_child(_section("THE COMPETITION"))
 	for r: Dictionary in Game.rivals:
 		if not Rivals.alive(r):

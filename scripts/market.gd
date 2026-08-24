@@ -141,6 +141,62 @@ static func negotiate(offer: Dictionary, quote: int) -> String:
 	return "rejected"
 
 ## Is an accepted deal actually being delivered right now?
+# ---------- the pipeline: leads, RFPs, proposals ----------
+
+const LEAD_QUALIFY_COST := 220  # a visit, a survey, an afternoon of somebody's time
+
+static func gen_lead() -> Dictionary:
+	## A lead is a rumour with a company name on it. It has no budget yet
+	## because nobody has asked them what they want.
+	var offer := gen_offer()
+	return {
+		"id": "lead_" + String(offer["id"]),
+		"customer": offer["customer"],
+		"kind": offer["kind"],
+		"ctype": offer["ctype"],
+		"stage": "lead",
+		"heard": offer["hint"],
+		"size": int(offer["budget"]),  # what it will turn out to be worth
+		"sla": int(offer["sla"]),
+		"params": offer["params"],
+		"load": int(offer["load"]),
+		"public": bool(offer.get("public", false)),
+		"ttl": 6,
+	}
+
+static func rfp_requirements(lead: Dictionary) -> String:
+	var bits: Array = []
+	var t := tier(int(lead["sla"]))
+	if float(t["uptime"]) > 0.0:
+		bits.append("%s availability" % t["label"])
+	else:
+		bits.append("best effort is acceptable")
+	bits.append("about %d Mbps" % int(lead["load"]))
+	if bool(lead.get("public", false)):
+		bits.append("a public address of their own")
+	return ", ".join(PackedStringArray(bits))
+
+static func score_proposal(lead: Dictionary, price: int, committed_sla: int,
+		reputation: int, references: int) -> Dictionary:
+	## An RFP is not won on price alone, which is the point of running one.
+	## -> {won: bool, why: String, rival: String}
+	if committed_sla < int(lead["sla"]):
+		return {"won": false, "rival": "",
+			"why": "you committed to less availability than they asked for"}
+	var budget := int(lead["size"])
+	if price > int(float(budget) * 1.25):
+		return {"won": false, "rival": "", "why": "your price was well over their budget"}
+	var best_rival := Rivals.best_bidder({"budget": budget, "kind": lead["kind"]})
+	var rival_price := budget
+	if not best_rival.is_empty():
+		rival_price = Rivals.bid_for(best_rival, {"budget": budget, "kind": lead["kind"]})
+	# reputation and references are worth real money in a formal evaluation
+	var advantage := 1.0 + float(reputation) / 250.0 + float(references) * 0.04
+	if float(price) <= float(rival_price) * advantage:
+		return {"won": true, "rival": String(best_rival.get("name", "")), "why": ""}
+	return {"won": false, "rival": String(best_rival.get("name", "")),
+		"why": "%s came in cheaper" % best_rival.get("name", "somebody else")}
+
 static func check(kind: String, params: Dictionary) -> bool:
 	match kind:
 		"hosting":

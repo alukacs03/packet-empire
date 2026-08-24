@@ -3153,6 +3153,47 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- the sales pipeline ---
+	var pl_saved := Game.deals.duplicate()
+	var pl_money := Game.money
+	Game.money = 100000
+	Game.leads = []
+	var lead := Market.gen_lead()
+	Game.leads = [lead]
+	check(String(lead["stage"]) == "lead", "pipeline: it starts as a rumour")
+	check(Game.submit_proposal(lead, 100, 2) != "",
+		"pipeline: you cannot tender for something nobody has put out to tender")
+	# qualifying either kills it or turns it into an RFP; force the good path
+	var pl_tries := 0
+	while String(lead["stage"]) == "lead" and pl_tries < 30:
+		Game.qualify_lead(lead)
+		pl_tries += 1
+		if not Game.leads.has(lead):
+			lead = Market.gen_lead()
+			Game.leads = [lead]
+	check(String(lead["stage"]) == "rfp", "pipeline: a qualified lead goes out to tender")
+	check(Market.rfp_requirements(lead) != "", "pipeline: with requirements you can read")
+	# committing to less than they asked for loses it outright
+	if int(lead["sla"]) > 0:
+		var under := Market.score_proposal(lead, 10, int(lead["sla"]) - 1, 100, 0)
+		check(not bool(under["won"]), "pipeline: under-committing on availability loses the tender")
+	var over := Market.score_proposal(lead, int(lead["size"]) * 5, int(lead["sla"]), 100, 0)
+	check(not bool(over["won"]), "pipeline: so does pricing well over their budget")
+	var keen := Market.score_proposal(lead, 1, int(lead["sla"]), 100, 0)
+	check(bool(keen["won"]), "pipeline: a keen, compliant proposal wins")
+	# reputation is worth money in a formal evaluation
+	var mid := int(lead["size"])
+	var low_rep := Market.score_proposal(lead, mid, int(lead["sla"]), 0, 0)
+	var high_rep := Market.score_proposal(lead, mid, int(lead["sla"]), 100, 5)
+	check(bool(high_rep["won"]) or not bool(low_rep["won"]),
+		"pipeline: standing and references are worth real money in an evaluation")
+	var pl_deals := Game.deals.size()
+	check(Game.submit_proposal(lead, 1, int(lead["sla"])) == "", "pipeline: winning signs a deal")
+	check(Game.deals.size() == pl_deals + 1, "pipeline: which appears in the book")
+	check(Game.leads.is_empty(), "pipeline: and leaves the pipeline")
+	Game.deals = pl_saved
+	Game.money = pl_money
+
 	# --- customers who grow, and what people say about you ---
 	var gr_deal := {"id": "grow1", "customer": "Growing Kft", "kind": "hosting",
 		"params": {}, "fee": 200, "load": 300, "healthy": true, "cycles": 30,
