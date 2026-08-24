@@ -186,7 +186,9 @@ func _work_spot(idx := 0) -> Vector2:
 	var pool: Array = broken if not broken.is_empty() else untidy
 	if pool.is_empty():
 		return _random_spot()
-	var r2: Net.Rack = pool[_rng.randi() % pool.size()]
+	# Stable assignment keeps a visible operator attached to the fault they are
+	# depicting; additional crew members fan out across additional cabinets.
+	var r2: Net.Rack = pool[idx % pool.size()]
 	# stand on the tile in front of the cabinet, which in isometric means one
 	# step along BOTH axes, not simply further down the screen
 	var g2: Vector2i = Game.grid_size()
@@ -195,6 +197,9 @@ func _work_spot(idx := 0) -> Vector2:
 		spot = r2.tile - Vector2i(1, 1)  # against the far wall: stand behind it
 	spot.x = clampi(spot.x, 0, maxi(0, g2.x - 1))
 	spot.y = clampi(spot.y, 0, maxi(0, g2.y - 1))
-	# each person keeps their own lane so two never occupy the same body
+	# Step into the diamond before applying a horizontal lane. tile_to_world()
+	# lands on an isometric boundary; offsetting sideways from that boundary can
+	# otherwise make the operator belong to a second-neighbour tile.
 	return Iso.tile_to_world(spot) \
-		+ Vector2(-30.0 + idx % 3 * 30.0 + _rng.randf_range(-5.0, 5.0), 0.0)
+		+ Vector2(-30.0 + idx % 3 * 30.0 + _rng.randf_range(-5.0, 5.0),
+			Iso.TILE_H * 0.375)
