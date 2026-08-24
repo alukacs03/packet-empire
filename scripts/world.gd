@@ -98,6 +98,9 @@ func _shoot_all() -> void:
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],
+		["rack_arrival", func() -> void:
+			if r.visual:
+				r.visual.begin_arrival()],
 		["floor_outage", func() -> void:
 			Game.customer_outage_active = true
 			Game.last_customer_outage_cycle = Game.cycle],
@@ -268,7 +271,8 @@ func _place_rack(tile: Vector2i) -> void:
 	if not Game.try_spend(Game.RACK_PRICE):
 		ui.hud_toast("A rack costs $%d and you have $%d." % [Game.RACK_PRICE, Game.money])
 		return
-	add_child(RackVisual.new().setup(Game.add_rack(tile)))
+	add_child(RackVisual.new().setup(Game.add_rack(tile), true))
+	Sfx.play("place")
 	queue_redraw()
 
 var _anims: Array = []

@@ -7,22 +7,53 @@ const H := 104.0
 const W := 0.86
 
 var rack: Net.Rack
+var base_position := Vector2.ZERO
+var arriving := false
+var arrival_elapsed := 0.0
 var highlighted := false:
 	set(v):
 		highlighted = v
 		queue_redraw()
 
-func setup(r: Net.Rack) -> RackVisual:
+func setup(r: Net.Rack, play_arrival := false) -> RackVisual:
 	rack = r
 	r.visual = self
-	position = Iso.tile_to_world(r.tile)
+	base_position = Iso.tile_to_world(r.tile)
+	position = base_position
 	z_index = r.tile.x + r.tile.y + 1
+	if play_arrival:
+		begin_arrival()
 	return self
+
+func begin_arrival() -> void:
+	arriving = true
+	arrival_elapsed = 0.0
+	modulate = Color(1, 1, 1, 0.35)
+	queue_redraw()
 
 func top_anchor() -> Vector2:
 	return position + Vector2(0, -H)
 
-func _process(_dt: float) -> void:
+func _process(dt: float) -> void:
+	if arriving:
+		arrival_elapsed += dt
+		var duration := 0.28 if Prefs.reduced_motion else 0.58
+		var p := clampf(arrival_elapsed / duration, 0.0, 1.0)
+		modulate.a = lerpf(0.35, 1.0, minf(p * 2.2, 1.0))
+		if Prefs.reduced_motion:
+			position = base_position
+			scale = Vector2.ONE
+		else:
+			var settle := 1.0 - pow(1.0 - p, 3.0)
+			position = base_position + Vector2(0, -34.0 * (1.0 - settle))
+			var impact := maxf(0.0, 1.0 - absf(p - 0.78) / 0.13)
+			scale = Vector2(1.0 + impact * 0.025, 1.0 - impact * 0.045)
+		queue_redraw()
+		if p >= 1.0:
+			arriving = false
+			position = base_position
+			scale = Vector2.ONE
+			modulate = Color.WHITE
 	if highlighted:
 		queue_redraw()
 		return
@@ -54,6 +85,15 @@ func _draw() -> void:
 	var s := Vector2(0, ey)
 	var w := Vector2(-ex, 0)
 	var up := Vector2(0, -H)
+	if arriving:
+		var duration := 0.28 if Prefs.reduced_motion else 0.58
+		var arrival_p := clampf(arrival_elapsed / duration, 0.0, 1.0)
+		var contact := clampf((arrival_p - 0.58) / 0.42, 0.0, 1.0)
+		if contact > 0.0:
+			var ring := PackedVector2Array()
+			for p in [n, e, s, w, n]:
+				ring.append(p * lerpf(0.72, 1.28, contact))
+			draw_polyline(ring, Color(UIW.colour("warm"), (1.0 - contact) * 0.72), 2.0)
 	# Layered contact shadow and small levelling feet anchor the cabinet to the
 	# concrete instead of making it hover above the room illustration.
 	var sh := PackedVector2Array()
