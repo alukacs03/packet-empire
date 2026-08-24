@@ -2174,6 +2174,7 @@ func check_demo_end() -> void:
 
 var contracts_tab := "Jobs"
 var log_filter := "all"
+var replay_for := -1  # which incident's timeline is expanded
 
 func _build_contracts_overlay() -> void:
 	contracts_overlay = _overlay()
@@ -2817,6 +2818,13 @@ func _build_log_tab() -> void:
 				Color(0.95, 0.72, 0.55))
 			il.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			irow.add_child(il)
+			var replay_btn := Button.new()
+			replay_btn.text = "Replay"
+			replay_btn.tooltip_text = "What the estate looked like either side of it"
+			replay_btn.pressed.connect(func() -> void:
+				replay_for = int(inc["cycle"]) if replay_for != int(inc["cycle"]) else -1
+				_refresh_contracts())
+			irow.add_child(replay_btn)
 			var rbtn := Button.new()
 			rbtn.text = "Write it up"
 			rbtn.pressed.connect(func() -> void:
@@ -2824,6 +2832,20 @@ func _build_log_tab() -> void:
 					Game.review_incident(inc, id)
 					_refresh_contracts()))
 			irow.add_child(rbtn)
+			if replay_for == int(inc["cycle"]):
+				var frames := Game.replay_around(int(inc["cycle"]))
+				if frames.is_empty():
+					contracts_box.add_child(_label("      (nothing recorded that far back)", 12, MUTED))
+				for frame: Dictionary in frames:
+					var mark := "▸" if int(frame["cycle"]) == int(inc["cycle"]) else " "
+					var rl2 := _label("      %s %s" % [mark, Game.replay_line(frame)], 12,
+						Color(1.0, 0.8, 0.5) if int(frame["cycle"]) == int(inc["cycle"])
+						else Color(0.68, 0.74, 0.82))
+					rl2.add_theme_font_override("font", mono)
+					contracts_box.add_child(rl2)
+					for ev_line in frame["events"]:
+						contracts_box.add_child(_wrap("           %s" % ev_line, 11,
+							Color(0.58, 0.64, 0.72), 620))
 	for inc2: Dictionary in Game.incidents:
 		if bool(inc2.get("reviewed", false)):
 			contracts_box.add_child(_label("  ✓ cycle %d: %s (cause: %s)" % [int(inc2["cycle"]),

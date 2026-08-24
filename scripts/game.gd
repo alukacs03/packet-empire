@@ -1506,8 +1506,11 @@ static func event_severity(text: String) -> String:
 
 var unread_events := 0  # since the player last looked at the log
 
+var events_logged := 0  # monotonic: events is capped, so its size cannot count
+
 func log_event(text: String) -> void:
 	events.push_front("cycle %d: %s" % [cycle, text])
+	events_logged += 1
 	if event_severity(text) != "info":
 		unread_events += 1
 	if events.size() > 60:
@@ -1747,6 +1750,66 @@ func _attack_tick() -> void:
 		"mbps": 800 + randi() % 4000, "cycles_left": 3 + randi() % 4})
 	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
 		% [ip, victim["customer"]])
+
+# ---------- the timeline, for working out what actually happened ----------
+
+const TIMELINE_KEEP := 48
+var timeline: Array = []  # one entry per cycle: state, plus what was logged
+var _events_before := 0
+
+func timeline_tick() -> void:
+	## A snapshot per cycle of the things you would want to know afterwards,
+	## plus whatever was logged during it. Reconstructing an outage from a
+	## flat log is guesswork; reconstructing it from state over time is not.
+	var down_devices: Array = []
+	for d in all_devices():
+		if d.status != "active":
+			down_devices.append(d.name)
+	var down_links := 0
+	for l in links:
+		if not l.a.enabled or not l.b.enabled:
+			down_links += 1
+	var unhealthy: Array = []
+	for deal in deals:
+		if not bool(deal.get("healthy", false)) and not deal.has("renewal"):
+			unhealthy.append(String(deal["customer"]))
+	var fresh: Array = []
+	var added := events_logged - _events_before
+	if added > 0:
+		for i in mini(added, events.size()):
+			fresh.append(String(events[i]))  # newest first, which is how they are stored
+	_events_before = events_logged
+	timeline.append({
+		"cycle": cycle,
+		"down_devices": down_devices,
+		"down_links": down_links,
+		"unhealthy": unhealthy,
+		"events": fresh,
+	})
+	while timeline.size() > TIMELINE_KEEP:
+		timeline.pop_front()
+
+func replay_around(target_cycle: int, span := 4) -> Array:
+	var out: Array = []
+	for entry in timeline:
+		var c := int(entry["cycle"])
+		if c >= target_cycle - span and c <= target_cycle + span:
+			out.append(entry)
+	return out
+
+func replay_line(entry: Dictionary) -> String:
+	## one readable line per cycle of the replay
+	var bits: Array = []
+	if not entry["down_devices"].is_empty():
+		bits.append("%d device(s) down: %s" % [entry["down_devices"].size(),
+			", ".join(PackedStringArray(entry["down_devices"]))])
+	if int(entry["down_links"]) > 0:
+		bits.append("%d link(s) down" % int(entry["down_links"]))
+	if not entry["unhealthy"].is_empty():
+		bits.append("not delivering: %s" % ", ".join(PackedStringArray(entry["unhealthy"])))
+	if bits.is_empty():
+		bits.append("everything delivering")
+	return "cycle %d  ·  %s" % [int(entry["cycle"]), "   ".join(PackedStringArray(bits))]
 
 # ---------- the sales pipeline ----------
 
@@ -2641,6 +2704,7 @@ func sla_tick() -> void:
 	maybe_upsell()
 	reference_tick()
 	lead_tick()
+	timeline_tick()
 	if cycle % 12 == 0 and cycle > 0:
 		var rep_now := make_report()
 		press_tick(rep_now)
@@ -2991,7 +3055,7 @@ func _serialize() -> Dictionary:
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
 		"buyout_offer": buyout_offer, "sold_out": sold_out, "references": references,
-		"leads": leads,
+		"leads": leads, "timeline": timeline,
 		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
 		"efficiency": efficiency, "quarter_profit": quarter_profit,
 		"quarter_depreciation": quarter_depreciation,
@@ -3289,6 +3353,7 @@ func _apply(data: Dictionary) -> void:
 	sold_out = bool(data.get("sold_out", false))
 	references = data.get("references", [])
 	leads = data.get("leads", [])
+	timeline = data.get("timeline", [])
 	accountant = bool(data.get("accountant", false))
 	fixed_tariff = bool(data.get("fixed_tariff", false))
 	efficiency = int(data.get("efficiency", 0))

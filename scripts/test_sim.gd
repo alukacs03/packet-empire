@@ -3153,6 +3153,41 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- incident replay ---
+	Game.timeline = []
+	Game._events_before = Game.events_logged
+	var tl_dev: Net.NDevice = Game.all_devices()[0]
+	var tl_was := tl_dev.status
+	for tl_i in 3:
+		Game.timeline_tick()
+		Game.cycle += 1
+	tl_dev.status = "offline"
+	Game.log_event("FAULT: %s stopped answering." % tl_dev.name)
+	var tl_bad := Game.cycle
+	Game.timeline_tick()
+	Game.cycle += 1
+	tl_dev.status = tl_was
+	for tl_j in 3:
+		Game.timeline_tick()
+		Game.cycle += 1
+	check(Game.timeline.size() == 7, "replay: one frame is recorded per cycle")
+	var tl_frames := Game.replay_around(tl_bad, 2)
+	check(tl_frames.size() == 5, "replay: it can be read either side of a moment")
+	var tl_found := false
+	for tl_f in tl_frames:
+		if int(tl_f["cycle"]) == tl_bad:
+			tl_found = tl_dev.name in tl_f["down_devices"]
+	check(tl_found, "replay: the frame at the fault names the device that was down")
+	var tl_ev := false
+	for tl_f2 in tl_frames:
+		for tl_line in tl_f2["events"]:
+			if "stopped answering" in String(tl_line):
+				tl_ev = true
+	check(tl_ev, "replay: and carries what was logged at the time")
+	check(Game.replay_line(tl_frames[0]).begins_with("cycle "),
+		"replay: each frame reads as a line")
+	Game.timeline = []
+
 	# --- the sales pipeline ---
 	var pl_saved := Game.deals.duplicate()
 	var pl_money := Game.money
