@@ -101,6 +101,8 @@ func _shoot_all() -> void:
 		["rack_arrival", func() -> void:
 			if r.visual:
 				r.visual.begin_arrival()],
+		["rack_place_rejected", func() -> void:
+			$Floor.reject_tile(r.tile, "CELL OCCUPIED")],
 		["floor_outage", func() -> void:
 			Game.customer_outage_active = true
 			Game.last_customer_outage_cycle = Game.cycle],
@@ -262,13 +264,16 @@ func _unhandled_input(e: InputEvent) -> void:
 func _place_rack(tile: Vector2i) -> void:
 	var grid: Vector2i = Game.grid_size()
 	if tile.x < 0 or tile.y < 0 or tile.x >= grid.x or tile.y >= grid.y:
+		($Floor as Node).reject_tile(tile, "OUTSIDE OWNED FLOOR")
 		ui.hud_toast("That is outside %s. Expand the floor or pick another tile."
 			% Game.site_name(Game.current_site))
 		return
 	if Game.rack_at(tile):
+		($Floor as Node).reject_tile(tile, "CELL OCCUPIED")
 		ui.hud_toast("There is already a rack there.")
 		return
 	if not Game.try_spend(Game.RACK_PRICE):
+		($Floor as Node).reject_tile(tile, "NEED $%d" % Game.RACK_PRICE)
 		ui.hud_toast("A rack costs $%d and you have $%d." % [Game.RACK_PRICE, Game.money])
 		return
 	add_child(RackVisual.new().setup(Game.add_rack(tile), true))

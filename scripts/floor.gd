@@ -3,12 +3,20 @@ extends Node2D
 ## around the owned area, and a pulsing hover highlight.
 
 var hover_tile := Vector2i(-1, -1)
+var reject_overlay: RejectOverlay
 const STARTER_ROOM: Texture2D = preload("res://assets/generated/starter_colo_room.png")
 const MATURE_ROOM: Texture2D = preload("res://assets/generated/mature_colo_room.png")
 const STARTER_ROOM_RECT := Rect2(-500, -210, 1000, 562)
 
 func _ready() -> void:
 	Game.topology_changed.connect(queue_redraw)
+	reject_overlay = RejectOverlay.new()
+	reject_overlay.z_index = 200
+	add_child(reject_overlay)
+
+func reject_tile(tile: Vector2i, reason: String) -> void:
+	reject_overlay.show_rejection(tile, reason)
+	Sfx.play("bad")
 
 func _process(_dt: float) -> void:
 	var t := Iso.world_to_tile(get_global_mouse_position())
@@ -80,6 +88,45 @@ func _draw_tile(t: Vector2i, color: Color) -> void:
 func _outline(t: Vector2i, color: Color, w: float) -> void:
 	var pts := _tile_points(t)
 	draw_polyline(pts + PackedVector2Array([pts[0]]), color, w)
+
+class RejectOverlay extends Node2D:
+	var tile := Vector2i(-999, -999)
+	var reason := ""
+	var elapsed := -1.0
+
+	func show_rejection(at: Vector2i, why: String) -> void:
+		tile = at
+		reason = why
+		elapsed = 0.0
+		queue_redraw()
+
+	func _process(dt: float) -> void:
+		if elapsed < 0.0:
+			return
+		elapsed += dt
+		if elapsed >= 0.62:
+			elapsed = -1.0
+			reason = ""
+		queue_redraw()
+
+	func _draw() -> void:
+		if elapsed < 0.0:
+			return
+		var p := clampf(elapsed / 0.62, 0.0, 1.0)
+		var fade := 1.0 - p
+		var pulse := 1.0 if Prefs.reduced_motion else 0.72 + 0.28 * sin(p * PI * 3.0)
+		var danger := Color(Prefs.bad_colour(), fade * pulse)
+		var center := Iso.tile_to_world(tile)
+		var points := PackedVector2Array([
+			center + Vector2(0, -Iso.TILE_H / 2.0), center + Vector2(Iso.TILE_W / 2.0, 0),
+			center + Vector2(0, Iso.TILE_H / 2.0), center + Vector2(-Iso.TILE_W / 2.0, 0)])
+		draw_colored_polygon(points, Color(danger, fade * 0.12))
+		draw_polyline(points + PackedVector2Array([points[0]]), danger, 2.5)
+		draw_line(center + Vector2(-7, -4), center + Vector2(7, 4), danger, 2.0)
+		draw_line(center + Vector2(7, -4), center + Vector2(-7, 4), danger, 2.0)
+		if elapsed < 0.42:
+			draw_string(UIW.mono_font(), center + Vector2(14, -10), reason,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, danger)
 
 func _draw_room_atmosphere(grid: Vector2i) -> void:
 	## The facility is a character. Early stages are a rented, warm, slightly
