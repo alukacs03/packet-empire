@@ -3,11 +3,11 @@ extends CanvasLayer
 ## All UI: toolbar, rack view, device view (faceplate + console),
 ## interface editor, VLAN manager.
 
-const ACCENT := Color(0.3, 0.75, 0.85)
-const BG := Color(0.07, 0.08, 0.11, 0.97)
-const PANEL := Color(0.11, 0.13, 0.17)
-const DIM := Color(0.02, 0.02, 0.04, 0.72)
-const MUTED := Color(0.55, 0.6, 0.7)
+const ACCENT: Color = UIW.COLORS["accent"]
+const BG: Color = UIW.COLORS["overlay"]
+const PANEL: Color = UIW.COLORS["surface"]
+const DIM: Color = UIW.COLORS["backdrop"]
+const MUTED: Color = UIW.COLORS["muted"]
 
 var mode_btns := {}
 var rack_overlay: Control
@@ -101,8 +101,7 @@ var theme_res: Theme
 var mono: SystemFont
 
 func _ready() -> void:
-	mono = SystemFont.new()
-	mono.font_names = PackedStringArray(["Menlo", "Consolas", "monospace"])
+	mono = UIW.mono_font()
 	theme_res = _make_theme()
 	_build_toolbar()
 	_build_rack_overlay()
@@ -251,29 +250,10 @@ func is_open() -> bool:
 # ---------- theme / widget helpers ----------
 
 func _make_theme() -> Theme:
-	var t := Theme.new()
-	var n := _sb(Color(0.15, 0.17, 0.22), Color(0.25, 0.28, 0.36))
-	var h := _sb(Color(0.19, 0.22, 0.29), ACCENT * Color(1, 1, 1, 0.6))
-	var p := _sb(Color(0.1, 0.22, 0.27), ACCENT)
-	for cls in ["Button", "OptionButton"]:
-		t.set_stylebox("normal", cls, n)
-		t.set_stylebox("hover", cls, h)
-		t.set_stylebox("pressed", cls, p)
-		t.set_stylebox("focus", cls, _sb(Color.TRANSPARENT, Color.TRANSPARENT))
-		t.set_color("font_color", cls, Color(0.85, 0.89, 0.95))
-		t.set_color("font_hover_color", cls, Color.WHITE)
-	t.set_stylebox("panel", "PanelContainer", _sb(PANEL, Color(0.3, 0.34, 0.44), 10, 14))
-	t.set_color("font_color", "Label", Color(0.85, 0.89, 0.95))
-	return t
+	return UIW.make_theme()
 
 func _sb(bg: Color, border: Color, radius := 6, margin := 8) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.border_color = border
-	s.set_border_width_all(1 if border.a > 0.0 else 0)
-	s.set_corner_radius_all(radius)
-	s.set_content_margin_all(margin)
-	return s
+	return UIW.custom_box(bg, border, radius, margin)
 
 func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 560.0) -> Label:
 	## a label that wraps instead of pushing its container sideways
@@ -283,21 +263,17 @@ func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 
 	return l
 
 func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
-	var l := Label.new()
-	l.text = text
+	var l := UIW.make_text(text)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
 	return l
 
 func _accent(b: Button) -> Button:
-	b.add_theme_stylebox_override("normal", _sb(Color(0.1, 0.28, 0.34), ACCENT * Color(1, 1, 1, 0.8), 6))
-	b.add_theme_stylebox_override("hover", _sb(Color(0.14, 0.36, 0.44), ACCENT, 6))
-	b.add_theme_color_override("font_color", Color(0.8, 0.97, 1.0))
-	return b
+	return UIW.style_button(b, "primary")
 
 
 func _section(text: String) -> Label:
-	return _label(text, 11, Color(0.5, 0.58, 0.72))
+	return UIW.make_section(text)
 
 func _show_overlay(o: Control) -> void:
 	Sfx.play("open")
@@ -332,7 +308,7 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	parent.add_child(center)
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", _sb(BG, Color(0.32, 0.38, 0.5), 12, 20))
+	UIW.style_panel(panel, "overlay", "lg")
 	center.add_child(panel)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(min_w, 0)
@@ -397,7 +373,7 @@ func _build_toolbar() -> void:
 	var bar := PanelContainer.new()
 	bar.theme = theme_res
 	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	var sb := _sb(Color(0.05, 0.06, 0.1, 0.92), Color.TRANSPARENT, 0, 10)
+	var sb := UIW.panel_box("hud", "sm")
 	sb.border_color = Color(0.25, 0.5, 0.6, 0.5)
 	sb.border_width_bottom = 1
 	sb.content_margin_left = 20
@@ -749,7 +725,7 @@ func _build_dev_overlay() -> void:
 	cap_out.add_theme_font_size_override("normal_font_size", 12)
 	cap_out.add_theme_color_override("default_color", Color(0.75, 0.85, 0.95))
 	var cap_bg := PanelContainer.new()
-	cap_bg.add_theme_stylebox_override("panel", _sb(Color(0.04, 0.05, 0.07), Color(0.3, 0.35, 0.45), 6, 10))
+	UIW.style_panel(cap_bg, "console", "sm")
 	cap_bg.add_child(cap_out)
 	cap_box.add_child(cap_bg)
 	cli_box = VBoxContainer.new()
@@ -762,7 +738,7 @@ func _build_dev_overlay() -> void:
 	cli_out.add_theme_font_size_override("normal_font_size", 14)
 	cli_out.add_theme_color_override("default_color", Color(0.75, 0.95, 0.8))
 	var term_bg := PanelContainer.new()
-	term_bg.add_theme_stylebox_override("panel", _sb(Color(0.03, 0.05, 0.05), Color(0.2, 0.35, 0.3), 6, 10))
+	UIW.style_panel(term_bg, "console", "sm")
 	term_bg.add_child(cli_out)
 	cli_box.add_child(term_bg)
 	var h := HBoxContainer.new()
@@ -2224,12 +2200,14 @@ func close_contracts() -> void:
 	contracts_overlay.visible = false
 
 func _chip(text: String, col: Color) -> Control:
-	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel", _sb(Color(col, 0.18), Color(col, 0.75), 4, 4))
-	pc.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var l := _label(text, 10, col.lightened(0.3))
-	pc.add_child(l)
-	return pc
+	var semantic := "info"
+	if col.r > col.g * 1.2:
+		semantic = "danger"
+	elif col.g > col.r * 1.2:
+		semantic = "success"
+	elif col.r > 0.7 and col.g > 0.5:
+		semantic = "warning"
+	return UIW.make_chip(text, semantic)
 
 func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col: Color) -> HBoxContainer:
 	var h := HBoxContainer.new()
@@ -2247,8 +2225,8 @@ func _build_business_tab() -> void:
 			"  %d of them are overdue." % late.size() if not late.is_empty() else ""],
 		13, Prefs.bad_colour() if not late.is_empty() else Color(0.75, 0.82, 0.9), 560))
 	if Game.invoices.is_empty():
-		contracts_box.add_child(_label("  Nothing outstanding: everything you have billed has been paid.",
-			12, MUTED))
+		contracts_box.add_child(UIW.make_empty_state(
+			"Nothing outstanding: everything you have billed has been paid."))
 	for inv: Dictionary in Game.invoices.slice(0, 8):
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
@@ -2700,12 +2678,13 @@ func _build_market_tab() -> void:
 			14, Color(0.7, 0.75, 0.85), 560))
 	contracts_box.add_child(_section("PIPELINE"))
 	if Game.leads.is_empty():
-		contracts_box.add_child(_wrap("  Nothing in the pipeline. Bigger work arrives through people talking about you, so reputation, references and marketing all feed this.",
-			12, MUTED, 560))
+		var pipeline_empty := UIW.make_empty_state(
+			"Nothing in the pipeline. Bigger work arrives through people talking about you, so reputation, references and marketing all feed this.")
+		pipeline_empty.custom_minimum_size.x = 560
+		contracts_box.add_child(pipeline_empty)
 	for lead: Dictionary in Game.leads.duplicate():
 		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel",
-			_sb(Color(0.10, 0.13, 0.12), Color(0.4, 0.7, 0.55, 0.55), 8, 12))
+		UIW.style_panel(card, "positive", "md")
 		contracts_box.add_child(card)
 		var lv := VBoxContainer.new()
 		lv.add_theme_constant_override("separation", 6)

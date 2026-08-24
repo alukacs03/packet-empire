@@ -1,6 +1,172 @@
 class_name UIW
-## Custom-drawn hardware widgets: rack U-slots that look like rack units,
-## and a device faceplate that looks like real front-panel gear.
+## Shared UI foundation plus custom-drawn hardware widgets. New screens should
+## consume the named tokens and helpers here rather than copy colours/styles.
+
+const COLORS := {
+	"accent": Color(0.3, 0.75, 0.85),
+	"accent_soft": Color(0.16, 0.34, 0.40),
+	"backdrop": Color(0.02, 0.02, 0.04, 0.72),
+	"overlay": Color(0.07, 0.08, 0.11, 0.97),
+	"surface": Color(0.11, 0.13, 0.17),
+	"surface_raised": Color(0.15, 0.17, 0.22),
+	"surface_hover": Color(0.19, 0.22, 0.29),
+	"console": Color(0.04, 0.05, 0.07),
+	"border": Color(0.30, 0.34, 0.44),
+	"border_strong": Color(0.42, 0.50, 0.62),
+	"focus": Color(0.55, 0.90, 1.0),
+	"text": Color(0.85, 0.89, 0.95),
+	"text_strong": Color(0.96, 0.98, 1.0),
+	"muted": Color(0.55, 0.60, 0.70),
+	"subtle": Color(0.42, 0.48, 0.60),
+	"success": Color(0.50, 0.92, 0.62),
+	"warning": Color(1.0, 0.78, 0.42),
+	"danger": Color(0.98, 0.43, 0.38),
+	"info": Color(0.58, 0.78, 0.94),
+}
+
+const SPACING := {"xs": 4, "sm": 8, "md": 12, "lg": 20, "xl": 28}
+const TYPE_SCALE := {"caption": 11, "small": 12, "body": 14, "body_large": 15,
+	"heading": 17, "title": 20, "display": 28}
+const RADII := {"sm": 4, "md": 7, "lg": 11}
+
+static func colour(token: String) -> Color:
+	return COLORS.get(token, COLORS["text"])
+
+static func space(token: String) -> int:
+	return int(SPACING.get(token, SPACING["md"]))
+
+static func type_size(token: String) -> int:
+	return int(TYPE_SCALE.get(token, TYPE_SCALE["body"]))
+
+static func radius(token: String) -> int:
+	return int(RADII.get(token, RADII["md"]))
+
+static func custom_box(bg: Color, border: Color, corner := 7, padding := 8) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(1 if border.a > 0.0 else 0)
+	style.set_corner_radius_all(corner)
+	style.set_content_margin_all(padding)
+	return style
+
+static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
+	var bg := colour("surface")
+	var edge := colour("border")
+	var rounding := radius("md")
+	match variant:
+		"overlay":
+			bg = colour("overlay")
+			edge = colour("border_strong")
+			rounding = radius("lg")
+		"hud":
+			bg = Color(0.05, 0.06, 0.10, 0.94)
+			edge = Color(colour("accent"), 0.45)
+			rounding = 0
+		"console":
+			bg = colour("console")
+			edge = Color(colour("border_strong"), 0.8)
+		"positive":
+			bg = Color(0.10, 0.15, 0.13)
+			edge = Color(colour("success"), 0.55)
+		"warning":
+			bg = Color(0.18, 0.14, 0.08)
+			edge = Color(colour("warning"), 0.7)
+		"danger":
+			bg = Color(0.19, 0.09, 0.09)
+			edge = Color(colour("danger"), 0.75)
+	return custom_box(bg, edge, rounding, space(padding))
+
+static func style_panel(panel: PanelContainer, variant := "surface", padding := "md") -> PanelContainer:
+	panel.add_theme_stylebox_override("panel", panel_box(variant, padding))
+	return panel
+
+static func _button_palette(variant: String) -> Dictionary:
+	match variant:
+		"primary":
+			return {"base": Color(0.10, 0.28, 0.34), "edge": Color(colour("accent"), 0.85),
+				"text": Color(0.82, 0.97, 1.0)}
+		"danger":
+			return {"base": Color(0.24, 0.10, 0.10), "edge": Color(colour("danger"), 0.8),
+				"text": Color(1.0, 0.82, 0.80)}
+		"quiet":
+			return {"base": Color(0.10, 0.11, 0.15, 0.65), "edge": Color(colour("border"), 0.65),
+				"text": colour("text")}
+	return {"base": colour("surface_raised"), "edge": colour("border"), "text": colour("text")}
+
+static func style_button(button: Button, variant := "default") -> Button:
+	var palette := _button_palette(variant)
+	var base: Color = palette["base"]
+	var edge: Color = palette["edge"]
+	button.add_theme_stylebox_override("normal", custom_box(base, edge, radius("md"), space("sm")))
+	button.add_theme_stylebox_override("hover", custom_box(base.lightened(0.10),
+		colour("accent"), radius("md"), space("sm")))
+	button.add_theme_stylebox_override("pressed", custom_box(base.darkened(0.15),
+		colour("accent"), radius("md"), space("sm")))
+	button.add_theme_stylebox_override("focus", custom_box(base.lightened(0.04),
+		colour("focus"), radius("md"), space("sm")))
+	button.add_theme_stylebox_override("disabled", custom_box(base.darkened(0.18),
+		Color(edge, 0.35), radius("md"), space("sm")))
+	button.add_theme_color_override("font_color", palette["text"])
+	button.add_theme_color_override("font_hover_color", colour("text_strong"))
+	button.add_theme_color_override("font_pressed_color", colour("text_strong"))
+	button.add_theme_color_override("font_focus_color", colour("text_strong"))
+	button.add_theme_color_override("font_disabled_color", Color(colour("muted"), 0.55))
+	return button
+
+static func make_text(text: String, role := "body", semantic := "text") -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", type_size(role))
+	label.add_theme_color_override("font_color", colour(semantic))
+	return label
+
+static func make_section(text: String) -> Label:
+	var label := make_text(text, "caption", "muted")
+	label.text = text.to_upper()
+	return label
+
+static func make_empty_state(text: String) -> Label:
+	var label := make_text(text, "small", "muted")
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.custom_minimum_size = Vector2(0, 32)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return label
+
+static func make_chip(text: String, semantic := "info") -> PanelContainer:
+	var col := colour(semantic)
+	var chip := PanelContainer.new()
+	chip.add_theme_stylebox_override("panel", custom_box(Color(col, 0.16), Color(col, 0.72),
+		radius("sm"), space("xs")))
+	chip.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var label := make_text(text, "caption", semantic)
+	label.add_theme_color_override("font_color", col.lightened(0.25))
+	chip.add_child(label)
+	return chip
+
+static func make_theme() -> Theme:
+	var theme := Theme.new()
+	var prototype := Button.new()
+	style_button(prototype)
+	for cls in ["Button", "OptionButton"]:
+		for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+			theme.set_stylebox(state, cls, prototype.get_theme_stylebox(state))
+		for state in ["font_color", "font_hover_color", "font_pressed_color",
+				"font_focus_color", "font_disabled_color"]:
+			theme.set_color(state, cls, prototype.get_theme_color(state))
+	theme.set_stylebox("panel", "PanelContainer", panel_box())
+	theme.set_color("font_color", "Label", colour("text"))
+	theme.set_stylebox("normal", "LineEdit", panel_box("console", "sm"))
+	theme.set_stylebox("focus", "LineEdit", custom_box(colour("console"), colour("focus"),
+		radius("md"), space("sm")))
+	theme.set_color("font_color", "LineEdit", colour("text"))
+	theme.set_color("font_placeholder_color", "LineEdit", Color(colour("muted"), 0.7))
+	theme.set_stylebox("panel", "TooltipPanel", panel_box("overlay", "sm"))
+	theme.set_color("font_color", "TooltipLabel", colour("text_strong"))
+	# This prototype is never added to the scene tree, so queue_free() would
+	# leave it waiting forever and leak its theme resources at shutdown.
+	prototype.free()
+	return theme
 
 const TYPE_COLORS := {
 	"switch": Color(0.2, 0.7, 0.75),

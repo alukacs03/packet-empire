@@ -73,6 +73,27 @@ static func ui_smoke(world: Node2D) -> int:
 	print("---- ui smoke ----")
 	var ui := UILayer.new()
 	world.add_child(ui)
+	# shared UI foundation: every reusable button state exists and keyboard
+	# focus is visible rather than being the old transparent outline.
+	var foundation_button := Button.new()
+	UIW.style_button(foundation_button, "primary")
+	for visual_state in ["normal", "hover", "pressed", "focus", "disabled"]:
+		check(foundation_button.has_theme_stylebox_override(visual_state),
+			"ui foundation: buttons define the %s state" % visual_state)
+	var focus_box := foundation_button.get_theme_stylebox("focus") as StyleBoxFlat
+	check(focus_box != null and focus_box.border_color.a > 0.0,
+		"ui foundation: keyboard focus has a visible outline")
+	var empty_state := UIW.make_empty_state("Nothing needs attention.")
+	check(empty_state.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART \
+		and empty_state.get_theme_font_size("font_size") == UIW.type_size("small"),
+		"ui foundation: empty states use shared wrapping and type tokens")
+	var shared_theme := UIW.make_theme()
+	check(shared_theme.has_stylebox("panel", "TooltipPanel") \
+		and shared_theme.has_stylebox("focus", "LineEdit"),
+		"ui foundation: tooltips and text inputs consume the shared theme")
+	foundation_button.free()
+	empty_state.free()
+	shared_theme = null
 	var r: Net.Rack = Game.racks[0]
 	var dev: Net.NDevice = null
 	for d in Game.all_devices():

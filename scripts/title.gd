@@ -8,8 +8,8 @@ signal start_requested(slot: int, company: String, difficulty: int, demo: bool)
 signal continue_requested(slot: int)
 signal settings_requested
 
-const ACCENT := Color(0.3, 0.75, 0.85)
-const MUTED := Color(0.55, 0.6, 0.7)
+const ACCENT: Color = UIW.COLORS["accent"]
+const MUTED: Color = UIW.COLORS["muted"]
 
 var root: Control
 var menu_box: VBoxContainer
@@ -19,8 +19,7 @@ var _mono: SystemFont
 
 func _ready() -> void:
 	layer = 90
-	_mono = SystemFont.new()
-	_mono.font_names = ["Menlo", "DejaVu Sans Mono", "Consolas", "monospace"]
+	_mono = UIW.mono_font()
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
@@ -65,8 +64,7 @@ func _ready() -> void:
 	var right := PanelContainer.new()
 	right.custom_minimum_size = Vector2(430, 0)
 	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right.add_theme_stylebox_override("panel",
-		_sb(Color(0.07, 0.08, 0.11, 0.9), Color(0.2, 0.24, 0.3, 0.9), 10, 20))
+	UIW.style_panel(right, "overlay", "lg")
 	cols.add_child(right)
 	var rv := VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 12)
@@ -99,20 +97,13 @@ func _wordmark() -> Control:
 	return h
 
 func _lbl(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
-	var l := Label.new()
-	l.text = text
+	var l := UIW.make_text(text)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
 	return l
 
 func _sb(bg: Color, border: Color, radius := 6, margin := 8) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = bg
-	s.border_color = border
-	s.set_border_width_all(1 if border.a > 0.0 else 0)
-	s.set_corner_radius_all(radius)
-	s.set_content_margin_all(margin)
-	return s
+	return UIW.custom_box(bg, border, radius, margin)
 
 func _menu_button(text: String, sub: String, primary: bool) -> Button:
 	var b := Button.new()
@@ -121,13 +112,7 @@ func _menu_button(text: String, sub: String, primary: bool) -> Button:
 	b.custom_minimum_size = Vector2(320, 44 if sub == "" else 52)
 	b.tooltip_text = sub
 	b.add_theme_font_size_override("font_size", 18 if primary else 16)
-	var base := Color(0.14, 0.24, 0.28, 0.85) if primary else Color(0.10, 0.11, 0.15, 0.75)
-	var edge := Color(ACCENT, 0.8) if primary else Color(0.25, 0.29, 0.36, 0.9)
-	b.add_theme_stylebox_override("normal", _sb(base, edge, 8, 12))
-	b.add_theme_stylebox_override("hover", _sb(base.lightened(0.12), ACCENT, 8, 12))
-	b.add_theme_stylebox_override("pressed", _sb(base.darkened(0.15), ACCENT, 8, 12))
-	b.add_theme_stylebox_override("focus", _sb(base.lightened(0.06), ACCENT, 8, 12))
-	b.add_theme_color_override("font_color", Color(0.9, 0.94, 1.0))
+	UIW.style_button(b, "primary" if primary else "quiet")
 	b.pressed.connect(func() -> void: Sfx.play("click"))
 	return b
 
