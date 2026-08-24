@@ -97,7 +97,10 @@ func _shoot_all() -> void:
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],
-		["rack", func() -> void: ui.open_rack(r)],
+		["welcome", func() -> void: ui.show_welcome()],
+		["rack", func() -> void:
+			ui.welcome_overlay.visible = false
+			ui.open_rack(r)],
 		["device", func() -> void: ui.open_dev(sw)],
 		["device_packet", func() -> void: ui.close_dev(); ui.open_dev(packet_sw)],
 		["console", func() -> void:

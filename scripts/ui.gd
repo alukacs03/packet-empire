@@ -71,6 +71,7 @@ var map_overlay: Control
 var welcome_overlay: Control
 var tutorial_panel: PanelContainer
 var tutorial_box: VBoxContainer
+var tutorial_suppressed_by_overlay := false
 var contracts_overlay: Control
 var contracts_box: VBoxContainer
 var contracts_tabs := {}
@@ -286,6 +287,16 @@ func _process(_dt: float) -> void:
 			cycle_lbl.text = "⏸ paused"
 		elif t:
 			cycle_lbl.text = "⏱ %ds" % int(ceil(t.time_left))
+	# The live brief belongs to the floor, not on top of focused workspaces.
+	# Remember whether we hid it so it can return after the overlay closes.
+	if tutorial_panel:
+		if is_open():
+			if tutorial_panel.visible:
+				tutorial_suppressed_by_overlay = true
+				tutorial_panel.visible = false
+		elif tutorial_suppressed_by_overlay:
+			tutorial_suppressed_by_overlay = false
+			_refresh_tutorial()
 	# focus watchdog: while the console is open, dropped focus/editing returns to it
 	if cli_box and cli_box.visible and not if_overlay.visible:
 		if get_viewport().gui_get_focus_owner() == null:
@@ -1350,14 +1361,25 @@ const OPS_TABS := [
 ]
 var ops_tab := "Capacity"
 var ops_tab_btns := {}
+var ops_metric_values := {}
 
 func _build_ops() -> void:
 	ops_overlay = _overlay()
-	var v := _card(ops_overlay, 820)
+	var v := _card(ops_overlay, 900)
 	ops_title = _header(v, func() -> void: ops_overlay.visible = false)
-	ops_title.text = "Operations"
+	ops_title.text = "Network operations"
+	var status_line := _section("LIVE ESTATE  /  CURRENT SHIFT")
+	status_line.add_theme_color_override("font_color", UIW.colour("accent"))
+	v.add_child(status_line)
+	var metrics := HBoxContainer.new()
+	metrics.add_theme_constant_override("separation", UIW.space("md"))
+	v.add_child(metrics)
+	metrics.add_child(_ops_metric("DEVICES", "devices", "info"))
+	metrics.add_child(_ops_metric("CABLE PLANT", "links", "accent"))
+	metrics.add_child(_ops_metric("ATTENTION", "alerts", "warning"))
+	metrics.add_child(_ops_metric("LIVE DRAW", "power", "success"))
 	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 6)
+	tabs.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(tabs)
 	for entry in OPS_TABS:
 		var tb := Button.new()
@@ -1369,8 +1391,23 @@ func _build_ops() -> void:
 		tabs.add_child(tb)
 		ops_tab_btns[String(entry[0])] = tb
 	ops_box = VBoxContainer.new()
-	ops_box.add_theme_constant_override("separation", 3)
+	ops_box.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(ops_box)
+
+func _ops_metric(caption: String, key: String, semantic: String) -> PanelContainer:
+	var panel := UIW.style_panel(PanelContainer.new(), "surface", "md")
+	panel.custom_minimum_size = Vector2(196, 86)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UIW.space("xs"))
+	panel.add_child(box)
+	var cap := _section(caption)
+	box.add_child(cap)
+	var value := _label("—", 22, UIW.colour(semantic))
+	value.add_theme_font_override("font", mono)
+	box.add_child(value)
+	ops_metric_values[key] = value
+	return panel
 
 func _ops_sections_for_tab() -> Array:
 	for entry in OPS_TABS:
@@ -1408,8 +1445,18 @@ func _refresh_ops() -> void:
 	for d: Net.NDevice in devs:
 		if not _device_alerts(d).is_empty():
 			alerting += 1
-	ops_title.text = "Operations   ·   %d devices   ·   %d cables (%d down)   ·   %d needing attention" % [
-		devs.size(), Game.links.size(), links_down, alerting]
+	ops_title.text = "Network operations"
+	var watts := 0
+	for si in Game.site_count():
+		watts += int(Game.capacity(si)["watts"])
+	(ops_metric_values["devices"] as Label).text = "%02d ONLINE" % devs.size()
+	(ops_metric_values["links"] as Label).text = "%02d / %02d UP" % [Game.links.size() - links_down,
+		Game.links.size()]
+	(ops_metric_values["alerts"] as Label).text = "%02d %s" % [alerting,
+		"CLEAR" if alerting == 0 else "OPEN"]
+	(ops_metric_values["alerts"] as Label).add_theme_color_override("font_color",
+		UIW.colour("success") if alerting == 0 else UIW.colour("warning"))
+	(ops_metric_values["power"] as Label).text = "%d W" % watts
 	ops_box.add_child(_section("CAPACITY"))
 	for si in Game.site_count():
 		var cap: Dictionary = Game.capacity(si)
@@ -2163,31 +2210,75 @@ func _tutorial_head(text: String) -> Control:
 
 func _build_welcome() -> void:
 	welcome_overlay = _overlay()
-	var v := _card(welcome_overlay, 620)
+	var v := _card(welcome_overlay, 680)
 	var t := _header(v, func() -> void: welcome_overlay.visible = false)
-	t.text = "Welcome to Packet Empire"
+	t.text = "Your first night on the floor"
 	welcome_overlay.set_meta("title_label", t)
-	var body := _label("You run a tiny corner of a colocation floor, and you're going to grow it into a datacenter empire: by actually learning networking.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n   •  Learn opens an encyclopedia, F1 lists every key\n\nEverything costs money: contracts pay, and rival companies are bidding for the same customers, so your prices have to beat the market. Later you can lease more sites, link them with WAN circuits, and buy competitors outright.\n\nOpen Contracts (toolbar) and take the first job. The briefs teach you every command you need.", 15, Color(0.8, 0.85, 0.92))
-	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.custom_minimum_size = Vector2(560, 0)
+	var shift := _section("SHIFT 01  /  LEGACY COLO  /  02:13")
+	shift.add_theme_color_override("font_color", UIW.colour("warm"))
+	v.add_child(shift)
+	var body := _wrap("One borrowed cage. Questionable wiring. Enough cash for one rack. Turn this forgotten corner into a network people can depend on.", 17,
+		UIW.colour("text_strong"), 620)
 	welcome_overlay.set_meta("body_label", body)
 	v.add_child(body)
+
+	var modules := HBoxContainer.new()
+	modules.add_theme_constant_override("separation", UIW.space("md"))
+	v.add_child(modules)
+	modules.add_child(_welcome_module("01", "READ THE ROOM",
+		"Drag to pan. Scroll to zoom. Every cable and blinking port is part of the simulation.", "info"))
+	modules.add_child(_welcome_module("02", "BUILD FOR REAL",
+		"Place a rack, install hardware, then wire ports. Cheap PacketTik gear speaks RouterOS.", "warm"))
+	modules.add_child(_welcome_module("03", "KEEP IT ALIVE",
+		"Contracts fund the floor. Diagnose failures at the console and earn the next expansion.", "success"))
+
+	var tip := UIW.style_panel(PanelContainer.new(), "console", "md")
+	v.add_child(tip)
+	var tip_row := HBoxContainer.new()
+	tip_row.add_theme_constant_override("separation", UIW.space("md"))
+	tip.add_child(tip_row)
+	var prompt := _label(">", 20, UIW.colour("accent"))
+	prompt.add_theme_font_override("font", mono)
+	tip_row.add_child(prompt)
+	var tip_copy := _wrap("The live brief stays on the right. It gives you the next objective without solving the network for you.",
+		13, UIW.colour("muted"), 560)
+	tip_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tip_row.add_child(tip_copy)
+
 	var go := Button.new()
-	go.text = "Open Contracts"
+	go.text = "CLOCK IN  ·  OPEN FIRST CONTRACT"
 	_accent(go)
 	go.pressed.connect(func() -> void:
 		welcome_overlay.visible = false
 		open_contracts())
 	v.add_child(go)
 
+func _welcome_module(number: String, title: String, copy: String, semantic: String) -> PanelContainer:
+	var card := UIW.style_panel(PanelContainer.new(), "surface", "md")
+	card.custom_minimum_size = Vector2(196, 154)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UIW.space("sm"))
+	card.add_child(box)
+	var number_label := _label(number, 20, UIW.colour(semantic))
+	number_label.add_theme_font_override("font", mono)
+	box.add_child(number_label)
+	var heading := _label(title, 12, UIW.colour("text_strong"))
+	heading.add_theme_font_override("font", mono)
+	box.add_child(heading)
+	var copy_label := _wrap(copy, 13, UIW.colour("muted"), 164)
+	copy_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_child(copy_label)
+	return card
+
 func show_welcome() -> void:
 	if Demo.active():
 		var head := welcome_overlay.get_meta("title_label") as Label
 		if head != null:
-			head.text = "Welcome to the Packet Empire demo"
+			head.text = "Your first night on the floor"
 		var body := welcome_overlay.get_meta("body_label") as Label
 		if body != null:
-			body.text = "You run a tiny corner of a colocation floor. The demo is the opening arc of the campaign: six jobs that take you from an empty rack to two offices routed together, and it should take about half an hour.\n\nHow to play:\n   •  Right/middle-drag pans, scroll zooms\n   •  Place rack (R), then click a rack to open it\n   •  Install switches and servers into rack slots\n   •  Click a port to configure it or run a cable\n   •  Every device has a real console (Open console)\n   •  Learn opens an encyclopedia, F1 lists every key\n\nNothing here is faked. The switches take Arista-style commands and the cheap gear takes RouterOS, so when a ping fails there is a real reason and you can go and find it.\n\nOpen Contracts and take the first job. The briefs teach you every command you need."
+			body.text = "Six contracts. One tired colo cage. About half an hour to prove you can turn cheap hardware into a network people trust."
 	_show_overlay(welcome_overlay)
 
 # ---------- demo ----------
