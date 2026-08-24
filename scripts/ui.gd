@@ -566,6 +566,11 @@ func _refresh_slots() -> void:
 		var slot := UIW.RackSlot.new()
 		if dev:
 			slot.setup(i + 1, dev, func() -> void: open_dev(dev))
+		elif cur_rack.covered.has(i):
+			# the upper half of a two-unit box: part of the device below
+			var below: Net.NDevice = cur_rack.covered[i]
+			slot.setup(i + 1, below, func() -> void: open_dev(below))
+			slot.upper_half = true
 		else:
 			var idx := i
 			slot.setup(i + 1, null, func() -> void: _pick_new_device(idx, slot))
@@ -578,11 +583,16 @@ func _pick_new_device(slot: int, at: Control) -> void:
 	for k in keys:
 		var mod: Dictionary = Game.MODELS[k]
 		var locked: bool = int(mod.get("tier", 0)) > Game.stage
-		var line := "%-24s %-8s %2d ports  $%d" % [mod["label"], mod["type"], mod["ports"], mod["price"]]
+		var height := Game.model_height(k)
+		var line := "%-24s %-8s %dU %2d ports  $%d" % [mod["label"], mod["type"], height,
+			mod["ports"], mod["price"]]
+		var fits := Game.can_install(cur_rack, slot, k)
 		if locked:
 			line += "   🔒 needs %s" % Game.STAGES[int(mod["tier"])]["name"]
+		elif not fits:
+			line += "   ✋ needs %dU here" % height
 		m.add_item(line)
-		m.set_item_disabled(m.item_count - 1, locked)
+		m.set_item_disabled(m.item_count - 1, locked or not fits)
 	add_child(m)
 	m.id_pressed.connect(func(id: int) -> void:
 		var mod2: Dictionary = Game.MODELS[keys[id]]
@@ -590,11 +600,15 @@ func _pick_new_device(slot: int, at: Control) -> void:
 			hud_toast("%s needs the %s stage: expand first." % [mod2["label"],
 				Game.STAGES[int(mod2["tier"])]["name"]])
 			return
+		if not Game.can_install(cur_rack, slot, keys[id]):
+			hud_toast("A %s is %dU and will not fit there." % [mod2["label"],
+				Game.model_height(keys[id])])
+			return
 		if not Game.try_spend(mod2["price"]):
 			hud_toast("Not enough money for a %s ($%d, you have $%d)." % [mod2["label"],
 				int(mod2["price"]), Game.money])
 			return
-		cur_rack.slots[slot] = Game.new_device(keys[id])
+		Game.install_device(cur_rack, slot, Game.new_device(keys[id]))
 		cur_rack.visual.queue_redraw()
 		_refresh_slots())
 	m.popup_hide.connect(m.queue_free)

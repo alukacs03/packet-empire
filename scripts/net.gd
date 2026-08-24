@@ -114,6 +114,10 @@ class Rack:
 	var site := 0  # which site (floor) this rack stands on
 	var tile: Vector2i
 	var slots: Array = []
+	## Slot index -> the device below that occupies it. A two-unit box sits in
+	## one slot and takes the one above it, so iterating slots still sees each
+	## device exactly once.
+	var covered := {}
 	var visual: Node2D
 	func _init(n: String, t: Vector2i) -> void:
 		name = n

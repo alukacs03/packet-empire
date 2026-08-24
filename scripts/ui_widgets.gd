@@ -260,6 +260,7 @@ class Bar extends Control:
 
 class RackSlot extends Control:
 	var u_num := 0
+	var upper_half := false  # the second unit of a 2U box, drawn as its top
 	var dev: Net.NDevice
 	var on_click: Callable
 	var hovered := false

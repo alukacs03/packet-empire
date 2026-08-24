@@ -3153,6 +3153,31 @@ static func run() -> int:
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
 
+	# --- rack elevations: not everything is one unit tall ---
+	var ru_rack := Game.add_rack(Vector2i(47, 1))
+	check(Game.model_height("srv-1") == 1 and Game.model_height("sw-24") == 2,
+		"elevation: the catalogue knows how tall things are")
+	var ru_big := Game.new_device("sw-24")
+	check(Game.can_install(ru_rack, 0, "sw-24"), "elevation: a 2U box fits at the bottom")
+	check(Game.install_device(ru_rack, 0, ru_big), "elevation: and installs")
+	check(ru_rack.slots[0] == ru_big and ru_rack.covered.has(1),
+		"elevation: taking the unit above it as well")
+	check(ru_rack.slots[1] == null,
+		"elevation: while still appearing in the rack exactly once")
+	check(not Game.can_install(ru_rack, 1, "srv-1"),
+		"elevation: nothing else fits in the space it is using")
+	check(Game.can_install(ru_rack, 2, "srv-1"), "elevation: the unit above that is free")
+	check(not Game.can_install(ru_rack, Net.Rack.SLOTS - 1, "sw-24"),
+		"elevation: a 2U box cannot hang off the top of the cabinet")
+	var ru_count := 0
+	for ru_d in ru_rack.slots:
+		if ru_d != null:
+			ru_count += 1
+	check(ru_count == 1, "elevation: iterating the rack sees it once, not twice")
+	Game.free_slots(ru_rack, ru_big)
+	check(ru_rack.covered.is_empty() and ru_rack.slots[0] == null,
+		"elevation: removing it frees both units")
+
 	# --- incident replay ---
 	Game.timeline = []
 	Game._events_before = Game.events_logged

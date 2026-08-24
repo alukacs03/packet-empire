@@ -26,6 +26,9 @@ const MODELS := {
 		"blurb": "Eight serial ports and its own way in. The box you reach a device from when the device is the problem."},
 	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
+## How many rack units each model occupies. Everything not listed is 1U.
+const HEIGHTS := {"sw-24": 2, "srv-2": 2, "rtr-edge": 2, "crac-1": 2, "lb-1": 2}
+
 ## Which models ship with two power supplies. Everything else has one, and a
 ## single-supply device is only as reliable as the feed you plugged it into.
 const DUAL_PSU := ["sw-24", "srv-2", "rtr-edge", "fw-1", "lb-1"]
@@ -2805,12 +2808,44 @@ func new_device(model: String) -> Net.NDevice:
 		d.ifaces.append(lo)
 	return d
 
+static func model_height(model: String) -> int:
+	return int(HEIGHTS.get(model, 1))
+
+func slot_free(rack: Net.Rack, idx: int) -> bool:
+	if idx < 0 or idx >= Net.Rack.SLOTS:
+		return false
+	return rack.slots[idx] == null and not rack.covered.has(idx)
+
+func can_install(rack: Net.Rack, idx: int, model: String) -> bool:
+	## a 2U box needs the slot above it as well, and cannot hang off the top
+	for k in model_height(model):
+		if not slot_free(rack, idx + k):
+			return false
+	return true
+
+func install_device(rack: Net.Rack, idx: int, dev: Net.NDevice) -> bool:
+	if not can_install(rack, idx, dev.model):
+		return false
+	rack.slots[idx] = dev
+	for k in range(1, model_height(dev.model)):
+		rack.covered[idx + k] = dev
+	topology_changed.emit()
+	return true
+
+func free_slots(rack: Net.Rack, dev: Net.NDevice) -> void:
+	var at := rack.slots.find(dev)
+	if at >= 0:
+		rack.slots[at] = null
+	for key in rack.covered.keys():
+		if rack.covered[key] == dev:
+			rack.covered.erase(key)
+
 func uninstall_device(dev: Net.NDevice) -> void:
 	for i: Net.Iface in dev.ifaces:
 		disconnect_iface(i)
 	var r := rack_of(dev)
 	if r:
-		r.slots[r.slots.find(dev)] = null
+		free_slots(r, dev)
 		if r.visual:
 			r.visual.queue_redraw()
 	_refund(MODELS[dev.model]["price"] / 2)
