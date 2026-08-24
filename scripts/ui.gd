@@ -188,6 +188,8 @@ func _feature_available(feature: String) -> bool:
 	return Game.feature_unlocked(feature, Prefs.show_everything)
 
 func _refresh_feature_discovery() -> void:
+	for feature: String in Game.DISCOVERY_FEATURES:
+		Game.observe_feature_unlock(feature)
 	if hud_map_btn:
 		hud_map_btn.visible = _feature_available("map")
 	if hud_ops_btn:

@@ -108,6 +108,10 @@ var contract_debriefs := {}  # contract id -> truthful completion snapshot
 var mastered_contracts: Array = []
 var active_contract_debrief := {}
 var feature_intros_seen: Array = []  # one-time authored handoffs for newly revealed tools
+var feature_discovery_trace := {}  # counts/cycles only; never player-authored content
+
+const DISCOVERY_FEATURES := ["map", "market", "business", "log", "ops", "expand"]
+const DISCOVERY_IGNORED_CYCLES := 6
 
 const ACHIEVEMENTS := [
 	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
@@ -317,6 +321,63 @@ func acknowledge_feature_intro(feature: String) -> void:
 	## company should meet its tools again, while a loaded company should not.
 	if feature not in feature_intros_seen:
 		feature_intros_seen.append(feature)
+	observe_feature_unlock(feature)
+	if not feature_discovery_trace.get("unlocked", {}).has(feature):
+		return
+	var acknowledged: Dictionary = feature_discovery_trace.get("acknowledged", {})
+	if not acknowledged.has(feature):
+		acknowledged[feature] = cycle
+	feature_discovery_trace["acknowledged"] = acknowledged
+
+func observe_feature_unlock(feature: String) -> void:
+	## This trace stays deliberately coarse: tool id and campaign cycle only.
+	## It must never absorb names, commands, addresses, or topology details.
+	if sandbox or feature not in DISCOVERY_FEATURES or not feature_unlocked(feature):
+		return
+	var unlocked: Dictionary = feature_discovery_trace.get("unlocked", {})
+	if not unlocked.has(feature):
+		unlocked[feature] = cycle
+	feature_discovery_trace["unlocked"] = unlocked
+	if not feature_discovery_trace.has("acknowledged"):
+		feature_discovery_trace["acknowledged"] = {}
+
+func feature_discovery_diagnostics() -> Dictionary:
+	## Local QA summary. Values are intentionally aggregate or enum-like so a
+	## save can diagnose pacing without reproducing anything the player wrote.
+	var unlocked_cycles: Dictionary = feature_discovery_trace.get("unlocked", {})
+	var acknowledged_cycles: Dictionary = feature_discovery_trace.get("acknowledged", {})
+	var unlocked: Array = []
+	var acknowledged: Array = []
+	var long_ignored: Array = []
+	var latency_cycles := {}
+	for feature: String in DISCOVERY_FEATURES:
+		if unlocked_cycles.has(feature):
+			unlocked.append(feature)
+			if acknowledged_cycles.has(feature):
+				acknowledged.append(feature)
+				latency_cycles[feature] = maxi(0,
+					int(acknowledged_cycles[feature]) - int(unlocked_cycles[feature]))
+			elif cycle - int(unlocked_cycles[feature]) >= DISCOVERY_IGNORED_CYCLES:
+				long_ignored.append(feature)
+	var stall := ""
+	if contracts_done.is_empty() and cycle >= 6:
+		stall = "before_first_contract"
+	elif contracts_done.size() < 3 and cycle >= 18:
+		stall = "before_market"
+	elif contracts_done.size() >= 3 and deals.is_empty() \
+			and unlocked_cycles.has("market") \
+			and cycle - int(unlocked_cycles["market"]) >= 18:
+		stall = "before_first_customer"
+	return {"cycle": cycle, "contracts_completed": contracts_done.size(),
+		"unlocked": unlocked, "acknowledged": acknowledged,
+		"long_ignored": long_ignored, "ack_latency_cycles": latency_cycles,
+		"opening_stall": stall}
+
+func _feature_discovery_trace_from_data(data: Dictionary) -> Dictionary:
+	## Old and damaged saves both migrate to an empty trace; unlock state is
+	## rediscovered from campaign milestones the next time the HUD refreshes.
+	var loaded: Variant = data.get("feature_discovery_trace", {})
+	return loaded if typeof(loaded) == TYPE_DICTIONARY else {}
 
 func site_name(idx: int) -> String:
 	_ensure_sites()
@@ -3811,6 +3872,7 @@ func _serialize() -> Dictionary:
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
 		"feature_intros_seen": feature_intros_seen,
+		"feature_discovery_trace": feature_discovery_trace,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents,
@@ -4135,6 +4197,7 @@ func _apply(data: Dictionary) -> void:
 	spares = data.get("spares", {})
 	guided_outage = data.get("guided_outage", {})
 	feature_intros_seen = data.get("feature_intros_seen", [])
+	feature_discovery_trace = _feature_discovery_trace_from_data(data)
 	contract_debriefs = data.get("contract_debriefs", {})
 	mastered_contracts = data.get("mastered_contracts", [])
 	active_contract_debrief = data.get("active_contract_debrief", {})

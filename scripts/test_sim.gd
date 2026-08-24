@@ -76,6 +76,7 @@ static func ui_smoke(world: Node2D) -> int:
 	Game.sandbox = false
 	Prefs.show_everything = false
 	Game.feature_intros_seen = []
+	Game.feature_discovery_trace = {}
 	if "rackup" not in Game.contracts_done:
 		Game.contracts_done.append("rackup")
 	var ui := UILayer.new()
@@ -1101,6 +1102,7 @@ static func run() -> int:
 	Game.monitors = []
 	Game.spares = {}
 	Game.feature_intros_seen = []
+	Game.feature_discovery_trace = {}
 	Game.stats["guided_delivery_complete"] = 0
 	Game.sandbox = false
 	Game.stage = 0
@@ -1113,6 +1115,14 @@ static func run() -> int:
 		"discovery: a fresh campaign keeps unexplained advanced tools out of the opening HUD")
 	check(Game.feature_unlocked("ops", true),
 		"discovery: the experienced-player override exposes the full toolbox")
+	check(Game._feature_discovery_trace_from_data({}).is_empty() \
+			and Game._feature_discovery_trace_from_data({"feature_discovery_trace": "bad"}).is_empty(),
+		"discovery diagnostics: legacy and malformed saves migrate to a safe empty trace")
+	var pre_stall_cycle := Game.cycle
+	Game.cycle = 18
+	check(Game.feature_discovery_diagnostics()["opening_stall"] == "before_first_contract",
+		"discovery diagnostics: a coarse milestone id flags a stalled opening without player data")
+	Game.cycle = pre_stall_cycle
 	Game.acknowledge_feature_intro("map")
 	Game.acknowledge_feature_intro("map")
 	var intro_payload: Dictionary = JSON.parse_string(Game.snapshot())
@@ -1134,6 +1144,29 @@ static func run() -> int:
 	check(Game.try_complete_contract(_contract("rackup")), "walkthrough: contract 1 pays")
 	check(Game.feature_unlocked("map") and not Game.feature_unlocked("market"),
 		"discovery: the logical map appears after the first physical rack job")
+	Game.observe_feature_unlock("map")
+	var map_unlock_cycle := Game.cycle
+	Game.observe_feature_unlock("map")
+	check(int(Game.feature_discovery_trace["unlocked"]["map"]) == map_unlock_cycle,
+		"discovery diagnostics: repeated refreshes keep the original reveal cycle")
+	Game.cycle += Game.DISCOVERY_IGNORED_CYCLES
+	var ignored_diag := Game.feature_discovery_diagnostics()
+	check("map" in ignored_diag["long_ignored"],
+		"discovery diagnostics: an unacknowledged reveal becomes locally visible as ignored")
+	Game.acknowledge_feature_intro("map")
+	var acknowledged_diag := Game.feature_discovery_diagnostics()
+	check("map" in acknowledged_diag["acknowledged"] \
+			and int(acknowledged_diag["ack_latency_cycles"]["map"]) == Game.DISCOVERY_IGNORED_CYCLES,
+		"discovery diagnostics: acknowledgement latency is recorded in campaign cycles")
+	var diagnostic_text := JSON.stringify(acknowledged_diag)
+	check(Game.company_name not in diagnostic_text and "racks" not in diagnostic_text \
+			and "devices" not in diagnostic_text and "commands" not in diagnostic_text,
+		"discovery diagnostics: the summary contains no authored names, topology, or commands")
+	var trace_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(trace_payload.has("feature_discovery_trace") \
+			and trace_payload["feature_discovery_trace"]["unlocked"].has("map"),
+		"discovery diagnostics: the coarse local trace persists with the campaign")
+	Game.cycle = map_unlock_cycle
 	var rackup_debrief: Dictionary = Game.contract_debriefs.get("rackup", {})
 	check(not rackup_debrief.is_empty() and w_rack.name in String(rackup_debrief["proof"][0]) \
 			and w_sw.name in String(rackup_debrief["proof"][1]),
