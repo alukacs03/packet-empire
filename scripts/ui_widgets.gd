@@ -43,15 +43,15 @@ static func radius(token: String) -> int:
 	return int(RADII.get(token, RADII["md"]))
 
 static func custom_box(bg: Color, border: Color, corner := 7, padding := 8) -> StyleBoxFlat:
+	## Flat by default. Depth belongs to whole workspaces, not every nested
+	## input, chip, button and metric inside them.
 	var style := StyleBoxFlat.new()
 	style.bg_color = bg
 	style.border_color = border
 	style.set_border_width_all(1 if border.a > 0.0 else 0)
 	style.set_corner_radius_all(corner)
 	style.set_content_margin_all(padding)
-	style.shadow_color = Color(0.01, 0.03, 0.07, 0.42)
-	style.shadow_size = 5
-	style.shadow_offset = Vector2(0, 3)
+	style.shadow_size = 0
 	return style
 
 static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
@@ -80,6 +80,10 @@ static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
 			bg = Color("47252d")
 			edge = Color(colour("danger"), 0.75)
 	var style := custom_box(bg, edge, rounding, space(padding))
+	if variant == "overlay":
+		style.shadow_color = Color(0.01, 0.025, 0.06, 0.38)
+		style.shadow_size = 6
+		style.shadow_offset = Vector2(0, 4)
 	# Cards use a clipped technical silhouette and a stronger leading rail.
 	style.corner_radius_top_right = 2
 	style.corner_radius_bottom_left = 2
