@@ -107,6 +107,7 @@ var guided_outage := {}  # deterministic opening incident and its evidence timel
 var contract_debriefs := {}  # contract id -> truthful completion snapshot
 var mastered_contracts: Array = []
 var active_contract_debrief := {}
+var feature_intros_seen: Array = []  # one-time authored handoffs for newly revealed tools
 
 const ACHIEVEMENTS := [
 	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
@@ -310,6 +311,12 @@ func feature_unlocked(feature: String, reveal_all := false) -> bool:
 		"expand":
 			return "two_offices" in contracts_done or stage > 0
 	return false
+
+func acknowledge_feature_intro(feature: String) -> void:
+	## Unlock cards are campaign history, not a global preference: a fresh
+	## company should meet its tools again, while a loaded company should not.
+	if feature not in feature_intros_seen:
+		feature_intros_seen.append(feature)
 
 func site_name(idx: int) -> String:
 	_ensure_sites()
@@ -3803,6 +3810,7 @@ func _serialize() -> Dictionary:
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
+		"feature_intros_seen": feature_intros_seen,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents,
@@ -4126,6 +4134,7 @@ func _apply(data: Dictionary) -> void:
 	status_posts = data.get("status_posts", [])
 	spares = data.get("spares", {})
 	guided_outage = data.get("guided_outage", {})
+	feature_intros_seen = data.get("feature_intros_seen", [])
 	contract_debriefs = data.get("contract_debriefs", {})
 	mastered_contracts = data.get("mastered_contracts", [])
 	active_contract_debrief = data.get("active_contract_debrief", {})

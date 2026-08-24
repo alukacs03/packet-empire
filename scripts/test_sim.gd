@@ -73,8 +73,19 @@ static func demo_world() -> void:
 static func ui_smoke(world: Node2D) -> int:
 	## Exercise every overlay so UI-only runtime errors surface in CI output.
 	print("---- ui smoke ----")
+	Game.sandbox = false
+	Prefs.show_everything = false
+	Game.feature_intros_seen = []
+	if "rackup" not in Game.contracts_done:
+		Game.contracts_done.append("rackup")
 	var ui := UILayer.new()
 	world.add_child(ui)
+	check(ui.unlock_intro_panel.visible and ui._unlock_intro_active == "map" \
+			and "wall map" in ui.unlock_intro_title.text.to_lower(),
+		"discovery: a newly available tool arrives with an authored, non-modal handoff")
+	ui._dismiss_unlock_intro()
+	check("map" in Game.feature_intros_seen and ui._unlock_intro_active != "map",
+		"discovery: acknowledging a handoff records it once and advances a queued reveal")
 	# shared UI foundation: every reusable button state exists and keyboard
 	# focus is visible rather than being the old transparent outline.
 	var foundation_button := Button.new()
@@ -1089,6 +1100,7 @@ static func run() -> int:
 	Game.invoices = []
 	Game.monitors = []
 	Game.spares = {}
+	Game.feature_intros_seen = []
 	Game.stats["guided_delivery_complete"] = 0
 	Game.sandbox = false
 	Game.stage = 0
@@ -1101,6 +1113,13 @@ static func run() -> int:
 		"discovery: a fresh campaign keeps unexplained advanced tools out of the opening HUD")
 	check(Game.feature_unlocked("ops", true),
 		"discovery: the experienced-player override exposes the full toolbox")
+	Game.acknowledge_feature_intro("map")
+	Game.acknowledge_feature_intro("map")
+	var intro_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(Game.feature_intros_seen.count("map") == 1 \
+			and "map" in intro_payload["feature_intros_seen"],
+		"discovery: acknowledged tool introductions are deduplicated and saved")
+	Game.feature_intros_seen = []
 	var w_rack := Game.add_rack(Vector2i(0, 0))
 	check(Game.try_spend(Game.RACK_PRICE), "walkthrough: rack affordable at start")
 	var w_sw := Game.new_device("sw-lite")

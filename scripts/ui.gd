@@ -76,8 +76,49 @@ var contracts_overlay: Control
 var contracts_box: VBoxContainer
 var contracts_tabs := {}
 var _toast_lbl: Label
+var unlock_intro_panel: PanelContainer
+var unlock_intro_kicker: Label
+var unlock_intro_title: Label
+var unlock_intro_body: Label
+var unlock_intro_where: Label
+var unlock_intro_action: Button
+var _unlock_intro_pending: Array[String] = []
+var _unlock_intro_active := ""
 var vlan_section: VBoxContainer
 var vlan_box: VBoxContainer
+
+const UNLOCK_INTROS := {
+	"map": {
+		"kicker": "NEW TOOL  /  WALL MAP",
+		"title": "The wall map is live.",
+		"body": "One rack has become a network. Trace the path here before you crawl behind the cabinet.",
+		"where": "MAP  ·  TOP TOOLBAR", "action": "Open Map", "colour": "accent"},
+	"market": {
+		"kicker": "NEW DESK  /  MARKET",
+		"title": "The tender board is open.",
+		"body": "Three clean jobs gave sales something to brag about. Qualify leads, price the risk, and choose who you work for.",
+		"where": "COMPANY  /  MARKET", "action": "See the board", "colour": "warm"},
+	"business": {
+		"kicker": "NEW DESK  /  BUSINESS",
+		"title": "The books have arrived.",
+		"body": "A live customer turns blinking lights into invoices. Follow what was earned, billed, and actually paid.",
+		"where": "COMPANY  /  BUSINESS", "action": "Open the books", "colour": "success"},
+	"log": {
+		"kicker": "NEW DESK  /  INCIDENT LOG",
+		"title": "Start the incident clock.",
+		"body": "The first unhappy packet deserves a paper trail. Record what customers heard and what the room did.",
+		"where": "COMPANY  /  LOG", "action": "Read the log", "colour": "warning"},
+	"ops": {
+		"kicker": "NEW TOOL  /  OPERATIONS",
+		"title": "You are on call now.",
+		"body": "A paying service needs more than hope. Watch capacity, monitors, spares, and the work waiting for a pair of hands.",
+		"where": "OPS  ·  TOP TOOLBAR", "action": "Open Ops", "colour": "danger"},
+	"expand": {
+		"kicker": "NEW OPTION  /  FACILITY",
+		"title": "The tape measure is out.",
+		"body": "This corner has proved itself. The next room brings more floor—and puts power and cooling on your books.",
+		"where": "EXPAND  ·  TOP TOOLBAR", "action": "Point it out", "colour": "warm"},
+}
 
 var cur_rack: Net.Rack
 var cur_dev: Net.NDevice
@@ -112,6 +153,7 @@ func _ready() -> void:
 	mono = UIW.mono_font()
 	theme_res = _make_theme()
 	_build_toolbar()
+	_build_unlock_intro()
 	_build_rack_overlay()
 	_build_dev_overlay()
 	_build_if_overlay()
@@ -155,6 +197,112 @@ func _refresh_feature_discovery() -> void:
 			and _feature_available("expand")
 	for tab_name in contracts_tabs:
 		contracts_tabs[tab_name].visible = _feature_available(String(tab_name).to_lower())
+	_consider_unlock_intros()
+
+func _build_unlock_intro() -> void:
+	## A slim control-room dispatch, parked beneath the HUD and away from the
+	## live brief. It informs without pausing the floor or dimming the room.
+	unlock_intro_panel = PanelContainer.new()
+	unlock_intro_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	unlock_intro_panel.position = Vector2(UIW.space("lg"), -250)
+	unlock_intro_panel.custom_minimum_size = Vector2(430, 0)
+	unlock_intro_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	unlock_intro_panel.theme = theme_res
+	unlock_intro_panel.visible = false
+	add_child(unlock_intro_panel)
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", UIW.space("lg"))
+	margin.add_theme_constant_override("margin_top", UIW.space("md"))
+	margin.add_theme_constant_override("margin_right", UIW.space("lg"))
+	margin.add_theme_constant_override("margin_bottom", UIW.space("md"))
+	unlock_intro_panel.add_child(margin)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", UIW.space("sm"))
+	margin.add_child(v)
+	unlock_intro_kicker = _label("", 11, UIW.colour("accent"))
+	unlock_intro_kicker.add_theme_font_override("font", mono)
+	v.add_child(unlock_intro_kicker)
+	unlock_intro_title = _label("", 20, Color(0.96, 0.97, 1.0))
+	v.add_child(unlock_intro_title)
+	unlock_intro_body = _wrap("", 13, UIW.colour("muted"), 382)
+	v.add_child(unlock_intro_body)
+	unlock_intro_where = _label("", 11, UIW.colour("muted"))
+	unlock_intro_where.add_theme_font_override("font", mono)
+	v.add_child(unlock_intro_where)
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", UIW.space("sm"))
+	v.add_child(actions)
+	unlock_intro_action = Button.new()
+	_accent(unlock_intro_action)
+	unlock_intro_action.pressed.connect(_follow_unlock_intro)
+	actions.add_child(unlock_intro_action)
+	var dismiss := Button.new()
+	dismiss.text = "Got it"
+	dismiss.pressed.connect(_dismiss_unlock_intro)
+	actions.add_child(dismiss)
+
+func _unlock_intro_suppressed() -> bool:
+	return Game.sandbox or Prefs.show_everything or OS.get_environment("PACKET_SHOT") != ""
+
+func _consider_unlock_intros() -> void:
+	if unlock_intro_panel == null:
+		return
+	if _unlock_intro_suppressed():
+		_unlock_intro_pending.clear()
+		_unlock_intro_active = ""
+		unlock_intro_panel.visible = false
+		return
+	for feature: String in ["map", "market", "business", "log", "ops", "expand"]:
+		if _feature_available(feature) and feature not in Game.feature_intros_seen \
+				and feature != _unlock_intro_active and feature not in _unlock_intro_pending:
+			_unlock_intro_pending.append(feature)
+	if _unlock_intro_active == "":
+		_show_next_unlock_intro()
+
+func _show_next_unlock_intro() -> void:
+	if _unlock_intro_pending.is_empty():
+		unlock_intro_panel.visible = false
+		return
+	_unlock_intro_active = _unlock_intro_pending.pop_front()
+	var intro: Dictionary = UNLOCK_INTROS[_unlock_intro_active]
+	var colour := UIW.colour(String(intro["colour"]))
+	unlock_intro_panel.add_theme_stylebox_override("panel",
+		_flat_sb(Color(0.045, 0.075, 0.11, 0.97), Color(colour, 0.8), 2, 0))
+	unlock_intro_kicker.text = String(intro["kicker"])
+	unlock_intro_kicker.add_theme_color_override("font_color", colour)
+	unlock_intro_title.text = String(intro["title"])
+	unlock_intro_body.text = String(intro["body"])
+	unlock_intro_where.text = String(intro["where"])
+	unlock_intro_action.text = String(intro["action"])
+	unlock_intro_panel.modulate.a = 0.0
+	unlock_intro_panel.visible = true
+	Sfx.play("open")
+	create_tween().tween_property(unlock_intro_panel, "modulate:a", 1.0, 0.18)
+
+func _dismiss_unlock_intro() -> void:
+	if _unlock_intro_active == "":
+		return
+	Game.acknowledge_feature_intro(_unlock_intro_active)
+	_unlock_intro_active = ""
+	unlock_intro_panel.visible = false
+	_show_next_unlock_intro()
+
+func _follow_unlock_intro() -> void:
+	var feature := _unlock_intro_active
+	_dismiss_unlock_intro()
+	match feature:
+		"map":
+			toggle_map()
+		"ops":
+			toggle_ops()
+		"market", "business", "log":
+			contracts_tab = feature.capitalize()
+			open_contracts()
+		"expand":
+			expand_btn.grab_focus()
+			expand_btn.modulate = Color(1.25, 1.12, 0.72)
+			create_tween().tween_property(expand_btn, "modulate", Color.WHITE, 0.7)
+			hud_toast("EXPAND  /  The next room is ready when the cash and timing are right.", true)
 
 func _money_flash() -> void:
 	Sfx.play("money")
