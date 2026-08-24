@@ -246,6 +246,21 @@ func _shoot_all() -> void:
 			deal["payment_state"] = "billing"
 			deal["degraded"] = true
 			ui._refresh_contracts()],
+		["debrief_rackup", func() -> void:
+			Game.active_contract_debrief = Game._opening_contract_debrief(Contracts.all()[0])
+			Game.contract_debriefs["rackup"] = Game.active_contract_debrief
+			ui.contracts_tab = "Jobs"
+			ui._refresh_contracts()],
+		["debrief_first_ping", func() -> void:
+			Game.active_contract_debrief = Game._opening_contract_debrief(Contracts.all()[1])
+			Game.contract_debriefs["first_ping"] = Game.active_contract_debrief
+			ui._refresh_contracts()],
+		["debrief_two_tenants", func() -> void:
+			Game.set_access_vlan(sw.ifaces[0], 10)
+			Game.set_access_vlan(sw.ifaces[1], 20)
+			Game.active_contract_debrief = Game._opening_contract_debrief(Contracts.all()[2])
+			Game.contract_debriefs["two_tenants"] = Game.active_contract_debrief
+			ui._refresh_contracts()],
 		["business_cashflow", func() -> void:
 			Game.last_business = {"revenue": 162, "invoiced": 72, "collected": 72,
 				"power": 34, "transit": 18}

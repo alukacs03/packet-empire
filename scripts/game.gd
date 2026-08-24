@@ -104,6 +104,9 @@ var last_customer_outage_cycle := 0
 var best_outage_streak := 0
 var customer_outage_active := false
 var guided_outage := {}  # deterministic opening incident and its evidence timeline
+var contract_debriefs := {}  # contract id -> truthful completion snapshot
+var mastered_contracts: Array = []
+var active_contract_debrief := {}
 
 const ACHIEVEMENTS := [
 	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
@@ -1183,8 +1186,140 @@ func try_complete_contract(c: Dictionary) -> bool:
 	stats["contracts"] += 1
 	stats["earned"] += int(c["reward"])
 	money += c["reward"]
+	var debrief := _opening_contract_debrief(c)
+	if not debrief.is_empty():
+		contract_debriefs[String(c["id"])] = debrief
+		active_contract_debrief = debrief
+		log_event("DEBRIEF READY: %s is complete. The proof records what made it work." % c["title"])
 	money_changed.emit()
 	return true
+
+func _iface_with_ip(ip: String) -> Net.Iface:
+	var owner := Contracts._owner(ip)
+	if owner == null:
+		return null
+	for iface: Net.Iface in owner.ifaces:
+		for cidr: String in iface.ips:
+			if cidr.split("/")[0] == ip:
+				return iface
+	return null
+
+func _switch_link_for(dev: Net.NDevice) -> Dictionary:
+	for iface: Net.Iface in dev.ifaces:
+		var link := link_at(iface)
+		if link == null:
+			continue
+		var far := link.other(iface)
+		if far.dev.type == "switch":
+			return {"local": iface, "switch": far.dev, "port": far}
+	return {}
+
+func _opening_contract_debrief(c: Dictionary) -> Dictionary:
+	var cid := String(c["id"])
+	var base := {"id": cid, "title": String(c["title"]), "customer": String(c["customer"]),
+		"reward": int(c["reward"]), "proof": []}
+	match cid:
+		"rackup":
+			var rack: Net.Rack = racks[0] if not racks.is_empty() else null
+			if rack == null:
+				return {}
+			var patches: Array = []
+			for link: Net.Link in links:
+				var server_end: Net.Iface = null
+				var switch_end: Net.Iface = null
+				if link.a.dev.type == "server" and link.b.dev.type == "switch":
+					server_end = link.a; switch_end = link.b
+				elif link.b.dev.type == "server" and link.a.dev.type == "switch":
+					server_end = link.b; switch_end = link.a
+				if server_end != null:
+					patches.append("%s %s  ⇄  %s %s" % [server_end.dev.name, server_end.name,
+						switch_end.dev.name, switch_end.name])
+			base["proof"] = ["%s is physically installed with %d occupied device slots." % [rack.name,
+				rack.slots.filter(func(d): return d != null).size()], "Two seated access patches: %s." % ",  ".join(PackedStringArray(patches.slice(0, 2)))]
+			base["concept"] = "Physical layer first"
+			base["practice"] = "Trace and label both ends before configuring a protocol."
+			base["avoided"] = "No logical fix can rescue a server that is not physically patched."
+			base["mastery"] = "Fit blanking panels in every unused rack unit."
+		"first_ping":
+			var left := _iface_with_ip("10.0.0.1")
+			var right := _iface_with_ip("10.0.0.2")
+			if left == null or right == null:
+				return {}
+			var left_path := _switch_link_for(left.dev)
+			var right_path := _switch_link_for(right.dev)
+			var path := "%s %s (10.0.0.1)  →  switched network  →  %s %s (10.0.0.2)" % [
+				left.dev.name, left.name, right.dev.name, right.name]
+			if not left_path.is_empty() and not right_path.is_empty() \
+					and left_path["switch"] == right_path["switch"]:
+				path = "%s %s  →  %s %s / %s  →  %s %s" % [left.dev.name, left.name,
+					left_path["switch"].name, left_path["port"].name, right_path["port"].name,
+					right.dev.name, right.name]
+			base["proof"] = [path, "10.0.0.1 reached 10.0.0.2 on the live /24 without a gateway hop."]
+			base["concept"] = "Same-subnet switching"
+			base["practice"] = "ping 10.0.0.2"
+			base["avoided"] = "A router was not added where one broadcast domain was enough."
+			base["mastery"] = "Keep both server route tables empty; this path needs no gateway."
+		"two_tenants":
+			var sw: Net.NDevice = null
+			for dev in all_devices():
+				if dev.type == "switch" and dev.vlans.has(10) and dev.vlans.has(20):
+					sw = dev; break
+			if sw == null:
+				return {}
+			var vlan10: Array = []
+			var vlan20: Array = []
+			for iface: Net.Iface in sw.ifaces:
+				if iface.mode != "access":
+					continue
+				var peer := peer_label(iface)
+				if iface.untagged_vlan == 10:
+					vlan10.append("%s%s" % [iface.name, " ⇄ " + peer if peer != "" else ""])
+				elif iface.untagged_vlan == 20:
+					vlan20.append("%s%s" % [iface.name, " ⇄ " + peer if peer != "" else ""])
+			base["proof"] = ["%s keeps VLAN 10 on %s." % [sw.name, ", ".join(PackedStringArray(vlan10))],
+				"%s keeps VLAN 20 on %s; the former ping is now correctly blocked." % [sw.name,
+					", ".join(PackedStringArray(vlan20))]]
+			base["concept"] = "Separate broadcast domains"
+			base["practice"] = "/interface bridge vlan print" if String(MODELS[sw.model].get("os", "")) == "ros" else "show vlan"
+			base["avoided"] = "Sharing an IPv4 prefix did not punch through the VLAN boundary."
+			base["mastery"] = "Add 10.0.0.3 to VLAN 10 while keeping VLAN 20 isolated."
+		_:
+			return {}
+	return base
+
+func contract_mastery_met(cid: String) -> bool:
+	match cid:
+		"rackup":
+			for rack: Net.Rack in racks:
+				for slot in Net.Rack.SLOTS:
+					if slot_free(rack, slot) and not rack.blanked.has(slot):
+						return false
+			return not racks.is_empty()
+		"first_ping":
+			var left := Contracts._owner("10.0.0.1")
+			var right := Contracts._owner("10.0.0.2")
+			return left != null and right != null and left.static_routes.is_empty() \
+				and right.static_routes.is_empty() and Sim.ping(left, "10.0.0.2")["ok"]
+		"two_tenants":
+			return Contracts._owner("10.0.0.3") != null \
+				and Sim.ping(Contracts._owner("10.0.0.3"), "10.0.0.1")["ok"] \
+				and not Sim.ping(Contracts._owner("10.0.0.3"), "10.0.0.2")["ok"]
+	return false
+
+func check_contract_mastery(cid: String) -> String:
+	if not contract_debriefs.has(cid):
+		return "complete the contract before attempting mastery"
+	if cid in mastered_contracts:
+		return ""
+	if not contract_mastery_met(cid):
+		return "mastery condition is not live yet"
+	mastered_contracts.append(cid)
+	log_event("MASTERED: %s was completed with the optional operating constraint." % cid)
+	money_changed.emit()
+	return ""
+
+func dismiss_contract_debrief() -> void:
+	active_contract_debrief = {}
 
 const SLA_PERIOD := 45.0  # seconds per billing cycle
 
@@ -3536,6 +3671,8 @@ func _serialize() -> Dictionary:
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
+		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
+		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
@@ -3857,6 +3994,9 @@ func _apply(data: Dictionary) -> void:
 	status_posts = data.get("status_posts", [])
 	spares = data.get("spares", {})
 	guided_outage = data.get("guided_outage", {})
+	contract_debriefs = data.get("contract_debriefs", {})
+	mastered_contracts = data.get("mastered_contracts", [])
+	active_contract_debrief = data.get("active_contract_debrief", {})
 	attacks = data.get("attacks", [])
 	scrubbing = bool(data.get("scrubbing", false))
 	insured = bool(data.get("insured", false))

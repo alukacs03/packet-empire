@@ -1079,6 +1079,9 @@ static func run() -> int:
 	Game.offers = []
 	Game.contracts_done = []
 	Game.sla_status = {}
+	Game.contract_debriefs = {}
+	Game.mastered_contracts = []
+	Game.active_contract_debrief = {}
 	Game.stage = 0
 	Game.debt = 0
 	Game.money = 2000
@@ -1095,14 +1098,42 @@ static func run() -> int:
 	Game.connect_ifaces(w_s1.ifaces[0], w_sw.ifaces[0])
 	Game.connect_ifaces(w_s2.ifaces[0], w_sw.ifaces[1])
 	check(Game.try_complete_contract(_contract("rackup")), "walkthrough: contract 1 pays")
+	var rackup_debrief: Dictionary = Game.contract_debriefs.get("rackup", {})
+	check(not rackup_debrief.is_empty() and w_rack.name in String(rackup_debrief["proof"][0]) \
+			and w_sw.name in String(rackup_debrief["proof"][1]),
+		"debrief: rack-up proof snapshots the player's actual cabinet, switch and patches")
+	check(Game.money > 0 and int(Game.active_contract_debrief["reward"]) == 400,
+		"debrief: the reward lands immediately instead of waiting for review")
+	check(Game.check_contract_mastery("rackup") != "", "mastery: an untidy rack is not mastered by completion alone")
+	for rack_slot in Net.Rack.SLOTS:
+		if Game.slot_free(w_rack, rack_slot):
+			w_rack.blanked[rack_slot] = true
+	check(Game.check_contract_mastery("rackup") == "" and "rackup" in Game.mastered_contracts,
+		"mastery: the optional physical housekeeping constraint is tracked separately")
 	Game.add_ip(w_s1.ifaces[0], "10.0.0.1/24")
 	Game.add_ip(w_s2.ifaces[0], "10.0.0.2/24")
 	check(Game.try_complete_contract(_contract("first_ping")), "walkthrough: contract 2 pays")
+	var ping_debrief: Dictionary = Game.contract_debriefs.get("first_ping", {})
+	check(w_s1.name in String(ping_debrief["proof"][0]) and w_s2.name in String(ping_debrief["proof"][0]) \
+			and w_sw.name in String(ping_debrief["proof"][0]),
+		"debrief: first ping records the actual endpoint and switch path")
+	check(Game.check_contract_mastery("first_ping") == "" and "first_ping" in Game.mastered_contracts,
+		"mastery: the gateway-free same-subnet solution is recognized")
 	Game.add_vlan(w_sw, 10, "alfa")
 	Game.add_vlan(w_sw, 20, "beta")
 	Game.set_access_vlan(w_sw.ifaces[0], 10)
 	Game.set_access_vlan(w_sw.ifaces[1], 20)
 	check(Game.try_complete_contract(_contract("two_tenants")), "walkthrough: contract 3 pays")
+	var vlan_debrief: Dictionary = Game.contract_debriefs.get("two_tenants", {})
+	check(w_sw.name in String(vlan_debrief["proof"][0]) and "ether1" in String(vlan_debrief["proof"][0]) \
+			and String(vlan_debrief["practice"]) == "/interface bridge vlan print",
+		"debrief: VLAN isolation uses actual PacketTik ports and vendor-correct evidence")
+	check(Game.check_contract_mastery("two_tenants") != "",
+		"mastery: the VLAN extension remains an optional follow-on challenge")
+	var mastery_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check("rackup" in mastery_payload["mastered_contracts"] \
+			and mastery_payload["contract_debriefs"].has("first_ping"),
+		"debrief: snapshots and separate mastery state are included in saves")
 	check(Game.money > 0, "walkthrough: never broke during the colo arc (have $%d)" % Game.money)
 	var cycles := 0
 	while Game.money < 5000 + 1500 and cycles < 40:
@@ -1130,6 +1161,8 @@ static func run() -> int:
 	w_eos.exec("switchport access vlan 10")
 	w_eos.exec("end")
 	CLI.new_session(w_s3).exec("ip addr add 10.0.0.3/24 dev eth0")
+	check(Game.check_contract_mastery("two_tenants") == "" and "two_tenants" in Game.mastered_contracts,
+		"mastery: extending VLAN 10 while preserving isolation completes the optional challenge")
 	check(Game.try_complete_contract(_contract("stretch_vlans")),
 		"walkthrough: contract 4 pays (trunk built from both dialects)")
 	Game.connect_ifaces(w_sw.ifaces[3], w_sw2.ifaces[6])  # the spare link

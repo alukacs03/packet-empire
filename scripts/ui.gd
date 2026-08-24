@@ -3935,6 +3935,69 @@ func _toast(text: String) -> void:
 		contracts_box.move_child(_toast_lbl, 0)
 	_toast_lbl.text = text
 
+func _build_contract_debrief(debrief: Dictionary) -> void:
+	var card := UIW.style_panel(PanelContainer.new(), "surface", "lg")
+	contracts_box.add_child(card)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UIW.space("md"))
+	card.add_child(box)
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", UIW.space("md"))
+	box.add_child(head)
+	var title_box := VBoxContainer.new()
+	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(title_box)
+	var eyebrow := _section("JOB COMPLETE  /  PROOF OF WORK")
+	eyebrow.add_theme_color_override("font_color", UIW.colour("warm"))
+	title_box.add_child(eyebrow)
+	title_box.add_child(_label("%s  /  %s" % [debrief.get("title", "Contract"),
+		debrief.get("customer", "customer")], 19, UIW.colour("text_strong")))
+	head.add_child(UIW.make_chip("+$%d PAID" % int(debrief.get("reward", 0)), "success"))
+	var proof := UIW.style_panel(PanelContainer.new(), "console", "md")
+	box.add_child(proof)
+	var proof_box := VBoxContainer.new()
+	proof_box.add_theme_constant_override("separation", UIW.space("sm"))
+	proof.add_child(proof_box)
+	var proof_title := _section("LIVE SOLUTION SNAPSHOT")
+	proof_title.add_theme_color_override("font_color", UIW.colour("accent"))
+	proof_box.add_child(proof_title)
+	for line: String in debrief.get("proof", []):
+		var proof_line := _wrap("●  " + line, 12, UIW.colour("text"), 720)
+		proof_line.add_theme_font_override("font", mono)
+		proof_box.add_child(proof_line)
+	var lessons := HBoxContainer.new()
+	lessons.add_theme_constant_override("separation", UIW.space("sm"))
+	box.add_child(lessons)
+	lessons.add_child(_offer_fact("KEY CONCEPT", String(debrief.get("concept", "")), "accent"))
+	lessons.add_child(_offer_fact("USEFUL PRACTICE", String(debrief.get("practice", "")), "info"))
+	lessons.add_child(_offer_fact("FAILURE AVOIDED", String(debrief.get("avoided", "")), "warning"))
+	var mastery := UIW.style_panel(PanelContainer.new(), "console", "md")
+	box.add_child(mastery)
+	var mastery_row := HBoxContainer.new()
+	mastery_row.add_theme_constant_override("separation", UIW.space("md"))
+	mastery.add_child(mastery_row)
+	var mastered: bool = String(debrief.get("id", "")) in Game.mastered_contracts
+	var mastery_copy := _wrap("%s  OPTIONAL MASTERY  /  %s" % ["●" if mastered else "◇",
+		debrief.get("mastery", "")], 12,
+		UIW.colour("success") if mastered else UIW.colour("muted"), 570)
+	mastery_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mastery_row.add_child(mastery_copy)
+	if not mastered:
+		var mastery_btn := Button.new()
+		mastery_btn.text = "Check mastery"
+		mastery_btn.pressed.connect(func() -> void:
+			var err := Game.check_contract_mastery(String(debrief["id"]))
+			if err != "": _toast(err)
+			_refresh_contracts())
+		mastery_row.add_child(mastery_btn)
+	var continue_btn := Button.new()
+	continue_btn.text = "Continue operating"
+	_accent(continue_btn)
+	continue_btn.pressed.connect(func() -> void:
+		Game.dismiss_contract_debrief()
+		_refresh_contracts())
+	box.add_child(continue_btn)
+
 func _refresh_contracts() -> void:
 	for c in contracts_box.get_children():
 		c.queue_free()
@@ -3950,6 +4013,8 @@ func _refresh_contracts() -> void:
 		"Log":
 			_build_log_tab()
 			return
+	if not Game.active_contract_debrief.is_empty():
+		_build_contract_debrief(Game.active_contract_debrief)
 	_build_jobs_tab()
 	contracts_box.add_child(_section("CAMPAIGN"))
 	var found_active := false
