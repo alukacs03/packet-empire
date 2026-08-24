@@ -270,6 +270,14 @@ func show_settings() -> void:
 		Prefs.colourblind = on
 		Prefs.apply())
 	panel_box.add_child(cb)
+	var motion := CheckButton.new()
+	motion.text = "Reduce motion"
+	motion.tooltip_text = "Replaces traveling highlights and decorative movement with static confirmations"
+	motion.button_pressed = Prefs.reduced_motion
+	motion.toggled.connect(func(on: bool) -> void:
+		Prefs.reduced_motion = on
+		Prefs.apply())
+	panel_box.add_child(motion)
 	panel_box.add_child(_lbl("Interface scale", 13, MUTED))
 	var scale_row := HBoxContainer.new()
 	scale_row.add_theme_constant_override("separation", 6)

@@ -856,6 +856,7 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 	rack_cable_layer.finish()
 	if target == original_target:
 		hud_toast("Plug reseated: %s %s." % [target.dev.name, target.name], true)
+		rack_cable_layer.confirm(rack_cable_from, target)
 	elif target and Game.can_link(rack_cable_from, target):
 		if rack_cable_old_link:
 			Game.disconnect_iface(rack_cable_from)
@@ -863,6 +864,7 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 		hud_toast("Cable run: %s %s ⇄ %s %s" % [rack_cable_from.dev.name,
 			rack_cable_from.name, target.dev.name, target.name], true)
 		_refresh_slots()
+		rack_cable_layer.confirm(rack_cable_from, target)
 	elif rack_cable_old_link:
 		var loose_end := original_target
 		Game.disconnect_iface(rack_cable_from)
@@ -2157,6 +2159,7 @@ func _build_menu() -> void:
 			"Interface scale: %d%%" % int(Prefs.ui_scale * 100),
 			"Colourblind-friendly status colours: %s" % ("on" if Prefs.colourblind else "off"),
 			"Sound: %s" % ("on" if Prefs.sound else "off"),
+			"Reduced motion: %s" % ("on" if Prefs.reduced_motion else "off"),
 		], func(id: int) -> void:
 			match id:
 				0:
@@ -2170,6 +2173,8 @@ func _build_menu() -> void:
 					Prefs.colourblind = not Prefs.colourblind
 				3:
 					Prefs.sound = not Prefs.sound
+				4:
+					Prefs.reduced_motion = not Prefs.reduced_motion
 			Prefs.apply()
 			hud_toast("Setting applied.", true)))
 	v.add_child(prefs_btn)

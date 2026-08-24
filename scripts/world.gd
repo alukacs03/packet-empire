@@ -94,6 +94,7 @@ func _shoot_all() -> void:
 		["title", func() -> void: show_title()],
 		["title_slots", func() -> void: title.show_slots()],
 		["title_new", func() -> void: title.show_new_game(true)],
+		["title_settings", func() -> void: title.show_settings()],
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],
@@ -106,6 +107,11 @@ func _shoot_all() -> void:
 		["rack", func() -> void:
 			ui.welcome_overlay.visible = false
 			ui.open_rack(r)],
+		["rack_cable_feedback", func() -> void:
+			for link: Net.Link in Game.links:
+				if Game.rack_of(link.a.dev) == r and Game.rack_of(link.b.dev) == r:
+					ui.rack_cable_layer.confirm(link.a, link.b)
+					break],
 		["rack_tidy", func() -> void:
 			for slot_i in Net.Rack.SLOTS:
 				if Game.slot_free(r, slot_i):

@@ -2775,6 +2775,10 @@ static func run() -> int:
 	var cb_ok := Prefs.ok_colour()
 	Prefs.colourblind = false
 	check(cb_ok != Prefs.ok_colour(), "prefs: the colourblind palette changes the good colour")
+	var old_motion := Prefs.reduced_motion
+	Prefs.reduced_motion = true
+	check(Prefs.reduced_motion, "prefs: reduced motion can be enabled")
+	Prefs.reduced_motion = old_motion
 
 	# --- syslog and clocks ---
 	var log_rack := Game.add_rack(Vector2i(16, 1))

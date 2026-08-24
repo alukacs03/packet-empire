@@ -846,6 +846,9 @@ class CablePull extends Control:
 	var valid_target := false
 	var rack: Net.Rack
 	var slot_box: VBoxContainer
+	var feedback_a: Net.Iface
+	var feedback_b: Net.Iface
+	var feedback_elapsed := -1.0
 	var _mono: SystemFont
 	const CABLE_COLOURS := [Color("f2b84b"), Color("4dd5c8"), Color("75a7ff"),
 		Color("e7748f"), Color("a78bfa"), Color("8ed081")]
@@ -881,7 +884,20 @@ class CablePull extends Control:
 		valid_target = false
 		queue_redraw()
 
-	func _process(_dt: float) -> void:
+	func confirm(a: Net.Iface, b: Net.Iface) -> void:
+		feedback_a = a
+		feedback_b = b
+		feedback_elapsed = 0.0
+		queue_redraw()
+
+	func _process(dt: float) -> void:
+		if feedback_elapsed >= 0.0:
+			feedback_elapsed += dt
+			var duration := 0.24 if Prefs.reduced_motion else 0.72
+			if feedback_elapsed >= duration:
+				feedback_elapsed = -1.0
+				feedback_a = null
+				feedback_b = null
 		if visible:
 			queue_redraw()
 
@@ -946,14 +962,47 @@ class CablePull extends Control:
 			draw_circle(b, 8.0, Color(colour, 0.16))
 			draw_circle(b, 8.0, colour, false, 1.5)
 
+	func _point_on_path(points: PackedVector2Array, progress: float) -> Vector2:
+		var lengths := PackedFloat32Array()
+		var total := 0.0
+		for i in range(1, points.size()):
+			var length := points[i - 1].distance_to(points[i])
+			lengths.append(length)
+			total += length
+		var wanted := total * clampf(progress, 0.0, 1.0)
+		for i in lengths.size():
+			if wanted <= lengths[i]:
+				return points[i].lerp(points[i + 1], wanted / maxf(lengths[i], 0.001))
+			wanted -= lengths[i]
+		return points[points.size() - 1]
+
+	func _draw_confirmation(points: PackedVector2Array, colour: Color) -> void:
+		var duration := 0.24 if Prefs.reduced_motion else 0.72
+		var progress := clampf(feedback_elapsed / duration, 0.0, 1.0)
+		var fade := 1.0 - progress
+		# The plug boots briefly catch light as they seat. In reduced-motion mode
+		# this static acknowledgement is the complete effect.
+		for endpoint in [points[0], points[points.size() - 1]]:
+			draw_circle(endpoint, 5.0 + progress * 5.0, Color(colour, fade * 0.34))
+			draw_circle(endpoint, 5.0 + progress * 5.0, Color(colour, fade * 0.85), false, 1.4)
+		if not Prefs.reduced_motion:
+			var travel := clampf((progress - 0.08) / 0.78, 0.0, 1.0)
+			var glint := _point_on_path(points, travel)
+			draw_circle(glint, 6.0, Color(colour, fade * 0.18))
+			draw_circle(glint, 2.3, colour.lightened(0.45))
+
 	func _draw() -> void:
 		var positions := _port_positions()
 		var drawn := 0
 		if rack:
 			for link: Net.Link in Game.links:
 				if link != suppressed_link and positions.has(link.a) and positions.has(link.b):
-					_draw_lead(positions[link.a], positions[link.b],
-						CABLE_COLOURS[drawn % CABLE_COLOURS.size()], false, drawn % 3)
+					var colour: Color = CABLE_COLOURS[drawn % CABLE_COLOURS.size()]
+					var points := _dressed_points(positions[link.a], positions[link.b], drawn % 3)
+					_draw_lead(positions[link.a], positions[link.b], colour, false, drawn % 3)
+					if feedback_elapsed >= 0.0 and ((link.a == feedback_a and link.b == feedback_b) \
+							or (link.a == feedback_b and link.b == feedback_a)):
+						_draw_confirmation(points, colour)
 					drawn += 1
 		if active:
 			var a := from - global_position
