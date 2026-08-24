@@ -622,6 +622,7 @@ class RackSlot extends Control:
 	signal cable_started(iface: Net.Iface, screen_pos: Vector2)
 	signal cable_moved(screen_pos: Vector2)
 	signal cable_released(screen_pos: Vector2)
+	signal blanking_toggled(slot: int)
 	var u_num := 0
 	var upper_half := false  # the second unit of a 2U box, drawn as its top
 	var dev: Net.NDevice
@@ -629,11 +630,13 @@ class RackSlot extends Control:
 	var hovered := false
 	var _mono: SystemFont
 	var _drag_iface: Net.Iface
+	var blanked := false
 
-	func setup(u: int, d: Net.NDevice, cb: Callable) -> RackSlot:
+	func setup(u: int, d: Net.NDevice, cb: Callable, is_blanked := false) -> RackSlot:
 		u_num = u
 		dev = d
 		on_click = cb
+		blanked = is_blanked
 		custom_minimum_size = Vector2(520, 46)
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		_mono = UIW.mono_font()
@@ -642,7 +645,8 @@ class RackSlot extends Control:
 			if Game.config_dirty(d):
 				tooltip_text += "   (unsaved configuration)"
 		else:
-			tooltip_text = "Empty slot: install hardware"
+			tooltip_text = ("Blanking panel fitted · right-click to remove · left-click to install hardware"
+				if blanked else "Open rack gap · right-click to fit a blanking panel · left-click to install hardware")
 		return self
 
 	func _notification(what: int) -> void:
@@ -654,7 +658,11 @@ class RackSlot extends Control:
 			queue_redraw()
 
 	func _gui_input(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT \
+				and e.pressed and dev == null:
+			blanking_toggled.emit(u_num - 1)
+			accept_event()
+		elif e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 			if e.pressed:
 				var port := port_at(e.position)
 				var link := Game.link_at(port) if port else null
@@ -751,10 +759,26 @@ class RackSlot extends Control:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
 		var inner := Rect2(RAIL + 2, 3, w - RAIL * 2 - 4, h - 6)
 		if dev == null:
-			# empty recess
-			draw_rect(inner, UIW.colour("console"))
-			draw_rect(inner, UIW.colour("border"), false, 1.0)
-			if hovered:
+			if blanked:
+				# A fitted steel blank: shallow ribs, corner screws and a clean
+				# continuous face make the before/after obvious at rack scale.
+				var panel := Color("3a4650")
+				if hovered:
+					panel = panel.lightened(0.08)
+				draw_rect(inner, panel)
+				draw_rect(inner, Color("71808b"), false, 1.0)
+				for rib in 4:
+					var ry := inner.position.y + 8.0 + rib * 7.0
+					draw_line(Vector2(inner.position.x + 16, ry), Vector2(inner.end.x - 16, ry),
+						Color(0.10, 0.14, 0.17, 0.56), 1.0)
+				for screw in [inner.position + Vector2(8, 7), Vector2(inner.end.x - 8, inner.position.y + 7),
+					Vector2(inner.position.x + 8, inner.end.y - 7), inner.end - Vector2(8, 7)]:
+					draw_circle(screw, 1.8, Color("aab4ba"))
+			else:
+				# empty recess
+				draw_rect(inner, UIW.colour("console"))
+				draw_rect(inner, UIW.colour("border"), false, 1.0)
+			if hovered and not blanked:
 				draw_string(_mono, inner.position + Vector2(inner.size.x / 2.0 - 60, inner.size.y / 2.0 + 4),
 					"+ INSTALL HARDWARE", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("accent"))
 			return

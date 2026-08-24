@@ -490,7 +490,31 @@ func rack_heat(r: Net.Rack) -> int:
 		var off: Vector2i = other.tile - r.tile
 		if absi(off.x) <= 1 and absi(off.y) <= 1:
 			neighbours += 1
-	return int(round(float(rack_watts(r)) * (1.0 + CROWDING_PENALTY * neighbours)))
+	var recirculation := 1.0 - rack_airflow_seal(r) * 0.08
+	return int(round(float(rack_watts(r)) * (1.0 + CROWDING_PENALTY * neighbours) * recirculation))
+
+func rack_airflow_seal(r: Net.Rack) -> float:
+	## Blanks stop exhaust returning through unused U spaces. The reward is
+	## intentionally small and capped: layout and actual cooling still matter.
+	var gaps := 0
+	var sealed := 0
+	for idx in Net.Rack.SLOTS:
+		if r.slots[idx] == null and not r.covered.has(idx):
+			gaps += 1
+			if r.blanked.has(idx):
+				sealed += 1
+	return 0.0 if gaps == 0 else float(sealed) / float(gaps)
+
+func toggle_blanking(r: Net.Rack, idx: int) -> bool:
+	if not slot_free(r, idx):
+		return false
+	if r.blanked.has(idx):
+		r.blanked.erase(idx)
+	else:
+		r.blanked[idx] = true
+	Sfx.play("cable")
+	topology_changed.emit()
+	return true
 
 func rack_cooling(r: Net.Rack) -> int:
 	## cold air does not teleport: a unit on the far side of the room is worth
@@ -2867,8 +2891,10 @@ func install_device(rack: Net.Rack, idx: int, dev: Net.NDevice) -> bool:
 	if not can_install(rack, idx, dev.model):
 		return false
 	rack.slots[idx] = dev
+	rack.blanked.erase(idx)
 	for k in range(1, model_height(dev.model)):
 		rack.covered[idx + k] = dev
+		rack.blanked.erase(idx + k)
 	topology_changed.emit()
 	return true
 
@@ -3120,7 +3146,8 @@ func _serialize() -> Dictionary:
 			slot_names.append(d.name if d else null)
 			if d:
 				devs[d.name] = _ser_device(d)
-		rack_data.append({"name": r.name, "site": r.site, "tile": [r.tile.x, r.tile.y], "slots": slot_names})
+		rack_data.append({"name": r.name, "site": r.site, "tile": [r.tile.x, r.tile.y],
+			"slots": slot_names, "blanked": r.blanked.keys()})
 	var link_data: Array = []
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
@@ -3568,9 +3595,17 @@ func _apply(data: Dictionary) -> void:
 	for rd in data["racks"]:
 		var r := Net.Rack.new(rd["name"], Vector2i(int(rd["tile"][0]), int(rd["tile"][1])))
 		r.site = int(rd.get("site", 0))
+		for blanked_slot in rd.get("blanked", []):
+			r.blanked[int(blanked_slot)] = true
 		for si in rd["slots"].size():
 			if rd["slots"][si] != null:
-				r.slots[si] = by_name[rd["slots"][si]]
+				var loaded_dev: Net.NDevice = by_name[rd["slots"][si]]
+				r.slots[si] = loaded_dev
+				r.blanked.erase(si)
+				for covered_i in range(1, model_height(loaded_dev.model)):
+					if si + covered_i < Net.Rack.SLOTS:
+						r.covered[si + covered_i] = loaded_dev
+						r.blanked.erase(si + covered_i)
 		racks.append(r)
 	for ld in data["links"]:
 		var a := _find_iface(by_name[ld[0]], ld[1])

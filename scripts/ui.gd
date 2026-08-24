@@ -14,6 +14,7 @@ var rack_overlay: Control
 var rack_title: Label
 var slot_box: VBoxContainer
 var rack_metric_values := {}
+var rack_airflow_lbl: Label
 var rack_cable_layer: UIW.CablePull
 var rack_cable_from: Net.Iface
 var rack_cable_old_link: Net.Link
@@ -571,6 +572,9 @@ func _build_rack_overlay() -> void:
 	rack_metrics.add_child(_rack_metric("CABINET LOAD", "units", "accent"))
 	rack_metrics.add_child(_rack_metric("POWER", "power", "warm"))
 	rack_metrics.add_child(_rack_metric("FEED BALANCE", "feeds", "success"))
+	rack_airflow_lbl = _label("", 11, UIW.colour("success"))
+	rack_airflow_lbl.add_theme_font_override("font", mono)
+	v.add_child(rack_airflow_lbl)
 	var info_row := HBoxContainer.new()
 	v.add_child(info_row)
 	var info := _label("Click hardware to inspect. Grab any free jack and pull it to another device.", 13, MUTED)
@@ -660,6 +664,17 @@ func _refresh_slots() -> void:
 		"%d W  ·  ~$%d/CYCLE" % [rack_watts, int(round(float(rack_watts) *
 			Game.efficiency_factor() * Game.energy_rate()))])
 	(rack_metric_values["feeds"] as Label).text = "A %02d  /  B %02d  /  DUAL %02d" % [feed_a, feed_b, dual]
+	var gaps := 0
+	var blanks := 0
+	for slot_i in Net.Rack.SLOTS:
+		if cur_rack.slots[slot_i] == null and not cur_rack.covered.has(slot_i):
+			gaps += 1
+			if cur_rack.blanked.has(slot_i):
+				blanks += 1
+	var airflow_gain := int(round(Game.rack_airflow_seal(cur_rack) * 8.0))
+	rack_airflow_lbl.text = "AIRFLOW SEAL  %02d / %02d UNUSED U  ·  %d%% LESS RECIRCULATION" \
+		% [blanks, gaps, airflow_gain]
+	rack_airflow_lbl.modulate = UIW.colour("success") if gaps > 0 and blanks == gaps else UIW.colour("muted")
 	for i in range(Net.Rack.SLOTS - 1, -1, -1):  # top of rack first
 		var dev: Net.NDevice = cur_rack.slots[i]
 		var slot := UIW.RackSlot.new()
@@ -672,12 +687,20 @@ func _refresh_slots() -> void:
 			slot.upper_half = true
 		else:
 			var idx := i
-			slot.setup(i + 1, null, func() -> void: _pick_new_device(idx, slot))
+			slot.setup(i + 1, null, func() -> void: _pick_new_device(idx, slot), cur_rack.blanked.has(i))
 		slot.cable_started.connect(_rack_cable_start)
 		slot.cable_moved.connect(_rack_cable_move)
 		slot.cable_released.connect(_rack_cable_release)
+		slot.blanking_toggled.connect(_toggle_rack_blanking)
 		slot_box.add_child(slot)
 	rack_cable_layer.watch(cur_rack, slot_box)
+
+func _toggle_rack_blanking(slot: int) -> void:
+	if Game.toggle_blanking(cur_rack, slot):
+		var fitted := cur_rack.blanked.has(slot)
+		hud_toast(("Blanking panel fitted at U%d. Hot-air recirculation reduced." if fitted \
+			else "Blanking panel removed from U%d.") % (slot + 1), fitted)
+		_refresh_slots()
 
 func _rack_cable_start(iface: Net.Iface, screen_pos: Vector2) -> void:
 	rack_cable_old_link = Game.link_at(iface)

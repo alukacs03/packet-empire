@@ -106,6 +106,11 @@ func _shoot_all() -> void:
 		["rack", func() -> void:
 			ui.welcome_overlay.visible = false
 			ui.open_rack(r)],
+		["rack_tidy", func() -> void:
+			for slot_i in Net.Rack.SLOTS:
+				if Game.slot_free(r, slot_i):
+					r.blanked[slot_i] = true
+			ui._refresh_slots()],
 		["device", func() -> void: ui.open_dev(sw)],
 		["device_packet", func() -> void: ui.close_dev(); ui.open_dev(packet_sw)],
 		["console", func() -> void:

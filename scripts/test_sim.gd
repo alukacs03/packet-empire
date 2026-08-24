@@ -443,12 +443,14 @@ static func run() -> int:
 	check(ls.exec("ip route").contains("default via 10.1.0.254"), "Linux: ip route shows default")
 
 	# --- save / load roundtrip ---
+	Game.racks[0].blanked[6] = true
 	Game.save_game()
 	var money_before := Game.money
 	Game.money = 1
 	check(Game.load_game(), "save: load_game returns true")
 	check(Game.money == money_before, "save: money restored")
 	check(Game.all_devices().size() == 6 and Game.links.size() == 5, "save: devices and links restored")
+	check(Game.racks[0].blanked.has(6), "save: fitted rack blanking panels restored")
 	var sw_l: Net.NDevice = null
 	for d in Game.all_devices():
 		if d.name == sw.name:
@@ -637,6 +639,30 @@ static func run() -> int:
 	# --- stages & power ---
 	check(Game.grid_size() == Vector2i(3, 3), "stage: colo corner is 3x3")
 	check(Game.power_draw() > 0, "stage: hardware draws watts")
+	var tidy_rack := Net.Rack.new("TIDY", Vector2i.ZERO)
+	tidy_rack.slots[0] = Game.new_device("srv-1")
+	var open_rack_heat := Game.rack_heat(tidy_rack)
+	for blank_slot in range(1, Net.Rack.SLOTS):
+		check(Game.toggle_blanking(tidy_rack, blank_slot),
+			"blanking: an empty U%d accepts a fitted panel" % (blank_slot + 1))
+	check(is_equal_approx(Game.rack_airflow_seal(tidy_rack), 1.0) \
+		and Game.rack_heat(tidy_rack) < open_rack_heat,
+		"blanking: sealing every open U gives the rack a visible, capped airflow benefit")
+	var blanked_install := Game.new_device("srv-1")
+	check(Game.install_device(tidy_rack, 1, blanked_install) and not tidy_rack.blanked.has(1),
+		"blanking: installing hardware automatically removes the panel from that U")
+	var persist_rack: Net.Rack = Game.racks[0]
+	var persisted_gap := -1
+	for gap_i in Net.Rack.SLOTS:
+		if Game.slot_free(persist_rack, gap_i):
+			persisted_gap = gap_i
+			break
+	if persisted_gap >= 0:
+		persist_rack.blanked[persisted_gap] = true
+		var rack_payload: Dictionary = Game._serialize()["racks"][0]
+		check(persisted_gap in rack_payload.get("blanked", []),
+			"blanking: fitted panels are included in the save payload")
+		persist_rack.blanked.erase(persisted_gap)
 	var m3 := Game.money
 	check(Game.expand(), "stage: expansion purchasable")
 	check(Game.money == m3 - 5000 and Game.grid_size() == Vector2i(7, 7), "stage: server room paid and unlocked")

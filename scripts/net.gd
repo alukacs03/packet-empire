@@ -118,6 +118,7 @@ class Rack:
 	## one slot and takes the one above it, so iterating slots still sees each
 	## device exactly once.
 	var covered := {}
+	var blanked := {}  # empty slot index -> true; fitted airflow blanking panels
 	var visual: Node2D
 	func _init(n: String, t: Vector2i) -> void:
 		name = n
