@@ -95,6 +95,13 @@ var clock_lbl: Label
 var expand_btn: Button
 var site_btn: Button
 var speed_btns := {}
+var hud_logo: Label
+var hud_nav_row: HBoxContainer
+var hud_status_row: HBoxContainer
+var hud_alert_btn: Button
+var hud_learn_btn: Button
+var hud_shortcut_hint: Label
+var hud_compact := false
 var hud_msg: Label
 var hud_msg_tween: Tween
 var theme_res: Theme
@@ -125,7 +132,9 @@ func _ready() -> void:
 	Game.money_changed.connect(_refresh_money)
 	Game.speed_changed.connect(_refresh_speed)
 	Game.money_changed.connect(_money_flash)
+	get_viewport().size_changed.connect(_refresh_hud_layout)
 	_refresh_money()
+	_refresh_hud_layout()
 
 func _money_flash() -> void:
 	Sfx.play("money")
@@ -136,19 +145,56 @@ func _refresh_attention() -> void:
 	if contracts_btn == null:
 		return
 	var n := Game.offers.size()
+	var urgent := ""
 	for deal in Game.deals:
 		if not deal["healthy"]:
 			n += 1
+			if urgent == "":
+				urgent = "%s is down" % deal["customer"]
 	for cid in Game.sla_status:
 		if not Game.sla_status[cid] and not Contracts.retired(cid):
 			n += 1
+			urgent = "SLA breach: %s" % cid
 	n += Game.unread_events
 	if n > 0:
-		contracts_btn.text = "Company (%d!)" % n
+		contracts_btn.text = ("Co. (%d)" if hud_compact else "Company (%d!)") % n
 		contracts_btn.modulate = Color(1.15, 0.95, 0.7)
 	else:
-		contracts_btn.text = "Company"
+		contracts_btn.text = "Co." if hud_compact else "Company"
 		contracts_btn.modulate = Color.WHITE
+	if hud_alert_btn:
+		hud_alert_btn.visible = n > 0
+		if n > 0:
+			if urgent != "":
+				hud_alert_btn.text = "! " + urgent
+			elif Game.unread_events > 0:
+				hud_alert_btn.text = "! %d new event%s" % [Game.unread_events,
+					"" if Game.unread_events == 1 else "s"]
+			elif Game.offers.size() > 0:
+				hud_alert_btn.text = "! %d offer%s waiting" % [Game.offers.size(),
+					"" if Game.offers.size() == 1 else "s"]
+			else:
+				hud_alert_btn.text = "! %d item%s need attention" % [n, "" if n == 1 else "s"]
+			hud_alert_btn.tooltip_text = "Open Company to act on the highest-priority item."
+
+func _refresh_hud_layout(width_override := -1.0) -> void:
+	if hud_nav_row == null:
+		return
+	var width: float = width_override if width_override >= 0.0 \
+		else get_viewport().get_visible_rect().size.x
+	hud_compact = width < 1180.0
+	hud_logo.visible = not hud_compact
+	hud_learn_btn.text = "?" if hud_compact else "LEARN"
+	mode_btns[0].text = "Q" if hud_compact else "CURSOR"
+	mode_btns[0].tooltip_text = "Select mode (Q)"
+	mode_btns[1].text = "R" if hud_compact else "＋ BUILD"
+	mode_btns[1].tooltip_text = "Place a rack (R)"
+	objective_lbl.custom_minimum_size.x = 150 if hud_compact else 260
+	clock_lbl.visible = not hud_compact
+	site_btn.custom_minimum_size.x = 80 if hud_compact else 120
+	hud_shortcut_hint.visible = false
+	_refresh_attention()
+	_refresh_money()
 
 func hud_toast(text: String, good := false) -> void:
 	## a short message on the HUD, for actions that would otherwise fail silently
@@ -185,8 +231,8 @@ func _refresh_money() -> void:
 				next_c = c["title"]
 				break
 		if next_c != "":
-			objective_lbl.text = ("%s  ▸ %s" % [Demo.progress_text(), next_c]) if Demo.active() \
-				else "▸ " + next_c
+			objective_lbl.text = ("%s  ·  NEXT  %s" % [Demo.progress_text(), next_c]) if Demo.active() \
+				else "NEXT  " + next_c
 		else:
 			var nr := Game.next_rank()
 			objective_lbl.text = "★ %s" % Game.rank() if nr.is_empty() \
@@ -217,7 +263,7 @@ func _refresh_money() -> void:
 		expand_btn.visible = false  # acquired floors come as they are
 	elif Game.stage < Game.STAGES.size() - 1:
 		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
-		expand_btn.text = "Expand ($%d)" % int(nxt["price"])
+		expand_btn.text = ("+$%d" if hud_compact else "Expand ($%d)") % int(nxt["price"])
 		expand_btn.tooltip_text = nxt["blurb"]
 		expand_btn.visible = true
 	else:
@@ -307,17 +353,22 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	parent.add_child(center)
-	var panel := PanelContainer.new()
-	UIW.style_panel(panel, "overlay", "lg")
+	var panel := UIW.CommandPanel.new().setup("overlay", "accent", UIW.space("lg"))
 	center.add_child(panel)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(min_w, 0)
+	scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("md"))
 	panel.add_child(scroll)
 	_card_scrolls.append(scroll)
+	var content_margin := MarginContainer.new()
+	content_margin.add_theme_constant_override("margin_right", UIW.space("lg"))
+	content_margin.add_theme_constant_override("margin_bottom", UIW.space("sm"))
+	content_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content_margin)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 10)
+	v.add_theme_constant_override("separation", UIW.space("lg"))
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(v)
+	content_margin.add_child(v)
 	return v
 
 func _scroll_to_bottom() -> void:
@@ -335,26 +386,21 @@ func _fit_cards() -> void:
 		var content: Control = scroll.get_child(0)
 		var need := content.get_combined_minimum_size()
 		scroll.custom_minimum_size = Vector2(
-			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 120.0),
-			minf(need.y, vp.y - 160.0))
+			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 160.0),
+			minf(need.y, vp.y - 190.0))
 
 func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 10)
 	box.add_child(h)
-	var tick := ColorRect.new()
-	tick.color = ACCENT
-	tick.custom_minimum_size = Vector2(4, 24)
-	tick.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	h.add_child(tick)
 	var title := _label("", 20, Color.WHITE)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(title)
 	var back := Button.new()
-	back.text = "  Back (Esc)  "
+	back.text = "ESC  CLOSE"
+	UIW.style_button(back, "quiet")
 	back.pressed.connect(on_back)
 	h.add_child(back)
-	box.add_child(HSeparator.new())
 	return title
 
 func _menu(at: Control, items: Array, on_pick: Callable) -> void:
@@ -380,25 +426,29 @@ func _build_toolbar() -> void:
 	sb.content_margin_right = 20
 	bar.add_theme_stylebox_override("panel", sb)
 	add_child(bar)
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 10)
-	bar.add_child(h)
-	var logo := _label("▦  PACKET EMPIRE", 17, ACCENT)
-	logo.add_theme_font_override("font", mono)
-	h.add_child(logo)
+	var hud_stack := VBoxContainer.new()
+	hud_stack.add_theme_constant_override("separation", UIW.space("xs"))
+	bar.add_child(hud_stack)
+	hud_nav_row = HBoxContainer.new()
+	hud_nav_row.add_theme_constant_override("separation", UIW.space("sm"))
+	hud_stack.add_child(hud_nav_row)
+	var h := hud_nav_row
+	hud_logo = _label("PE  /  CONTROL ROOM", 15, ACCENT)
+	hud_logo.add_theme_font_override("font", mono)
+	h.add_child(hud_logo)
 	h.add_child(VSeparator.new())
-	for m in [["Select", 0], ["+ Rack", 1]]:
+	for m in [["CURSOR", 0], ["＋ BUILD", 1]]:
 		var b := Button.new()
 		b.text = m[0]
 		b.toggle_mode = true
 		b.pressed.connect(func() -> void: get_parent().mode = m[1])
 		h.add_child(b)
 		mode_btns[m[1]] = b
-	var learnb := Button.new()
-	learnb.text = "Learn"
-	learnb.tooltip_text = "Networkopedia: every concept the game teaches"
-	learnb.pressed.connect(open_pedia)
-	h.add_child(learnb)
+	hud_learn_btn = Button.new()
+	hud_learn_btn.text = "LEARN"
+	hud_learn_btn.tooltip_text = "Networkopedia: every concept the game teaches"
+	hud_learn_btn.pressed.connect(open_pedia)
+	h.add_child(hud_learn_btn)
 	site_btn = Button.new()
 	site_btn.tooltip_text = "Switch between the floors you operate"
 	site_btn.custom_minimum_size = Vector2(120, 0)
@@ -412,12 +462,12 @@ func _build_toolbar() -> void:
 			_refresh_money()))
 	h.add_child(site_btn)
 	var opsb := Button.new()
-	opsb.text = "Ops"
+	opsb.text = "OPS"
 	opsb.tooltip_text = "Operations dashboard (O)"
 	opsb.pressed.connect(toggle_ops)
 	h.add_child(opsb)
 	var mapb := Button.new()
-	mapb.text = "Map"
+	mapb.text = "MAP"
 	mapb.tooltip_text = "Logical topology (M)"
 	mapb.pressed.connect(toggle_map)
 	h.add_child(mapb)
@@ -432,14 +482,31 @@ func _build_toolbar() -> void:
 		if Game.expand():
 			_refresh_money())
 	h.add_child(expand_btn)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(spacer)
+	var nav_spacer := Control.new()
+	nav_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(nav_spacer)
+	var save_btn := Button.new()
+	save_btn.text = "💾"
+	save_btn.tooltip_text = "Save the game"
+	save_btn.pressed.connect(func() -> void: Game.save_game())
+	h.add_child(save_btn)
+	hud_status_row = HBoxContainer.new()
+	hud_status_row.add_theme_constant_override("separation", UIW.space("sm"))
+	hud_stack.add_child(hud_status_row)
+	h = hud_status_row
 	objective_lbl = _label("", 12, Color(0.65, 0.8, 0.9))
-	objective_lbl.custom_minimum_size = Vector2(210, 0)
+	objective_lbl.custom_minimum_size = Vector2(260, 0)
 	objective_lbl.clip_text = true
 	objective_lbl.tooltip_text = "Current campaign objective: details in Contracts"
 	h.add_child(objective_lbl)
+	hud_alert_btn = Button.new()
+	hud_alert_btn.visible = false
+	UIW.style_button(hud_alert_btn, "danger")
+	hud_alert_btn.pressed.connect(open_contracts)
+	h.add_child(hud_alert_btn)
+	var status_spacer := Control.new()
+	status_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(status_spacer)
 	clock_lbl = _label("", 11, Color(0.55, 0.65, 0.78))
 	clock_lbl.custom_minimum_size = Vector2(120, 0)
 	clock_lbl.clip_text = true
@@ -460,18 +527,12 @@ func _build_toolbar() -> void:
 	money_lbl = _label("", 15, Color(0.55, 0.95, 0.6))
 	money_lbl.add_theme_font_override("font", mono)
 	h.add_child(money_lbl)
-	var save_btn := Button.new()
-	save_btn.text = "💾"
-	save_btn.tooltip_text = "Save the game"
-	save_btn.pressed.connect(func() -> void: Game.save_game())
-	h.add_child(save_btn)
 	update_mode(0)
-	var hint := _label("Q select   ·   R place rack   ·   right-drag pan   ·   scroll zoom   ·   Esc back", 12, Color(0.45, 0.5, 0.62))
-	hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	hint.position = Vector2(20, -30)
-	hint.text = "Space pause  ·  Q select  ·  R place rack  ·  F find  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom"
-	hint.theme = theme_res
-	add_child(hint)
+	hud_shortcut_hint = _label("Space pause  ·  Q select  ·  R place rack  ·  F find  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom", 12, Color(0.45, 0.5, 0.62))
+	hud_shortcut_hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	hud_shortcut_hint.position = Vector2(20, -30)
+	hud_shortcut_hint.theme = theme_res
+	add_child(hud_shortcut_hint)
 
 func update_mode(m: int) -> void:
 	for k in mode_btns:
@@ -1982,15 +2043,14 @@ func toggle_map() -> void:
 # ---------- tutorial checklist ----------
 
 func _build_tutorial() -> void:
-	tutorial_panel = PanelContainer.new()
+	tutorial_panel = UIW.CommandPanel.new().setup("console", "warm", UIW.space("lg"))
 	tutorial_panel.theme = theme_res
 	tutorial_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	tutorial_panel.position = Vector2(-340, 70)
-	tutorial_panel.custom_minimum_size = Vector2(320, 0)
-	tutorial_panel.add_theme_stylebox_override("panel", _sb(Color(0.07, 0.09, 0.12, 0.94), ACCENT * Color(1, 1, 1, 0.5), 8, 12))
+	tutorial_panel.position = Vector2(-380, 112)
+	tutorial_panel.custom_minimum_size = Vector2(356, 0)
 	add_child(tutorial_panel)
 	tutorial_box = VBoxContainer.new()
-	tutorial_box.add_theme_constant_override("separation", 5)
+	tutorial_box.add_theme_constant_override("separation", UIW.space("sm"))
 	tutorial_panel.add_child(tutorial_box)
 	_refresh_tutorial()
 
@@ -2071,8 +2131,16 @@ func _refresh_tutorial() -> void:
 		tutorial_box.add_child(l)
 
 func _tutorial_head(text: String) -> Control:
+	var shell := VBoxContainer.new()
+	shell.add_theme_constant_override("separation", 5)
+	var eyebrow := _label("LIVE BRIEF  /  NEXT OBJECTIVE", 10, UIW.colour("warm"))
+	eyebrow.add_theme_font_override("font", mono)
+	shell.add_child(eyebrow)
 	var h := HBoxContainer.new()
+	shell.add_child(h)
 	var sec := _section(text)
+	sec.add_theme_font_size_override("font_size", 14)
+	sec.add_theme_color_override("font_color", UIW.colour("text_strong"))
 	sec.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(sec)
 	var x := Button.new()
@@ -2083,7 +2151,7 @@ func _tutorial_head(text: String) -> Control:
 		tutorial_hidden = true
 		_refresh_tutorial())
 	h.add_child(x)
-	return h
+	return shell
 
 # ---------- welcome ----------
 

@@ -22,6 +22,7 @@ func _ready() -> void:
 	_mono = UIW.mono_font()
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.theme = UIW.make_theme()
 	add_child(root)
 	root.add_child(TitleBackdrop.new())
 
@@ -47,27 +48,30 @@ func _ready() -> void:
 	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(spacer_top)
 	left.add_child(_wordmark())
-	left.add_child(_lbl("A datacenter you actually have to make work.", 17, MUTED))
+	var eyebrow := _lbl("NETWORK OPERATIONS TYCOON", 12, UIW.colour("warm"))
+	eyebrow.add_theme_font_override("font", _mono)
+	left.add_child(eyebrow)
+	left.add_child(_lbl("Build the network. Win the contract. Survive the traffic.", 18, UIW.colour("text")))
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 26)
 	left.add_child(gap)
 
 	menu_box = VBoxContainer.new()
-	menu_box.add_theme_constant_override("separation", 8)
+	menu_box.add_theme_constant_override("separation", 12)
+	menu_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	left.add_child(menu_box)
 	var spacer_bot := Control.new()
 	spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(spacer_bot)
 	left.add_child(_lbl("Real switches, real routing, real consequences.", 12,
-		Color(0.4, 0.45, 0.55)))
+		UIW.colour("muted")))
 
-	var right := PanelContainer.new()
-	right.custom_minimum_size = Vector2(430, 0)
-	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	UIW.style_panel(right, "overlay", "lg")
+	var right := UIW.CommandPanel.new().setup("overlay", "warm", 28)
+	right.custom_minimum_size = Vector2(390, 520)
+	right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	cols.add_child(right)
 	var rv := VBoxContainer.new()
-	rv.add_theme_constant_override("separation", 12)
+	rv.add_theme_constant_override("separation", 18)
 	right.add_child(rv)
 	pane_title = _lbl("", 20, ACCENT)
 	rv.add_child(pane_title)
@@ -76,11 +80,10 @@ func _ready() -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	rv.add_child(scroll)
 	panel_box = VBoxContainer.new()
-	panel_box.add_theme_constant_override("separation", 10)
+	panel_box.add_theme_constant_override("separation", 14)
 	panel_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(panel_box)
-	rv.add_child(_lbl("Built with Claude Code.  Escape backs out of any pane.", 11,
-		Color(0.38, 0.43, 0.52)))
+	rv.add_child(_lbl("ESC returns to this briefing.", 11, UIW.colour("muted")))
 
 	_build_menu()
 	show_intro()
@@ -88,15 +91,15 @@ func _ready() -> void:
 func _wordmark() -> Control:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 0)
-	var a := _lbl("PACKET ", 58, Color(0.93, 0.96, 1.0))
-	a.add_theme_font_override("font", _mono)
+	var a := _lbl("PACKET ", 58, UIW.colour("text_strong"))
+	a.add_theme_font_override("font", UIW.sans_font())
 	h.add_child(a)
-	var b := _lbl("EMPIRE", 58, ACCENT)
-	b.add_theme_font_override("font", _mono)
+	var b := _lbl("EMPIRE", 58, UIW.colour("warm"))
+	b.add_theme_font_override("font", UIW.sans_font())
 	h.add_child(b)
 	return h
 
-func _lbl(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
+func _lbl(text: String, size := 15, color := UIW.COLORS["text"]) -> Label:
 	var l := UIW.make_text(text)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
@@ -106,13 +109,9 @@ func _sb(bg: Color, border: Color, radius := 6, margin := 8) -> StyleBoxFlat:
 	return UIW.custom_box(bg, border, radius, margin)
 
 func _menu_button(text: String, sub: String, primary: bool) -> Button:
-	var b := Button.new()
-	b.text = "  %s" % text
-	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.custom_minimum_size = Vector2(320, 44 if sub == "" else 52)
+	var mark := "%02d" % (menu_box.get_child_count() + 1)
+	var b := UIW.ActionButton.new().setup(text, sub, primary, mark)
 	b.tooltip_text = sub
-	b.add_theme_font_size_override("font_size", 18 if primary else 16)
-	UIW.style_button(b, "primary" if primary else "quiet")
 	b.pressed.connect(func() -> void: Sfx.play("click"))
 	return b
 
@@ -200,8 +199,6 @@ func show_new_game(is_demo: bool) -> void:
 	panel_box.add_child(_lbl("Company name", 13, MUTED))
 	var name_in := LineEdit.new()
 	name_in.text = "Packet Empire"
-	name_in.add_theme_stylebox_override("normal",
-		_sb(Color(0.05, 0.06, 0.08), Color(0.25, 0.3, 0.38), 6, 8))
 	panel_box.add_child(name_in)
 
 	var diff := 1
@@ -228,8 +225,7 @@ func show_new_game(is_demo: bool) -> void:
 	var go := Button.new()
 	go.text = "Start" if not is_demo else "Start the demo"
 	go.custom_minimum_size = Vector2(0, 40)
-	go.add_theme_stylebox_override("normal", _sb(Color(0.14, 0.28, 0.32), ACCENT, 8, 10))
-	go.add_theme_stylebox_override("hover", _sb(Color(0.18, 0.34, 0.39), ACCENT, 8, 10))
+	UIW.style_button(go, "primary")
 	go.pressed.connect(func() -> void:
 		var slot := _free_slot()
 		start_requested.emit(slot, name_in.text.strip_edges(), 1 if is_demo else diff, is_demo))
@@ -302,8 +298,7 @@ func show_slots() -> void:
 func _slot_row(i: int) -> Control:
 	var info := Game.slot_info(i)
 	var pc := PanelContainer.new()
-	pc.add_theme_stylebox_override("panel",
-		_sb(Color(0.09, 0.10, 0.14, 0.9), Color(0.22, 0.26, 0.33), 8, 10))
+	UIW.style_panel(pc, "surface", "md")
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
@@ -317,7 +312,7 @@ func _slot_row(i: int) -> Control:
 		_money(int(info["money"])), "   demo" if info.get("demo", false) else ""],
 		12, MUTED))
 	if String(info.get("saved", "")) != "":
-		v.add_child(_lbl(String(info["saved"]), 11, Color(0.4, 0.45, 0.55)))
+		v.add_child(_lbl(String(info["saved"]), 11, UIW.colour("subtle")))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	v.add_child(row)

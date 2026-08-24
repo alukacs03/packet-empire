@@ -251,7 +251,10 @@ func play_trace(trace: Array) -> void:
 		queue_redraw()
 
 static func _tray(p0: Vector2, p1: Vector2, t: float) -> Vector2:
-	var mid := (p0 + p1) / 2.0 + Vector2(0, -36)
+	var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)
+	# Early installs sag between improvised rack runs; mature rooms route high,
+	# neat, and out of the technicians' way.
+	var mid := (p0 + p1) / 2.0 + Vector2(0, lerpf(-24.0, -64.0, progress))
 	return p0.lerp(mid, t).lerp(mid.lerp(p1, t), t)
 
 func _draw() -> void:
@@ -275,8 +278,10 @@ func _draw() -> void:
 			pts.append(_tray(p0 + perp, p1 + perp, i / 16.0))
 		draw_polyline(pts, Color(0, 0, 0, 0.25), 3.5)  # shadow line
 		var blocked := Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b)
+		var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)
+		var live_cable := Color("db7948").lerp(Color("54d8dc"), progress)
 		draw_polyline(pts, Color(0.55, 0.35, 0.3, 0.75) if blocked
-			else Color(1.0, 0.62, 0.2, 0.9), 2.0)
+			else Color(live_cable, 0.92), lerpf(2.6, 2.0, progress))
 		if not blocked:
 			_cable_flow(p0 + perp, p1 + perp, int(Game.last_link_load.get(l, 0)),
 				Game.link_capacity(l))

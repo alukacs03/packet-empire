@@ -12,7 +12,7 @@ const SPEED := 46.0  # world units per second
 const DWELL := Vector2(3.0, 9.0)  # seconds spent standing at a destination
 ## A rack is about two metres and stands 96 units tall on screen, so a person
 ## at roughly 1.75m lands a little under eighty.
-const HEIGHT := 78.0
+const HEIGHT := 84.0
 
 var people: Array = []  # Person nodes
 var _rng := RandomNumberGenerator.new()
@@ -21,9 +21,10 @@ class Person extends Node2D:
 	var target := Vector2.ZERO
 	var dwell := 0.0
 	var phase := 0.0
-	var kit := Color(0.35, 0.62, 0.75)
+	var kit := Color("39a6bc")
 	var idx := 0
 	var crew: Techs
+	var facing := 1.0
 
 	func _process(dt: float) -> void:
 		if dwell > 0.0:
@@ -35,7 +36,10 @@ class Person extends Node2D:
 				dwell = crew._rng.randf_range(DWELL.x, DWELL.y)
 				target = crew._work_spot(idx)
 			else:
-				position += (target - position).normalized() * step
+				var travel := (target - position).normalized()
+				if absf(travel.x) > 0.05:
+					facing = signf(travel.x)
+				position += travel * step
 			# sort against the cabinets by the tile underfoot, exactly as
 			# RackVisual does, so standing behind one puts you behind it
 			var t := Iso.world_to_tile(position)
@@ -53,17 +57,41 @@ class Person extends Node2D:
 			var a := TAU * k / 12.0
 			shadow.append(Vector2(cos(a) * 13.0, sin(a) * 6.5))
 		draw_colored_polygon(shadow, Color(0, 0, 0, 0.3))
-		var hip := Vector2(0, -HEIGHT * 0.42 + bob)
-		draw_line(hip, Vector2(-stride, 0), kit.darkened(0.4), 8.0)
-		draw_line(hip, Vector2(stride, 0), kit.darkened(0.4), 8.0)
-		draw_line(hip, Vector2(0, -HEIGHT * 0.79 + bob), kit, 13.0)
-		draw_circle(Vector2(0, -HEIGHT * 0.9 + bob), HEIGHT * 0.115,
-			Color(0.86, 0.78, 0.68))
+		var hip := Vector2(0, -HEIGHT * 0.39 + bob)
+		# Boots and separated legs preserve the walk cycle at tiny scale.
+		draw_line(hip + Vector2(-4, 0), Vector2(-stride - 4, -2), Color("26313a"), 8.0)
+		draw_line(hip + Vector2(4, 0), Vector2(stride + 4, 0), Color("1b2730"), 8.0)
+		draw_line(Vector2(-stride - 7, -1), Vector2(-stride + 1, -1), Color("13191e"), 5.0)
+		draw_line(Vector2(stride + 1, 1), Vector2(stride + 9, 1), Color("13191e"), 5.0)
+		# Jacket silhouette, shoulder seam, and a small utility pack make these
+		# people characters rather than animated measurement sticks.
+		var torso := PackedVector2Array([
+			Vector2(-10, -HEIGHT * 0.73 + bob), Vector2(8, -HEIGHT * 0.75 + bob),
+			Vector2(12, -HEIGHT * 0.43 + bob), Vector2(6, -HEIGHT * 0.36 + bob),
+			Vector2(-7, -HEIGHT * 0.37 + bob), Vector2(-12, -HEIGHT * 0.47 + bob),
+		])
+		draw_colored_polygon(torso, kit)
+		draw_line(Vector2(-8, -HEIGHT * 0.60 + bob), Vector2(9, -HEIGHT * 0.62 + bob), kit.lightened(0.26), 2.0)
+		draw_rect(Rect2(Vector2(-13 * facing, -HEIGHT * 0.67 + bob), Vector2(7 * facing, 19)), kit.darkened(0.38))
+		# Arms angle toward a laptop while working and swing gently while walking.
+		var hand_y := -HEIGHT * (0.48 if working else 0.43) + bob
+		draw_line(Vector2(-8, -HEIGHT * 0.68 + bob), Vector2(-14 - stride * 0.25, hand_y), kit.darkened(0.08), 6.0)
+		draw_line(Vector2(8, -HEIGHT * 0.68 + bob), Vector2(15 + stride * 0.25, hand_y), kit.darkened(0.08), 6.0)
+		var head := Vector2(2 * facing, -HEIGHT * 0.86 + bob)
+		draw_circle(head, HEIGHT * 0.11, Color("d7ab82"))
+		# Hair/hat alternates by crew member so contractors do not look cloned.
+		if idx % 2 == 0:
+			draw_arc(head + Vector2(-1 * facing, -2), HEIGHT * 0.10, PI, TAU, 10, Color("3a271d"), 5.0)
+		else:
+			draw_line(head + Vector2(-9, -5), head + Vector2(9, -5), kit.lightened(0.28), 5.0)
+		draw_circle(head + Vector2(7 * facing, 0), 1.5, Color("272229"))
 		if working:
 			# a laptop lid catching the light, so you can see where the work is
 			var glow := 0.45 + 0.25 * sin(clock * 3.0 + phase)
-			draw_line(Vector2(9, -HEIGHT * 0.5), Vector2(24, -HEIGHT * 0.58),
-				Color(0.5, 0.9, 1.0, glow), 3.0)
+			var laptop := Rect2(Vector2(10 * facing, -HEIGHT * 0.58), Vector2(17 * facing, 12))
+			draw_rect(laptop.abs(), Color("263743"))
+			draw_line(Vector2(11 * facing, -HEIGHT * 0.57), Vector2(25 * facing, -HEIGHT * 0.57),
+				Color(0.5, 0.9, 1.0, glow), 2.0)
 
 func _ready() -> void:
 	_rng.seed = 4242
@@ -89,8 +117,8 @@ func _resize_crew() -> void:
 		p.phase = _rng.randf() * TAU
 		var spawn_tile := Iso.world_to_tile(p.position)
 		p.z_index = spawn_tile.x + spawn_tile.y + 2
-		p.kit = Color(0.35, 0.62, 0.75) if people.size() % 2 == 0 \
-			else Color(0.75, 0.55, 0.3)
+		p.kit = Color("39a6bc") if people.size() % 2 == 0 \
+			else Color("d98b45")
 		add_child(p)
 		people.append(p)
 

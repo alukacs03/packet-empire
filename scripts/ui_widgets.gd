@@ -3,28 +3,29 @@ class_name UIW
 ## consume the named tokens and helpers here rather than copy colours/styles.
 
 const COLORS := {
-	"accent": Color(0.3, 0.75, 0.85),
-	"accent_soft": Color(0.16, 0.34, 0.40),
-	"backdrop": Color(0.02, 0.02, 0.04, 0.72),
-	"overlay": Color(0.07, 0.08, 0.11, 0.97),
-	"surface": Color(0.11, 0.13, 0.17),
-	"surface_raised": Color(0.15, 0.17, 0.22),
-	"surface_hover": Color(0.19, 0.22, 0.29),
-	"console": Color(0.04, 0.05, 0.07),
-	"border": Color(0.30, 0.34, 0.44),
-	"border_strong": Color(0.42, 0.50, 0.62),
-	"focus": Color(0.55, 0.90, 1.0),
-	"text": Color(0.85, 0.89, 0.95),
-	"text_strong": Color(0.96, 0.98, 1.0),
-	"muted": Color(0.55, 0.60, 0.70),
-	"subtle": Color(0.42, 0.48, 0.60),
-	"success": Color(0.50, 0.92, 0.62),
-	"warning": Color(1.0, 0.78, 0.42),
-	"danger": Color(0.98, 0.43, 0.38),
-	"info": Color(0.58, 0.78, 0.94),
+	"accent": Color("39d9d0"),
+	"accent_soft": Color("174c5c"),
+	"warm": Color("ffb45c"),
+	"backdrop": Color(0.025, 0.055, 0.10, 0.76),
+	"overlay": Color("13233b"),
+	"surface": Color("192b47"),
+	"surface_raised": Color("223957"),
+	"surface_hover": Color("2b4969"),
+	"console": Color("0b1728"),
+	"border": Color("395a76"),
+	"border_strong": Color("5683a0"),
+	"focus": Color("8ff8f0"),
+	"text": Color("d9e8f2"),
+	"text_strong": Color("fff7e8"),
+	"muted": Color("8da7ba"),
+	"subtle": Color("66869d"),
+	"success": Color("69e39a"),
+	"warning": Color("ffb45c"),
+	"danger": Color("ff6f68"),
+	"info": Color("71b7ef"),
 }
 
-const SPACING := {"xs": 4, "sm": 8, "md": 12, "lg": 20, "xl": 28}
+const SPACING := {"xs": 4, "sm": 8, "md": 16, "lg": 24, "xl": 36}
 const TYPE_SCALE := {"caption": 11, "small": 12, "body": 14, "body_large": 15,
 	"heading": 17, "title": 20, "display": 28}
 const RADII := {"sm": 4, "md": 7, "lg": 11}
@@ -48,6 +49,9 @@ static func custom_box(bg: Color, border: Color, corner := 7, padding := 8) -> S
 	style.set_border_width_all(1 if border.a > 0.0 else 0)
 	style.set_corner_radius_all(corner)
 	style.set_content_margin_all(padding)
+	style.shadow_color = Color(0.01, 0.03, 0.07, 0.42)
+	style.shadow_size = 5
+	style.shadow_offset = Vector2(0, 3)
 	return style
 
 static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
@@ -60,22 +64,27 @@ static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
 			edge = colour("border_strong")
 			rounding = radius("lg")
 		"hud":
-			bg = Color(0.05, 0.06, 0.10, 0.94)
-			edge = Color(colour("accent"), 0.45)
+			bg = Color(0.055, 0.105, 0.175, 0.97)
+			edge = Color(colour("accent"), 0.62)
 			rounding = 0
 		"console":
 			bg = colour("console")
 			edge = Color(colour("border_strong"), 0.8)
 		"positive":
-			bg = Color(0.10, 0.15, 0.13)
+			bg = Color("153b38")
 			edge = Color(colour("success"), 0.55)
 		"warning":
-			bg = Color(0.18, 0.14, 0.08)
+			bg = Color("44351e")
 			edge = Color(colour("warning"), 0.7)
 		"danger":
-			bg = Color(0.19, 0.09, 0.09)
+			bg = Color("47252d")
 			edge = Color(colour("danger"), 0.75)
-	return custom_box(bg, edge, rounding, space(padding))
+	var style := custom_box(bg, edge, rounding, space(padding))
+	# Cards use a clipped technical silhouette and a stronger leading rail.
+	style.corner_radius_top_right = 2
+	style.corner_radius_bottom_left = 2
+	style.border_width_left = 3
+	return style
 
 static func style_panel(panel: PanelContainer, variant := "surface", padding := "md") -> PanelContainer:
 	panel.add_theme_stylebox_override("panel", panel_box(variant, padding))
@@ -84,13 +93,13 @@ static func style_panel(panel: PanelContainer, variant := "surface", padding := 
 static func _button_palette(variant: String) -> Dictionary:
 	match variant:
 		"primary":
-			return {"base": Color(0.10, 0.28, 0.34), "edge": Color(colour("accent"), 0.85),
-				"text": Color(0.82, 0.97, 1.0)}
+			return {"base": Color("176775"), "edge": colour("accent"),
+				"text": colour("text_strong")}
 		"danger":
-			return {"base": Color(0.24, 0.10, 0.10), "edge": Color(colour("danger"), 0.8),
+			return {"base": Color("6a2932"), "edge": Color(colour("danger"), 0.9),
 				"text": Color(1.0, 0.82, 0.80)}
 		"quiet":
-			return {"base": Color(0.10, 0.11, 0.15, 0.65), "edge": Color(colour("border"), 0.65),
+			return {"base": Color(0.07, 0.13, 0.22, 0.80), "edge": Color(colour("border"), 0.85),
 				"text": colour("text")}
 	return {"base": colour("surface_raised"), "edge": colour("border"), "text": colour("text")}
 
@@ -146,6 +155,8 @@ static func make_chip(text: String, semantic := "info") -> PanelContainer:
 
 static func make_theme() -> Theme:
 	var theme := Theme.new()
+	theme.default_font = sans_font()
+	theme.default_font_size = type_size("body")
 	var prototype := Button.new()
 	style_button(prototype)
 	for cls in ["Button", "OptionButton"]:
@@ -163,24 +174,122 @@ static func make_theme() -> Theme:
 	theme.set_color("font_placeholder_color", "LineEdit", Color(colour("muted"), 0.7))
 	theme.set_stylebox("panel", "TooltipPanel", panel_box("overlay", "sm"))
 	theme.set_color("font_color", "TooltipLabel", colour("text_strong"))
+	var scroll_track := custom_box(Color(0.025, 0.055, 0.095, 0.72), Color.TRANSPARENT, 4, 0)
+	scroll_track.shadow_size = 0
+	var scroll_grab := custom_box(Color(colour("border_strong"), 0.72), Color.TRANSPARENT, 4, 0)
+	scroll_grab.shadow_size = 0
+	var scroll_hot := custom_box(colour("accent_soft"), Color(colour("accent"), 0.55), 4, 0)
+	scroll_hot.shadow_size = 0
+	for cls in ["VScrollBar", "HScrollBar"]:
+		theme.set_stylebox("scroll", cls, scroll_track)
+		theme.set_stylebox("scroll_focus", cls, scroll_track)
+		theme.set_stylebox("grabber", cls, scroll_grab)
+		theme.set_stylebox("grabber_highlight", cls, scroll_hot)
+		theme.set_stylebox("grabber_pressed", cls, scroll_hot)
 	# This prototype is never added to the scene tree, so queue_free() would
 	# leave it waiting forever and leak its theme resources at shutdown.
 	prototype.free()
 	return theme
 
+# =========================================================== CommandPanel ==
+
+class CommandPanel extends PanelContainer:
+	## A deliberately authored frame for primary screens. Chamfered geometry,
+	## a strong identity rail, and small technical details keep overlays from
+	## reading as stock engine dialogs while retaining normal container layout.
+	var variant := "overlay"
+	var accent := UIW.colour("accent")
+
+	func setup(v := "overlay", accent_token := "accent", padding := 24) -> CommandPanel:
+		variant = v
+		accent = UIW.colour(accent_token)
+		var inset := StyleBoxEmpty.new()
+		inset.content_margin_left = padding
+		inset.content_margin_right = padding
+		inset.content_margin_top = padding
+		inset.content_margin_bottom = padding
+		add_theme_stylebox_override("panel", inset)
+		return self
+
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		if w < 32.0 or h < 32.0:
+			return
+		var cut := 16.0
+		var bg := UIW.colour("overlay")
+		if variant == "surface":
+			bg = UIW.colour("surface")
+		elif variant == "console":
+			bg = UIW.colour("console")
+		# Broad offset silhouette, then a square technical plate. Diagonal corner
+		# braces carry the chamfer motif without relying on polygon triangulation.
+		draw_rect(Rect2(Vector2(8, 10), size), Color(0.01, 0.025, 0.06, 0.48))
+		draw_rect(Rect2(Vector2.ZERO, size), bg)
+		draw_rect(Rect2(Vector2.ZERO, size), Color(UIW.colour("border_strong"), 0.90), false, 1.25)
+		draw_line(Vector2(0, 36), Vector2(0, h - 24), accent, 4.0)
+		draw_line(Vector2(cut, 0), Vector2(110, 0), accent, 3.0)
+		draw_line(Vector2(w - 36, 0), Vector2(w, 36), Color(accent, 0.60), 2.0)
+		draw_line(Vector2(w - 16, h), Vector2(w, h - 16), Color(UIW.colour("border_strong"), 0.68), 1.25)
+		for i in 3:
+			draw_circle(Vector2(w - 22 - i * 10, 18), 2.0, Color(accent, 0.35 + i * 0.18))
+
+# ============================================================ ActionButton ==
+
+class ActionButton extends Button:
+	## A menu action with its own hierarchy and navigation cue. Keeping the
+	## subtitle visible removes tooltip hunting and lets each choice breathe.
+	var heading := ""
+	var detail := ""
+	var glyph := "01"
+	var primary := false
+
+	func setup(title: String, subtitle: String, is_primary: bool, mark: String) -> ActionButton:
+		heading = title
+		detail = subtitle
+		glyph = mark
+		primary = is_primary
+		text = ""
+		custom_minimum_size = Vector2(430, 68 if subtitle != "" else 58)
+		UIW.style_button(self, "primary" if primary else "quiet")
+		return self
+
+	func _draw() -> void:
+		var accent_col := UIW.colour("warm") if primary else UIW.colour("accent")
+		var center := Vector2(30, size.y * 0.5)
+		draw_circle(center, 17, Color(accent_col, 0.14 if not is_hovered() else 0.26))
+		draw_circle(center, 17, Color(accent_col, 0.72), false, 1.25)
+		draw_string(UIW.mono_font(), center + Vector2(-8, 4), glyph,
+			HORIZONTAL_ALIGNMENT_CENTER, 16, 10, accent_col)
+		var title_y := 29.0 if detail != "" else size.y * 0.5 + 5
+		draw_string(UIW.sans_font(), Vector2(58, title_y), heading,
+			HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 17, UIW.colour("text_strong"))
+		if detail != "":
+			draw_string(UIW.sans_font(), Vector2(58, 49), detail,
+				HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 12, UIW.colour("muted"))
+		draw_string(UIW.mono_font(), Vector2(size.x - 42, size.y * 0.5 + 5), "→",
+			HORIZONTAL_ALIGNMENT_CENTER, 24, 16, accent_col)
+
 const TYPE_COLORS := {
-	"switch": Color(0.2, 0.7, 0.75),
-	"router": Color(0.85, 0.6, 0.3),
-	"firewall": Color(0.85, 0.35, 0.35),
-	"uplink": Color(0.7, 0.5, 0.9),
-	"cooling": Color(0.5, 0.8, 0.95),
-	"loadbalancer": Color(0.55, 0.85, 0.55),
-	"ap": Color(0.9, 0.8, 0.45),
-	"server": Color(0.45, 0.55, 0.8),
-	"console": Color(0.75, 0.72, 0.6),
+	"switch": Color("39d9d0"),
+	"router": Color("ffb45c"),
+	"firewall": Color("ff6f68"),
+	"uplink": Color("b58cff"),
+	"cooling": Color("70c8ff"),
+	"loadbalancer": Color("69e39a"),
+	"ap": Color("ffe079"),
+	"server": Color("719cff"),
+	"console": Color("e4c891"),
 }
 
 static var _mono_shared: SystemFont
+static var _sans_shared: SystemFont
+
+static func sans_font() -> SystemFont:
+	if _sans_shared == null:
+		_sans_shared = SystemFont.new()
+		_sans_shared.font_names = PackedStringArray(["Avenir Next", "Inter", "SF Pro Display", "Arial"])
+	return _sans_shared
 
 static func mono_font() -> SystemFont:
 	if _mono_shared == null:
@@ -206,15 +315,15 @@ class Graph extends Control:
 		return self
 
 	func _draw() -> void:
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.08, 0.11))
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.25, 0.3, 0.38), false, 1.0)
+		draw_rect(Rect2(Vector2.ZERO, size), UIW.colour("console"))
+		draw_rect(Rect2(Vector2.ZERO, size), UIW.colour("border"), false, 1.0)
 		var pts: Array = []
 		for h in Game.history:
 			pts.append(float(h.get(key, 0)))
 		if pts.size() < 2:
 			draw_string(_mono, Vector2(10, size.y / 2.0),
 				"%s: not enough history yet" % title, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-				Color(0.5, 0.55, 0.65))
+				UIW.colour("muted"))
 			return
 		var lo: float = pts[0]
 		var hi: float = pts[0]
@@ -230,9 +339,10 @@ class Graph extends Control:
 			line.append(Vector2(x, y))
 		if lo < 0.0 and hi > 0.0:  # zero line, when the series crosses it
 			var zy := size.y - 20.0 - (size.y - 34.0) * (0.0 - lo) / (hi - lo)
-			draw_line(Vector2(8, zy), Vector2(size.x - 8, zy), Color(0.4, 0.44, 0.55, 0.6), 1.0)
-		draw_polyline(line, colour, 2.0)
-		draw_circle(line[line.size() - 1], 3.0, colour)
+			draw_line(Vector2(8, zy), Vector2(size.x - 8, zy), Color(UIW.colour("border_strong"), 0.6), 1.0)
+		draw_polyline(line, Color(colour, 0.22), 7.0)
+		draw_polyline(line, colour, 2.5)
+		draw_circle(line[line.size() - 1], 4.0, colour)
 		draw_string(_mono, Vector2(10, 14), "%s   now %d   (min %d, max %d)" % [title,
 			int(float(pts[pts.size() - 1])), int(lo), int(hi)],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, colour.lightened(0.2))
@@ -277,11 +387,11 @@ class TopoMap extends Control:
 
 	func _draw() -> void:
 		_nodes.clear()
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.05, 0.08, 0.97))
-		var title_c := Color(0.5, 0.85, 0.95)
+		draw_rect(Rect2(Vector2.ZERO, size), UIW.colour("console"))
+		var title_c := UIW.colour("accent")
 		draw_string(_mono, Vector2(30, 100), "LOGICAL TOPOLOGY", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, title_c)
 		draw_string(_mono, Vector2(30, 122), "click a device to open it · M or Esc to close",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.55, 0.65))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("muted"))
 		# pack rack boxes into a grid that fills the window, floor order preserved
 		const COL_W := 250.0
 		const TOP := 145.0
@@ -305,11 +415,12 @@ class TopoMap extends Control:
 			col_i += 1
 			row_h = maxf(row_h, box_h)
 			var box := Rect2(origin, Vector2(215, box_h))
-			draw_rect(box, Color(0.09, 0.1, 0.14))
-			draw_rect(box, Color(0.3, 0.34, 0.44), false, 1.0)
+			draw_rect(box, UIW.colour("surface"))
+			draw_rect(Rect2(box.position, Vector2(4, box.size.y)), UIW.colour("accent"))
+			draw_rect(box, UIW.colour("border"), false, 1.0)
 			var site_tag: String = "" if Game.site_count() <= 1 else "  ·  " + Game.site_name(r.site)
 			draw_string(_mono, origin + Vector2(10, 22), "▤ " + r.name + site_tag,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.75, 0.8, 0.9))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIW.colour("text_strong"))
 			var y := origin.y + 34
 			for d in filled:
 				_nodes[d] = Rect2(origin.x + 8, y, 199, 36)
@@ -350,15 +461,16 @@ class TopoMap extends Control:
 		for dev: Net.NDevice in _nodes:
 			var rect: Rect2 = _nodes[dev]
 			var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
-			draw_rect(rect, col.darkened(0.65))
-			draw_rect(rect, col if dev.status == "active" else Color(0.6, 0.3, 0.3), false, 1.5)
+			draw_rect(rect, col.darkened(0.56))
+			draw_rect(Rect2(rect.position, Vector2(4, rect.size.y)), col)
+			draw_rect(rect, col if dev.status == "active" else UIW.colour("danger"), false, 1.5)
 			draw_string(_mono, rect.position + Vector2(8, 15), dev.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
 			draw_string(_mono, rect.position + Vector2(8, 29), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col.lightened(0.3))
 		# legend
 		var ly := size.y - 26
 		draw_string(_mono, Vector2(30, ly),
 			"- host link  : trunk/inter-switch   ┄ STP blocked (no traffic: that is the point)  : management",
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.5, 0.55, 0.65))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
 
 	func _flow(pa: Vector2, pb: Vector2, col: Color, load: int, cap: int) -> void:
 		## dots travelling the link, more of them the busier it is. A link
@@ -397,30 +509,30 @@ class Bar extends Control:
 
 	func _draw() -> void:
 		var share := 0.0 if total <= 0 else clampf(float(used) / float(total), 0.0, 1.0)
-		var col := Color(0.35, 0.8, 0.6)
+		var col := UIW.colour("success")
 		if share >= 1.0:
 			col = Prefs.bad_colour()
 		elif share > 0.66:
-			col = Color(1.0, 0.75, 0.35)
+			col = UIW.colour("warning")
 		draw_string(_mono, Vector2(0, 13), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-			Color(0.72, 0.78, 0.86))
+			UIW.colour("text"))
 		var right := "%d / %d" % [used, total]
 		if note != "":
 			right += "   " + note
 		draw_string(_mono, Vector2(size.x - 250, 13), right, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-			Color(0.62, 0.68, 0.76))
+			UIW.colour("muted"))
 		if runway >= 0:
 			draw_string(_mono, Vector2(size.x - 120, 13),
 				"full now" if runway == 0 else "~%d cycles" % runway,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
-				Prefs.bad_colour() if runway <= 6 else Color(0.62, 0.68, 0.76))
+				Prefs.bad_colour() if runway <= 6 else UIW.colour("muted"))
 		var track := Rect2(0, 19, size.x - 4, 8)
-		draw_rect(track, Color(0.13, 0.15, 0.19))
+		draw_rect(track, UIW.colour("console"))
 		draw_rect(Rect2(track.position, Vector2(track.size.x * share, track.size.y)), col)
 		# the two-thirds mark, which is where you should already be ordering
 		var mark := track.position.x + track.size.x * 0.66
 		draw_line(Vector2(mark, track.position.y - 2), Vector2(mark, track.end.y + 2),
-			Color(0.45, 0.5, 0.6, 0.8), 1.0)
+			Color(UIW.colour("border_strong"), 0.8), 1.0)
 
 # ================================================================ RackSlot ==
 
@@ -469,32 +581,32 @@ class RackSlot extends Control:
 		const RAIL := 30.0
 		# rails with screw holes
 		for rx in [0.0, w - RAIL]:
-			draw_rect(Rect2(rx, 0, RAIL, h), Color(0.16, 0.17, 0.21))
-			draw_rect(Rect2(rx, 0, RAIL, h), Color(0.3, 0.33, 0.4), false, 1.0)
+			draw_rect(Rect2(rx, 0, RAIL, h), Color("203953"))
+			draw_rect(Rect2(rx, 0, RAIL, h), UIW.colour("border"), false, 1.0)
 			for hy in [h * 0.25, h * 0.75]:
-				draw_circle(Vector2(rx + RAIL / 2.0, hy), 3.2, Color(0.05, 0.05, 0.07))
-				draw_circle(Vector2(rx + RAIL / 2.0, hy), 3.2, Color(0.4, 0.44, 0.52), false, 1.0)
+				draw_circle(Vector2(rx + RAIL / 2.0, hy), 3.2, UIW.colour("console"))
+				draw_circle(Vector2(rx + RAIL / 2.0, hy), 3.2, UIW.colour("border_strong"), false, 1.0)
 		draw_string(_mono, Vector2(4, h / 2.0 + 4), "U%d" % u_num,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.5, 0.55, 0.65))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
 		var inner := Rect2(RAIL + 2, 3, w - RAIL * 2 - 4, h - 6)
 		if dev == null:
 			# empty recess
-			draw_rect(inner, Color(0.055, 0.06, 0.085))
-			draw_rect(inner, Color(0.2, 0.22, 0.28), false, 1.0)
+			draw_rect(inner, UIW.colour("console"))
+			draw_rect(inner, UIW.colour("border"), false, 1.0)
 			if hovered:
 				draw_string(_mono, inner.position + Vector2(inner.size.x / 2.0 - 60, inner.size.y / 2.0 + 4),
-					"+ install hardware", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.5, 0.75, 0.85))
+					"+ INSTALL HARDWARE", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("accent"))
 			return
 		# device faceplate
 		var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
 		if dev.status != "active":
 			col = Color(0.4, 0.33, 0.33)
-		var face := col.darkened(0.62)
+		var face := col.darkened(0.52)
 		if hovered:
-			face = col.darkened(0.5)
+			face = col.darkened(0.40)
 		draw_rect(inner, face)
 		draw_rect(inner, col.darkened(0.1) if hovered else col.darkened(0.3), false, 1.5)
-		draw_rect(Rect2(inner.position, Vector2(4, inner.size.y)), col)  # vendor stripe
+		draw_rect(Rect2(inner.position, Vector2(6, inner.size.y)), col)  # vendor stripe
 		draw_string(_mono, inner.position + Vector2(14, 18), dev.name,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.92, 0.95, 1.0))
 		draw_string(_mono, inner.position + Vector2(14, 33), Game.MODELS[dev.model]["label"],
@@ -599,38 +711,38 @@ class Faceplate extends Control:
 		var col: Color = UIW.TYPE_COLORS.get(dev.type, Color(0.5, 0.5, 0.6))
 		# brushed panel
 		var panel := Rect2(Vector2.ZERO, size)
-		draw_rect(panel, Color(0.13, 0.14, 0.17))
+		draw_rect(panel, Color("1b304a"))
 		for k in int(size.y / 3):
 			draw_line(Vector2(1, k * 3), Vector2(size.x - 1, k * 3), Color(1, 1, 1, 0.012))
-		draw_rect(panel, Color(0.42, 0.46, 0.55), false, 1.5)
-		draw_rect(Rect2(0, 0, size.x, 3), col.darkened(0.1))  # vendor accent strip
+		draw_rect(panel, UIW.colour("border_strong"), false, 1.5)
+		draw_rect(Rect2(0, 0, size.x, 5), col)  # vendor accent strip
 		# corner screws
 		for sx in [10.0, size.x - 10.0]:
 			for sy in [10.0, size.y - 10.0]:
-				draw_circle(Vector2(sx, sy), 3.5, Color(0.07, 0.07, 0.1))
-				draw_circle(Vector2(sx, sy), 3.5, Color(0.45, 0.5, 0.6), false, 1.0)
-				draw_line(Vector2(sx - 2, sy), Vector2(sx + 2, sy), Color(0.45, 0.5, 0.6), 1.0)
+				draw_circle(Vector2(sx, sy), 3.5, UIW.colour("console"))
+				draw_circle(Vector2(sx, sy), 3.5, UIW.colour("border_strong"), false, 1.0)
+				draw_line(Vector2(sx - 2, sy), Vector2(sx + 2, sy), UIW.colour("border_strong"), 1.0)
 		# silk-screen branding
 		draw_string(_mono, Vector2(24, size.y / 2.0 - 4), Game.MODELS[dev.model]["label"].split(" ")[0],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, col.lightened(0.2))
 		draw_string(_mono, Vector2(24, size.y / 2.0 + 13),
 			" ".join(PackedStringArray(Array(Game.MODELS[dev.model]["label"].split(" ")).slice(1))),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.55, 0.6, 0.7))
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
 		# port jacks
 		var t := Time.get_ticks_msec() / 1000.0
 		for idx in _ports.size():
 			var i: Net.Iface = _ports[idx]
 			var r := _jack_rect(idx)
 			var linked := Game.link_at(i) != null
-			var body := Color(0.05, 0.06, 0.08)
-			var border := Color(0.4, 0.44, 0.52)
+			var body := UIW.colour("console")
+			var border := UIW.colour("border_strong")
 			if not i.enabled:
 				border = Color(0.85, 0.4, 0.35)
 			elif linked:
 				border = Color(0.35, 0.9, 0.5)
 			if idx == hover_idx:
-				body = Color(0.1, 0.14, 0.18)
-				border = Color(0.6, 0.9, 1.0)
+				body = UIW.colour("surface_hover")
+				border = UIW.colour("focus")
 			draw_rect(r, body)
 			draw_rect(r, border, false, 1.5)
 			# RJ45 tab notch
@@ -648,4 +760,4 @@ class Faceplate extends Control:
 			var below := (idx % 2 == 1) if _ports.size() > 6 else true
 			var ty := r.end.y + 13 if below else r.position.y - 6
 			draw_string(_mono, Vector2(r.position.x + r.size.x / 2.0 - 6, ty), num if num != "" else i.name,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.65, 0.7, 0.8))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
