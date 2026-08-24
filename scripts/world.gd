@@ -111,6 +111,11 @@ func _shoot_all() -> void:
 				if Game.slot_free(r, slot_i):
 					r.blanked[slot_i] = true
 			ui._refresh_slots()],
+		["rack_note", func() -> void:
+			Game.set_note(r, "Temporary uplink. Remove after the tenant migration.")
+			Game.set_note(sw, "Port 1 is the temporary tenant uplink.")
+			ui._refresh_note_card(ui.rack_note_ui, r, ui.rack_note_btn)
+			ui._refresh_slots()],
 		["device", func() -> void: ui.open_dev(sw)],
 		["device_packet", func() -> void: ui.close_dev(); ui.open_dev(packet_sw)],
 		["console", func() -> void:

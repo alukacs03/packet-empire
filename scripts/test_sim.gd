@@ -444,6 +444,8 @@ static func run() -> int:
 
 	# --- save / load roundtrip ---
 	Game.racks[0].blanked[6] = true
+	Game.set_note(Game.racks[0], "Temporary patch during the migration")
+	Game.set_note(a, "Do not reboot before the handover")
 	Game.save_game()
 	var money_before := Game.money
 	Game.money = 1
@@ -451,6 +453,8 @@ static func run() -> int:
 	check(Game.money == money_before, "save: money restored")
 	check(Game.all_devices().size() == 6 and Game.links.size() == 5, "save: devices and links restored")
 	check(Game.racks[0].blanked.has(6), "save: fitted rack blanking panels restored")
+	check(Game.racks[0].note.get("text", "") == "Temporary patch during the migration",
+		"save: player-authored rack notes restored verbatim")
 	var sw_l: Net.NDevice = null
 	for d in Game.all_devices():
 		if d.name == sw.name:
@@ -460,7 +464,13 @@ static func run() -> int:
 	for d in Game.all_devices():
 		if d.name == a.name:
 			a_l = d
+	check(a_l != null and a_l.note.get("text", "") == "Do not reboot before the handover",
+		"save: player-authored device notes travel with the device")
 	check(a_l != null and Sim.ping(a_l, "10.1.0.2")["ok"], "save: reloaded topology still routes end-to-end")
+	var note_cycle := Game.cycle
+	Game.cycle += 13
+	check(Game.note_age(a_l) == 13, "notes: age is derived without interpreting the player's text")
+	Game.cycle = note_cycle
 
 	# --- trunk allowed-vlan pruning (uses reloaded devices) ---
 	var a2 := _dev_named(a.name)

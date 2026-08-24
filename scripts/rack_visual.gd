@@ -120,6 +120,17 @@ func _draw() -> void:
 	draw_rect(Rect2(badge_pos, Vector2(40, 17)), Color(UIW.colour("border_strong"), 0.72), false, 1.0)
 	draw_string(UIW.sans_font(), badge_pos + Vector2(8, 13), rack.name,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("text_strong"))
+	if not rack.note.is_empty():
+		# A tiny folded paper tab is readable as human context even at floor zoom.
+		var paper := Rect2(Vector2(-ex * 0.78, -H + 12), Vector2(16, 19))
+		draw_rect(Rect2(paper.position + Vector2(2, 2), paper.size), Color(0, 0, 0, 0.28))
+		draw_rect(paper, Color("e8c96f"))
+		draw_colored_polygon(PackedVector2Array([paper.end - Vector2(5, 0), paper.end,
+			paper.end - Vector2(0, 5)]), Color("b49348"))
+		draw_line(paper.position + Vector2(3, 7), paper.position + Vector2(12, 7),
+			Color("67552c"), 1.0)
+		draw_line(paper.position + Vector2(3, 11), paper.position + Vector2(10, 11),
+			Color("67552c"), 1.0)
 	# a hot cabinet glows at its base, so a bad row is visible from the floor
 	if Game.rack_hot(rack):
 		var pulse_h := 0.3 + 0.18 * sin(tms / 420.0)

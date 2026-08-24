@@ -18,6 +18,8 @@ var rack_airflow_lbl: Label
 var rack_cable_layer: UIW.CablePull
 var rack_cable_from: Net.Iface
 var rack_cable_old_link: Net.Link
+var rack_note_ui := {}
+var rack_note_btn: Button
 
 var dev_overlay: Control
 var dev_title: Label
@@ -39,6 +41,8 @@ var cli_out: RichTextLabel
 var cli_in: LineEdit
 var cli_prompt: Label
 var cli_toggle: Button
+var dev_note_ui := {}
+var dev_note_btn: Button
 
 var if_overlay: Control
 var if_title: Label
@@ -312,6 +316,18 @@ func _make_theme() -> Theme:
 func _sb(bg: Color, border: Color, radius := 6, margin := 8) -> StyleBoxFlat:
 	return UIW.custom_box(bg, border, radius, margin)
 
+func _flat_sb(bg: Color, border: Color, radius := 0, margin := 8) -> StyleBoxFlat:
+	## Authored physical surfaces (paper, labels, etched plates) should not inherit
+	## the raised-card shadow used by interactive command panels.
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(1 if border.a > 0.0 else 0)
+	style.set_corner_radius_all(radius)
+	style.set_content_margin_all(margin)
+	style.shadow_size = 0
+	return style
+
 func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 560.0) -> Label:
 	## a label that wraps instead of pushing its container sideways
 	var l := _label(text, size, color)
@@ -424,6 +440,93 @@ func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	back.pressed.connect(on_back)
 	h.add_child(back)
 	return title
+
+func _note_card(box: VBoxContainer, on_save: Callable) -> Dictionary:
+	var paper := PanelContainer.new()
+	var paper_style := _flat_sb(Color("dfca8c"), Color("8d7948"), 2, 14)
+	paper_style.border_width_top = 1
+	paper_style.border_width_bottom = 2
+	paper.add_theme_stylebox_override("panel", paper_style)
+	paper.visible = false
+	box.add_child(paper)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", UIW.space("md"))
+	paper.add_child(row)
+	var words := VBoxContainer.new()
+	words.add_theme_constant_override("separation", UIW.space("xs"))
+	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(words)
+	var cap := _label("HANDOVER NOTE  /  PAST YOU WROTE", 10, Color("51462d"))
+	cap.add_theme_font_override("font", mono)
+	words.add_child(cap)
+	var edit := LineEdit.new()
+	edit.max_length = 140
+	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	edit.add_theme_font_override("font", mono)
+	edit.add_theme_font_size_override("font_size", 13)
+	edit.add_theme_color_override("font_color", Color("302a1e"))
+	edit.add_theme_color_override("caret_color", Color("302a1e"))
+	edit.add_theme_color_override("font_placeholder_color", Color("75694a"))
+	var writing_line := _flat_sb(Color(1, 1, 1, 0.08), Color(0, 0, 0, 0), 0, 6)
+	writing_line.border_color = Color("8d7948")
+	writing_line.border_width_bottom = 1
+	edit.add_theme_stylebox_override("normal", writing_line)
+	var writing_focus := writing_line.duplicate() as StyleBoxFlat
+	writing_focus.border_color = Color("554827")
+	writing_focus.border_width_bottom = 2
+	edit.add_theme_stylebox_override("focus", writing_focus)
+	edit.placeholder_text = "Short context for whoever opens this next…"
+	edit.text_submitted.connect(func(_text: String) -> void: on_save.call(edit.text))
+	words.add_child(edit)
+	var age := _label("", 9, Color("665939"))
+	age.add_theme_font_override("font", mono)
+	words.add_child(age)
+	var actions := VBoxContainer.new()
+	actions.add_theme_constant_override("separation", UIW.space("xs"))
+	row.add_child(actions)
+	var pin := _note_action("PIN")
+	pin.pressed.connect(func() -> void: on_save.call(edit.text))
+	actions.add_child(pin)
+	var remove := _note_action("REMOVE")
+	remove.pressed.connect(func() -> void: on_save.call(""))
+	actions.add_child(remove)
+	return {"panel": paper, "edit": edit, "age": age}
+
+func _note_action(text: String) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.flat = true
+	button.add_theme_font_override("font", mono)
+	button.add_theme_font_size_override("font_size", 10)
+	for state in ["font_color", "font_pressed_color", "font_focus_color"]:
+		button.add_theme_color_override(state, Color("51462d"))
+	button.add_theme_color_override("font_hover_color", Color("241f16"))
+	var normal := _flat_sb(Color(0, 0, 0, 0), Color("8d7948"), 0, 5)
+	normal.border_width_top = 0
+	normal.border_width_left = 0
+	normal.border_width_right = 0
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(1, 1, 1, 0.12)
+	hover.border_color = Color("51462d")
+	for state in ["normal", "focus", "pressed"]:
+		button.add_theme_stylebox_override(state, normal)
+	button.add_theme_stylebox_override("hover", hover)
+	return button
+
+func _refresh_note_card(parts: Dictionary, target: Variant, trigger: Button) -> void:
+	var note: Dictionary = target.note
+	(parts["panel"] as PanelContainer).visible = not note.is_empty()
+	trigger.text = "✎ EDIT NOTE" if not note.is_empty() else "✎ LEAVE NOTE"
+	if note.is_empty():
+		return
+	(parts["edit"] as LineEdit).text = String(note.get("text", ""))
+	var age := Game.note_age(target)
+	(parts["age"] as Label).text = ("WRITTEN THIS CYCLE" if age == 0 else
+		("STALE  ·  %d CYCLES OLD" % age if age >= 12 else "%d CYCLES OLD" % age))
+
+func _open_note_card(parts: Dictionary) -> void:
+	(parts["panel"] as PanelContainer).visible = true
+	(parts["edit"] as LineEdit).grab_focus.call_deferred()
 
 func _menu(at: Control, items: Array, on_pick: Callable) -> void:
 	var m := PopupMenu.new()
@@ -566,6 +669,10 @@ func _build_rack_overlay() -> void:
 	rack_overlay = _overlay()
 	var v := _card(rack_overlay, 640)
 	rack_title = _header(v, close_rack)
+	rack_note_ui = _note_card(v, func(text: String) -> void:
+		Game.set_note(cur_rack, text)
+		_refresh_note_card(rack_note_ui, cur_rack, rack_note_btn)
+		_refresh_slots())
 	var rack_metrics := HBoxContainer.new()
 	rack_metrics.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(rack_metrics)
@@ -580,6 +687,11 @@ func _build_rack_overlay() -> void:
 	var info := _label("Click hardware to inspect. Grab any free jack and pull it to another device.", 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info_row.add_child(info)
+	rack_note_btn = Button.new()
+	rack_note_btn.text = "✎ LEAVE NOTE"
+	rack_note_btn.tooltip_text = "Leave short context for yourself on this cabinet"
+	rack_note_btn.pressed.connect(func() -> void: _open_note_card(rack_note_ui))
+	info_row.add_child(rack_note_btn)
 	var bp_btn := Button.new()
 	bp_btn.text = "Blueprints"
 	bp_btn.tooltip_text = "Save this rack's layout, or build a saved one into an empty rack"
@@ -636,6 +748,7 @@ func open_rack(r: Net.Rack) -> void:
 	cur_rack = r
 	dev_overlay.visible = false
 	rack_title.text = "Rack %s" % r.name
+	_refresh_note_card(rack_note_ui, r, rack_note_btn)
 	_refresh_slots()
 	_show_overlay(rack_overlay)
 
@@ -809,6 +922,10 @@ func _build_dev_overlay() -> void:
 	var v := _card(dev_overlay, 760)
 	(v.get_parent().get_parent() as ScrollContainer).set_meta("visible_stack", v)
 	dev_title = _header(v, close_dev)
+	dev_note_ui = _note_card(v, func(text: String) -> void:
+		Game.set_note(cur_dev, text)
+		_refresh_note_card(dev_note_ui, cur_dev, dev_note_btn)
+		_refresh_ports())
 
 	var name_row := HBoxContainer.new()
 	v.add_child(name_row)
@@ -866,6 +983,11 @@ func _build_dev_overlay() -> void:
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 8)
 	v.add_child(btn_row)
+	dev_note_btn = Button.new()
+	dev_note_btn.text = "✎ LEAVE NOTE"
+	dev_note_btn.tooltip_text = "Leave short handover context on this device"
+	dev_note_btn.pressed.connect(func() -> void: _open_note_card(dev_note_ui))
+	btn_row.add_child(dev_note_btn)
 	cli_toggle = Button.new()
 	cli_toggle.text = "Open console  ▤"
 	cli_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -960,6 +1082,7 @@ func _build_dev_overlay() -> void:
 func open_dev(d: Net.NDevice) -> void:
 	cur_dev = d
 	_refresh_dev_header()
+	_refresh_note_card(dev_note_ui, d, dev_note_btn)
 	cli_box.visible = false
 	cap_box.visible = false
 	cli_out.custom_minimum_size.y = 0

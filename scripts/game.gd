@@ -516,6 +516,19 @@ func toggle_blanking(r: Net.Rack, idx: int) -> bool:
 	topology_changed.emit()
 	return true
 
+func set_note(target: Variant, text: String) -> void:
+	## Notes are deliberately opaque. No keyword, date, or promise written here
+	## ever changes the simulation; it is past-you talking to future-you.
+	text = text.strip_edges().left(140)
+	if text == "":
+		target.note = {}
+	else:
+		target.note = {"text": text, "cycle": cycle}
+	topology_changed.emit()
+
+func note_age(target: Variant) -> int:
+	return maxi(0, cycle - int(target.note.get("cycle", cycle))) if not target.note.is_empty() else 0
+
 func rack_cooling(r: Net.Rack) -> int:
 	## cold air does not teleport: a unit on the far side of the room is worth
 	## much less than one at the end of the row
@@ -3147,7 +3160,7 @@ func _serialize() -> Dictionary:
 			if d:
 				devs[d.name] = _ser_device(d)
 		rack_data.append({"name": r.name, "site": r.site, "tile": [r.tile.x, r.tile.y],
-			"slots": slot_names, "blanked": r.blanked.keys()})
+			"slots": slot_names, "blanked": r.blanked.keys(), "note": r.note})
 	var link_data: Array = []
 	for l in links:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
@@ -3412,6 +3425,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
 			"ips": i.ips})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
+		"note": d.note,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
@@ -3546,6 +3560,7 @@ func _apply(data: Dictionary) -> void:
 		d.installed_cycle = int(sd.get("installed_cycle", 0))
 		d.log_host = sd.get("log_host", "")
 		d.ntp_server = sd.get("ntp_server", "")
+		d.note = sd.get("note", {}).duplicate(true)
 		d.resolver = sd.get("resolver", "")
 		for vid in sd["vlans"]:
 			d.vlans[int(vid)] = sd["vlans"][vid]
@@ -3595,6 +3610,7 @@ func _apply(data: Dictionary) -> void:
 	for rd in data["racks"]:
 		var r := Net.Rack.new(rd["name"], Vector2i(int(rd["tile"][0]), int(rd["tile"][1])))
 		r.site = int(rd.get("site", 0))
+		r.note = rd.get("note", {}).duplicate(true)
 		for blanked_slot in rd.get("blanked", []):
 			r.blanked[int(blanked_slot)] = true
 		for si in rd["slots"].size():

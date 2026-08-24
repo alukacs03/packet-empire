@@ -85,6 +85,7 @@ class NDevice:
 	var ntp_server := ""  # clock source
 	var clock_skew := 0  # cycles of drift when the clock is unsynchronised
 	var logs: Array = []  # local log buffer
+	var note := {}  # player-authored {text, cycle}; never interpreted by the simulation
 	var flows := {}  # runtime: "id|src|dst" of forwarded flows
 	var bgp := {}  # {asn, neighbors: [{ip, remote_as}], networks: ["prefix/len"]}
 	var ospf := {}  # {"networks": ["prefix/len"]}: single area 0, enabled when non-empty
@@ -119,6 +120,7 @@ class Rack:
 	## device exactly once.
 	var covered := {}
 	var blanked := {}  # empty slot index -> true; fitted airflow blanking panels
+	var note := {}  # player-authored {text, cycle}
 	var visual: Node2D
 	func _init(n: String, t: Vector2i) -> void:
 		name = n

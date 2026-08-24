@@ -798,6 +798,16 @@ class RackSlot extends Control:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, visual["ink"])
 		draw_string(_mono, inner.position + Vector2(14, 33), Game.MODELS[dev.model]["label"],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col.lightened(0.25))
+		if not dev.note.is_empty():
+			var sticky := Rect2(inner.position + Vector2(166, 6), Vector2(17, 20))
+			draw_rect(Rect2(sticky.position + Vector2(2, 2), sticky.size), Color(0, 0, 0, 0.28))
+			draw_rect(sticky, Color("e8c96f"))
+			draw_colored_polygon(PackedVector2Array([sticky.end - Vector2(6, 0), sticky.end,
+				sticky.end - Vector2(0, 6)]), Color("b49348"))
+			draw_line(sticky.position + Vector2(4, 7), sticky.position + Vector2(13, 7),
+				Color("67552c"), 1.0)
+			draw_line(sticky.position + Vector2(4, 11), sticky.position + Vector2(11, 11),
+				Color("67552c"), 1.0)
 		# Ethernet sockets: recessed jack, metal lip, and a tiny link light.
 		for i: Net.Iface in _physical_ports():
 			var port_rect := _port_rect(i)
