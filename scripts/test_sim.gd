@@ -111,11 +111,42 @@ static func ui_smoke(world: Node2D) -> int:
 	var physical_port: Net.Iface = dev.ifaces[0]
 	var jack_pos := port_slot.port_screen_position(physical_port)
 	check(port_slot.port_at_screen(jack_pos) == physical_port,
-		"rack cabling: physical port squares expose usable drag targets")
+		"rack cabling: physical jacks expose usable drag targets")
 	port_slot.free()
+	var dense_switch: Net.NDevice
+	for candidate: Net.NDevice in Game.all_devices():
+		if candidate.type == "switch" and candidate.ifaces.size() > 12:
+			dense_switch = candidate
+			break
+	if dense_switch:
+		var switch_slot := UIW.RackSlot.new().setup(1, dense_switch, func() -> void: pass)
+		switch_slot.size = Vector2(520, 46)
+		var sockets_separate := true
+		var socket_rects: Array = []
+		for iface: Net.Iface in switch_slot._physical_ports():
+			var socket := switch_slot._port_rect(iface)
+			for existing: Rect2 in socket_rects:
+				if existing.intersects(socket):
+					sockets_separate = false
+			socket_rects.append(socket)
+		check(sockets_separate, "rack cabling: dense switch faceplates keep every jack distinct")
+		switch_slot.free()
 	ui.show_welcome()
 	ui.welcome_overlay.visible = false
 	ui.open_rack(r)
+	var local_link: Net.Link
+	for link: Net.Link in Game.links:
+		if Game.rack_of(link.a.dev) == r and Game.rack_of(link.b.dev) == r:
+			local_link = link
+			break
+	if local_link:
+		var rack_links_before := Game.links.duplicate()
+		ui._rack_cable_start(local_link.a, Vector2.ZERO)
+		ui._rack_cable_release(Vector2(-100, -100))
+		check(Game.links.size() == rack_links_before.size() - 1,
+			"rack cabling: pulling a fitted local plug away from the cabinet unplugs it")
+		Game.links = rack_links_before
+		ui._refresh_slots()
 	ui.open_dev(dev)
 	ui._toggle_cli()
 	ui.cli_in.text = "ip addr"

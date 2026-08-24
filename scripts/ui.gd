@@ -16,6 +16,7 @@ var slot_box: VBoxContainer
 var rack_metric_values := {}
 var rack_cable_layer: UIW.CablePull
 var rack_cable_from: Net.Iface
+var rack_cable_old_link: Net.Link
 
 var dev_overlay: Control
 var dev_title: Label
@@ -572,7 +573,7 @@ func _build_rack_overlay() -> void:
 	rack_metrics.add_child(_rack_metric("FEED BALANCE", "feeds", "success"))
 	var info_row := HBoxContainer.new()
 	v.add_child(info_row)
-	var info := _label("Click hardware to inspect. Drag free port squares to cable inside this rack.", 13, MUTED)
+	var info := _label("Click hardware to inspect. Grab any free jack and pull it to another device.", 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info_row.add_child(info)
 	var bp_btn := Button.new()
@@ -673,35 +674,69 @@ func _refresh_slots() -> void:
 			var idx := i
 			slot.setup(i + 1, null, func() -> void: _pick_new_device(idx, slot))
 		slot.cable_started.connect(_rack_cable_start)
-		slot.cable_moved.connect(func(screen_pos: Vector2) -> void:
-			rack_cable_layer.move_to(screen_pos))
+		slot.cable_moved.connect(_rack_cable_move)
 		slot.cable_released.connect(_rack_cable_release)
 		slot_box.add_child(slot)
+	rack_cable_layer.watch(cur_rack, slot_box)
 
 func _rack_cable_start(iface: Net.Iface, screen_pos: Vector2) -> void:
-	rack_cable_from = iface
-	rack_cable_layer.begin(screen_pos)
+	rack_cable_old_link = Game.link_at(iface)
+	if rack_cable_old_link:
+		# Pulling a fitted plug leaves the far end anchored. The loose end can be
+		# dressed into another jack, or dropped away from the rack to unplug it.
+		rack_cable_from = rack_cable_old_link.other(iface)
+		var anchored_pos := _rack_port_position(rack_cable_from)
+		rack_cable_layer.begin(anchored_pos, rack_cable_from, rack_cable_old_link)
+	else:
+		rack_cable_from = iface
+		rack_cable_layer.begin(screen_pos, iface)
 
-func _rack_cable_release(screen_pos: Vector2) -> void:
-	rack_cable_layer.finish()
-	if rack_cable_from == null:
-		return
-	var target: Net.Iface
+func _rack_port_position(iface: Net.Iface) -> Vector2:
+	for child in slot_box.get_children():
+		if child is UIW.RackSlot and (child as UIW.RackSlot).dev == iface.dev:
+			return (child as UIW.RackSlot).port_screen_position(iface)
+	return Vector2.ZERO
+
+func _rack_target_at(screen_pos: Vector2) -> Net.Iface:
 	for child in slot_box.get_children():
 		if child is UIW.RackSlot:
 			var candidate: Net.Iface = (child as UIW.RackSlot).port_at_screen(screen_pos)
-			if candidate and candidate != rack_cable_from and candidate.dev != rack_cable_from.dev \
-					and Game.link_at(candidate) == null:
-				target = candidate
-				break
-	if target and Game.can_link(rack_cable_from, target):
+			if candidate and candidate != rack_cable_from and candidate.dev != rack_cable_from.dev:
+				if Game.link_at(candidate) == null:
+					return candidate
+				if rack_cable_old_link and candidate == rack_cable_old_link.other(rack_cable_from):
+					return candidate  # putting the same plug back cancels the move
+	return null
+
+func _rack_cable_move(screen_pos: Vector2) -> void:
+	rack_cable_layer.move_to(screen_pos, _rack_target_at(screen_pos) != null)
+
+func _rack_cable_release(screen_pos: Vector2) -> void:
+	if rack_cable_from == null:
+		rack_cable_layer.finish()
+		return
+	var target := _rack_target_at(screen_pos)
+	var original_target: Net.Iface = rack_cable_old_link.other(rack_cable_from) if rack_cable_old_link else null
+	rack_cable_layer.finish()
+	if target == original_target:
+		hud_toast("Plug reseated: %s %s." % [target.dev.name, target.name], true)
+	elif target and Game.can_link(rack_cable_from, target):
+		if rack_cable_old_link:
+			Game.disconnect_iface(rack_cable_from)
 		Game.connect_ifaces(rack_cable_from, target)
 		hud_toast("Cable run: %s %s ⇄ %s %s" % [rack_cable_from.dev.name,
 			rack_cable_from.name, target.dev.name, target.name], true)
 		_refresh_slots()
+	elif rack_cable_old_link:
+		var loose_end := original_target
+		Game.disconnect_iface(rack_cable_from)
+		hud_toast("Unplugged %s %s from %s %s." % [rack_cable_from.dev.name,
+			rack_cable_from.name, loose_end.dev.name, loose_end.name], true)
+		_refresh_slots()
 	else:
 		hud_toast("Drop the cable on a free port in this rack.")
 	rack_cable_from = null
+	rack_cable_old_link = null
 
 func _pick_new_device(slot: int, at: Control) -> void:
 	var keys := Game.MODELS.keys()

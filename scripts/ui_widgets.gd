@@ -657,7 +657,9 @@ class RackSlot extends Control:
 		if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
 			if e.pressed:
 				var port := port_at(e.position)
-				if port and Game.link_at(port) == null:
+				var link := Game.link_at(port) if port else null
+				var local_link := link and Game.rack_of(link.other(port).dev) == Game.rack_of(dev)
+				if port and (link == null or local_link):
 					_drag_iface = port
 					cable_started.emit(port, port_screen_position(port))
 					accept_event()
@@ -668,9 +670,24 @@ class RackSlot extends Control:
 					_drag_iface = null
 					cable_released.emit(get_global_mouse_position())
 					accept_event()
-		elif e is InputEventMouseMotion and _drag_iface:
-			cable_moved.emit(get_global_mouse_position())
-			accept_event()
+		elif e is InputEventMouseMotion:
+			var hovered_port := port_at(e.position)
+			if hovered_port:
+				var link := Game.link_at(hovered_port)
+				var local_link := link and Game.rack_of(link.other(hovered_port).dev) == Game.rack_of(dev)
+				mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if link == null or local_link \
+					else Control.CURSOR_HELP
+				var action := "FREE — DRAG TO PATCH"
+				if local_link:
+					action = "PATCHED — GRAB TO REPATCH OR UNPLUG"
+				elif link:
+					action = "REMOTE LINK — CLICK TO INSPECT"
+				tooltip_text = "%s  /  %s  ·  %s" % [dev.name, hovered_port.name, action]
+			else:
+				mouse_default_cursor_shape = Control.CURSOR_ARROW
+			if _drag_iface:
+				cable_moved.emit(get_global_mouse_position())
+				accept_event()
 
 	func _physical_ports() -> Array:
 		var out: Array = []
@@ -691,14 +708,21 @@ class RackSlot extends Control:
 			return Rect2()
 		const RAIL := 30.0
 		var inner := Rect2(RAIL + 2, 3, size.x - RAIL * 2 - 4, size.y - 6)
-		var px := inner.position.x + inner.size.x - 26 - idx * 13
-		if px < inner.position.x + 190:
-			return Rect2()
-		return Rect2(px - 6, inner.position.y + inner.size.y / 2.0 - 10, 21, 20)
+		# Real faceplates bank ports in rows. Keeping twelve per row gives every
+		# jack a distinct socket and drag target, even on a 24-port switch.
+		const PITCH := 17.0
+		const JACK := Vector2(14, 11)
+		var columns := mini(12, ports.size())
+		var col := idx % 12
+		var row := idx / 12
+		var bank_w := (columns - 1) * PITCH + JACK.x
+		var bank_x := inner.end.x - 18.0 - bank_w
+		var bank_y := inner.position.y + (6.0 if ports.size() > 12 else (inner.size.y - JACK.y) * 0.5)
+		return Rect2(Vector2(bank_x + col * PITCH, bank_y + row * 15.0), JACK)
 
 	func port_at(local_pos: Vector2) -> Net.Iface:
 		for iface: Net.Iface in _physical_ports():
-			if _port_rect(iface).has_point(local_pos):
+			if _port_rect(iface).grow(2.0).has_point(local_pos):
 				return iface
 		return null
 
@@ -750,18 +774,22 @@ class RackSlot extends Control:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, visual["ink"])
 		draw_string(_mono, inner.position + Vector2(14, 33), Game.MODELS[dev.model]["label"],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col.lightened(0.25))
-		# mini port squares, lit when linked
+		# Ethernet sockets: recessed jack, metal lip, and a tiny link light.
 		for i: Net.Iface in _physical_ports():
 			var port_rect := _port_rect(i)
 			if port_rect.size == Vector2.ZERO:
 				continue
 			var linked := Game.link_at(i) != null
-			var pc := Color(0.35, 0.95, 0.5) if linked else Color(0.2, 0.22, 0.28)
+			var pc := Color(0.35, 0.95, 0.5) if linked else Color(0.15, 0.18, 0.22)
 			if not i.enabled:
 				pc = Color(0.7, 0.3, 0.25)
-			draw_rect(port_rect.grow(-6), pc)
-			if Game.link_at(i) == null and hovered:
-				draw_rect(port_rect, Color(UIW.colour("accent"), 0.55), false, 1.0)
+			draw_rect(port_rect, Color("111821"))
+			draw_rect(port_rect, col.darkened(0.25), false, 1.0)
+			draw_rect(Rect2(port_rect.position + Vector2(3, 3), port_rect.size - Vector2(6, 5)), pc)
+			draw_line(port_rect.position + Vector2(4, 2), port_rect.position + Vector2(10, 2),
+				Color("aeb7bc"), 1.0)
+			if not linked and hovered:
+				draw_rect(port_rect.grow(2), Color(UIW.colour("accent"), 0.72), false, 1.0)
 		if Game.config_dirty(dev):  # unsaved configuration: amber dot by the status LED
 			draw_circle(inner.position + Vector2(inner.size.x - 24, 10), 2.6, Color(1.0, 0.72, 0.3))
 		# status LED
@@ -775,42 +803,128 @@ class CablePull extends Control:
 	var active := false
 	var from := Vector2.ZERO
 	var to := Vector2.ZERO
+	var source_iface: Net.Iface
+	var suppressed_link: Net.Link
+	var valid_target := false
+	var rack: Net.Rack
+	var slot_box: VBoxContainer
+	var _mono: SystemFont
+	const CABLE_COLOURS := [Color("f2b84b"), Color("4dd5c8"), Color("75a7ff"),
+		Color("e7748f"), Color("a78bfa"), Color("8ed081")]
 
 	func setup() -> CablePull:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_mono = UIW.mono_font()
 		return self
 
-	func begin(screen_from: Vector2) -> void:
+	func watch(r: Net.Rack, slots: VBoxContainer) -> void:
+		rack = r
+		slot_box = slots
+		queue_redraw()
+
+	func begin(screen_from: Vector2, iface: Net.Iface, hide_link: Net.Link = null) -> void:
 		active = true
+		source_iface = iface
+		suppressed_link = hide_link
 		from = screen_from
 		to = screen_from
 		queue_redraw()
 
-	func move_to(screen_to: Vector2) -> void:
+	func move_to(screen_to: Vector2, can_drop := false) -> void:
 		to = screen_to
+		valid_target = can_drop
 		queue_redraw()
 
 	func finish() -> void:
 		active = false
+		source_iface = null
+		suppressed_link = null
+		valid_target = false
 		queue_redraw()
 
-	func _draw() -> void:
-		if not active:
-			return
-		var a := from - global_position
-		var b := to - global_position
-		var sag := minf(42.0, absf(b.x - a.x) * 0.08 + 14.0)
+	func _process(_dt: float) -> void:
+		if visible:
+			queue_redraw()
+
+	func _port_positions() -> Dictionary:
+		var positions := {}
+		if slot_box == null:
+			return positions
+		for child in slot_box.get_children():
+			if child is UIW.RackSlot and not child.is_queued_for_deletion():
+				var slot := child as UIW.RackSlot
+				for iface: Net.Iface in slot._physical_ports():
+					if not positions.has(iface):
+						positions[iface] = slot.port_screen_position(iface) - global_position
+		return positions
+
+	func _loose_points(a: Vector2, b: Vector2) -> PackedVector2Array:
+		# While held, the lead hangs under the hand with a little gravity.
+		var control := Vector2((a.x + b.x) * 0.5, maxf(a.y, b.y) + 30.0)
 		var points := PackedVector2Array()
-		for step in 17:
-			var t := float(step) / 16.0
-			var p := a.lerp(b, t)
-			p.y += sin(t * PI) * sag
-			points.append(p)
-		draw_polyline(points, Color(0.01, 0.02, 0.03, 0.72), 7.0)
-		draw_polyline(points, UIW.colour("warm"), 3.0)
-		draw_circle(a, 5.0, UIW.colour("accent"))
-		draw_circle(b, 5.0, UIW.colour("warm"))
+		for step in 25:
+			var t := float(step) / 24.0
+			var omt := 1.0 - t
+			points.append(omt * omt * a + 2.0 * omt * t * control + t * t * b)
+		return points
+
+	func _dressed_points(a: Vector2, b: Vector2, lane := 0) -> PackedVector2Array:
+		# Installed leads are dressed through the right-hand vertical manager.
+		# Rounded elbows stop the run looking like a diagram connector.
+		var gutter := maxf(a.x, b.x) + 24.0 + lane * 4.0
+		var radius := minf(10.0, absf(b.y - a.y) * 0.22)
+		var direction := signf(b.y - a.y)
+		if is_zero_approx(direction):
+			direction = 1.0
+		var points := PackedVector2Array([a, Vector2(gutter - radius, a.y)])
+		for step in range(1, 6):
+			var t := float(step) / 5.0
+			var omt := 1.0 - t
+			var corner_a := Vector2(gutter, a.y)
+			var end_a := Vector2(gutter, a.y + direction * radius)
+			points.append(omt * omt * Vector2(gutter - radius, a.y) \
+				+ 2.0 * omt * t * corner_a + t * t * end_a)
+		points.append(Vector2(gutter, b.y - direction * radius))
+		for step in range(1, 6):
+			var t := float(step) / 5.0
+			var omt := 1.0 - t
+			var start_b := Vector2(gutter, b.y - direction * radius)
+			var corner_b := Vector2(gutter, b.y)
+			var end_b := Vector2(gutter - radius, b.y)
+			points.append(omt * omt * start_b + 2.0 * omt * t * corner_b + t * t * end_b)
+		points.append(b)
+		return points
+
+	func _draw_lead(a: Vector2, b: Vector2, colour: Color, preview := false, lane := 0) -> void:
+		var points := _loose_points(a, b) if preview else _dressed_points(a, b, lane)
+		draw_polyline(points, Color(0.005, 0.008, 0.012, 0.90), 7.0, true)
+		draw_polyline(points, colour, 3.5, true)
+		# Rubber boots make the endpoints read as plugs rather than dots.
+		for end in [a, b]:
+			draw_rect(Rect2(end - Vector2(3, 5), Vector2(9, 10)), Color("101820"))
+			draw_rect(Rect2(end - Vector2(2, 4), Vector2(7, 8)), colour.darkened(0.12))
+		if preview:
+			draw_circle(b, 8.0, Color(colour, 0.16))
+			draw_circle(b, 8.0, colour, false, 1.5)
+
+	func _draw() -> void:
+		var positions := _port_positions()
+		var drawn := 0
+		if rack:
+			for link: Net.Link in Game.links:
+				if link != suppressed_link and positions.has(link.a) and positions.has(link.b):
+					_draw_lead(positions[link.a], positions[link.b],
+						CABLE_COLOURS[drawn % CABLE_COLOURS.size()], false, drawn % 3)
+					drawn += 1
+		if active:
+			var a := from - global_position
+			var b := to - global_position
+			var colour := UIW.colour("success") if valid_target else UIW.colour("warm")
+			_draw_lead(a, b, colour, true)
+			if source_iface:
+				draw_string(_mono, b + Vector2(13, -10), "%s  /  %s" % [source_iface.dev.name,
+					source_iface.name], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, colour)
 
 # =============================================================== Faceplate ==
 
