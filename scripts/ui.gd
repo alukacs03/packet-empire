@@ -131,6 +131,8 @@ func _ready() -> void:
 	Game.money_changed.connect(_refresh_money)
 	Game.speed_changed.connect(_refresh_speed)
 	Game.money_changed.connect(_money_flash)
+	Game.customer_service_changed.connect(_customer_service_feedback)
+	Game.customer_cash_changed.connect(_customer_cash_feedback)
 	get_viewport().size_changed.connect(_refresh_hud_layout)
 	_refresh_money()
 	_refresh_hud_layout()
@@ -139,6 +141,30 @@ func _money_flash() -> void:
 	Sfx.play("money")
 	money_lbl.modulate = Color(1.6, 1.6, 1.2)
 	create_tween().tween_property(money_lbl, "modulate", Color.WHITE, 0.5)
+
+func _customer_service_feedback(customer: String, state: String, fee: int) -> void:
+	match state:
+		"delivered":
+			hud_toast("SERVICE LIVE  /  %s's promise is proven. Billing starts at $%d/cycle."
+				% [customer, fee], true)
+		"restored":
+			hud_toast("SERVICE RESTORED  /  %s is reachable again. Billing resumes this cycle."
+				% customer, true)
+		"suspended":
+			hud_toast("PAYMENT SUSPENDED  /  %s is down. No invoice until service returns."
+				% customer)
+	_refresh_tutorial()
+	_refresh_open()
+
+func _customer_cash_feedback(customer: String, state: String, amount: int) -> void:
+	if state == "invoiced":
+		hud_toast("INVOICE RAISED  /  %s owes $%d. Cash follows their payment terms."
+			% [customer, amount], true)
+	elif state == "collected":
+		hud_toast("CASH ARRIVED  /  %s paid $%d. The working service remains yours to operate."
+			% [customer, amount], true)
+	_refresh_tutorial()
+	_refresh_open()
 
 func _refresh_attention() -> void:
 	if contracts_btn == null:
@@ -904,6 +930,9 @@ func _pick_new_device(slot: int, at: Control) -> void:
 			float(watts) * Game.efficiency_factor() * Game.energy_rate()))
 		var line := "%-24s %-8s %dU %2d ports  $%-4d  %3dW %-12s" % [mod["label"],
 			mod["type"], height, mod["ports"], mod["price"], watts, running_cost]
+		var delivery_credit := Game.delivery_credit_for_model(String(k))
+		if delivery_credit > 0:
+			line += "   CUSTOMER RESERVE $%d" % delivery_credit
 		var fits := Game.can_install(cur_rack, slot, k)
 		if locked:
 			line += "   🔒 needs %s" % Game.STAGES[int(mod["tier"])]["name"]
@@ -922,9 +951,10 @@ func _pick_new_device(slot: int, at: Control) -> void:
 			hud_toast("A %s is %dU and will not fit there." % [mod2["label"],
 				Game.model_height(keys[id])])
 			return
-		if not Game.try_spend(mod2["price"]):
-			hud_toast("Not enough money for a %s ($%d, you have $%d)." % [mod2["label"],
-				int(mod2["price"]), Game.money])
+		if not Game.try_buy_device(String(keys[id])):
+			var available := Game.money + Game.delivery_credit_for_model(String(keys[id]))
+			hud_toast("Not enough available for a %s ($%d, cash and protected delivery funds total $%d)." % [
+				mod2["label"], int(mod2["price"]), available])
 			return
 		Game.install_device(cur_rack, slot, Game.new_device(keys[id]))
 		cur_rack.visual.queue_redraw()
@@ -2417,6 +2447,79 @@ func _next_waiting_customer() -> Dictionary:
 			return deal
 	return {}
 
+func _open_business_desk() -> void:
+	contracts_tab = "Business"
+	_refresh_contracts()
+	_show_overlay(contracts_overlay)
+
+func _guided_invoice(deal: Dictionary) -> Dictionary:
+	for invoice: Dictionary in Game.invoices:
+		if String(invoice.get("deal", "")) == String(deal.get("id", "")):
+			return invoice
+	return {}
+
+func _render_guided_delivery(deal: Dictionary) -> void:
+	tutorial_panel.visible = true
+	for old in tutorial_box.get_children():
+		old.queue_free()
+	var ever_live := bool(deal.get("ever_healthy", false))
+	var live := bool(deal.get("healthy", false))
+	var invoiced := deal.has("first_invoice_cycle")
+	var collected := deal.has("first_cash_cycle")
+	if not ever_live:
+		tutorial_box.add_child(_tutorial_head("DELIVER  /  %s" % String(deal["customer"]).to_upper()))
+		tutorial_box.add_child(_wrap("Promise sold: %s" % String(deal["brief"]), 13,
+			UIW.colour("text"), 290))
+		for check: Dictionary in Market.delivery_checks(deal):
+			var check_ok := bool(check["ok"])
+			var copy := "%s  %s\n     FIELD WORK  /  %s" % ["●" if check_ok else "○",
+				check["promise"], check["work"]]
+			tutorial_box.add_child(_wrap(copy, 12,
+				Color(0.48, 0.9, 0.62) if check_ok else UIW.colour("muted"), 290))
+		var reserve := int(deal.get("delivery_credit", 0))
+		if reserve > 0:
+			tutorial_box.add_child(_wrap("PROTECTED  /  $%d customer reserve can only fund a server for this promise."
+				% reserve, 11, UIW.colour("warm"), 290))
+		var delivery_btn := Button.new()
+		delivery_btn.text = "Open customer delivery brief"
+		delivery_btn.pressed.connect(func() -> void:
+			contracts_tab = "Jobs"
+			open_contracts())
+		tutorial_box.add_child(delivery_btn)
+		return
+	if not collected or not live:
+		tutorial_box.add_child(_tutorial_head("BILL  /  %s" % String(deal["customer"]).to_upper()))
+		tutorial_box.add_child(_label("%s  Service %s  ·  billing %s" % [
+			"●" if live else "!", "live" if live else "down",
+			"active" if live else "SUSPENDED"], 12,
+			Color(0.48, 0.9, 0.62) if live else Prefs.bad_colour()))
+		tutorial_box.add_child(_label("%s  First invoice raised" % ("●" if invoiced else "○"),
+			12, Color(0.48, 0.9, 0.62) if invoiced else UIW.colour("muted")))
+		tutorial_box.add_child(_label("%s  First cash collected" % ("●" if collected else "○"),
+			12, Color(0.48, 0.9, 0.62) if collected else UIW.colour("muted")))
+		var invoice := _guided_invoice(deal)
+		if not invoice.is_empty() and not collected:
+			var due_in := maxi(0, int(invoice["due"]) - Game.cycle)
+			tutorial_box.add_child(_wrap("RECEIVABLE  /  $%d due in %d cycle%s. Revenue is earned; cash has not landed yet."
+				% [int(invoice["amount"]), due_in, "" if due_in == 1 else "s"],
+				11, UIW.colour("warm"), 290))
+		var books_btn := Button.new()
+		books_btn.text = "Open the business ledger"
+		books_btn.pressed.connect(_open_business_desk)
+		tutorial_box.add_child(books_btn)
+		return
+	tutorial_box.add_child(_tutorial_head("CUSTOMER LIVE  /  CASH MOVING"))
+	for line in ["Promise translated into a working service",
+			"First invoice raised on the customer terms",
+			"First cash collected without removing the topology"]:
+		tutorial_box.add_child(_label("●  " + line, 12, Color(0.48, 0.9, 0.62)))
+	var continue_btn := Button.new()
+	continue_btn.text = "Keep operating this customer"
+	continue_btn.pressed.connect(func() -> void:
+		Game.stats["guided_delivery_acknowledged"] = 1
+		_refresh_tutorial())
+	tutorial_box.add_child(continue_btn)
+
 func _refresh_tutorial() -> void:
 	if tutorial_panel == null:
 		return
@@ -2424,6 +2527,10 @@ func _refresh_tutorial() -> void:
 		tutorial_panel.visible = false
 		return
 	if "rackup" in Game.contracts_done:
+		var guided := Game.guided_customer_deal()
+		if not guided.is_empty() and int(Game.stats.get("guided_delivery_acknowledged", 0)) == 0:
+			_render_guided_delivery(guided)
+			return
 		var waiting := _next_waiting_customer()
 		if not waiting.is_empty():
 			tutorial_panel.visible = true
@@ -2711,6 +2818,23 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	return h
 
 func _build_business_tab() -> void:
+	contracts_box.add_child(_section("LAST CYCLE  /  BUSINESS FLOW"))
+	contracts_box.add_child(_wrap(
+		"Revenue is what the network earned. An invoice makes it receivable; collection is when cash reaches the bank. Power and transit leave immediately.",
+		12, UIW.colour("muted"), 600))
+	var flow := GridContainer.new()
+	flow.columns = 3
+	flow.add_theme_constant_override("h_separation", UIW.space("sm"))
+	flow.add_theme_constant_override("v_separation", UIW.space("sm"))
+	contracts_box.add_child(flow)
+	flow.add_child(_offer_fact("REVENUE EARNED", "+$%d\nservice delivered" % int(Game.last_business.get("revenue", 0)), "success"))
+	flow.add_child(_offer_fact("INVOICES RAISED", "+$%d\nnow receivable" % int(Game.last_business.get("invoiced", 0)), "info"))
+	flow.add_child(_offer_fact("CASH COLLECTED", "+$%d\nreached the bank" % int(Game.last_business.get("collected", 0)), "success"))
+	flow.add_child(_offer_fact("POWER COST", "-$%d\npaid this cycle" % int(Game.last_business.get("power", 0)), "warning"))
+	flow.add_child(_offer_fact("TRANSIT COST", "-$%d\nports and traffic" % int(Game.last_business.get("transit", 0)), "warning"))
+	var cash_delta := int(Game.last_cycle_delta)
+	flow.add_child(_offer_fact("NET CASH", "%s$%d\nactual bank movement" % [
+		"+" if cash_delta >= 0 else "-", absi(cash_delta)], "success" if cash_delta >= 0 else "danger"))
 	contracts_box.add_child(_section("RECEIVABLES"))
 	var owed := Game.receivables()
 	var late := Game.overdue_invoices()
@@ -3522,19 +3646,24 @@ func _build_jobs_tab() -> void:
 		contracts_box.add_child(_section("ACTIVE DEALS"))
 		for deal: Dictionary in Game.deals:
 			var ok: bool = deal["healthy"]
-			var chip_txt := "PAYING"
+			var chip_txt := "BILLING"
 			var chip_col := Color(0.4, 0.85, 0.5)
+			var payment_copy := ""
 			if not ok:
-				chip_txt = "DOWN"
+				var suspended := String(deal.get("payment_state", "waiting")) == "suspended"
+				chip_txt = "SUSPENDED" if suspended else "WAITING"
 				chip_col = Color(0.95, 0.45, 0.35)
+				payment_copy = "   (service down: billing suspended)" if suspended \
+					else "   (promise not delivered: no invoice yet)"
 			elif deal.get("degraded", false):
 				chip_txt = "SLOW"
 				chip_col = Color(0.95, 0.75, 0.4)
+				payment_copy = "   (congested: invoicing at half rate)"
 			contracts_box.add_child(_chip_row(
 				chip_txt,
 				chip_col,
 				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
-					"" if ok else "   (not delivered: not paying)"],
+					payment_copy],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
 			if deal.has("upsell"):
 				var up: Dictionary = deal["upsell"]

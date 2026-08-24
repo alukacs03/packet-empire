@@ -5,6 +5,8 @@ extends Node
 signal events_changed
 signal topology_changed
 signal money_changed
+signal customer_service_changed(customer: String, state: String, fee: int)
+signal customer_cash_changed(customer: String, state: String, amount: int)
 
 # Hardware catalog: fictional vendors, real tiers. New model = new entry.
 const MODELS := {
@@ -737,7 +739,20 @@ func raise_invoice(deal: Dictionary, amount: int) -> void:
 	var terms := payment_terms(deal)
 	invoices.append({"customer": String(deal["customer"]), "deal": String(deal["id"]),
 		"amount": amount, "raised": cycle, "due": cycle + terms, "chased": false})
-	last_pl["invoiced"] = int(last_pl.get("invoiced", 0)) + amount
+	last_business["revenue"] = int(last_business.get("revenue", 0)) + amount
+	last_business["invoiced"] = int(last_business.get("invoiced", 0)) + amount
+	if bool(deal.get("guided", false)) and not deal.has("first_invoice_cycle"):
+		deal["first_invoice_cycle"] = cycle
+		deal["first_invoice_amount"] = amount
+		customer_cash_changed.emit(String(deal["customer"]), "invoiced", amount)
+		log_event("INVOICE: %s now owes $%d, due in %d cycle(s). Revenue is earned; cash has not arrived yet."
+			% [deal["customer"], amount, terms])
+
+func deal_by_id(id: String) -> Dictionary:
+	for deal: Dictionary in deals:
+		if String(deal.get("id", "")) == id:
+			return deal
+	return {}
 
 func collect_invoices() -> int:
 	## money that has actually landed this cycle, plus the ones that slipped
@@ -745,14 +760,27 @@ func collect_invoices() -> int:
 	for inv in invoices.duplicate():
 		if int(inv["due"]) > cycle:
 			continue
+		var deal := deal_by_id(String(inv["deal"]))
+		var guided_first_payment := not deal.is_empty() and bool(deal.get("guided", false)) \
+			and not deal.has("first_cash_cycle")
 		# a customer who has not been chased sometimes simply pays late
-		if not bool(inv["chased"]) and randf() < 0.18:
+		if not guided_first_payment and not bool(inv["chased"]) and randf() < 0.18:
 			inv["due"] = int(inv["due"]) + randi_range(1, 2)
 			if not bool(inv.get("slipped", false)):
 				inv["slipped"] = true
 				log_event("LATE: %s has not paid the $%d they owe." % [inv["customer"], int(inv["amount"])])
 			continue
-		collected += int(inv["amount"])
+		var amount := int(inv["amount"])
+		collected += amount
+		last_business["collected"] = int(last_business.get("collected", 0)) + amount
+		if not deal.is_empty() and bool(deal.get("guided", false)) \
+				and not deal.has("first_cash_cycle"):
+			deal["first_cash_cycle"] = cycle
+			deal["first_cash_amount"] = amount
+			stats["guided_delivery_complete"] = 1
+			customer_cash_changed.emit(String(deal["customer"]), "collected", amount)
+			log_event("CASH: %s paid their first $%d invoice. The service stays live and keeps billing."
+				% [deal["customer"], amount])
 		invoices.erase(inv)
 	for inv2 in invoices.duplicate():
 		if cycle - int(inv2["due"]) > WRITE_OFF_AFTER:
@@ -760,7 +788,7 @@ func collect_invoices() -> int:
 			reputation = maxi(0, reputation - 2)
 			log_event("WRITTEN OFF: $%d from %s is never arriving." % [int(inv2["amount"]), inv2["customer"]])
 	if collected > 0:
-		last_pl["collections"] = int(last_pl.get("collections", 0)) + collected
+		last_pl["cash collected"] = int(last_pl.get("cash collected", 0)) + collected
 	return collected
 
 # ---------- the working day ----------
@@ -1127,6 +1155,8 @@ const UPS_PRICE := 1800
 const UPS_CYCLES := 3  # how long a full battery holds a dead feed up
 var _pristine := {}  # what a brand new game looks like
 var last_pl := {}  # line item -> amount, from the latest cycle
+var last_business := {"revenue": 0, "invoiced": 0, "collected": 0,
+	"power": 0, "transit": 0}  # profit and cash timing are related, not identical
 var cycle_timer: Timer
 var speed := 1  # 0 = paused, otherwise a multiplier on the revenue cycle
 
@@ -1932,10 +1962,16 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 		"id": "rfp_%d%s" % [cycle, String(lead["customer"]).substr(0, 3)],
 		"customer": lead["customer"], "kind": lead["kind"], "params": lead["params"],
 		"fee": price, "brief": Market.rfp_requirements(lead), "healthy": false,
+		"payment_state": "waiting",
 		"cycles": 0, "up_cycles": 0, "term": 18, "sla": committed_sla,
 		"ctype": lead.get("ctype", "enterprise"), "loyalty": 0.75,
 		"load": int(lead["load"]), "public": bool(lead.get("public", false)),
 	}
+	if bool(lead.get("guided", false)):
+		deal["guided"] = true
+		deal["delivery_credit"] = int(Market.cost_to_serve(lead)["setup"])
+		log_event("DELIVERY RESERVE: Kiskacsa set aside $%d for the server. It cannot be spent on anything else."
+			% int(deal["delivery_credit"]))
 	deals.append(deal)
 	stats["deals"] = int(stats.get("deals", 0)) + 1
 	reputation = mini(100, reputation + 2)
@@ -2519,6 +2555,8 @@ func sla_tick() -> void:
 	var customer_outage_now := false
 	var earned := 0
 	last_pl = {}
+	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
+		"power": 0, "transit": 0}
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -2541,6 +2579,7 @@ func sla_tick() -> void:
 	if stage >= 1:  # colo includes power; your own room doesn't
 		var bill := power_bill()
 		last_pl["power"] = -bill
+		last_business["power"] = bill
 		earned -= bill
 	if accountant:
 		last_pl["accountant"] = -ACCOUNTANT_FEE
@@ -2564,11 +2603,13 @@ func sla_tick() -> void:
 		if ok:
 			var fee: int = int(c["reward"]) / 10
 			last_pl["service fees"] = int(last_pl.get("service fees", 0)) + fee
+			last_business["revenue"] = int(last_business.get("revenue", 0)) + fee
 			earned += fee
 	for d in all_devices():  # transit invoices
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
 				last_pl["transit ports"] = int(last_pl.get("transit ports", 0)) - TRANSIT_FEE
+				last_business["transit"] = int(last_business.get("transit", 0)) + TRANSIT_FEE
 				earned -= TRANSIT_FEE
 	if overheating():
 		# heat kills, and it kills where the heat is: the hottest cabinet loses
@@ -2637,6 +2678,7 @@ func sla_tick() -> void:
 	var link_load := {}
 	var deal_links := {}
 	for deal in deals:
+		var was_healthy := bool(deal.get("healthy", false))
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
 		var deal_host := Contracts._owner(String(deal["params"].get("ip", "")))
 		if deal["healthy"] and deal_host != null and cert_expired(deal_host):
@@ -2653,9 +2695,24 @@ func sla_tick() -> void:
 		else:
 			deal["hijacked"] = false
 		if deal["healthy"]:
+			var first_delivery := not bool(deal.get("ever_healthy", false))
 			deal["ever_healthy"] = true
+			deal["payment_state"] = "billing"
+			if not was_healthy:
+				var state := "delivered" if first_delivery else "restored"
+				customer_service_changed.emit(String(deal["customer"]), state, int(deal["fee"]))
+				log_event("SERVICE %s: %s is reachable. Billing %s at $%d/cycle."
+					% [state.to_upper(), deal["customer"], "started" if first_delivery else "resumed",
+						int(deal["fee"])])
 		elif bool(deal.get("ever_healthy", false)) and not deal.has("renewal"):
 			customer_outage_now = true
+			deal["payment_state"] = "suspended"
+			if was_healthy:
+				customer_service_changed.emit(String(deal["customer"]), "suspended", int(deal["fee"]))
+				log_event("PAYMENT SUSPENDED: %s is down. No invoice will be raised until service returns."
+					% deal["customer"])
+		else:
+			deal["payment_state"] = "waiting"
 		if deal["healthy"]:
 			var used := _deal_path_links(deal)
 			deal_links[deal["id"]] = used
@@ -2697,7 +2754,11 @@ func sla_tick() -> void:
 			deal["degraded"] = false
 			deal["missed"] = int(deal.get("missed", 0)) + 1
 			var missed: int = deal["missed"]
-			if missed == 3:
+			if bool(deal.get("guided", false)) and not bool(deal.get("ever_healthy", false)):
+				if missed == 3:
+					log_event("DELIVERY COACH: Kiskacsa is still waiting. Their protected server reserve and contract remain open while you finish the service.")
+				deal["missed"] = mini(missed, 3)
+			elif missed == 3:
 				log_event("%s is losing patience: deliver their service or they walk in 2 cycles."
 					% deal["customer"])
 			elif missed >= 5:
@@ -2740,9 +2801,11 @@ func sla_tick() -> void:
 	var transit_bill := transit_cost()
 	if transit_bill > 0:
 		last_pl["transit (95th)"] = int(last_pl.get("transit (95th)", 0)) - transit_bill
+		last_business["transit"] = int(last_business.get("transit", 0)) + transit_bill
 		earned -= transit_bill
 	if bool(ixp.get("joined", false)):
 		last_pl["exchange port"] = int(last_pl.get("exchange port", 0)) - IXP_PORT_FEE
+		last_business["transit"] = int(last_business.get("transit", 0)) + IXP_PORT_FEE
 		earned -= IXP_PORT_FEE
 	earned += collect_invoices()
 	last_cycle_delta = earned
@@ -2810,6 +2873,37 @@ func _update_reliability_streak(outage_now: bool) -> void:
 				member["morale"] = mini(100, int(member.get("morale", 70)) + 1)
 
 # ---------- money ----------
+
+func guided_customer_deal() -> Dictionary:
+	for deal: Dictionary in deals:
+		if bool(deal.get("guided", false)):
+			return deal
+	return {}
+
+func delivery_credit_for_model(model: String) -> int:
+	var deal := guided_customer_deal()
+	if deal.is_empty() or bool(deal.get("ever_healthy", false)) or not MODELS.has(model):
+		return 0
+	if String(deal.get("kind", "")) == "hosting" and String(MODELS[model]["type"]) == "server":
+		return mini(int(MODELS[model]["price"]), int(deal.get("delivery_credit", 0)))
+	return 0
+
+func try_buy_device(model: String) -> bool:
+	if not MODELS.has(model):
+		return false
+	var price := int(MODELS[model]["price"])
+	var credit := delivery_credit_for_model(model)
+	if money + credit < price:
+		return false
+	if credit <= 0:
+		return try_spend(price)
+	var deal := guided_customer_deal()
+	deal["delivery_credit"] = int(deal.get("delivery_credit", 0)) - credit
+	money -= price - credit
+	log_event("DELIVERY RESERVE: $%d funded %s for %s; $%d remains protected."
+		% [credit, MODELS[model]["label"], deal["customer"], int(deal["delivery_credit"])])
+	money_changed.emit()
+	return true
 
 func try_spend(amount: int) -> bool:
 	if sandbox:
@@ -3470,6 +3564,10 @@ func load_game() -> bool:
 func _apply(data: Dictionary) -> void:
 	racks = []
 	links = []
+	last_cycle_delta = 0
+	last_pl = {}
+	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
+		"power": 0, "transit": 0}
 	money = int(data["money"])
 	company_name = String(data.get("company_name", "Packet Empire"))
 	demo = bool(data.get("demo", false))

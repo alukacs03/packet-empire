@@ -3362,6 +3362,24 @@ static func run() -> int:
 	var pl_money := Game.money
 	var pl_stats := Game.stats.duplicate(true)
 	var pl_contracts := Game.contracts_done.duplicate()
+	var pl_racks := Game.racks.duplicate()
+	var pl_links := Game.links.duplicate()
+	var pl_invoices := Game.invoices.duplicate(true)
+	var pl_cycle := Game.cycle
+	var pl_stage := Game.stage
+	var pl_reputation := Game.reputation
+	var pl_debt := Game.debt
+	var pl_staff := Game.staff.duplicate(true)
+	var pl_rivals := Game.rivals.duplicate(true)
+	var pl_history := Game.history.duplicate(true)
+	var pl_events := Game.events.duplicate(true)
+	var pl_leads_saved := Game.leads.duplicate(true)
+	var pl_offers := Game.offers.duplicate(true)
+	var pl_last_pl := Game.last_pl.duplicate(true)
+	var pl_last_business := Game.last_business.duplicate(true)
+	var pl_last_delta := Game.last_cycle_delta
+	var pl_quarter_profit := Game.quarter_profit
+	var pl_quarter_depreciation := Game.quarter_depreciation
 	Game.money = 100000
 	Game.leads = []
 	Game.deals = []
@@ -3382,8 +3400,58 @@ static func run() -> int:
 		"guided sales: a first bad proposal is coached and remains recoverable")
 	check(Game.submit_proposal(guided, 1, int(guided["sla"])) == "" and not Game.deals.is_empty(),
 		"guided sales: a revised compliant proposal signs a live delivery deal")
+	var guided_deal: Dictionary = Game.deals[0]
+	check(int(guided_deal.get("delivery_credit", 0)) == int(serve["setup"]),
+		"guided delivery: the required starter server budget is protected inside the deal")
+	Game.money = 0
+	check(Game.try_buy_device("srv-1") and Game.money == 0,
+		"guided delivery: the protected reserve buys the required server even after cash was spent elsewhere")
+	# A tiny reusable customer network exercises the whole promise -> service ->
+	# invoice -> cash path. It remains installed after the tutorial milestone.
+	Game.contracts_done = []
+	Game.invoices = []
+	Game.stage = 0
+	Game.cycle = 206
+	Game.debt = 0
+	Game.staff = []
+	Game.rivals = []
+	guided_deal["missed"] = 4
+	Game.sla_tick()
+	check(Game.deals.has(guided_deal) and int(guided_deal["missed"]) == 3,
+		"guided delivery: the first customer cannot time out while the player learns to build it")
+	var delivery_rack := Game.add_rack(Vector2i(31, 31))
+	var delivery_server := Game.new_device("srv-1")
+	var delivery_peer := Game.new_device("srv-1")
+	delivery_rack.slots[0] = delivery_server
+	delivery_rack.slots[1] = delivery_peer
+	delivery_server.ifaces[0].ips = ["10.42.18.10/24"]
+	delivery_peer.ifaces[0].ips = ["10.42.18.20/24"]
+	Game.connect_ifaces(delivery_server.ifaces[0], delivery_peer.ifaces[0])
+	var delivery_checks := Market.delivery_checks(guided_deal)
+	check(delivery_checks.size() == 4 and delivery_checks.all(func(item): return bool(item["ok"])),
+		"guided delivery: each sold hosting promise maps to a passing live technical check")
+	Game.sla_tick()
+	check(bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "billing",
+		"guided delivery: proving the topology changes the customer from waiting to billing")
+	check(guided_deal.has("first_invoice_cycle") and int(Game.last_business["invoiced"]) == int(guided_deal["fee"]),
+		"guided delivery: the first live cycle raises a visible invoice")
+	delivery_server.ifaces[0].enabled = false
+	Game.topology_changed.emit()
+	Game.sla_tick()
+	check(not bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "suspended" \
+			and int(Game.last_business["invoiced"]) == 0,
+		"guided delivery: breaking service visibly suspends new billing")
+	check(guided_deal.has("first_cash_cycle") and int(Game.last_business["collected"]) > 0,
+		"guided delivery: the already-earned first invoice becomes cash after the startup payment term")
+	delivery_server.ifaces[0].enabled = true
+	Game.topology_changed.emit()
+	Game.sla_tick()
+	check(bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "billing" \
+			and int(Game.last_business["invoiced"]) > 0,
+		"guided delivery: restoring the same topology resumes billing without replacing the customer")
 	Game.deals = []
 	Game.leads = []
+	Game.money = 100000
 	var lead := Market.gen_lead()
 	Game.leads = [lead]
 	check(String(lead["stage"]) == "lead", "pipeline: it starts as a rumour")
@@ -3421,6 +3489,25 @@ static func run() -> int:
 	Game.money = pl_money
 	Game.stats = pl_stats
 	Game.contracts_done = pl_contracts
+	Game.racks = pl_racks
+	Game.links = pl_links
+	Game.invoices = pl_invoices
+	Game.cycle = pl_cycle
+	Game.stage = pl_stage
+	Game.reputation = pl_reputation
+	Game.debt = pl_debt
+	Game.staff = pl_staff
+	Game.rivals = pl_rivals
+	Game.history = pl_history
+	Game.events = pl_events
+	Game.leads = pl_leads_saved
+	Game.offers = pl_offers
+	Game.last_pl = pl_last_pl
+	Game.last_business = pl_last_business
+	Game.last_cycle_delta = pl_last_delta
+	Game.quarter_profit = pl_quarter_profit
+	Game.quarter_depreciation = pl_quarter_depreciation
+	Game.topology_changed.emit()
 
 	# --- customers who grow, and what people say about you ---
 	var gr_deal := {"id": "grow1", "customer": "Growing Kft", "kind": "hosting",

@@ -166,14 +166,45 @@ func _shoot_all() -> void:
 			Game.deals = [{"id": "guided_delivery", "customer": "Kiskacsa Kft",
 				"kind": "hosting", "params": {"ip": "10.42.18.10"}, "fee": 72,
 				"brief": "best effort is acceptable, about 150 Mbps", "healthy": false,
+				"guided": true, "payment_state": "waiting", "delivery_credit": 400,
 				"cycles": 0, "up_cycles": 0, "term": 18, "sla": 0,
 				"ctype": "startup", "load": 150, "public": false}]
 			ui.close_contracts()
 			ui._refresh_tutorial()],
-		["contracts", func() -> void:
-			ui.open_contracts()
+		["guided_billing", func() -> void:
+			var deal: Dictionary = Game.deals[0]
+			deal["healthy"] = true
+			deal["ever_healthy"] = true
+			deal["payment_state"] = "billing"
+			deal["first_invoice_cycle"] = Game.cycle
+			deal["first_invoice_amount"] = 72
+			Game.invoices = [{"customer": "Kiskacsa Kft", "deal": "guided_delivery",
+				"amount": 72, "raised": Game.cycle, "due": Game.cycle + 1, "chased": false}]
+			ui._refresh_tutorial()],
+		["guided_suspended", func() -> void:
+			var deal: Dictionary = Game.deals[0]
+			deal["healthy"] = false
+			deal["payment_state"] = "suspended"
 			ui.contracts_tab = "Jobs"
-			ui._refresh_contracts()],
+			ui.open_contracts()],
+		["guided_cash", func() -> void:
+			var deal: Dictionary = Game.deals[0]
+			deal["healthy"] = true
+			deal["payment_state"] = "billing"
+			deal["first_cash_cycle"] = Game.cycle + 1
+			deal["first_cash_amount"] = 72
+			Game.invoices = []
+			ui.close_contracts()
+			ui._refresh_tutorial()],
+		["business_cashflow", func() -> void:
+			Game.last_business = {"revenue": 162, "invoiced": 72, "collected": 72,
+				"power": 34, "transit": 18}
+			Game.last_cycle_delta = 20
+			ui.contracts_tab = "Business"
+			ui.open_contracts()],
+		["contracts", func() -> void:
+			ui.contracts_tab = "Jobs"
+			ui.open_contracts()],
 		["map", func() -> void:
 			ui.close_contracts()
 			ui.toggle_map()],

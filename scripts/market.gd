@@ -311,6 +311,55 @@ static func check(kind: String, params: Dictionary) -> bool:
 			return false
 	return false
 
+static func delivery_checks(deal: Dictionary) -> Array:
+	## Turn the words in a sold promise into observable work. The guided first
+	## customer is hosting; later deal kinds still receive an honest live check.
+	if String(deal.get("kind", "")) != "hosting":
+		return [{"promise": String(deal.get("brief", "Deliver the sold service")),
+			"work": "Prove the complete service against the live network",
+			"ok": check(String(deal.get("kind", "")), deal.get("params", {}))}]
+	var ip := String(deal.get("params", {}).get("ip", ""))
+	var owner := Contracts._owner(ip)
+	var addressed := owner != null and owner.type == "server"
+	var patched := false
+	if addressed:
+		for iface: Net.Iface in owner.ifaces:
+			var link := Game.link_at(iface)
+			if iface.enabled and link != null and link.other(iface).enabled:
+				patched = true
+				break
+	var reachable := false
+	var path_capacity := 0
+	if addressed:
+		for source in Game.all_devices():
+			if source == owner:
+				continue
+			var source_addressed := false
+			for iface: Net.Iface in source.ifaces:
+				if not iface.ips.is_empty():
+					source_addressed = true
+			if not source_addressed or not Sim.ping(source, ip)["ok"]:
+				continue
+			reachable = true
+			path_capacity = 1_000_000
+			for hop in Sim.last_trace:
+				var path_link := Game.link_at(hop["a"])
+				if path_link != null:
+					path_capacity = mini(path_capacity, Game.link_capacity(path_link))
+			break
+	var load := int(deal.get("load", 0))
+	return [
+		{"promise": "Host the application at %s" % ip,
+			"work": "Address a server at %s/24" % ip, "ok": addressed},
+		{"promise": "Keep the application on the network",
+			"work": "Patch that server into an active rack port", "ok": patched},
+		{"promise": "Make the application reachable",
+			"work": "Prove a ping from another addressed device", "ok": reachable},
+		{"promise": "Carry about %d Mbps" % load,
+			"work": "Keep at least %d Mbps free across the proven path" % load,
+			"ok": reachable and path_capacity >= load},
+	]
+
 static func _has_uplink() -> bool:
 	for d in Game.all_devices():
 		if d.type == "uplink":
