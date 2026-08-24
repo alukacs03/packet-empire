@@ -26,23 +26,8 @@ func _draw() -> void:
 	var facility_accent := UIW.colour("warm").lerp(UIW.colour("accent"), progress)
 	_draw_room_atmosphere(grid)
 	_draw_reliability_sign(progress)
-	# The room is a raised, lit platform instead of a black void. The lower lip
-	# and cast shadow make the buildable area read as a tangible toy-board.
-	var deck := PackedVector2Array([
-		Iso.tile_to_world(Vector2i(0, 0)) - Vector2(0, Iso.TILE_H / 2.0),
-		Iso.tile_to_world(Vector2i(grid.x, 0)) - Vector2(0, Iso.TILE_H / 2.0),
-		Iso.tile_to_world(Vector2i(grid.x, grid.y)) - Vector2(0, Iso.TILE_H / 2.0),
-		Iso.tile_to_world(Vector2i(0, grid.y)) - Vector2(0, Iso.TILE_H / 2.0),
-	])
-	if progress >= 0.42:
-		var shadow := PackedVector2Array()
-		for p in deck:
-			shadow.append(p + Vector2(14, 22))
-		draw_colored_polygon(shadow, Color(0.015, 0.035, 0.075, 0.58))
-		var south := deck[2]
-		var west := deck[3]
-		draw_colored_polygon(PackedVector2Array([deck[1], south, south + Vector2(0, 15), deck[1] + Vector2(0, 15)]), Color("322b25").lerp(Color("142b48"), progress))
-		draw_colored_polygon(PackedVector2Array([south, west, west + Vector2(0, 15), south + Vector2(0, 15)]), Color("211d1b").lerp(Color("0d213b"), progress))
+	# Build cells are service-floor paint projected over the authored concrete.
+	# They never become a second raised board as the facility expands.
 	if Game.site_count() > 1:  # which floor am I standing on
 		var anchor := Iso.tile_to_world(Vector2i(0, grid.y)) + Vector2(-60, 40)
 		draw_string(ThemeDB.fallback_font, anchor, Game.site_name(Game.current_site),
@@ -52,8 +37,7 @@ func _draw() -> void:
 			var t := Vector2i(x, y)
 			var v := float((x * 7 + y * 13) % 5) / 5.0 * 0.025
 			var c := Color("4b4339").lerp(Color("2b435d"), progress).lightened(v)
-			if progress < 0.42:
-				c.a = 0.16
+			c.a = lerpf(0.14, 0.20, progress)
 			if (x + y) % 2 == 0:
 				c = c.lightened(0.075)
 			_draw_tile(t, c)
@@ -74,7 +58,7 @@ func _draw() -> void:
 	for cnr in corners:
 		pts.append(Iso.tile_to_world(cnr) - Vector2(0, Iso.TILE_H / 2.0))
 	pts.append(pts[0])
-	draw_polyline(pts, Color(facility_accent, 0.16), 12.0)
+	draw_polyline(pts, Color(facility_accent, 0.11), 7.0)
 	draw_polyline(pts, Color(facility_accent, 0.78), 2.5)
 
 func _tile_points(t: Vector2i) -> PackedVector2Array:

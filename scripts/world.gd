@@ -101,7 +101,14 @@ func _shoot_all() -> void:
 		["floor_outage", func() -> void:
 			Game.customer_outage_active = true
 			Game.last_customer_outage_cycle = Game.cycle],
+		["floor_mature", func() -> void:
+			Game.customer_outage_active = false
+			Game.stage = Game.STAGES.size() - 1
+			rebuild_racks()
+			queue_redraw()],
 		["welcome", func() -> void:
+			Game.stage = 0
+			rebuild_racks()
 			Game.customer_outage_active = false
 			ui.show_welcome()],
 		["rack", func() -> void:
