@@ -3044,46 +3044,65 @@ func _build_log_tab() -> void:
 
 func _build_jobs_tab() -> void:
 	if not Game.offers.is_empty():
-		contracts_box.add_child(_section("INCOMING OFFERS: QUOTE A PRICE PER REVENUE CYCLE"))
+		var desk := _section("BID DESK  /  INCOMING OPPORTUNITIES")
+		desk.add_theme_color_override("font_color", UIW.colour("warm"))
+		contracts_box.add_child(desk)
 	for offer: Dictionary in Game.offers:
-		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", _sb(Color(0.12, 0.1, 0.15), Color(0.6, 0.5, 0.8, 0.5), 8, 14))
+		var card := UIW.style_panel(PanelContainer.new(), "surface", "lg")
 		contracts_box.add_child(card)
 		var cv := VBoxContainer.new()
-		cv.add_theme_constant_override("separation", 6)
+		cv.add_theme_constant_override("separation", UIW.space("md"))
 		card.add_child(cv)
 		var ct2: Dictionary = Market.TYPES.get(offer.get("ctype", "enterprise"), {})
-		cv.add_child(_label("%s   ·   %s   ·   %s" % [offer["customer"],
-			Market.label_for(offer["kind"]), ct2.get("label", "")], 16, Color.WHITE))
+		var offer_head := HBoxContainer.new()
+		offer_head.add_theme_constant_override("separation", UIW.space("md"))
+		cv.add_child(offer_head)
+		var customer := _label(String(offer["customer"]), 18, UIW.colour("text_strong"))
+		customer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		offer_head.add_child(customer)
+		offer_head.add_child(UIW.make_chip("%s  /  %s" % [Market.label_for(offer["kind"]),
+			ct2.get("label", "")], "info"))
+		offer_head.add_child(UIW.make_chip("%d CYCLES LEFT" % int(offer["ttl"]),
+			"warning" if int(offer["ttl"]) <= 2 else "accent"))
 		if ct2.has("note"):
-			cv.add_child(_wrap(ct2["note"], 13, Color(0.7, 0.72, 0.8)))
-		cv.add_child(_wrap("Word is: %s." % offer["hint"], 13, Color(0.75, 0.7, 0.85)))
+			cv.add_child(_wrap("%s  Market intel: %s" % [ct2["note"], offer["hint"]],
+				13, UIW.colour("muted"), 620))
+
+		var ask := UIW.style_panel(PanelContainer.new(), "console", "md")
+		cv.add_child(ask)
+		var ask_box := VBoxContainer.new()
+		ask_box.add_theme_constant_override("separation", UIW.space("sm"))
+		ask.add_child(ask_box)
+		var ask_tag := _section("CLIENT ASK")
+		ask_tag.add_theme_color_override("font_color", UIW.colour("accent"))
+		ask_box.add_child(ask_tag)
+		ask_box.add_child(_wrap(offer["brief"], 14, UIW.colour("text_strong"), 620))
+
 		var otier := Market.tier(int(offer.get("sla", 0)))
+		var facts := HBoxContainer.new()
+		facts.add_theme_constant_override("separation", UIW.space("sm"))
+		cv.add_child(facts)
 		if float(otier["uptime"]) > 0.0:
-			cv.add_child(_wrap("📜 Service level: %s. Miss it and they charge back %.1fx the fee."
-				% [otier["label"], float(otier["penalty"])], 13, Color(1.0, 0.8, 0.5)))
+			facts.add_child(_offer_fact("SERVICE LEVEL", "%s  ·  %.1fx penalty" % [otier["label"],
+				float(otier["penalty"])], "warning"))
 		else:
-			cv.add_child(_label("📜 Service level: best effort.", 13, Color(0.65, 0.7, 0.75)))
-		cv.add_child(_wrap(offer["brief"], 14, Color(0.78, 0.8, 0.88)))
-		cv.add_child(_wrap("💡 " + offer["costs"], 13, Color(0.6, 0.65, 0.55)))
+			facts.add_child(_offer_fact("SERVICE LEVEL", "Best effort  ·  no penalty", "success"))
+		facts.add_child(_offer_fact("DELIVERY", String(offer["costs"]), "info"))
+		var est: Array = Game.market_estimate(offer)
+		var market_copy := "No rival bidder"
+		if not Rivals.best_bidder(offer).is_empty():
+			market_copy = ("No price signal yet" if est.is_empty() else "$%d–$%d likely" % [
+				int(est[0]), int(est[1])])
+		facts.add_child(_offer_fact("MARKET RANGE", market_copy,
+			"success" if Rivals.best_bidder(offer).is_empty() else "warm"))
 		if bool(offer.get("public", false)):
 			var blocked := Game.can_accept_offer(offer)
-			cv.add_child(_wrap("🌐 They need a public IPv4 address of their own.%s"
+			cv.add_child(_wrap("PUBLIC ADDRESS REQUIRED.%s"
 				% ("" if blocked == "" else "  You have none free: buy a /29 or let this one go."),
-				13, Prefs.bad_colour() if blocked != "" else Color(0.7, 0.8, 0.9)))
-		var est: Array = Game.market_estimate(offer)
-		if Rivals.best_bidder(offer).is_empty():
-			cv.add_child(_wrap("📉 No competitor is chasing this one: price it properly.",
-				13, Color(0.7, 0.9, 0.65)))
-		elif est.is_empty():
-			cv.add_child(_label("📉 You have no read on what competitors charge yet.", 13, Color(0.6, 0.6, 0.7)))
-		else:
-			cv.add_child(_label("📉 Rivals would likely quote $%d to $%d for this." % [int(est[0]), int(est[1])],
-				13, Color(0.7, 0.85, 0.6)))
-		cv.add_child(_label("Offer expires in %d cycle(s)." % int(offer["ttl"]), 12, MUTED))
+				12, Prefs.bad_colour() if blocked != "" else UIW.colour("info"), 620))
 		if offer["state"] == "counter":
-			cv.add_child(_wrap("They countered: \"Best we can do is $%d per cycle.\"" % int(offer["budget"]),
-				14, Color(1.0, 0.8, 0.4)))
+			cv.add_child(_wrap("COUNTEROFFER  /  Best we can do is $%d per cycle." % int(offer["budget"]),
+				14, UIW.colour("warm")))
 			var row := HBoxContainer.new()
 			cv.add_child(row)
 			var acc := Button.new()
@@ -3129,6 +3148,7 @@ func _build_jobs_tab() -> void:
 				Game.dismiss_offer(offer)
 				_refresh_contracts())
 			row.add_child(dis)
+
 	if not Game.deals.is_empty():
 		contracts_box.add_child(_section("ACTIVE DEALS"))
 		for deal: Dictionary in Game.deals:
@@ -3242,6 +3262,19 @@ func _build_jobs_tab() -> void:
 			Game.try_complete_integration(a)
 			_refresh_contracts())
 		cv.add_child(btn)
+
+func _offer_fact(caption: String, value: String, semantic: String) -> PanelContainer:
+	var panel := UIW.style_panel(PanelContainer.new(), "overlay", "sm")
+	panel.custom_minimum_size = Vector2(198, 76)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", UIW.space("xs"))
+	panel.add_child(box)
+	var cap := _section(caption)
+	cap.add_theme_color_override("font_color", UIW.colour(semantic))
+	box.add_child(cap)
+	box.add_child(_wrap(value, 12, UIW.colour("text"), 180))
+	return panel
 
 func _toast(text: String) -> void:
 	if _toast_lbl == null or not is_instance_valid(_toast_lbl):
