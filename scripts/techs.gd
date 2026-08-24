@@ -50,20 +50,25 @@ class Person extends Node2D:
 	func _draw() -> void:
 		var clock := Time.get_ticks_msec() / 1000.0
 		var working := dwell > 0.0
-		var bob := 0.0 if working else sin(clock * 6.0 + phase) * 2.0
-		var stride := 0.0 if working else sin(clock * 6.0 + phase) * 9.0
+		var animated := not Prefs.reduced_motion
+		var bob := 0.0 if working or not animated else sin(clock * 6.0 + phase) * 1.3
+		var stride := 0.0 if working or not animated else sin(clock * 6.0 + phase) * 7.0
 		# an iso-flattened shadow, so nobody looks like they are hovering
 		var shadow := PackedVector2Array()
 		for k in 12:
 			var a := TAU * k / 12.0
 			shadow.append(Vector2(cos(a) * 13.0, sin(a) * 6.5))
-		draw_colored_polygon(shadow, Color(0, 0, 0, 0.3))
+		draw_colored_polygon(shadow, Color(0, 0, 0, 0.24))
 		var hip := Vector2(0, -HEIGHT * 0.39 + bob)
 		# Boots and separated legs preserve the walk cycle at tiny scale.
-		draw_line(hip + Vector2(-4, 0), Vector2(-stride - 4, -2), Color("26313a"), 8.0)
-		draw_line(hip + Vector2(4, 0), Vector2(stride + 4, 0), Color("1b2730"), 8.0)
+		draw_line(hip + Vector2(-4, 0), Vector2(-stride - 4, -2), Color("33434c"), 8.0)
+		draw_line(hip + Vector2(4, 0), Vector2(stride + 4, 0), Color("1a2831"), 8.0)
+		draw_line(hip + Vector2(-6, 2), Vector2(-stride - 5, -1), Color(0.55, 0.65, 0.68, 0.25), 1.4)
 		draw_line(Vector2(-stride - 7, -1), Vector2(-stride + 1, -1), Color("13191e"), 5.0)
 		draw_line(Vector2(stride + 1, 1), Vector2(stride + 9, 1), Color("13191e"), 5.0)
+		# Neck sits behind the jacket collar; the skin shade is warmer under the
+		# starter room lamps and keeps the head from reading as a plain circle.
+		draw_rect(Rect2(Vector2(-3 + facing, -HEIGHT * 0.80 + bob), Vector2(7, 10)), Color("b77e5c"))
 		# Jacket silhouette, shoulder seam, and a small utility pack make these
 		# people characters rather than animated measurement sticks.
 		var torso := PackedVector2Array([
@@ -72,27 +77,51 @@ class Person extends Node2D:
 			Vector2(-7, -HEIGHT * 0.37 + bob), Vector2(-12, -HEIGHT * 0.47 + bob),
 		])
 		draw_colored_polygon(torso, kit)
+		var jacket_shadow := PackedVector2Array([
+			Vector2(0, -HEIGHT * 0.74 + bob), Vector2(8, -HEIGHT * 0.75 + bob),
+			Vector2(12, -HEIGHT * 0.43 + bob), Vector2(5, -HEIGHT * 0.36 + bob),
+			Vector2(0, -HEIGHT * 0.38 + bob)])
+		draw_colored_polygon(jacket_shadow, kit.darkened(0.16))
 		draw_line(Vector2(-8, -HEIGHT * 0.60 + bob), Vector2(9, -HEIGHT * 0.62 + bob), kit.lightened(0.26), 2.0)
 		draw_rect(Rect2(Vector2(-13 * facing, -HEIGHT * 0.67 + bob), Vector2(7 * facing, 19)), kit.darkened(0.38))
+		# Collar, lanyard and badge are identity cues that survive at normal zoom.
+		draw_line(Vector2(-4, -HEIGHT * 0.72 + bob), Vector2(0, -HEIGHT * 0.63 + bob), Color("d8d2bb"), 1.2)
+		draw_line(Vector2(4, -HEIGHT * 0.72 + bob), Vector2(0, -HEIGHT * 0.63 + bob), Color("d8d2bb"), 1.2)
+		draw_rect(Rect2(Vector2(-2, -HEIGHT * 0.61 + bob), Vector2(5, 5)), Color("e7d59b"))
+		draw_line(Vector2(-8, -HEIGHT * 0.40 + bob), Vector2(8, -HEIGHT * 0.40 + bob), Color("11191f"), 2.2)
+		if idx % 2 == 1:
+			draw_rect(Rect2(Vector2(7, -HEIGHT * 0.47 + bob), Vector2(4, 8)), Color("d0a84d"))
 		# Arms angle toward a laptop while working and swing gently while walking.
 		var hand_y := -HEIGHT * (0.48 if working else 0.43) + bob
 		draw_line(Vector2(-8, -HEIGHT * 0.68 + bob), Vector2(-14 - stride * 0.25, hand_y), kit.darkened(0.08), 6.0)
 		draw_line(Vector2(8, -HEIGHT * 0.68 + bob), Vector2(15 + stride * 0.25, hand_y), kit.darkened(0.08), 6.0)
 		var head := Vector2(2 * facing, -HEIGHT * 0.86 + bob)
 		draw_circle(head, HEIGHT * 0.11, Color("d7ab82"))
+		draw_arc(head + Vector2(-2 * facing, 2), HEIGHT * 0.10, -PI * 0.48, PI * 0.48,
+			8, Color(0.38, 0.20, 0.14, 0.20), 3.0)
+		draw_circle(head + Vector2(-8 * facing, 1), 2.4, Color("bd8766"))
 		# Hair/hat alternates by crew member so contractors do not look cloned.
 		if idx % 2 == 0:
 			draw_arc(head + Vector2(-1 * facing, -2), HEIGHT * 0.10, PI, TAU, 10, Color("3a271d"), 5.0)
 		else:
-			draw_line(head + Vector2(-9, -5), head + Vector2(9, -5), kit.lightened(0.28), 5.0)
+			draw_line(head + Vector2(-9, -5), head + Vector2(9, -5), kit.lightened(0.20), 5.0)
+			draw_line(head + Vector2(-7 * facing, -6), head + Vector2(10 * facing, -2), kit.darkened(0.16), 2.0)
 		draw_circle(head + Vector2(7 * facing, 0), 1.5, Color("272229"))
+		draw_line(head + Vector2(9 * facing, 2), head + Vector2(11 * facing, 3), Color("8e5f49"), 1.0)
+		if idx % 3 == 0:
+			# One operator wears a compact single-ear radio headset.
+			draw_arc(head, HEIGHT * 0.115, PI * 1.1, PI * 1.9, 8, Color("17232b"), 1.8)
+			draw_circle(head + Vector2(-9 * facing, 1), 2.2, Color("223844"))
 		if working:
 			# a laptop lid catching the light, so you can see where the work is
-			var glow := 0.45 + 0.25 * sin(clock * 3.0 + phase)
-			var laptop := Rect2(Vector2(10 * facing, -HEIGHT * 0.58), Vector2(17 * facing, 12))
-			draw_rect(laptop.abs(), Color("263743"))
-			draw_line(Vector2(11 * facing, -HEIGHT * 0.57), Vector2(25 * facing, -HEIGHT * 0.57),
-				Color(0.5, 0.9, 1.0, glow), 2.0)
+			var glow := 0.55 if not animated else 0.45 + 0.20 * sin(clock * 3.0 + phase)
+			var near := Vector2(10 * facing, -HEIGHT * 0.58)
+			var far := Vector2(26 * facing, -HEIGHT * 0.55)
+			draw_colored_polygon(PackedVector2Array([near, far, far + Vector2(0, 11),
+				near + Vector2(0, 8)]), Color("263743"))
+			draw_line(near + Vector2(2 * facing, 1), far + Vector2(-2 * facing, 1),
+				Color(0.5, 0.9, 1.0, glow), 1.8)
+			draw_circle(near.lerp(far, 0.55) + Vector2(0, 5), 1.2, Color(0.45, 0.8, 0.88, glow))
 
 func _ready() -> void:
 	_rng.seed = 4242
