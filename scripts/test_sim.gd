@@ -567,6 +567,28 @@ static func run() -> int:
 	check(Game.sla_status.values().has(false), "sla: breach is flagged for the UI")
 	a3.ifaces[0].enabled = true
 	Game.topology_changed.emit()
+	# The physical floor counter is stricter than an alert counter: it records
+	# customer impact, holds at zero through an active outage, then resumes.
+	var streak_cycle := Game.cycle
+	Game.last_customer_outage_cycle = Game.cycle - 7
+	Game.best_outage_streak = 3
+	Game.customer_outage_active = false
+	Game._update_reliability_streak(true)
+	check(Game.customer_outage_active and Game.best_outage_streak == 7 \
+		and Game.cycles_since_customer_outage() == 0,
+		"reliability sign: a customer outage resets the current streak and preserves the best")
+	Game.cycle += 1
+	Game._update_reliability_streak(true)
+	check(Game.cycles_since_customer_outage() == 0,
+		"reliability sign: the counter stays at zero while the outage remains active")
+	Game.cycle += 1
+	Game._update_reliability_streak(false)
+	check(Game.cycles_since_customer_outage() == 1,
+		"reliability sign: the counter resumes after customer service is restored")
+	Game.cycle = streak_cycle
+	Game.last_customer_outage_cycle = 0
+	Game.best_outage_streak = 0
+	Game.customer_outage_active = false
 
 	# --- firewall ACLs ---
 	var r3 := Game.add_rack(Vector2i(1, 0))

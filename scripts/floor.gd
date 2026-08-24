@@ -25,6 +25,7 @@ func _draw() -> void:
 	var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)
 	var facility_accent := UIW.colour("warm").lerp(UIW.colour("accent"), progress)
 	_draw_room_atmosphere(grid)
+	_draw_reliability_sign(progress)
 	# The room is a raised, lit platform instead of a black void. The lower lip
 	# and cast shadow make the buildable area read as a tangible toy-board.
 	var deck := PackedVector2Array([
@@ -144,3 +145,36 @@ func _draw_room_lighting(grid: Vector2i) -> void:
 				var a := TAU * float(k) / 24.0
 				glow.append(center + Vector2(cos(a) * radius_x, sin(a) * radius_y))
 			draw_colored_polygon(glow, Color(light_col, (0.010 + instability * 0.012) * fade))
+
+func _draw_reliability_sign(progress: float) -> void:
+	## A cheap wall-mounted counter that becomes part of the room's emotional
+	## weather. It is deliberately not a HUD stat: the team has to walk past it.
+	var rect := Rect2(-286, -136, 174, 70)
+	var accent := UIW.colour("warm").lerp(UIW.colour("accent"), progress)
+	var active := Game.customer_outage_active
+	if active:
+		accent = Color("ff5b50")
+	var clock := Time.get_ticks_msec() / 1000.0
+	var pulse := 0.42 + 0.14 * sin(clock * 8.0) if active else 0.20
+	# Warm bloom against the old concrete; the upgraded sign becomes a tighter,
+	# cooler lightbox as the facility matures.
+	draw_rect(rect.grow(10), Color(accent, pulse * (1.0 - progress * 0.45)))
+	draw_rect(Rect2(rect.position + Vector2(4, 5), rect.size), Color(0.01, 0.015, 0.02, 0.58))
+	draw_rect(rect, Color("211d1a").lerp(Color("0b1b2b"), progress))
+	draw_rect(Rect2(rect.position, Vector2(rect.size.x, 4)), accent)
+	draw_rect(rect, Color(accent, 0.68), false, 1.2)
+	# Slightly overbuilt corner fasteners sell it as an object bolted to the wall.
+	for screw in [rect.position + Vector2(7, 9), Vector2(rect.end.x - 7, rect.position.y + 9),
+		Vector2(rect.position.x + 7, rect.end.y - 7), rect.end - Vector2(7, 7)]:
+		draw_circle(screw, 1.8, Color("9b8872").lerp(Color("8eb8c9"), progress))
+	var title := "CUSTOMER OUTAGE ACTIVE" if active else "NO CUSTOMER OUTAGE"
+	draw_string(UIW.mono_font(), rect.position + Vector2(14, 19), title,
+		HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 28, 9, accent)
+	var streak := 0 if active else Game.cycles_since_customer_outage()
+	draw_string(UIW.mono_font(), rect.position + Vector2(14, 47), "%03d" % streak,
+		HORIZONTAL_ALIGNMENT_LEFT, 72, 23, UIW.colour("text_strong"))
+	draw_string(UIW.mono_font(), rect.position + Vector2(94, 45), "CYCLES",
+		HORIZONTAL_ALIGNMENT_LEFT, 64, 13, UIW.colour("text_strong"))
+	draw_string(UIW.mono_font(), rect.position + Vector2(14, 61), "BEST %03d  ·  LIVE CUSTOMERS" \
+		% Game.best_outage_streak, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 28, 7,
+		UIW.colour("muted"))

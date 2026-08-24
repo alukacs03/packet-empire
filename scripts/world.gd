@@ -97,7 +97,12 @@ func _shoot_all() -> void:
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],
-		["welcome", func() -> void: ui.show_welcome()],
+		["floor_outage", func() -> void:
+			Game.customer_outage_active = true
+			Game.last_customer_outage_cycle = Game.cycle],
+		["welcome", func() -> void:
+			Game.customer_outage_active = false
+			ui.show_welcome()],
 		["rack", func() -> void:
 			ui.welcome_overlay.visible = false
 			ui.open_rack(r)],

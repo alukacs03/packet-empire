@@ -97,6 +97,9 @@ var reputation := 50  # 0-100; feeds customer budgets
 var debt := 0  # bank loan principal
 var stats := {"earned": 0, "incidents": 0, "faults": 0, "contracts": 0, "deals": 0}
 var achievements: Array = []  # ids already earned
+var last_customer_outage_cycle := 0
+var best_outage_streak := 0
+var customer_outage_active := false
 
 const ACHIEVEMENTS := [
 	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
@@ -2460,6 +2463,7 @@ func sla_tick() -> void:
 		cycle += 1  # time passes, but nothing is billed and nothing breaks
 		return
 	cycle += 1
+	var customer_outage_now := false
 	var earned := 0
 	last_pl = {}
 	var incidents := _security_sweep()
@@ -2502,6 +2506,8 @@ func sla_tick() -> void:
 		if sla_status.get(c["id"], true) and not ok:
 			log_event("SLA BREACH: '%s' (%s) is down: fees suspended." % [c["title"], c["customer"]])
 		sla_status[c["id"]] = ok
+		if not ok:
+			customer_outage_now = true
 		if ok:
 			var fee: int = int(c["reward"]) / 10
 			last_pl["service fees"] = int(last_pl.get("service fees", 0)) + fee
@@ -2594,6 +2600,10 @@ func sla_tick() -> void:
 		else:
 			deal["hijacked"] = false
 		if deal["healthy"]:
+			deal["ever_healthy"] = true
+		elif bool(deal.get("ever_healthy", false)) and not deal.has("renewal"):
+			customer_outage_now = true
+		if deal["healthy"]:
 			var used := _deal_path_links(deal)
 			deal_links[deal["id"]] = used
 			# traffic follows the working day: quiet at night, heaviest at noon
@@ -2659,6 +2669,7 @@ func sla_tick() -> void:
 		# having it: it goes out as an invoice on the customer's terms
 		raise_invoice(deal, paid)
 		reputation = mini(100, reputation + 1)
+	_update_reliability_streak(customer_outage_now)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
 			offers.erase(offer)  # defensive: drop malformed offers
@@ -2715,6 +2726,35 @@ func sla_tick() -> void:
 		maintenance_used = 0  # a new quarter, a fresh allowance
 	if cycle % 5 == 0:
 		save_game()
+
+func cycles_since_customer_outage() -> int:
+	## A streak starts at founding and resets only when an established live
+	## customer service is actually unavailable. Alerts and congestion do not.
+	return 0 if customer_outage_active else maxi(0, cycle - last_customer_outage_cycle)
+
+func _update_reliability_streak(outage_now: bool) -> void:
+	var current := cycles_since_customer_outage()
+	if outage_now and not customer_outage_active:
+		best_outage_streak = maxi(best_outage_streak, current)
+		last_customer_outage_cycle = cycle
+		customer_outage_active = true
+		for member: Dictionary in staff:
+			member["morale"] = maxi(0, int(member.get("morale", 70)) - 3)
+		log_event("FLOOR SIGN: customer outage. The %d-cycle reliability streak is over." % current)
+		Sfx.play("alert")
+	elif outage_now:
+		last_customer_outage_cycle = cycle  # an active outage keeps the counter at zero
+	elif not outage_now:
+		var recovered := customer_outage_active
+		customer_outage_active = false
+		best_outage_streak = maxi(best_outage_streak, cycles_since_customer_outage())
+		if recovered:
+			log_event("FLOOR SIGN: customer service restored. The counter is moving again.")
+		# A long quiet run becomes a small shared source of pride, not an
+		# exploitable morale engine: one point at sparse ten-cycle milestones.
+		if cycle > 0 and cycle % 10 == 0 and cycles_since_customer_outage() >= 10:
+			for member: Dictionary in staff:
+				member["morale"] = mini(100, int(member.get("morale", 70)) + 1)
 
 # ---------- money ----------
 
@@ -3086,6 +3126,9 @@ func _serialize() -> Dictionary:
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,
+		"last_customer_outage_cycle": last_customer_outage_cycle,
+		"best_outage_streak": best_outage_streak,
+		"customer_outage_active": customer_outage_active,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
@@ -3401,6 +3444,9 @@ func _apply(data: Dictionary) -> void:
 	stage = int(data.get("stage", 0))
 	offers = data.get("offers", [])
 	cycle = int(data.get("cycle", 0))
+	last_customer_outage_cycle = int(data.get("last_customer_outage_cycle", 0))
+	best_outage_streak = int(data.get("best_outage_streak", 0))
+	customer_outage_active = bool(data.get("customer_outage_active", false))
 	reputation = int(data.get("reputation", 50))
 	difficulty = int(data.get("difficulty", 1))
 	achievements = data.get("achievements", [])
