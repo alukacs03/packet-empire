@@ -239,10 +239,16 @@ func _refresh_money() -> void:
 				else "★ %s  ·  $%d to %s" % [Game.rank(), int(nr[1]), nr[0]]
 	if clock_lbl:
 		var f := Game.day_factor()
-		clock_lbl.text = "%s  %d%%" % [Game.day_name(), int(round(f * 100.0))]
+		var shift_icon := "☀" if Game.day_slot() in [2, 3, 4, 5] else "☾"
+		var coverage := ""
+		if not Game.staff.is_empty() and not Staff.anyone_on_shift():
+			coverage = "  ·  UNATTENDED"
+		clock_lbl.text = "%s  %s  %d%%%s" % [shift_icon, Game.day_name().to_upper(),
+			int(round(f * 100.0)), coverage]
 		clock_lbl.add_theme_color_override("font_color",
-			Color(1.0, 0.75, 0.4) if f > 1.1 else Color(0.55, 0.65, 0.78))
-		clock_lbl.tooltip_text = "How much of your customers' traffic is flowing right now. Links that cope at night can still congest at the peak, so provision for this number, not the average."
+			UIW.colour("danger") if coverage != "" else
+			(UIW.colour("warning") if f > 1.1 else UIW.colour("muted")))
+		clock_lbl.tooltip_text = "Current shift and traffic level. The room lighting follows this clock; unattended hours leave incidents waiting for the next crew."
 	var power := ""
 	if Game.stage >= 1:
 		power = "  ⚡%d/❄%d" % [Game.power_draw(), Game.cooling_capacity()]

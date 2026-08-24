@@ -241,9 +241,14 @@ static func ui_smoke(world: Node2D) -> int:
 	Game.staff.append(Staff.make_candidate(RandomNumberGenerator.new()))
 	Game.staff.append(Staff.make_candidate(RandomNumberGenerator.new()))
 	Game.staff.append(Staff.make_candidate(RandomNumberGenerator.new()))
+	Game.cycle = 2  # morning: the default day crew is physically on the floor
 	crew._resize_crew()
 	check(crew.people.size() > crew_before, "floor: hiring puts another person on the floor")
+	Game.cycle = 0  # night: day staff have gone home, making coverage visible
+	crew._resize_crew()
+	check(crew.people.is_empty(), "floor: an uncovered night shift leaves the room visibly empty")
 	Game.staff.clear()
+	Game.cycle = 0
 	crew._resize_crew()
 	for person in crew.people:
 		person._process(0.2)

@@ -106,11 +106,19 @@ func _draw_room_atmosphere(grid: Vector2i) -> void:
 	# Cross-fading two matching authored rooms turns progression into a physical
 	# renovation: clutter and amber hum gradually yield to cold, managed calm.
 	var renovated := smoothstep(0.12, 0.88, progress)
+	var slot := Game.day_slot()
+	var daylight: float = [0.68, 0.80, 0.96, 1.0, 0.98, 0.90, 0.78, 0.66][slot]
+	var clock := Time.get_ticks_msec() / 1000.0
+	var old_fixture := 0.97 + 0.025 * sin(clock * 8.3) + 0.012 * sin(clock * 19.7)
+	if fmod(clock, 7.1) < 0.075:
+		old_fixture = 0.72
+	var starter_level: float = lerpf(float(daylight), 1.0, 0.30) * old_fixture
 	draw_texture_rect(STARTER_ROOM, STARTER_ROOM_RECT, false,
-		Color(1.0, 1.0, 1.0, 1.0 - renovated))
+		Color(starter_level, starter_level, starter_level * 0.96, 1.0 - renovated))
 	if renovated > 0.0:
+		var mature_level: float = lerpf(float(daylight), 1.0, 0.62)
 		draw_texture_rect(MATURE_ROOM, STARTER_ROOM_RECT, false,
-			Color(1.0, 1.0, 1.0, renovated))
+			Color(mature_level * 0.96, mature_level, mature_level * 1.04, renovated))
 
 func _draw_room_lighting(grid: Vector2i) -> void:
 	var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)

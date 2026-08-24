@@ -16,6 +16,7 @@ const HEIGHT := 84.0
 
 var people: Array = []  # Person nodes
 var _rng := RandomNumberGenerator.new()
+var _shown_slot := -1
 
 class Person extends Node2D:
 	var target := Vector2.ZERO
@@ -96,12 +97,25 @@ class Person extends Node2D:
 func _ready() -> void:
 	_rng.seed = 4242
 	Game.topology_changed.connect(_resize_crew)
+	_shown_slot = Game.day_slot()
 	_resize_crew()
+
+func _process(_dt: float) -> void:
+	if Game.day_slot() != _shown_slot:
+		_shown_slot = Game.day_slot()
+		_resize_crew()
 
 func _crew_size() -> int:
 	# two contractors keep the colo from looking abandoned; after that the
-	# floor fills up with the people you actually hired
-	return maxi(2, Game.staff.size())
+	# floor contains only the people actually clocked in. An empty night shift
+	# is therefore visible before the player reads the rota warning.
+	if Game.staff.is_empty():
+		return 2
+	var active := 0
+	for member in Game.staff:
+		if Staff.on_shift(member):
+			active += 1
+	return active
 
 func _resize_crew() -> void:
 	while people.size() > _crew_size():
