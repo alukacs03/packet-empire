@@ -21,6 +21,7 @@ var name_hint: Label
 var status_opt: OptionButton
 var psu_opt: OptionButton
 var port_row: VBoxContainer
+var dev_power_lbl: Label
 var conn_list: VBoxContainer
 var svc_lbl: Label
 var cap_box: VBoxContainer
@@ -66,6 +67,7 @@ var ops_box: VBoxContainer
 var help_overlay: Control
 var pedia_overlay: Control
 var pedia_body: RichTextLabel
+var pedia_topic_buttons: Array = []
 var menu_overlay: Control
 var map_overlay: Control
 var welcome_overlay: Control
@@ -258,9 +260,12 @@ func _refresh_money() -> void:
 	var debt_s := ("  (debt $%d)" % Game.debt) if Game.debt > 0 else ""
 	money_lbl.text = "%s$%d%s  ♦%d%s" % ["SANDBOX  " if Game.sandbox else "",
 		Game.money, debt_s, Game.reputation, power]
-	money_lbl.tooltip_text = "Cash%s · reputation %d · power and cooling" % [
-		"" if Game.debt == 0 else " (debt $%d)" % Game.debt, Game.reputation]
-	money_lbl.tooltip_text = "Money · Reputation (drives customer budgets) · Power/Cooling"
+	if Game.stage >= 1:
+		money_lbl.tooltip_text = "Cash and reputation. Power: %dW nameplate, %dW billed at $%.3f per watt per cycle = $%d next cycle. Cooling capacity: %dW." % [
+			Game.power_draw(), Game.effective_draw(), Game.energy_rate(), Game.power_bill(),
+			Game.cooling_capacity()]
+	else:
+		money_lbl.tooltip_text = "Cash and reputation. Electricity and cooling are included in this colo lease."
 	money_lbl.add_theme_color_override("font_color",
 		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
 	if site_btn:
@@ -638,8 +643,11 @@ func _pick_new_device(slot: int, at: Control) -> void:
 		var mod: Dictionary = Game.MODELS[k]
 		var locked: bool = int(mod.get("tier", 0)) > Game.stage
 		var height := Game.model_height(k)
-		var line := "%-24s %-8s %dU %2d ports  $%d" % [mod["label"], mod["type"], height,
-			mod["ports"], mod["price"]]
+		var watts := int(Game.WATTS.get(k, 0))
+		var running_cost := "power incl." if Game.stage < 1 else "~$%d/cycle" % int(round(
+			float(watts) * Game.efficiency_factor() * Game.energy_rate()))
+		var line := "%-24s %-8s %dU %2d ports  $%-4d  %3dW %-12s" % [mod["label"],
+			mod["type"], height, mod["ports"], mod["price"], watts, running_cost]
 		var fits := Game.can_install(cur_rack, slot, k)
 		if locked:
 			line += "   🔒 needs %s" % Game.STAGES[int(mod["tier"])]["name"]
@@ -712,6 +720,9 @@ func _build_dev_overlay() -> void:
 	port_row = VBoxContainer.new()
 	port_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	plate.add_child(port_row)
+	dev_power_lbl = _label("", 12, UIW.colour("muted"))
+	dev_power_lbl.add_theme_font_override("font", mono)
+	v.add_child(dev_power_lbl)
 
 	conn_list = VBoxContainer.new()
 	v.add_child(conn_list)
@@ -856,6 +867,12 @@ func _refresh_dev_header() -> void:
 	status_opt.disabled = cur_dev.status == "nopower"
 	status_opt.tooltip_text = "No power on feed %s. It comes back on its own." % cur_dev.psu \
 		if cur_dev.status == "nopower" else "Take the device out of service"
+	var watts := int(Game.WATTS.get(cur_dev.model, 0))
+	dev_power_lbl.text = ("POWER PROFILE  /  %dW nameplate  /  electricity included in colo lease" % watts
+		if Game.stage < 1 else
+		"POWER PROFILE  /  %dW nameplate  /  ~$%d per cycle at $%.3f/W" % [watts,
+			int(round(float(watts) * Game.efficiency_factor() * Game.energy_rate())),
+			Game.energy_rate()])
 	name_hint.text = ""
 
 func _rename_dev(new_name: String) -> void:
@@ -1216,31 +1233,89 @@ func _cable_action() -> void:
 
 func _build_pedia() -> void:
 	pedia_overlay = _overlay()
-	var v := _card(pedia_overlay, 860)
+	var v := _card(pedia_overlay, 980)
 	var t := _header(v, func() -> void: pedia_overlay.visible = false)
-	t.text = "Networkopedia"
+	t.text = "Network field manual"
+	var eyebrow := _section("LEARN  /  REFERENCE  /  COMMAND LAB")
+	eyebrow.add_theme_color_override("font_color", UIW.colour("accent"))
+	v.add_child(eyebrow)
 	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 14)
+	h.add_theme_constant_override("separation", UIW.space("lg"))
 	v.add_child(h)
+	var nav_panel := UIW.style_panel(PanelContainer.new(), "console", "lg")
+	nav_panel.custom_minimum_size = Vector2(304, 540)
+	h.add_child(nav_panel)
+	var nav := VBoxContainer.new()
+	nav.add_theme_constant_override("separation", UIW.space("sm"))
+	nav_panel.add_child(nav)
+	var contents := _section("CHAPTER INDEX")
+	contents.add_theme_color_override("font_color", UIW.colour("warm"))
+	nav.add_child(contents)
+	var topic_scroll := ScrollContainer.new()
+	topic_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	topic_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	topic_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	topic_scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("sm"))
+	nav.add_child(topic_scroll)
+	var topic_gutter := MarginContainer.new()
+	topic_gutter.add_theme_constant_override("margin_right", UIW.space("sm"))
+	topic_gutter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	topic_scroll.add_child(topic_gutter)
 	var topics := VBoxContainer.new()
 	topics.add_theme_constant_override("separation", 2)
-	topics.custom_minimum_size = Vector2(230, 480)
-	h.add_child(topics)
+	topics.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	topic_gutter.add_child(topics)
+	var article_panel := UIW.style_panel(PanelContainer.new(), "surface", "lg")
+	article_panel.custom_minimum_size = Vector2(620, 540)
+	article_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(article_panel)
 	pedia_body = RichTextLabel.new()
-	pedia_body.custom_minimum_size = Vector2(560, 480)
-	pedia_body.add_theme_font_size_override("normal_font_size", 15)
-	pedia_body.add_theme_color_override("default_color", Color(0.82, 0.86, 0.93))
-	h.add_child(pedia_body)
-	for entry in Pedia.TOPICS:
-		var b := Button.new()
-		b.text = entry[0]
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.pressed.connect(func() -> void:
-			pedia_body.clear()
-			pedia_body.append_text("[b]%s[/b]\n\n%s" % [entry[0], entry[1]]))
-		topics.add_child(b)
+	pedia_body.custom_minimum_size = Vector2(560, 490)
 	pedia_body.bbcode_enabled = true
-	pedia_body.append_text("[b]Networkopedia[/b]\n\nPick a topic on the left. Every article ends with the exact in-game commands to try it yourself.")
+	pedia_body.scroll_active = true
+	pedia_body.add_theme_font_size_override("normal_font_size", 15)
+	pedia_body.add_theme_color_override("default_color", UIW.colour("text"))
+	pedia_body.add_theme_constant_override("line_separation", 6)
+	article_panel.add_child(pedia_body)
+	for topic_i in Pedia.TOPICS.size():
+		var entry = Pedia.TOPICS[topic_i]
+		var b := Button.new()
+		b.text = "%02d   %s" % [topic_i + 1, entry[0]]
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.toggle_mode = true
+		b.custom_minimum_size = Vector2(0, 38)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.add_theme_font_override("font", mono)
+		b.add_theme_font_size_override("font_size", 12)
+		var plain := StyleBoxEmpty.new()
+		plain.content_margin_left = UIW.space("sm")
+		plain.content_margin_right = UIW.space("sm")
+		plain.content_margin_top = UIW.space("sm")
+		plain.content_margin_bottom = UIW.space("sm")
+		b.add_theme_stylebox_override("normal", plain)
+		b.add_theme_stylebox_override("hover", UIW.panel_box("surface", "sm"))
+		b.add_theme_stylebox_override("pressed", UIW.panel_box("positive", "sm"))
+		b.add_theme_stylebox_override("focus", UIW.panel_box("surface", "sm"))
+		b.add_theme_color_override("font_color", UIW.colour("muted"))
+		b.add_theme_color_override("font_hover_color", UIW.colour("text_strong"))
+		b.add_theme_color_override("font_pressed_color", UIW.colour("success"))
+		b.pressed.connect(func() -> void:
+			_show_pedia_entry(topic_i))
+		topics.add_child(b)
+		pedia_topic_buttons.append(b)
+	_show_pedia_entry(0)
+
+func _show_pedia_entry(topic_i: int) -> void:
+	if topic_i < 0 or topic_i >= Pedia.TOPICS.size():
+		return
+	var entry = Pedia.TOPICS[topic_i]
+	for button_i in pedia_topic_buttons.size():
+		(pedia_topic_buttons[button_i] as Button).button_pressed = button_i == topic_i
+	pedia_body.clear()
+	pedia_body.append_text("[color=#39d9d0]FIELD MANUAL  /  CHAPTER %02d[/color]\n\n" % (topic_i + 1))
+	pedia_body.append_text("[font_size=24][b]%s[/b][/font_size]\n\n" % entry[0])
+	pedia_body.append_text("%s\n\n" % entry[1])
+	pedia_body.append_text("[color=#8da7ba]Use the exact commands above in a device console. The simulation will respond to the configuration, not a scripted answer.[/color]")
 
 func open_pedia() -> void:
 	_show_overlay(pedia_overlay)
@@ -1362,6 +1437,7 @@ const OPS_TABS := [
 var ops_tab := "Capacity"
 var ops_tab_btns := {}
 var ops_metric_values := {}
+var ops_metric_notes := {}
 
 func _build_ops() -> void:
 	ops_overlay = _overlay()
@@ -1396,7 +1472,7 @@ func _build_ops() -> void:
 
 func _ops_metric(caption: String, key: String, semantic: String) -> PanelContainer:
 	var panel := UIW.style_panel(PanelContainer.new(), "surface", "md")
-	panel.custom_minimum_size = Vector2(196, 86)
+	panel.custom_minimum_size = Vector2(196, 104)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", UIW.space("xs"))
@@ -1406,7 +1482,11 @@ func _ops_metric(caption: String, key: String, semantic: String) -> PanelContain
 	var value := _label("—", 22, UIW.colour(semantic))
 	value.add_theme_font_override("font", mono)
 	box.add_child(value)
+	var note := _label("", 11, UIW.colour("muted"))
+	note.add_theme_font_override("font", mono)
+	box.add_child(note)
 	ops_metric_values[key] = value
+	ops_metric_notes[key] = note
 	return panel
 
 func _ops_sections_for_tab() -> Array:
@@ -1450,13 +1530,19 @@ func _refresh_ops() -> void:
 	for si in Game.site_count():
 		watts += int(Game.capacity(si)["watts"])
 	(ops_metric_values["devices"] as Label).text = "%02d ONLINE" % devs.size()
+	(ops_metric_notes["devices"] as Label).text = "installed estate"
 	(ops_metric_values["links"] as Label).text = "%02d / %02d UP" % [Game.links.size() - links_down,
 		Game.links.size()]
+	(ops_metric_notes["links"] as Label).text = "%d cable%s down" % [links_down,
+		"" if links_down == 1 else "s"]
 	(ops_metric_values["alerts"] as Label).text = "%02d %s" % [alerting,
 		"CLEAR" if alerting == 0 else "OPEN"]
+	(ops_metric_notes["alerts"] as Label).text = "device action queue"
 	(ops_metric_values["alerts"] as Label).add_theme_color_override("font_color",
 		UIW.colour("success") if alerting == 0 else UIW.colour("warning"))
 	(ops_metric_values["power"] as Label).text = "%d W" % watts
+	(ops_metric_notes["power"] as Label).text = ("included in colo lease" if Game.stage < 1 else
+		"$%.3f/W  ·  $%d/cycle" % [Game.energy_rate(), Game.power_bill()])
 	ops_box.add_child(_section("CAPACITY"))
 	for si in Game.site_count():
 		var cap: Dictionary = Game.capacity(si)
@@ -1480,6 +1566,16 @@ func _refresh_ops() -> void:
 	var advice := _capacity_advice()
 	if advice != "":
 		ops_box.add_child(_wrap("  " + advice, 13, Color(1.0, 0.82, 0.5), 780))
+	var meter := UIW.style_panel(PanelContainer.new(), "console", "md")
+	ops_box.add_child(meter)
+	var meter_copy := "COLO POWER INCLUDED  /  Your cost is $0 per watt in this cage. Reference rate for an owned room right now: $%.3f per watt per cycle." % Game.energy_rate()
+	if Game.stage >= 1:
+		meter_copy = "LIVE METER  /  %dW nameplate → %dW billed after efficiency  ×  $%.3f per watt per cycle  =  $%d next cycle" % [
+			Game.power_draw(), Game.effective_draw(), Game.energy_rate(), Game.power_bill()]
+	var meter_label := _wrap(meter_copy, 13,
+		UIW.colour("warm") if Game.stage >= 1 else UIW.colour("muted"), 780)
+	meter_label.add_theme_font_override("font", mono)
+	meter.add_child(meter_label)
 	if Game.stage >= 1:
 		ops_box.add_child(_section("AIRFLOW"))
 		var any_hot := false
@@ -2418,9 +2514,9 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("ENERGY AND THE BOOKS"))
 	if Game.stage >= 1:
 		contracts_box.add_child(_wrap(
-			"Drawing %dW of a nameplate %dW, at %s rate: $%d this cycle. Electricity is dearest exactly when your customers are busiest."
+			"Drawing %dW of a nameplate %dW. The %s rate is $%.3f per watt per cycle, so the next bill is $%d. Electricity is dearest exactly when your customers are busiest."
 			% [Game.effective_draw(), Game.power_draw(),
-				"a fixed" if Game.fixed_tariff else "the spot", Game.power_bill()],
+				"fixed" if Game.fixed_tariff else "spot", Game.energy_rate(), Game.power_bill()],
 			13, Color(0.75, 0.82, 0.9), 560))
 		var e_row := HBoxContainer.new()
 		e_row.add_theme_constant_override("separation", 8)

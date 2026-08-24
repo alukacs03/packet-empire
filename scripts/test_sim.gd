@@ -139,6 +139,13 @@ static func ui_smoke(world: Node2D) -> int:
 		"ops: a tab shows its own sections and hides the others")
 	ui.ops_tab = "Capacity"
 	ui._refresh_ops()
+	var ops_stage := Game.stage
+	Game.stage = 1
+	ui._refresh_ops()
+	var meter_note := (ui.ops_metric_notes["power"] as Label).text
+	check("/W" in meter_note and "/cycle" in meter_note,
+		"ops: live draw exposes the electricity rate per watt and projected cycle bill")
+	Game.stage = ops_stage
 	ui.toggle_ops()
 	ui.toggle_search()
 	ui.search_input.text = "sw"
