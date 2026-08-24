@@ -278,6 +278,14 @@ func show_settings() -> void:
 		Prefs.reduced_motion = on
 		Prefs.apply())
 	panel_box.add_child(motion)
+	var toolbox := CheckButton.new()
+	toolbox.text = "Show the full toolbox from the start"
+	toolbox.tooltip_text = "For experienced players: reveal every navigation area without waiting for campaign unlocks"
+	toolbox.button_pressed = Prefs.show_everything
+	toolbox.toggled.connect(func(on: bool) -> void:
+		Prefs.show_everything = on
+		Prefs.apply())
+	panel_box.add_child(toolbox)
 	panel_box.add_child(_lbl("Interface scale", 13, MUTED))
 	var scale_row := HBoxContainer.new()
 	scale_row.add_theme_constant_override("separation", 6)
@@ -293,7 +301,7 @@ func show_settings() -> void:
 			Prefs.apply()
 			show_settings())
 		scale_row.add_child(b2)
-	panel_box.add_child(_para("Scale affects the whole interface. Pick whatever keeps the console comfortable to read; you can change it again from the in-game menu."))
+	panel_box.add_child(_para("You can change these again from the in-game menu."))
 	settings_requested.emit()
 
 func show_slots() -> void:

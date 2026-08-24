@@ -1077,15 +1077,30 @@ static func run() -> int:
 	Game.links = []
 	Game.deals = []
 	Game.offers = []
+	Game.leads = []
 	Game.contracts_done = []
 	Game.sla_status = {}
 	Game.contract_debriefs = {}
 	Game.mastered_contracts = []
 	Game.active_contract_debrief = {}
+	Game.guided_outage = {}
+	Game.status_posts = []
+	Game.incidents = []
+	Game.invoices = []
+	Game.monitors = []
+	Game.spares = {}
+	Game.stats["guided_delivery_complete"] = 0
+	Game.sandbox = false
 	Game.stage = 0
 	Game.debt = 0
 	Game.money = 2000
 	Game.topology_changed.emit()
+	check(not Game.feature_unlocked("map") and not Game.feature_unlocked("market") \
+			and not Game.feature_unlocked("business") and not Game.feature_unlocked("log") \
+			and not Game.feature_unlocked("ops") and not Game.feature_unlocked("expand"),
+		"discovery: a fresh campaign keeps unexplained advanced tools out of the opening HUD")
+	check(Game.feature_unlocked("ops", true),
+		"discovery: the experienced-player override exposes the full toolbox")
 	var w_rack := Game.add_rack(Vector2i(0, 0))
 	check(Game.try_spend(Game.RACK_PRICE), "walkthrough: rack affordable at start")
 	var w_sw := Game.new_device("sw-lite")
@@ -1098,6 +1113,8 @@ static func run() -> int:
 	Game.connect_ifaces(w_s1.ifaces[0], w_sw.ifaces[0])
 	Game.connect_ifaces(w_s2.ifaces[0], w_sw.ifaces[1])
 	check(Game.try_complete_contract(_contract("rackup")), "walkthrough: contract 1 pays")
+	check(Game.feature_unlocked("map") and not Game.feature_unlocked("market"),
+		"discovery: the logical map appears after the first physical rack job")
 	var rackup_debrief: Dictionary = Game.contract_debriefs.get("rackup", {})
 	check(not rackup_debrief.is_empty() and w_rack.name in String(rackup_debrief["proof"][0]) \
 			and w_sw.name in String(rackup_debrief["proof"][1]),
@@ -1124,6 +1141,8 @@ static func run() -> int:
 	Game.set_access_vlan(w_sw.ifaces[0], 10)
 	Game.set_access_vlan(w_sw.ifaces[1], 20)
 	check(Game.try_complete_contract(_contract("two_tenants")), "walkthrough: contract 3 pays")
+	check(Game.feature_unlocked("market") and not Game.feature_unlocked("expand"),
+		"discovery: the market appears with the business pipeline while expansion stays quiet")
 	var vlan_debrief: Dictionary = Game.contract_debriefs.get("two_tenants", {})
 	check(w_sw.name in String(vlan_debrief["proof"][0]) and "ether1" in String(vlan_debrief["proof"][0]) \
 			and String(vlan_debrief["practice"]) == "/interface bridge vlan print",
@@ -1236,6 +1255,8 @@ static func run() -> int:
 	w_o2cli.exec("ip route add default via 192.168.2.1")
 	check(Game.try_complete_contract(_contract("two_offices")),
 		"walkthrough: contract 6 pays (two offices routed together)")
+	check(Game.feature_unlocked("expand"),
+		"discovery: facility expansion appears after the six-job opening arc")
 	var route_debrief: Dictionary = Game.contract_debriefs.get("two_offices", {})
 	check(w_o1.name in String(route_debrief["proof"][0]) and w_rtr.name in String(route_debrief["proof"][0]) \
 			and w_o2.name in String(route_debrief["proof"][1]) \
@@ -3466,6 +3487,8 @@ static func run() -> int:
 	var pl_monitors := Game.monitors.duplicate(true)
 	var pl_incidents := Game.incidents.duplicate(true)
 	Game.money = 100000
+	Game.stage = 0
+	Game.invoices = []
 	Game.leads = []
 	Game.deals = []
 	Game.contracts_done = ["guided_a", "guided_b", "guided_c"]
@@ -3486,6 +3509,8 @@ static func run() -> int:
 	check(Game.submit_proposal(guided, 1, int(guided["sla"])) == "" and not Game.deals.is_empty(),
 		"guided sales: a revised compliant proposal signs a live delivery deal")
 	var guided_deal: Dictionary = Game.deals[0]
+	check(Game.feature_unlocked("market") and not Game.feature_unlocked("business"),
+		"discovery: signing exposes the customer pipeline without prematurely opening the ledger")
 	check(int(guided_deal.get("delivery_credit", 0)) == int(serve["setup"]),
 		"guided delivery: the required starter server budget is protected inside the deal")
 	Game.money = 0
@@ -3518,6 +3543,8 @@ static func run() -> int:
 	Game.sla_tick()
 	check(bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "billing",
 		"guided delivery: proving the topology changes the customer from waiting to billing")
+	check(Game.feature_unlocked("business"),
+		"discovery: the ledger appears when the first customer starts earning revenue")
 	check(guided_deal.has("first_invoice_cycle") and int(Game.last_business["invoiced"]) == int(guided_deal["fee"]),
 		"guided delivery: the first live cycle raises a visible invoice")
 	delivery_server.ifaces[0].enabled = false
@@ -3545,6 +3572,8 @@ static func run() -> int:
 	check(String(Game.guided_outage.get("state", "")) == "alert" \
 			and Game.guided_outage_iface() != null and not Game.guided_outage_iface().enabled,
 		"guided outage: a deterministic reversible access-port fault raises the first alert")
+	check(Game.feature_unlocked("log") and Game.feature_unlocked("ops"),
+		"discovery: incident communication and operations appear with the first outage need")
 	check(not bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "suspended",
 		"guided outage: the real customer notices and billing stops")
 	check(Game.acknowledge_guided_outage() == "" \

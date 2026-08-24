@@ -77,6 +77,8 @@ func _shoot_all() -> void:
 	## PACKET_SHOT=<dir>: photograph every screen, then quit
 	var dir := OS.get_environment("PACKET_SHOT")
 	SimTests.demo_world()
+	var shot_offers := Game.offers.duplicate(true)
+	var shot_deals := Game.deals.duplicate(true)
 	rebuild_racks()
 	var r: Net.Rack = Game.racks[0]
 	var dev: Net.NDevice = null
@@ -98,6 +100,39 @@ func _shoot_all() -> void:
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],
+		["toolbar_fresh", func() -> void:
+			Game.contracts_done = []
+			Game.offers = []
+			Game.deals = []
+			Game.leads = []
+			Game.invoices = []
+			Game.guided_outage = {}
+			Game.incidents = []
+			Game.status_posts = []
+			Game.monitors = []
+			Game.spares = {}
+			Game.stats["guided_delivery_complete"] = 0
+			Game.stage = 0
+			Game.sandbox = false
+			Prefs.show_everything = false
+			ui._refresh_money()
+			ui._refresh_tutorial()],
+		["company_fresh", func() -> void:
+			ui.contracts_tab = "Jobs"
+			ui.open_contracts()],
+		["toolbar_experienced", func() -> void:
+			ui.close_contracts()
+			Prefs.show_everything = true
+			ui._refresh_feature_discovery()],
+		["toolbar_progressed", func() -> void:
+			Prefs.show_everything = false
+			Game.contracts_done = ["rackup", "first_ping", "two_tenants", "stretch_vlans",
+				"redundant_core", "two_offices"]
+			Game.offers = shot_offers
+			Game.deals = shot_deals
+			Game.stats["guided_delivery_complete"] = 1
+			ui._refresh_money()
+			ui._refresh_tutorial()],
 		["rack_arrival", func() -> void:
 			if r.visual:
 				r.visual.begin_arrival()],

@@ -99,6 +99,8 @@ var hud_nav_row: HBoxContainer
 var hud_status_row: HBoxContainer
 var hud_alert_btn: Button
 var hud_learn_btn: Button
+var hud_ops_btn: Button
+var hud_map_btn: Button
 var hud_shortcut_hint: Label
 var hud_compact := false
 var hud_msg: Label
@@ -134,9 +136,25 @@ func _ready() -> void:
 	Game.customer_service_changed.connect(_customer_service_feedback)
 	Game.customer_cash_changed.connect(_customer_cash_feedback)
 	Game.guided_outage_changed.connect(_refresh_tutorial)
+	Prefs.changed.connect(_refresh_feature_discovery)
 	get_viewport().size_changed.connect(_refresh_hud_layout)
 	_refresh_money()
+	_refresh_feature_discovery()
 	_refresh_hud_layout()
+
+func _feature_available(feature: String) -> bool:
+	return Game.feature_unlocked(feature, Prefs.show_everything)
+
+func _refresh_feature_discovery() -> void:
+	if hud_map_btn:
+		hud_map_btn.visible = _feature_available("map")
+	if hud_ops_btn:
+		hud_ops_btn.visible = _feature_available("ops")
+	if expand_btn:
+		expand_btn.visible = Game.current_site == 0 and Game.stage < Game.STAGES.size() - 1 \
+			and _feature_available("expand")
+	for tab_name in contracts_tabs:
+		contracts_tabs[tab_name].visible = _feature_available(String(tab_name).to_lower())
 
 func _money_flash() -> void:
 	Sfx.play("money")
@@ -303,6 +321,7 @@ func _refresh_money() -> void:
 		expand_btn.visible = true
 	else:
 		expand_btn.visible = false
+	_refresh_feature_discovery()
 
 var _cycle_lbl_accum := 0.0
 
@@ -616,16 +635,16 @@ func _build_toolbar() -> void:
 			Game.switch_site(id)
 			_refresh_money()))
 	h.add_child(site_btn)
-	var opsb := Button.new()
-	opsb.text = "OPS"
-	opsb.tooltip_text = "Operations dashboard (O)"
-	opsb.pressed.connect(toggle_ops)
-	h.add_child(opsb)
-	var mapb := Button.new()
-	mapb.text = "MAP"
-	mapb.tooltip_text = "Logical topology (M)"
-	mapb.pressed.connect(toggle_map)
-	h.add_child(mapb)
+	hud_ops_btn = Button.new()
+	hud_ops_btn.text = "OPS"
+	hud_ops_btn.tooltip_text = "Operations dashboard (O)"
+	hud_ops_btn.pressed.connect(toggle_ops)
+	h.add_child(hud_ops_btn)
+	hud_map_btn = Button.new()
+	hud_map_btn.text = "MAP"
+	hud_map_btn.tooltip_text = "Logical topology (M)"
+	hud_map_btn.pressed.connect(toggle_map)
+	h.add_child(hud_map_btn)
 	contracts_btn = Button.new()
 	contracts_btn.text = "Company"
 	contracts_btn.tooltip_text = "Jobs, business, market and log"
@@ -2109,6 +2128,9 @@ func _capacity_advice() -> String:
 	return ""
 
 func toggle_ops() -> void:
+	if not _feature_available("ops"):
+		hud_toast("OPS unlocks when your first live customer creates an operational duty.")
+		return
 	if ops_overlay.visible:
 		ops_overlay.visible = false
 	elif not is_open():
@@ -2238,6 +2260,7 @@ func _build_menu() -> void:
 			"Colourblind-friendly status colours: %s" % ("on" if Prefs.colourblind else "off"),
 			"Sound: %s" % ("on" if Prefs.sound else "off"),
 			"Reduced motion: %s" % ("on" if Prefs.reduced_motion else "off"),
+			"Full toolbox from start: %s" % ("on" if Prefs.show_everything else "off"),
 		], func(id: int) -> void:
 			match id:
 				0:
@@ -2253,6 +2276,8 @@ func _build_menu() -> void:
 					Prefs.sound = not Prefs.sound
 				4:
 					Prefs.reduced_motion = not Prefs.reduced_motion
+				5:
+					Prefs.show_everything = not Prefs.show_everything
 			Prefs.apply()
 			hud_toast("Setting applied.", true)))
 	v.add_child(prefs_btn)
@@ -2415,6 +2440,9 @@ func _build_map() -> void:
 		open_dev(dev)))
 
 func toggle_map() -> void:
+	if not _feature_available("map"):
+		hud_toast("MAP unlocks after the first rack is physically delivered.")
+		return
 	if map_overlay.visible:
 		map_overlay.visible = false
 	elif not is_open():
@@ -4001,7 +4029,10 @@ func _build_contract_debrief(debrief: Dictionary) -> void:
 func _refresh_contracts() -> void:
 	for c in contracts_box.get_children():
 		c.queue_free()
+	if not _feature_available(contracts_tab.to_lower()):
+		contracts_tab = "Jobs"
 	for k in contracts_tabs:
+		contracts_tabs[k].visible = _feature_available(String(k).to_lower())
 		contracts_tabs[k].button_pressed = (k == contracts_tab)
 	match contracts_tab:
 		"Business":

@@ -280,6 +280,37 @@ func site_count() -> int:
 	_ensure_sites()
 	return sites.size()
 
+func feature_unlocked(feature: String, reveal_all := false) -> bool:
+	## A control appears when the campaign has created its first meaningful
+	## need. Sandbox and the experienced-player preference bypass this map.
+	if reveal_all or sandbox:
+		return true
+	match feature:
+		"jobs", "learn":
+			return true
+		"map":
+			return "rackup" in contracts_done
+		"market":
+			return contracts_done.size() >= 3 or not leads.is_empty() \
+				or not offers.is_empty() or not deals.is_empty()
+		"business":
+			if stage >= 1 or not invoices.is_empty():
+				return true
+			for deal: Dictionary in deals:
+				if bool(deal.get("ever_healthy", false)):
+					return true
+			return false
+		"log":
+			return not guided_outage.is_empty() or not incidents.is_empty() \
+				or not status_posts.is_empty()
+		"ops":
+			return int(stats.get("guided_delivery_complete", 0)) > 0 \
+				or not guided_outage.is_empty() or stage >= 1 \
+				or not monitors.is_empty() or not spares.is_empty()
+		"expand":
+			return "two_offices" in contracts_done or stage > 0
+	return false
+
 func site_name(idx: int) -> String:
 	_ensure_sites()
 	if idx < 0 or idx >= sites.size():

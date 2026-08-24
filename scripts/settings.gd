@@ -11,6 +11,7 @@ var fullscreen := false
 var colourblind := false
 var sound := true
 var reduced_motion := false
+var show_everything := false
 
 func _ready() -> void:
 	load_prefs()
@@ -27,12 +28,14 @@ func load_prefs() -> void:
 	colourblind = bool(data.get("colourblind", false))
 	sound = bool(data.get("sound", true))
 	reduced_motion = bool(data.get("reduced_motion", false))
+	show_everything = bool(data.get("show_everything", false))
 
 func save_prefs() -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
-			"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion}))
+			"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion,
+			"show_everything": show_everything}))
 
 func apply() -> void:
 	if DisplayServer.get_name() != "headless":
