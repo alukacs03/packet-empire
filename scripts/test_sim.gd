@@ -269,6 +269,46 @@ static func ui_smoke(world: Node2D) -> int:
 	check(Game.racks.is_empty() and Game.contracts_done.is_empty(),
 		"demo: a new game starts from nothing")
 	check(Game.company_name == "Test Co" and Game.demo, "demo: the new game keeps its name")
+	# Opening guidance must follow the equipment the player can actually buy.
+	# Execute every suggested PacketTik command as well as checking the copy:
+	# this catches a hint drifting away from the CLI grammar later.
+	var hint_rack := Game.add_rack(Vector2i(0, 0))
+	var hint_devices := {
+		"two_tenants": Game.new_device("sw-lite"),
+		"stretch_vlans": Game.new_device("sw-lite"),
+		"redundant_core": Game.new_device("sw-lite"),
+		"two_offices": Game.new_device("rtr-lite"),
+	}
+	var hint_slot := 0
+	for hint_dev: Net.NDevice in hint_devices.values():
+		hint_rack.slots[hint_slot] = hint_dev
+		hint_slot += 1
+	for hint_id in hint_devices:
+		var hint_contract := _contract(String(hint_id))
+		var rendered_hint := Contracts.hint_for(hint_contract)
+		check("PacketTik RouterOS" in rendered_hint,
+			"demo hints: %s recognizes the PacketTik starter device" % hint_id)
+		check("configure terminal" not in rendered_hint,
+			"demo hints: %s does not suggest EOS to a PacketTik-only rack" % hint_id)
+		var hint_session := CLI.new_session(hint_devices[hint_id])
+		for hint_command in Contracts.hint_commands(String(hint_id), "ros"):
+			var hint_output := hint_session.exec(hint_command)
+			var rejected := hint_output.begins_with("usage:") or hint_output.begins_with("failure:") \
+				or hint_output.begins_with("no bridge")
+			check(not rejected, "demo hints: PacketTik accepts '%s'" % hint_command)
+	var vlan_topic: Array = []
+	for pedia_entry in Pedia.TOPICS:
+		if String(pedia_entry[0]) == "VLANs":
+			vlan_topic = pedia_entry
+			break
+	var starter_article := Pedia.article_text(vlan_topic)
+	check("Try on PacketTik RouterOS" in starter_article and "switchport access" not in starter_article,
+		"pedia: starter examples follow the installed PacketTik switch")
+	var eos_switch := Game.new_device("sw-8")
+	hint_rack.slots[hint_slot] = eos_switch
+	var mixed_hint := Contracts.hint_for(_contract("two_tenants"))
+	check("PacketTik RouterOS" in mixed_hint and "OpenRack / Arivista / Junivista EOS" in mixed_hint,
+		"demo hints: a mixed-vendor rack labels both command dialects")
 	Game._apply(saved_state)
 	Sfx.install(world)
 	check(Sfx._bank.has("good") and Sfx._bank["good"] is AudioStreamWAV,

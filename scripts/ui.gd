@@ -1709,7 +1709,7 @@ func _show_pedia_entry(topic_i: int) -> void:
 	pedia_body.clear()
 	pedia_body.append_text("[color=#39d9d0]FIELD MANUAL  /  CHAPTER %02d[/color]\n\n" % (topic_i + 1))
 	pedia_body.append_text("[font_size=24][b]%s[/b][/font_size]\n\n" % entry[0])
-	pedia_body.append_text("%s\n\n" % entry[1])
+	pedia_body.append_text("%s\n\n" % Pedia.article_text(entry))
 	pedia_body.append_text("[color=#8da7ba]Use the exact commands above in a device console. The simulation will respond to the configuration, not a scripted answer.[/color]")
 
 func open_pedia() -> void:
@@ -4243,7 +4243,8 @@ func _refresh_contracts() -> void:
 			var ok: bool = r["t"].call()
 			cv.add_child(_label(("●  " if ok else "○  ") + r["d"], 14,
 				Color(0.5, 0.95, 0.6) if ok else Color(0.65, 0.6, 0.55)))
-		if String(c.get("hint", "")) != "":
+		var contract_hint := Contracts.hint_for(c)
+		if contract_hint != "":
 			var hint_lbl := _label("", 13, Color(0.62, 0.75, 0.85))
 			hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			hint_lbl.custom_minimum_size = Vector2(560, 0)
@@ -4251,7 +4252,7 @@ func _refresh_contracts() -> void:
 			var hint_btn := Button.new()
 			hint_btn.text = "Stuck? Show me the commands"
 			hint_btn.pressed.connect(func() -> void:
-				hint_lbl.text = String(c["hint"])
+				hint_lbl.text = contract_hint
 				hint_lbl.visible = true
 				hint_btn.visible = false)
 			cv.add_child(hint_btn)
