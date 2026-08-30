@@ -63,7 +63,10 @@ static func demo_world() -> void:
 	Game.market_intel = 3
 	Game.rivals = Rivals.spawn()
 	Game.rivals[1]["deals"] = 2
-	Game.offers = [Market.gen_offer()]
+	var fixture_offer := Market.gen_offer()
+	while String(fixture_offer["kind"]) != "hosting":  # the scripted sections below
+		fixture_offer = Market.gen_offer()             # assume the first offer is hosting
+	Game.offers = [fixture_offer]
 	Game.deals = [{"id": "d1", "customer": "Balaton Zrt", "kind": "hosting",
 		"params": {"ip": "10.0.0.1"}, "fee": 120, "load": 300,
 		"brief": "Host our application server at 10.0.0.1/24.", "healthy": true}]
@@ -815,6 +818,10 @@ static func run() -> int:
 		"market: pricing under the rivals wins the job even with competition")
 
 	# --- security sweep: exposed management plane ---
+	# Re-seed: what this section proves must not depend on how many random
+	# draws every section above it happened to consume, or adding content
+	# anywhere shifts the stream and fails scripted checks that still hold.
+	seed(20260823)
 	Game.incidents_seen.clear()
 	var m7 := Game.money
 	var ev0 := Game.events.size()
@@ -2852,6 +2859,42 @@ static func run() -> int:
 	Game.set_note(hab_dev.ifaces[0], "customer handoff")
 	check(float(Game.habits["documents"]) > 0.5 and float(Game.habits["tidy"]) > 0.5,
 		"habits: labelling a port is read as a habit, from the act rather than the intent")
+	# --- customers who ask for what the network can actually do ---
+	var mk_rack := Game.add_rack(Vector2i(70, 1))
+	var mk_sw := Game.new_device("sw-8")
+	var mk_sw2 := Game.new_device("sw-8")
+	var mk_peer := Game.new_device("srv-1")
+	var mk_host := Game.new_device("srv-1")
+	mk_rack.slots[0] = mk_sw
+	mk_rack.slots[1] = mk_sw2
+	mk_rack.slots[2] = mk_peer
+	mk_rack.slots[3] = mk_host
+	Game.connect_ifaces(mk_peer.ifaces[0], mk_sw.ifaces[0])
+	Game.connect_ifaces(mk_host.ifaces[0], mk_sw2.ifaces[0])
+	Game.connect_ifaces(mk_sw.ifaces[2], mk_sw2.ifaces[2])
+	Game.add_ip(mk_peer.ifaces[0], "10.70.9.20/24")
+	Sim.flush_learned_state()
+	check(not Market.check("v6_host", {"ip": "fd70::10"}),
+		"market: an IPv6 customer is not served by a promise")
+	Game.add_ip(mk_host.ifaces[0], "fd70::10/64")
+	Game.add_ip(mk_peer.ifaces[0], "fd70::20/64")
+	Sim.flush_learned_state()
+	check(Market.check("v6_host", {"ip": "fd70::10"}),
+		"market: they are served when something answers natively at that address")
+	Game.add_ip(mk_host.ifaces[0], "10.70.9.10/24")
+	Sim.flush_learned_state()
+	check(not Market.check("bonded_uplink", {"ip": "10.70.9.10"}),
+		"market: a single lead is not a bundle, whatever it is called")
+	Game.connect_ifaces(mk_sw.ifaces[3], mk_sw2.ifaces[3])
+	for mk_pair in [[mk_sw.ifaces[2], mk_sw2.ifaces[2]], [mk_sw.ifaces[3], mk_sw2.ifaces[3]]]:
+		mk_pair[0].lag = 1
+		mk_pair[1].lag = 1
+	Sim.flush_learned_state()
+	check(Market.check("bonded_uplink", {"ip": "10.70.9.10"}),
+		"market: two bundled links deliver it, proved by pulling one")
+	check(mk_sw.ifaces[2].enabled and mk_sw.ifaces[3].enabled,
+		"market: proving it puts the links back the way it found them")
+
 	# --- the three in the morning call-out ---
 	var co_staff := Game.staff.duplicate(true)
 	var co_haz := Game.hazards.duplicate(true)
@@ -5244,6 +5287,7 @@ static func run() -> int:
 		"template: a switch template is refused on a server")
 
 	# --- monitors and history ---
+	seed(20260823)  # a cycle of weather here must not depend on the sections above
 	Game.monitors = []
 	Game.history = []
 	var mon_sw := Game.new_device("sw-8")
@@ -7620,6 +7664,7 @@ static func run() -> int:
 		Game.sites = [Game.sites[0]]  # one floor: the rest belong to other sections
 		Game.current_site = 0
 		Game.circuits = []
+		seed(20260823 + bal_level)  # each difficulty gets the same weather
 		Game.stage = 1
 		Game.debt = 0
 		Game.reputation = 55
@@ -7661,6 +7706,13 @@ static func run() -> int:
 			for bal_dev2: Net.NDevice in Game.all_devices():
 				if bal_dev2.status != "active":
 					bal_dev2.status = "active"
+			if Game.deals.is_empty():
+				# an operator who loses an account signs a comparable one; this
+				# section is about whether steady delivery outpaces the running
+				# costs, not about surviving one unlucky cancellation
+				Game.deals = [{"id": "bal", "customer": "SteadyCo", "kind": "hosting",
+					"params": {"ip": "10.99.0.10"}, "fee": 120, "load": 200, "brief": "",
+					"healthy": true, "budget": 120, "loyalty": 0.95}]
 		var bal_grew: bool = Game.money > bal_start
 		bal_ok = bal_ok and bal_grew
 		bal_report.append("%s %s ($%d → $%d)" % [Game.DIFFICULTIES[bal_level]["name"],
@@ -7985,7 +8037,7 @@ static func run() -> int:
 		"console: a repeated ping reports real loss and round-trip figures")
 	Game.grey_faults = {}
 	Game.inject_grey_fault(dx_sw2.ifaces[1], "loose_connector")
-	var flaky_out := CLI.fmt_ping_repeat(dx_a2, "10.198.0.11", 20)
+	var flaky_out := CLI.fmt_ping_repeat(dx_a2, "10.198.0.11", 40)
 	check(not flaky_out.contains("0% packet loss") and not flaky_out.contains("100% packet loss"),
 		"console: an intermittent fault reads as intermittent loss, which is how it is found")
 	var sw_cli2 := CLI.new_session(dx_sw2)

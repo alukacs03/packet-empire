@@ -40,6 +40,12 @@ const KINDS := {
 	"managed_switch": {"load": 150, "base": 110, "spread": 90,
 		"brief": "We want a managed network segment: our own VLAN %s on one of your switches: and we insist the switch itself is properly managed (an addressed Management port). We audit.",
 		"costs": "A switchport + VLAN + OOB management on that switch. Cheap if your house is in order."},
+	"v6_host": {"load": 350, "base": 150, "spread": 120,
+		"brief": "Our clients are IPv6 only. Host our service at %s and make sure it answers there, natively: we are not interested in promises about later.",
+		"costs": "A server with an IPv6 address on a segment your gateway routes. No new hardware if your addressing is in order."},
+	"bonded_uplink": {"load": 700, "base": 240, "spread": 170,
+		"brief": "Feed our cabinet at %s with TWO links bundled into one (LACP). We are buying the part where you pull one out and nothing happens.",
+		"costs": "Two ports on each switch, two leads, and a channel-group on both ends. Premium tier."},
 	"secure_host": {"load": 250, "base": 130, "spread": 110,
 		"brief": "Compliance demands it: our server at %s must sit behind a firewall that explicitly blocks outside access to it.",
 		"costs": "A firewall ($800) + a server. The expensive tier: quote accordingly."},
@@ -53,6 +59,8 @@ const KIND_LABELS := {
 	"dhcp_pool": "DHCP service",
 	"secure_host": "Firewalled host",
 	"redundant_gw": "Redundant gateway",
+	"v6_host": "IPv6 hosting",
+	"bonded_uplink": "Bundled uplink",
 }
 
 ## What each customer is actually doing with the service. The player is not
@@ -120,13 +128,17 @@ static func gen_offer() -> Dictionary:
 		kinds.erase("public_hosting")  # nobody asks before you have transit
 	if Game.stage < 1:
 		kinds.erase("redundant_gw")  # colo customers aren't that fancy
+		kinds.erase("bonded_uplink")  # and they are not paying for two of anything
 	var kind: String = kinds[randi() % kinds.size()]
 	var spec: Dictionary = KINDS[kind]
 	var params := {}
 	var subject := ""
 	match kind:
-		"hosting", "secure_host", "public_hosting":
+		"hosting", "secure_host", "public_hosting", "bonded_uplink":
 			params["ip"] = "10.%d.%d.10" % [randi() % 180 + 20, randi() % 250]
+			subject = params["ip"]
+		"v6_host":
+			params["ip"] = "fd%02x:%x::10" % [randi() % 256, randi() % 65535]
 			subject = params["ip"]
 		"redundant_gw":
 			params["vip"] = "10.%d.%d.1" % [randi() % 180 + 20, randi() % 250]
@@ -501,6 +513,45 @@ static func check(kind: String, params: Dictionary) -> bool:
 				var svc: Dictionary = d.services.get("dhcp", {})
 				if not svc.is_empty() and String(svc["start"]).begins_with(String(params.get("subnet", "?")) + ".") \
 						and svc["leases"].size() >= 1:
+					return true
+			return false
+		"v6_host":
+			# native, not "we will do it next quarter": something on the floor
+			# has to answer at that address over IPv6
+			return _hosted_and_reachable(String(params.get("ip", "")))
+		"bonded_uplink":
+			var host := Contracts._owner(String(params.get("ip", "")))
+			if host == null or host.type != "server":
+				return false
+			var seen_bundles: Array = []
+			for l in Game.links:
+				var bundle := Game.lag_members(l)
+				if bundle.size() < 2 or bundle[0] in seen_bundles:
+					continue
+				seen_bundles.append(bundle[0])
+				var was: Array = []
+				for m in bundle:
+					was.append([m.a.enabled, m.b.enabled])
+					m.a.enabled = false
+					m.b.enabled = false
+				Sim.flush_learned_state()
+				# a bundle only counts if the customer is actually behind it
+				var on_path := not _hosted_and_reachable(String(params.get("ip", "")))
+				for k in bundle.size():
+					bundle[k].a.enabled = bool(was[k][0])
+					bundle[k].b.enabled = bool(was[k][1])
+				Sim.flush_learned_state()
+				if not on_path:
+					continue
+				# and it only delivers if losing one member changes nothing
+				bundle[0].a.enabled = false
+				bundle[0].b.enabled = false
+				Sim.flush_learned_state()
+				var survived := _hosted_and_reachable(String(params.get("ip", "")))
+				bundle[0].a.enabled = bool(was[0][0])
+				bundle[0].b.enabled = bool(was[0][1])
+				Sim.flush_learned_state()
+				if survived:
 					return true
 			return false
 		"secure_host":
