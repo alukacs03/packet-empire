@@ -4046,13 +4046,23 @@ func _build_demo_end() -> void:
 	achieved.add_child(_welcome_module("✓", "YOU OPERATED",
 		"Real MAC learning, VLAN tagging, spanning tree and longest-prefix routing.", "accent"))
 	achieved.add_child(_welcome_module("→", "NEXT SHIFT",
-		"Own the room. Pay for power. Hire a crew. Reach the internet—and survive it.", "warm"))
+		"Own the room, and everything in it: the power bill, the crew, the customers who remember.", "warm"))
+	demo_overlay.set_meta("run_line", _wrap("", 13, UIW.colour("accent"), 700))
+	v.add_child(demo_overlay.get_meta("run_line"))
 	var beyond := UIW.style_panel(PanelContainer.new(), "console", "md")
 	v.add_child(beyond)
-	var beyond_copy := _wrap("FULL CAMPAIGN  /  DHCP · DNS · NAT · BGP · IPv6 · OSPF · VRRP · MLAG · WIREGUARD · 802.1X · MULTI-SITE WAN",
-		12, UIW.colour("muted"), 700)
-	beyond_copy.add_theme_font_override("font", mono)
-	beyond.add_child(beyond_copy)
+	var beyond_box := VBoxContainer.new()
+	beyond_box.add_theme_constant_override("separation", UIW.space("sm"))
+	beyond.add_child(beyond_box)
+	for line: String in [
+		"THE NETWORK  /  DHCP · DNS · NAT · BGP · OSPF · VRRP · MLAG · IPv6 · NAT64 · VXLAN · EVPN · WIREGUARD · 802.1X · MULTI-SITE WAN",
+		"THE BUSINESS  /  customers who remember how you treated them, rivals with grudges and favours, decisions whose bill arrives later",
+		"THE BUILDING  /  power, cooling, filters, fire, water, badges, contractors, and the paperwork somebody eventually asks to see",
+		"THE PEOPLE  /  a crew who copy your habits, standing duties, and who takes the blame when it was one of them",
+		"THE RUN  /  it ends: sold, retired, or broke. It is scored, and something survives into the next one."]:
+		var l3 := _wrap(line, 12, UIW.colour("muted"), 700)
+		l3.add_theme_font_override("font", mono)
+		beyond_box.add_child(l3)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(row)
@@ -4076,6 +4086,10 @@ func check_demo_end() -> void:
 	if not Demo.complete() or _demo_end_shown:
 		return
 	_demo_end_shown = true
+	# the card is about the shift they just worked, not a brochure
+	var run_line := demo_overlay.get_meta("run_line") as Label
+	if run_line != null:
+		run_line.text = Game.demo_summary()
 	_show_overlay(demo_overlay)
 
 # ---------- contracts ----------

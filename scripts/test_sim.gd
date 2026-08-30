@@ -8248,6 +8248,27 @@ static func run() -> int:
 	check(int(Game.stats["services_live"]) == 2,
 		"first light: the game remembers how many it has put into the world")
 	Game.stats = fla_stats
+
+	# --- the demo card is about the shift they worked ---
+	var ds_stats := Game.stats.duplicate(true)
+	var ds_skills := Game.skill_log.duplicate(true)
+	var ds_streak := Game.best_outage_streak
+	Game.stats["contracts"] = 6
+	Game.best_outage_streak = 31
+	Game.skill_log = {"l2_isolation": {"count": 2, "first_cycle": 4, "said": true}}
+	var summary := Game.demo_summary()
+	check(summary.contains("cycles on the floor") and summary.contains("6 job(s)") \
+			and summary.contains("31 cycles with nobody down") \
+			and summary.contains("layer 2 segmentation"),
+		"demo card: it says what this player actually did, including what it taught them")
+	Game.skill_log = {}
+	Game.stats["contracts"] = 0
+	Game.best_outage_streak = 0
+	check(not Game.demo_summary().contains("job(s)") and Game.demo_summary().contains("cycles on the floor"),
+		"demo card: and claims nothing about a shift that did not happen")
+	Game.stats = ds_stats
+	Game.skill_log = ds_skills
+	Game.best_outage_streak = ds_streak
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

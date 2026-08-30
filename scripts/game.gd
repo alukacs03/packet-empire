@@ -4628,6 +4628,22 @@ func rank() -> String:
 			name = r[0]
 	return name
 
+func demo_summary() -> String:
+	## One honest paragraph about the shift just worked, from what was recorded
+	## while they worked it.
+	var named: Array = []
+	for entry: Dictionary in Skills.CATALOG:
+		if int(skill_log.get(String(entry["id"]), {}).get("count", 0)) > 0:
+			named.append(String(entry["name"]))
+	var bits: Array = ["%d cycles on the floor" % cycle]
+	if int(stats.get("contracts", 0)) > 0:
+		bits.append("%d job(s) signed off" % int(stats.get("contracts", 0)))
+	if best_outage_streak > 0:
+		bits.append("a best run of %d cycles with nobody down" % best_outage_streak)
+	if not named.is_empty():
+		bits.append("and along the way you did %s" % ", ".join(PackedStringArray(named)))
+	return "This shift: " + ", ".join(PackedStringArray(bits)) + "."
+
 func rank_citation() -> String:
 	## What this particular run did to earn it. Read off what the game already
 	## keeps, so two players reaching the same rank are told different things.
