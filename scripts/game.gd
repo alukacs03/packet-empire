@@ -6409,6 +6409,8 @@ func digest_for(at: int) -> Array:
 func log_contains(text: String) -> bool:
 	## Folded lines are still in the log, which is the promise: nothing is
 	## dropped, only tucked into the cycle's shift notes.
+	## Recent history only: the log keeps sixty lines, so never use this to
+	## decide whether something ever happened. Count it in stats instead.
 	for e: String in events:
 		if text in e:
 			return true

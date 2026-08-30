@@ -3285,6 +3285,15 @@ static func run() -> int:
 	Game.sites = prot_sites
 	Game.current_site = prot_here
 
+	# nothing that has to stay true is read out of a log that scrolls
+	var trim_events := Game.events.duplicate()
+	Game.events = []
+	for trim_i in 80:
+		Game.log_event("SECURITY: filler line %d" % trim_i)
+	check(Game.events.size() <= 61,
+		"log: the event log is trimmed, which is why permanent facts live in stats")
+	Game.events = trim_events
+
 	# a finished job must not un-finish itself when the log scrolls
 	var mig_events := Game.events.duplicate()
 	var mig_stats := int(Game.stats.get("migrations", 0))
