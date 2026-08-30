@@ -153,6 +153,7 @@ func _draw_room_atmosphere(grid: Vector2i) -> void:
 	var warm_room := Color("171516")
 	var cold_room := Color("071b30")
 	draw_rect(Rect2(-2800, -1800, 5600, 3600), warm_room.lerp(cold_room, progress))
+	_draw_floor_slab(grid, progress)
 	# Cross-fading two matching authored rooms turns progression into a physical
 	# renovation: clutter and amber hum gradually yield to cold, managed calm.
 	var renovated := smoothstep(0.12, 0.88, progress)
@@ -166,9 +167,49 @@ func _draw_room_atmosphere(grid: Vector2i) -> void:
 	draw_texture_rect(STARTER_ROOM, STARTER_ROOM_RECT, false,
 		Color(starter_level, starter_level, starter_level * 0.96, 1.0 - renovated))
 	if renovated > 0.0:
+		# the bigger room is the same photograph, enlarged to stand around the
+		# floor the player actually owns rather than a corner of it
 		var mature_level: float = lerpf(float(daylight), 1.0, 0.62)
-		draw_texture_rect(MATURE_ROOM, STARTER_ROOM_RECT, false,
+		draw_texture_rect(MATURE_ROOM, _room_rect_for(grid), false,
 			Color(mature_level * 0.96, mature_level, mature_level * 1.04, renovated))
+
+func _room_rect_for(grid: Vector2i) -> Rect2:
+	## Grow the authored room with the floor, anchored so its back wall stays
+	## behind the top corner of the grid.
+	var span := float(maxi(grid.x, grid.y))
+	var scale := clampf(span / 3.0, 1.0, 2.9)
+	var size := STARTER_ROOM_RECT.size * scale
+	var centre := Iso.tile_to_world(Vector2i(int(grid.x / 2), int(grid.y / 2)))
+	return Rect2(centre - Vector2(size.x * 0.5, size.y * 0.62), size)
+
+func _floor_corners(grid: Vector2i, margin: float) -> PackedVector2Array:
+	## The owned floor as a diamond in world space, with a little apron so the
+	## slab reaches past the outermost buildable cell.
+	var mx := Iso.TILE_W * 0.5 * margin
+	var my := Iso.TILE_H * 0.5 * margin
+	var n := Iso.tile_to_world(Vector2i(0, 0)) + Vector2(0, -my)
+	var e := Iso.tile_to_world(Vector2i(grid.x - 1, 0)) \
+		+ Vector2(mx + Iso.TILE_W * 0.5, Iso.TILE_H * 0.5 + my * 0.5)
+	var sth := Iso.tile_to_world(Vector2i(grid.x - 1, grid.y - 1)) \
+		+ Vector2(0, Iso.TILE_H + my)
+	var w := Iso.tile_to_world(Vector2i(0, grid.y - 1)) \
+		+ Vector2(-mx - Iso.TILE_W * 0.5, Iso.TILE_H * 0.5 + my * 0.5)
+	return PackedVector2Array([n, e, sth, w])
+
+func _draw_floor_slab(grid: Vector2i, progress: float) -> void:
+	## The buildable area always stands on something. Without this, a floor
+	## bigger than the authored room leaves the grid hanging over the
+	## background, which reads as an interface rather than a room.
+	var slab := _floor_corners(grid, 1.4)
+	var concrete := Color("2a2622").lerp(Color("39434c"), progress)
+	draw_colored_polygon(slab, concrete)
+	# a slightly lighter inner field, so the slab has a surface rather than
+	# being one flat fill
+	var inner := _floor_corners(grid, 0.9)
+	draw_colored_polygon(inner, concrete.lightened(0.05))
+	var edge := PackedVector2Array(slab)
+	edge.append(slab[0])
+	draw_polyline(edge, concrete.darkened(0.45), 3.0)
 
 func _draw_room_lighting(grid: Vector2i) -> void:
 	var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)

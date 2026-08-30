@@ -361,6 +361,7 @@ func _shoot_all() -> void:
 			ui.toggle_help()],
 		["demo_end", func() -> void:
 			ui.help_overlay.visible = false
+			ui.refresh_demo_end()
 			ui._show_overlay(ui.demo_overlay)],
 		["ops", func() -> void:
 			ui.demo_overlay.visible = false

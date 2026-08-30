@@ -4082,14 +4082,17 @@ func _build_demo_end() -> void:
 
 var _demo_end_shown := false
 
+func refresh_demo_end() -> void:
+	## the card is about the shift they just worked, not a brochure
+	var run_line := demo_overlay.get_meta("run_line") as Label
+	if run_line != null:
+		run_line.text = Game.demo_summary()
+
 func check_demo_end() -> void:
 	if not Demo.complete() or _demo_end_shown:
 		return
 	_demo_end_shown = true
-	# the card is about the shift they just worked, not a brochure
-	var run_line := demo_overlay.get_meta("run_line") as Label
-	if run_line != null:
-		run_line.text = Game.demo_summary()
+	refresh_demo_end()
 	_show_overlay(demo_overlay)
 
 # ---------- contracts ----------

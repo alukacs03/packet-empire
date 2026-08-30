@@ -23,6 +23,9 @@ static func install(parent: Node) -> void:
 	## call once; safe to call again
 	if _node != null and is_instance_valid(_node):
 		return
+	# test and screenshot runs are automation, not play: never make noise
+	if OS.has_environment("PACKET_TEST") or OS.has_environment("PACKET_SHOT"):
+		muted = true
 	_node = Node.new()
 	_node.name = "Sfx"
 	parent.add_child(_node)
