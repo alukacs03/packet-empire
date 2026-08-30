@@ -3723,6 +3723,25 @@ func _build_market_tab() -> void:
 		row.add_child(buy)
 
 func _build_log_tab() -> void:
+	if Game.upstream_active():
+		contracts_box.add_child(_section("SOMEBODY ELSE'S OUTAGE"))
+		contracts_box.add_child(_wrap("  %s is down and you cannot fix it. What is left is everything else: the case, the chasing, and telling your customers before they ask." % Game.upstream["party"],
+			13, Color(1.0, 0.8, 0.5), 640))
+		for line: String in Game.upstream_evidence():
+			contracts_box.add_child(_wrap("      · %s" % line, 12, Color(0.7, 0.8, 0.85), 640))
+		var urow := HBoxContainer.new()
+		urow.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(urow)
+		var case_btn := Button.new()
+		case_btn.text = "Chase the case" if bool(Game.upstream.get("opened", false)) else "Open a case"
+		_accent(case_btn)
+		case_btn.pressed.connect(func() -> void:
+			var err: String = Game.chase_upstream() if bool(Game.upstream.get("opened", false)) \
+				else Game.open_upstream_case()
+			if err != "":
+				_toast(err)
+			_refresh_contracts())
+		urow.add_child(case_btn)
 	contracts_box.add_child(_section("STATUS PAGE"))
 	if Game.outage_open():
 		contracts_box.add_child(_label("  A customer service is down. Saying so costs you less than being found out.",

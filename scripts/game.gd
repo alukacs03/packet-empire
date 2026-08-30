@@ -236,6 +236,9 @@ var incidents: Array = []  # things worth reviewing afterwards
 const HABITS := ["saves", "documents", "windows", "tidy"]
 const HABIT_ALPHA := 0.06  # what you did today barely moves what you are
 var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
+var upstream := {}  # a live fault that is somebody else's to fix
+var last_upstream_cycle := -999
+const UPSTREAM_GAP := 60  # rare by design: this is spice, not a staple
 var blame_fear := 0  # how unsafe the team feels about owning up (0-5)
 var pending_reports: Array = []  # slips nobody has mentioned yet
 var status_posts: Array = []  # public incident communication
@@ -2520,6 +2523,116 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 	inc["blame"] = choice
 	return ""
 
+func multihomed() -> bool:
+	## two established upstream sessions is what survives one of them going away
+	var sessions := 0
+	for d: Net.NDevice in all_devices():
+		for nb in d.bgp.get("neighbors", []):
+			if Sim.bgp_established(d, nb):
+				sessions += 1
+	return sessions >= 2
+
+func upstream_active() -> bool:
+	return not upstream.is_empty()
+
+func _maybe_upstream_event() -> void:
+	## Occasionally the fault is entirely outside the player's reach. Never
+	## during another crisis, and never twice in quick succession.
+	if upstream_active() or cycle - last_upstream_cycle < UPSTREAM_GAP:
+		return
+	if customer_outage_active or guided_outage_active() or deals.is_empty() or cycle < 40:
+		return
+	if randf() > 0.015 * DIFFICULTIES[difficulty]["faults"]:
+		return
+	var carriers_in_use: Array = []
+	for c in circuits:
+		if String(c.get("carrier", "")) != "" and String(c["carrier"]) not in carriers_in_use:
+			carriers_in_use.append(String(c["carrier"]))
+	var kind := "carrier" if not carriers_in_use.is_empty() and randf() < 0.5 else "regional"
+	var party: String = carriers_in_use[randi() % carriers_in_use.size()] if kind == "carrier" \
+		else "your transit provider"
+	upstream = {"kind": kind, "party": party, "started": cycle, "until": cycle + randi_range(2, 5),
+		"opened": false, "case": "", "chased": 0, "posts": 0,
+		"protected": multihomed() if kind == "regional" else carrier_diverse(0, 0)}
+	if kind == "carrier":
+		carrier_outage[party] = int(upstream["until"])
+	log_event("UPSTREAM: %s. This one is not yours to fix: open a case, chase it, and tell your customers before they ask."
+		% ("%s has a regional failure" % party if kind == "regional"
+			else "%s is down across the region" % party))
+	topology_changed.emit()
+
+func upstream_evidence() -> Array:
+	## The small satisfaction available: your own tooling says it is not you.
+	if not upstream_active():
+		return []
+	var lines: Array = ["your devices are up, your links are up, and nothing here changed"]
+	if String(upstream["kind"]) == "carrier":
+		lines.append("every circuit you buy from %s is down; circuits on other carriers are not"
+			% upstream["party"])
+	else:
+		lines.append("traffic leaves your edge correctly and dies past the handoff at %s"
+			% upstream["party"])
+	lines.append("case with %s: %s" % [upstream["party"],
+		upstream["case"] if bool(upstream.get("opened", false)) else "not opened yet"])
+	if bool(upstream.get("protected", false)):
+		lines.append("the second path you paid for is carrying the traffic")
+	return lines
+
+func open_upstream_case() -> String:
+	if not upstream_active():
+		return "there is nothing upstream to chase"
+	if bool(upstream["opened"]):
+		return "the case is already open"
+	upstream["opened"] = true
+	upstream["case"] = "%s-%d" % [String(upstream["party"]).substr(0, 3).to_upper(), cycle]
+	log_event("UPSTREAM: case %s raised with %s. Now you wait, and chase." % [upstream["case"],
+		upstream["party"]])
+	return ""
+
+func chase_upstream() -> String:
+	if not upstream_active():
+		return "there is nothing upstream to chase"
+	if not bool(upstream["opened"]):
+		return "open a case first; nobody chases a ticket that does not exist"
+	if int(upstream.get("chased_cycle", -1)) == cycle:
+		return "you have already chased them this cycle"
+	upstream["chased_cycle"] = cycle
+	upstream["chased"] = int(upstream["chased"]) + 1
+	if int(upstream["until"]) > cycle + 1:
+		upstream["until"] = int(upstream["until"]) - 1
+		log_event("UPSTREAM: you pushed %s for an update. Their estimate moved in." % upstream["party"])
+	else:
+		log_event("UPSTREAM: %s says they are nearly there. They always say that." % upstream["party"])
+	return ""
+
+func upstream_tick() -> void:
+	_maybe_upstream_event()
+	if not upstream_active():
+		return
+	if status_posted_recently():
+		upstream["posts"] = int(upstream["posts"]) + 1
+	if cycle < int(upstream["until"]):
+		return
+	var kept_talking := int(upstream["posts"]) * 2 >= cycle - int(upstream["started"])
+	var protected := bool(upstream.get("protected", false))
+	if protected:
+		reputation = mini(100, reputation + 2)
+		log_event("UPSTREAM CLEARED: %s is back. Your second path carried the traffic through it, which is exactly what you bought it for."
+			% upstream["party"])
+	elif kept_talking:
+		reputation = mini(100, reputation + 2)
+		log_event("UPSTREAM CLEARED: %s is back. Your customers watched you handle somebody else's outage openly, and they will remember that."
+			% upstream["party"])
+	else:
+		reputation = maxi(0, reputation - 8)
+		log_event("UPSTREAM CLEARED: %s is back. You said nothing for %d cycles and your customers had to ask. That is the part they will remember."
+			% [upstream["party"], cycle - int(upstream["started"])])
+	record_incident("upstream", "%s failed upstream of you for %d cycles"
+		% [upstream["party"], cycle - int(upstream["started"])])
+	last_upstream_cycle = cycle
+	upstream = {}
+	topology_changed.emit()
+
 func observe_habit(habit: String, good: bool, weight := 1.0) -> void:
 	## Habits are read off what the player actually did, never off intent, and
 	## they move slowly in both directions.
@@ -3457,6 +3570,7 @@ func sla_tick() -> void:
 	dispute_tick()
 	report_tick()
 	habit_tick()
+	upstream_tick()
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -3588,6 +3702,13 @@ func sla_tick() -> void:
 			deal["cert_expired"] = true
 		else:
 			deal["cert_expired"] = false
+		if deal["healthy"] and upstream_active() and String(upstream["kind"]) == "regional" \
+				and not bool(upstream.get("protected", false)):
+			# nothing here is broken; the road out of the building is
+			deal["healthy"] = false
+			deal["upstream_down"] = true
+		else:
+			deal["upstream_down"] = false
 		if deal["healthy"] and not hijack_on(String(deal["params"].get("ip", ""))).is_empty():
 			# the service is fine; the internet is simply sending its traffic
 			# somewhere else, which the customer experiences as an outage
@@ -4212,7 +4333,8 @@ func _serialize() -> Dictionary:
 		"feature_discovery_trace": feature_discovery_trace,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
-		"incidents": incidents, "blame_fear": blame_fear, "habits": habits, "pending_reports": pending_reports,
+		"incidents": incidents, "blame_fear": blame_fear, "habits": habits,
+		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -4531,6 +4653,8 @@ func _apply(data: Dictionary) -> void:
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
+	upstream = data.get("upstream", {})
+	last_upstream_cycle = int(data.get("last_upstream_cycle", -999))
 	habits = data.get("habits", {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5})
 	pending_reports = data.get("pending_reports", [])
 	status_posts = data.get("status_posts", [])

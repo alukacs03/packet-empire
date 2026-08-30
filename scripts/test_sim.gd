@@ -2822,6 +2822,88 @@ static func run() -> int:
 	Game.habits = hab_player
 	Game.maintenance_until = -1
 
+	# --- you are the ticket now: an outage that is not yours ---
+	var up_deals := Game.deals.duplicate(true)
+	var up_posts := Game.status_posts.duplicate(true)
+	Game.status_posts = []
+	Game.reputation = 60
+	var up_deal := {"id": "up1", "customer": "Duna Media", "kind": "hosting",
+		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 100,
+		"healthy": true, "ever_healthy": true, "cycles": 10, "up_cycles": 10}
+	Game.deals = [up_deal]
+	var up_rack := Game.add_rack(Vector2i(34, 1))
+	var up_sw := Game.new_device("sw-8")
+	var up_srv := Game.new_device("srv-1")
+	var up_peer := Game.new_device("srv-1")
+	up_rack.slots[0] = up_sw
+	up_rack.slots[1] = up_srv
+	up_rack.slots[2] = up_peer
+	Game.connect_ifaces(up_srv.ifaces[0], up_sw.ifaces[0])
+	Game.connect_ifaces(up_peer.ifaces[0], up_sw.ifaces[1])
+	Game.add_ip(up_srv.ifaces[0], "10.44.0.10/24")
+	Game.add_ip(up_peer.ifaces[0], "10.44.0.11/24")
+	up_deal["params"] = {"ip": "10.44.0.10"}
+	Game.upstream = {}
+	Game.sla_tick()
+	check(bool(up_deal["healthy"]), "upstream: the customer is delivered before anything goes wrong")
+	Game.upstream = {"kind": "regional", "party": "your transit provider",
+		"started": Game.cycle, "until": Game.cycle + 4, "opened": false, "case": "",
+		"chased": 0, "posts": 0, "protected": false}
+	check(Game.chase_upstream() != "" and Game.open_upstream_case() == "" \
+			and String(Game.upstream["case"]) != "",
+		"upstream: you cannot chase a ticket you never raised")
+	var until_before := int(Game.upstream["until"])
+	check(Game.chase_upstream() == "" and int(Game.upstream["until"]) < until_before \
+			and Game.chase_upstream() != "",
+		"upstream: chasing moves their estimate in, once per cycle")
+	var evidence := Game.upstream_evidence()
+	check(evidence.size() >= 3 and "nothing here changed" in String(evidence[0]),
+		"upstream: your own tooling proves the fault is not yours")
+	Game.sla_tick()
+	check(not bool(up_deal["healthy"]) and bool(up_deal["upstream_down"]),
+		"upstream: an unprotected customer goes off the air even though nothing of yours broke")
+	# silence is punished
+	Game.cycle = int(Game.upstream["until"])
+	var rep_quiet_upstream := Game.reputation
+	Game.upstream_tick()
+	check(Game.upstream.is_empty() and Game.reputation < rep_quiet_upstream - 4,
+		"upstream: saying nothing for the whole outage costs more than the outage did")
+	# the same outage, communicated
+	Game.reputation = 60
+	Game.last_upstream_cycle = -999
+	Game.upstream = {"kind": "regional", "party": "your transit provider",
+		"started": Game.cycle, "until": Game.cycle + 2, "opened": true, "case": "TRA-1",
+		"chased": 1, "posts": 4, "protected": false}
+	var rep_open := Game.reputation
+	Game.cycle += 2
+	Game.upstream_tick()
+	check(Game.upstream.is_empty() and Game.reputation > rep_open,
+		"upstream: handling somebody else's outage openly leaves you better off than before it")
+	# and the redundancy somebody paid for gets to do its job
+	Game.reputation = 60
+	Game.last_upstream_cycle = -999
+	Game.upstream = {"kind": "regional", "party": "your transit provider",
+		"started": Game.cycle, "until": Game.cycle + 2, "opened": true, "case": "TRA-2",
+		"chased": 0, "posts": 0, "protected": true}
+	up_deal["healthy"] = true
+	Game.sla_tick()
+	check(bool(up_deal["healthy"]) and not bool(up_deal["upstream_down"]),
+		"upstream: a second upstream path carries the customer straight through it")
+	Game.cycle = int(Game.upstream["until"])
+	var rep_ready := Game.reputation
+	Game.upstream_tick()
+	check(Game.upstream.is_empty() and Game.reputation > rep_ready \
+			and Game.last_upstream_cycle == Game.cycle,
+		"upstream: prepared operators come out ahead, and the clock stops it recurring")
+	Game.upstream = {}
+	Game.last_upstream_cycle = Game.cycle
+	Game._maybe_upstream_event()
+	check(Game.upstream.is_empty(),
+		"upstream: it cannot happen again immediately, whatever the dice say")
+	Game.deals = up_deals
+	Game.status_posts = up_posts
+	Game.last_upstream_cycle = -999
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")
