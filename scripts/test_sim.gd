@@ -2978,6 +2978,27 @@ static func run() -> int:
 	Game.fire(Game.staff[0])
 	check(Game.oncall == "", "on call: the retainer stops when they leave")
 	Game.hire(Staff.make_candidate(RandomNumberGenerator.new(), Game.habits))
+	# and the phone rings where the player is, instead of waiting in a panel
+	Game.night_call = {}
+	Game.callout_who = ""
+	Game.callout_until = -1
+	Game.night_call_tick()
+	check(not Game.night_call.is_empty() and String(Game.night_call["reason"]).contains("smoke"),
+		"night call: an empty floor with something live rings the phone, and says what it is")
+	check(Game.answer_night_call(false) == "" and Game.night_call.is_empty(),
+		"night call: letting it wait costs nothing and clears the call")
+	Game.night_call_tick()
+	var nc_money := Game.money
+	check(Game.answer_night_call(true) == "" and Game.money < nc_money \
+			and Staff.anyone_on_shift(),
+		"night call: getting somebody in is the call-out, priced by the rota")
+	Game.night_call = {}
+	Game.night_call_tick()
+	check(Game.night_call.is_empty(),
+		"night call: with somebody in the building, nobody rings")
+	Game.callout_who = ""
+	Game.callout_until = -1
+	Game.hazards = []
 	Game.staff = co_staff
 	Game.hazards = co_haz
 	Game.cycle = co_cycle

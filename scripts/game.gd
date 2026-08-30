@@ -1599,6 +1599,50 @@ func answer_call(deal: Dictionary, answer: String) -> String:
 				% deal["customer"])
 	return ""
 
+var night_call := {}  # {reason, cycle} : the phone ringing on an empty floor
+
+func night_call_tick() -> void:
+	## Somebody rings you when the room is empty and something is live. The
+	## option to get out of bed has to arrive where the player is, not be
+	## found later in a panel.
+	if not night_call.is_empty():
+		# the moment passes: somebody clocked on, or it fixed itself
+		if not callout_ready():
+			night_call = {}
+		return
+	if not callout_ready():
+		return
+	var reason := ""
+	if customer_outage_active:
+		reason = "a customer of yours is off the air and there is nobody in the building"
+	elif not hazards.is_empty():
+		var h: Dictionary = hazards[0]
+		reason = "the panel is showing %s in %s and the floor is empty" % [
+			HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
+	else:
+		for d in all_devices():
+			if d.status != "active":
+				reason = "%s has dropped off the network and there is nobody in" % d.name
+				break
+	if reason == "":
+		return
+	night_call = {"reason": reason, "cycle": cycle}
+	log_event("THE PHONE: %s." % reason.capitalize())
+	Sfx.play("phone")
+
+func answer_night_call(get_them_in: bool) -> String:
+	if night_call.is_empty():
+		return "nobody is on the phone"
+	if not get_them_in:
+		night_call = {}
+		log_event("THE PHONE: you said it waits until morning. Whatever it does overnight, it does.")
+		return ""
+	var err := call_someone_out()
+	if err != "":
+		return err
+	night_call = {}
+	return ""
+
 func call_tick() -> void:
 	## A promise is only worth what it costs to miss it.
 	for deal in deals:
@@ -7892,6 +7936,7 @@ func sla_tick() -> void:
 	lockout_tick()
 	ticket_tick()
 	call_tick()
+	night_call_tick()
 	rank_tick()
 	season_tick()
 	remediation_tick()
@@ -8831,6 +8876,7 @@ func _serialize() -> Dictionary:
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"callout_who": callout_who, "callout_until": callout_until, "oncall": oncall,
+		"night_call": night_call,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
 		"customer_arcs": customer_arcs,
@@ -9172,6 +9218,7 @@ func _apply(data: Dictionary) -> void:
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
 	oncall = String(data.get("oncall", ""))
+	night_call = data.get("night_call", {})
 	callout_who = String(data.get("callout_who", ""))
 	callout_until = int(data.get("callout_until", -1))
 	incidents = data.get("incidents", [])

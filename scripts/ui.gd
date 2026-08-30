@@ -5144,6 +5144,39 @@ func _customer_eye_card(eye: Dictionary) -> PanelContainer:
 	return card
 
 func _build_jobs_tab() -> void:
+	if not Game.night_call.is_empty():
+		# the phone, ringing where the player already is
+		var np := UIW.style_panel(PanelContainer.new(), "console", "md")
+		contracts_box.add_child(np)
+		var nb := VBoxContainer.new()
+		nb.add_theme_constant_override("separation", UIW.space("sm"))
+		np.add_child(nb)
+		nb.add_child(_label("THE PHONE  /  OUT OF HOURS", 12, UIW.colour("warm")))
+		nb.add_child(_wrap("“%s.”" % String(Game.night_call["reason"]).capitalize(), 14,
+			UIW.colour("text_strong"), 620))
+		var nrow := HBoxContainer.new()
+		nrow.add_theme_constant_override("separation", 8)
+		nb.add_child(nrow)
+		var in_btn := Button.new()
+		var oncall_now := Staff.by_name(Game.oncall)
+		in_btn.text = "Get somebody in ($%d)" % (Game.CALLOUT_FEE / 2 if not oncall_now.is_empty()
+			else Game.CALLOUT_FEE)
+		in_btn.tooltip_text = "The person carrying the phone if there is one, otherwise whoever is best rested. They will be tired tomorrow."
+		_accent(in_btn)
+		in_btn.pressed.connect(func() -> void:
+			var err := Game.answer_night_call(true)
+			if err != "":
+				_toast(err)
+			_refresh_contracts()
+			_refresh_money())
+		nrow.add_child(in_btn)
+		var wait_btn := Button.new()
+		wait_btn.text = "It waits until morning"
+		wait_btn.tooltip_text = "Costs nothing. Whatever it does overnight, it does."
+		wait_btn.pressed.connect(func() -> void:
+			Game.answer_night_call(false)
+			_refresh_contracts())
+		nrow.add_child(wait_btn)
 	var customer_windows: Array = []
 	for active_deal: Dictionary in Game.deals:
 		var customer_view := Game.customer_eye(active_deal)
