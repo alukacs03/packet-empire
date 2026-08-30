@@ -8221,6 +8221,33 @@ static func run() -> int:
 		"seasons: but it says so when the year turns, before it bites")
 	Game.cycle = sn_cycle
 	Game.stage = sn_stage
+
+	# --- the first one matters more than the second ---
+	var fla_stats := Game.stats.duplicate(true)
+	Game.stats["services_live"] = 0
+	Game.events = []
+	Game.digest = {}
+	var fl_deal := {"id": "fl", "customer": "Fonix Klinika", "ctype": "smb", "kind": "hosting",
+		"params": {}, "fee": 180, "brief": "", "load": 150, "healthy": true, "ever_healthy": true}
+	Game._first_light(fl_deal)
+	check(Game.log_contains("FIRST LIGHT") and Game.log_contains("Fonix Klinika") \
+			and Game.log_contains("$180"),
+		"first light: the first service says whose it is, what it does, and what it is worth")
+	var quoted := false
+	for fl_ev: String in Game.events:
+		if "“" in fl_ev:
+			quoted = true
+	check(quoted, "first light: and it is said in the customer's own words")
+	Game.events = []
+	Game.digest = {}
+	var fl_second := fl_deal.duplicate(true)
+	fl_second["customer"] = "Madaras Jatek Kft"
+	Game._first_light(fl_second)
+	check(not Game.log_contains("FIRST LIGHT") and Game.log_contains("service(s) of yours in the world"),
+		"first light: the second one is quieter, and counts them")
+	check(int(Game.stats["services_live"]) == 2,
+		"first light: the game remembers how many it has put into the world")
+	Game.stats = fla_stats
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

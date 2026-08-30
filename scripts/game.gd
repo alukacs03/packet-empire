@@ -3755,6 +3755,35 @@ func day_factor() -> float:
 func day_name() -> String:
 	return DAY_NAMES[day_slot()]
 
+func _first_light(deal: Dictionary) -> void:
+	## The moment somebody's shop starts working because of something you built.
+	## Once per customer, in their words, and quieter every time after the first.
+	var biz := Market.business_for(deal)
+	var earlier := int(stats.get("services_live", 0))
+	stats["services_live"] = earlier + 1
+	if earlier == 0:
+		log_event("FIRST LIGHT: %s is live. %s Somebody's %s is working because of a cable you ran and a configuration you wrote."
+			% [deal["customer"], String(biz["live"]),
+				String(biz["what"]).trim_prefix("a ").trim_prefix("an ")])
+		log_event("FIRST LIGHT: “%s” — and it is worth $%d every cycle it stays that way."
+			% [_first_light_words(deal), int(deal["fee"])])
+		Sfx.play("money")
+	else:
+		log_event("LIVE: %s is answering. %s That is %d service(s) of yours in the world now."
+			% [deal["customer"], String(biz["live"]), earlier + 1])
+
+func _first_light_words(deal: Dictionary) -> String:
+	match String(Market.business_for(deal)["id"]):
+		"clinic":
+			return "Reception rang. They have booked eleven people since you left."
+		"school":
+			return "The registers went in on time this morning. Nobody mentioned the network, which is the compliment."
+		"streaming":
+			return "We are live and the chat has stopped complaining. Thank you."
+		"factory":
+			return "The line is moving. The supervisor says to tell you it is moving."
+	return "The first order came through while I was watching. The label printer made that noise."
+
 func customer_eye(deal: Dictionary) -> Dictionary:
 	## Translate a real service state into the small human thing it carries.
 	## This is deliberately derived at read time: the UI can never celebrate
@@ -5724,7 +5753,7 @@ var events_logged := 0  # monotonic: events is capped, so its size cannot count
 const DIGEST_PREFIX := "SHIFT NOTES"
 ## Lines that are routine on their own but must never be folded away: anything
 ## that asks for a decision, names a customer, or is the game teaching.
-const DIGEST_EXEMPT := ["ARRIVAL", "PROMOTED", "SEASON", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
+const DIGEST_EXEMPT := ["ARRIVAL", "PROMOTED", "SEASON", "FIRST LIGHT", "LIVE", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
 	"TICKET", "VISIT", "VISIT BOOKED", "AUDIT", "AUDIT OFFERED", "AUDIT RESULT", "DEBRIEF READY",
 	"RELATIONSHIP", "THE END", "CHALLENGE", "PACK", "HEADS UP", "CARRIED IT", "DROPPED IT",
 	"CONSEQUENCE", "LATER", "IDENTITY", "NEMESIS", "REFERRAL", "MASTERED"]
@@ -7942,6 +7971,7 @@ func sla_tick() -> void:
 			if not was_healthy:
 				if first_delivery:
 					Skills.observe("service_delivery")
+					_first_light(deal)
 				var state := "delivered" if first_delivery else "restored"
 				customer_service_changed.emit(String(deal["customer"]), state, int(deal["fee"]))
 				deal.erase("on_record")
