@@ -3003,6 +3003,30 @@ func _refresh_ops() -> void:
 			shelf.append("%s x%d" % [Game.MODELS[m]["label"], int(Game.spares[m])])
 	ops_box.add_child(_label("  On the shelf: %s" % (", ".join(PackedStringArray(shelf))
 		if not shelf.is_empty() else "nothing"), 13, Color(0.75, 0.8, 0.85)))
+	# what is on the shelf is half the answer; the rest is what is coming
+	var in_transit: Array = []
+	var on_dock := 0
+	for c: Dictionary in Game.crates:
+		if int(c["arrived"]) >= 0:
+			if Game.crate_site(c) == Game.current_site:
+				on_dock += 1
+			continue
+		in_transit.append("%s → %s, cycle %d" % [Game.MODELS[c["model"]]["label"],
+			Game.site_name(Game.crate_site(c)), int(c["due"])])
+	if not in_transit.is_empty():
+		ops_box.add_child(_wrap("  On the way: %s" % ", ".join(PackedStringArray(in_transit)),
+			13, Color(0.7, 0.8, 0.9), 780))
+	if on_dock > 0:
+		ops_box.add_child(_label("  On this dock, not yet unpacked: %d crate(s)" % on_dock,
+			13, UIW.colour("warning")))
+	var back_order: Array = []
+	for m_id: String in Game.stockouts:
+		if Game.stocked_out(m_id):
+			back_order.append("%s until cycle %d" % [Game.MODELS[m_id]["label"],
+				int(Game.stockouts[m_id])])
+	if not back_order.is_empty():
+		ops_box.add_child(_wrap("  Nobody can sell you: %s" % ", ".join(PackedStringArray(back_order)),
+			13, UIW.colour("warning"), 780))
 	var spare_btn := Button.new()
 	spare_btn.text = "Buy a spare…"
 	spare_btn.pressed.connect(func() -> void:
