@@ -269,6 +269,9 @@ var orphan_intel := {}  # orphan key -> how much digging the player has done (0-
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
+var audit := {}  # a scoped compliance audit: offered, accepted, findings, closed
+var control_evidence := {}  # control id -> the cycle it last passed
+var trust_marker := false  # the customers who ask for this can see it
 var tour := {}  # a scheduled visit: who is coming, and when
 var facility := {}  # task id -> the cycle it was last done
 var facility_auto := {}  # task id -> the crew keeps it on schedule
@@ -2096,6 +2099,246 @@ func renewal_tick() -> void:
 				and String(item["kind"]) in ["domain", "addresses"]:
 			# only the customer-facing lapses are visible from outside
 			reputation = maxi(0, reputation - 1)
+
+## A teaching abstraction, not any real certification scheme: eight controls
+## that map onto things the simulation can actually prove.
+const CONTROLS := [
+	{"id": "segmentation", "label": "Tenant segmentation",
+		"blurb": "Customer machines sit in their own VLAN rather than the default one."},
+	{"id": "mgmt_isolation", "label": "Management isolation",
+		"blurb": "Nothing a customer runs can reach the management plane."},
+	{"id": "central_auth", "label": "Central administrative authentication",
+		"blurb": "Admin logins are authenticated somewhere central, with an audit trail."},
+	{"id": "logging_time", "label": "Logging and time synchronisation",
+		"blurb": "Devices ship logs somewhere and agree what time it is."},
+	{"id": "config_history", "label": "Configuration history",
+		"blurb": "What is running is saved, and previous versions still exist."},
+	{"id": "physical_access", "label": "Physical and out-of-band access",
+		"blurb": "There is a way in when the network is the problem, and the floor is documented."},
+	{"id": "incident_review", "label": "Incident review",
+		"blurb": "Incidents are written up rather than left open."},
+	{"id": "patching", "label": "Maintenance and known defects",
+		"blurb": "Nothing is running on a lapsed licence or a known unfixed defect."},
+]
+const EVIDENCE_STALE := 12  # cycles after which evidence needs collecting again
+
+func control_devices() -> Array:
+	return all_devices()
+
+func control_state(id: String) -> Dictionary:
+	## Every control is answered by the live simulation. Nothing here can be
+	## satisfied by a checkbox somewhere in the interface.
+	var passing := false
+	var why := ""
+	match id:
+		"segmentation":
+			var tenanted := 0
+			for d: Net.NDevice in control_devices():
+				if d.type != "switch":
+					continue
+				for i: Net.Iface in d.ifaces:
+					if i.mode == "access" and link_at(i) != null and int(i.untagged_vlan) > 1:
+						tenanted += 1
+			passing = tenanted >= 2
+			why = "%d customer port(s) in a VLAN of their own" % tenanted
+		"mgmt_isolation":
+			var exposed := 0
+			for deal in deals:
+				var ip: String = deal["params"].get("ip", "")
+				var srv := Contracts._owner(ip) if ip != "" else null
+				if srv == null:
+					continue
+				for d: Net.NDevice in control_devices():
+					if not d.ip_forwarding and d.type != "switch":
+						continue
+					for mgmt: String in management_ips(d):
+						if Sim.ping(srv, mgmt)["ok"]:
+							exposed += 1
+			passing = exposed == 0
+			why = "no customer machine reaches the management plane" if passing \
+				else "%d customer-to-management path(s) open" % exposed
+		"central_auth":
+			for d: Net.NDevice in control_devices():
+				if not d.aaa.is_empty() and String(d.aaa.get("server", "")) != "":
+					passing = true
+			why = "an authentication server is configured" if passing \
+				else "every device authenticates locally"
+		"logging_time":
+			var logged := 0
+			var timed := 0
+			for d: Net.NDevice in control_devices():
+				if d.log_host != "":
+					logged += 1
+				if d.ntp_server != "":
+					timed += 1
+			passing = logged > 0 and timed > 0
+			why = "%d device(s) shipping logs, %d with a clock source" % [logged, timed]
+		"config_history":
+			var dirty := 0
+			var versioned := 0
+			for d: Net.NDevice in control_devices():
+				if config_dirty(d):
+					dirty += 1
+				if d.versions.size() > 0:
+					versioned += 1
+			passing = dirty == 0 and versioned > 0
+			why = "%d unsaved configuration(s), %d device(s) with history" % [dirty, versioned]
+		"physical_access":
+			var console := false
+			for d: Net.NDevice in control_devices():
+				if d.type == "console" and d.status == "active":
+					console = true
+			passing = console and drift_factor() < 0.4
+			why = "%s, documentation %s" % ["a console server is on the floor" if console
+				else "no out-of-band access", "current" if drift_factor() < 0.4 else "adrift"]
+		"incident_review":
+			var open_old := 0
+			for inc: Dictionary in incidents:
+				if not bool(inc.get("reviewed", false)) and cycle - int(inc.get("cycle", cycle)) >= 5:
+					open_old += 1
+			passing = open_old == 0
+			why = "%d incident(s) still unwritten after five cycles" % open_old
+		"patching":
+			var lapsed := 0
+			for item: Dictionary in renewals:
+				if bool(item.get("lapsed", false)):
+					lapsed += 1
+			passing = lapsed == 0 and firmware_bugs.is_empty()
+			why = "%d lapsed renewal(s), %d known defect(s) open" % [lapsed, firmware_bugs.size()]
+	if passing:
+		control_evidence[id] = cycle
+	var last := int(control_evidence.get(id, -999))
+	var status := "failing"
+	if passing:
+		status = "compliant"
+	elif last > -999 and cycle - last <= EVIDENCE_STALE:
+		status = "stale"
+	elif last > -999:
+		status = "incomplete"
+	return {"id": id, "status": status, "why": why, "evidence_cycle": last}
+
+func audit_readiness() -> Array:
+	var out: Array = []
+	for c: Dictionary in CONTROLS:
+		var st := control_state(String(c["id"]))
+		st["label"] = c["label"]
+		st["blurb"] = c["blurb"]
+		out.append(st)
+	return out
+
+func maybe_offer_audit() -> void:
+	if not audit.is_empty() or deals.is_empty() or cycle < 40 or biz_roll() > 0.02:
+		return
+	var scope: Array = []
+	var pool: Array = CONTROLS.duplicate()
+	for i in 4:
+		var pick: Dictionary = pool[int(biz_roll() * pool.size()) % pool.size()]
+		if String(pick["id"]) not in scope:
+			scope.append(String(pick["id"]))
+	var customer := String(deals[int(biz_roll() * deals.size()) % deals.size()]["customer"])
+	audit = {"state": "offered", "customer": customer, "scope": scope, "reward": 4500,
+		"deadline": cycle + 10, "findings": [], "history": []}
+	log_event("AUDIT OFFERED: %s wants a compliance review of %s, worth $%d if you pass. This is a teaching abstraction, not a real certification."
+		% [customer, ", ".join(PackedStringArray(scope)), int(audit["reward"])])
+
+func accept_audit() -> String:
+	if audit.get("state", "") != "offered":
+		return "there is nothing on the table"
+	audit["state"] = "accepted"
+	log_event("AUDIT ACCEPTED: %s samples %d control(s) at cycle %d. The scope is fixed from now on."
+		% [audit["customer"], audit["scope"].size(), int(audit["deadline"])])
+	return ""
+
+func delay_audit() -> String:
+	if audit.get("state", "") != "offered":
+		return "there is nothing to move"
+	audit["deadline"] = cycle + 20
+	audit["state"] = "accepted"
+	reputation = maxi(0, reputation - 3)
+	for deal in deals:
+		if String(deal["customer"]) == String(audit["customer"]):
+			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.1)
+	log_event("AUDIT DELAYED: %s moved the window out, and noticed that you asked."
+		% audit["customer"])
+	return ""
+
+func decline_audit() -> String:
+	if audit.get("state", "") != "offered":
+		return "there is nothing to decline"
+	log_event("AUDIT DECLINED: %s will take their compliance work elsewhere." % audit["customer"])
+	for deal in deals:
+		if String(deal["customer"]) == String(audit["customer"]):
+			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.15)
+	audit = {}
+	return ""
+
+func _audit_sample() -> Array:
+	var findings: Array = []
+	for id: String in audit["scope"]:
+		var st := control_state(id)
+		var grade := "pass"
+		match String(st["status"]):
+			"failing":
+				grade = "major finding"
+			"incomplete":
+				grade = "minor finding"
+			"stale":
+				grade = "observation"
+		findings.append({"control": id, "grade": grade, "why": st["why"]})
+	return findings
+
+func run_audit() -> void:
+	if audit.get("state", "") != "accepted" or cycle < int(audit["deadline"]):
+		return
+	audit["findings"] = _audit_sample()
+	audit["state"] = "findings"
+	audit["remediation_until"] = cycle + 8
+	var majors := 0
+	for f: Dictionary in audit["findings"]:
+		if String(f["grade"]) == "major finding":
+			majors += 1
+	log_event("AUDIT RESULT: %d finding(s), %d of them major. You have 8 cycles to remediate before it closes."
+		% [audit["findings"].size(), majors])
+	for f2: Dictionary in audit["findings"]:
+		log_event("AUDIT %s: %s (%s)" % [String(f2["grade"]).to_upper(), f2["control"], f2["why"]])
+
+func verify_audit() -> String:
+	## The same controls, re-checked against the live network. Nothing moves.
+	if audit.get("state", "") != "findings":
+		return "there is nothing to verify"
+	audit["findings"] = _audit_sample()
+	var majors := 0
+	for f: Dictionary in audit["findings"]:
+		if String(f["grade"]) == "major finding":
+			majors += 1
+	if majors > 0:
+		log_event("AUDIT REVERIFICATION: %d major finding(s) still open." % majors)
+		return "%d major finding(s) are still open" % majors
+	audit["state"] = "closed"
+	trust_marker = true
+	money += int(audit["reward"])
+	money_changed.emit()
+	reputation = mini(100, reputation + 6)
+	leads.append(Market.audit_lead(String(audit["customer"])))
+	audit["history"] = audit.get("history", []) + [{"cycle": cycle, "scope": audit["scope"]}]
+	log_event("AUDIT PASSED: $%d, a visible trust marker, and the kind of customer who asks for this now has your number."
+		% int(audit["reward"]))
+	return ""
+
+func audit_tick() -> void:
+	maybe_offer_audit()
+	if audit.get("state", "") == "accepted" and cycle >= int(audit["deadline"]):
+		run_audit()
+	elif audit.get("state", "") == "findings" and cycle > int(audit.get("remediation_until", 0)):
+		var majors := 0
+		for f: Dictionary in audit["findings"]:
+			if String(f["grade"]) == "major finding":
+				majors += 1
+		if majors > 0:
+			reputation = maxi(0, reputation - 5)
+			log_event("AUDIT CLOSED: the remediation window ran out with %d major finding(s) open."
+				% majors)
+		audit = {}
 
 const TOUR_KINDS := {
 	"prospect": {"label": "a prospective enterprise customer",
@@ -5885,6 +6128,7 @@ func sla_tick() -> void:
 	window_job_tick()
 	maybe_schedule_tour()
 	tour_tick()
+	audit_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
@@ -6756,7 +7000,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit,
+		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
 		"confirm_commits": confirm_commits, "tickets": tickets, "grey_faults": grey_faults, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
 		"parts_auto": parts_auto, "cable_debt": cable_debt,
@@ -7087,6 +7332,9 @@ func _apply(data: Dictionary) -> void:
 	blame_fear = int(data.get("blame_fear", 0))
 	facility = data.get("facility", {})
 	tour = data.get("tour", {})
+	audit = data.get("audit", {})
+	control_evidence = data.get("control_evidence", {})
+	trust_marker = bool(data.get("trust_marker", false))
 	renewals = data.get("renewals", [])
 	tac_cases = data.get("tac_cases", [])
 	orphan_intel = data.get("orphan_intel", {})

@@ -2830,8 +2830,15 @@ static func run() -> int:
 	Game.maintenance_until = -1
 
 	# --- you are the ticket now: an outage that is not yours ---
+	# the later sections keep adding hardware to this shared world, so give it
+	# enough cooling that nothing trips for reasons this section is not testing
+	var cool_rack := Game.add_rack(Vector2i(20, 6))
+	for cool_slot in 3:
+		cool_rack.slots[cool_slot] = Game.new_device("crac-1")
 	var up_deals := Game.deals.duplicate(true)
 	var up_posts := Game.status_posts.duplicate(true)
+	var up_staff := Game.staff.duplicate(true)
+	Game.staff = []  # nobody wandering off and unplugging things mid-measurement
 	Game.status_posts = []
 	Game.reputation = 60
 	var up_deal := {"id": "up1", "customer": "Duna Media", "kind": "hosting",
@@ -2909,6 +2916,7 @@ static func run() -> int:
 		"upstream: it cannot happen again immediately, whatever the dice say")
 	Game.deals = up_deals
 	Game.status_posts = up_posts
+	Game.staff = up_staff
 	Game.last_upstream_cycle = -999
 
 	# --- hear it before you see it ---
@@ -4163,6 +4171,70 @@ static func run() -> int:
 	var pp_payload: Dictionary = JSON.parse_string(Game.snapshot())
 	check(pp_payload["devices"].has(pp_panel.name),
 		"panels: the passive infrastructure is saved with everything else")
+
+	# --- compliance controls and the audit that samples them ---
+	Game.audit = {}
+	Game.control_evidence = {}
+	Game.trust_marker = false
+	var ready := Game.audit_readiness()
+	check(ready.size() == Game.CONTROLS.size(),
+		"compliance: every control in the catalogue is answered")
+	var by_id := {}
+	for ctl: Dictionary in ready:
+		by_id[String(ctl["id"])] = ctl
+		if String(ctl["why"]) == "":
+			by_id["_empty"] = true
+	check(not by_id.has("_empty"),
+		"compliance: each control says why it passes or fails, from the live network")
+	# a control cannot be satisfied by anything except the simulation
+	var comp_rack := Game.add_rack(Vector2i(76, 1))
+	var comp_con := Game.new_device("con-1")
+	comp_rack.slots[0] = comp_con
+	var before_phys := String(Game.control_state("physical_access")["status"])
+	Game.docs = {}
+	for comp_r: Net.Rack in Game.racks_on(Game.current_site):
+		Game.reconcile_rack(comp_r)
+	check(String(Game.control_state("physical_access")["status"]) == "compliant" \
+			or before_phys != "compliant",
+		"compliance: out-of-band access and current documentation is a live check, not a checkbox")
+	# the audit: scope stated up front, findings graded, remediation verified
+	Game.deals = [{"id": "aud", "customer": "Tisza Bank", "ctype": "enterprise", "kind": "hosting",
+		"params": {}, "fee": 300, "brief": "", "load": 200, "healthy": true, "ever_healthy": true,
+		"cycles": 20, "up_cycles": 20, "loyalty": 0.8}]
+	Game.audit = {"state": "offered", "customer": "Tisza Bank",
+		"scope": ["incident_review", "config_history"], "reward": 4500,
+		"deadline": Game.cycle + 2, "findings": [], "history": []}
+	check(Game.accept_audit() == "" and String(Game.audit["state"]) == "accepted" \
+			and Game.accept_audit() != "",
+		"compliance: the audit is accepted once, with its scope and deadline already stated")
+	Game.incidents = [{"kind": "test", "summary": "an incident nobody wrote up",
+		"cycle": Game.cycle - 9, "reviewed": false, "by": ""}]
+	Game.cycle = int(Game.audit["deadline"])
+	Game.run_audit()
+	check(String(Game.audit["state"]) == "findings" and not Game.audit["findings"].is_empty(),
+		"compliance: the audit produces findings rather than an instant pass or fail")
+	var graded := {}
+	for f_c: Dictionary in Game.audit["findings"]:
+		graded[String(f_c["control"])] = String(f_c["grade"])
+	check(graded.get("incident_review", "") == "major finding" \
+			and String(Game.audit["findings"][0]["why"]) != "",
+		"compliance: a failing control is a major finding, linked to the live reason it failed")
+	check(Game.verify_audit() != "" and not Game.trust_marker,
+		"compliance: re-verification with the finding still open does not pass you")
+	Game.review_incident(Game.incidents[0], 0)
+	for comp_dev: Net.NDevice in Game.all_devices():  # save what is running, everywhere
+		comp_dev.startup = Game.device_config(comp_dev)
+		if comp_dev.versions.is_empty():
+			Game.save_config_version(comp_dev)
+	var money_audit := Game.money
+	var leads_audit := Game.leads.size()
+	var verify_err := Game.verify_audit()
+	check(verify_err == "" and String(Game.audit["state"]) == "closed" and Game.trust_marker \
+			and Game.money > money_audit and Game.leads.size() == leads_audit + 1,
+		"compliance: fixing it for real closes the audit, pays, and opens regulated work")
+	Game.audit = {}
+	Game.trust_marker = false
+	Game.incidents = []
 	Game.money = 5000
 	var rb_rack := Game.add_rack(Vector2i(70, 1))
 	var rb_sw := Game.new_device("sw-8")

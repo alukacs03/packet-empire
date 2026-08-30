@@ -2401,6 +2401,54 @@ func _refresh_ops() -> void:
 				hud_toast("UPS installed.", true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
+	ops_box.add_child(_section("AUDIT READINESS"))
+	ops_box.add_child(_wrap("  A teaching abstraction, not any real certification scheme: eight controls the simulation can actually prove.%s"
+		% ("   Trust marker: earned." if Game.trust_marker else ""), 12, MUTED, 780))
+	for ctrl: Dictionary in Game.audit_readiness():
+		var ctrl_colour := Color(0.6, 0.85, 0.7)
+		if String(ctrl["status"]) == "failing":
+			ctrl_colour = Prefs.bad_colour()
+		elif String(ctrl["status"]) != "compliant":
+			ctrl_colour = Color(1.0, 0.82, 0.5)
+		var cl3 := _label("  %-34s %-11s %s" % [ctrl["label"], ctrl["status"], ctrl["why"]], 12,
+			ctrl_colour)
+		cl3.add_theme_font_override("font", mono)
+		cl3.tooltip_text = String(ctrl["blurb"])
+		ops_box.add_child(cl3)
+	if not Game.audit.is_empty():
+		var aud: Dictionary = Game.audit
+		ops_box.add_child(_wrap("  %s: a review of %s, worth $%d, sampled at cycle %d. The scope does not change once it starts."
+			% [aud["customer"], ", ".join(PackedStringArray(aud["scope"])), int(aud["reward"]),
+				int(aud["deadline"])], 13, Color(1.0, 0.85, 0.5), 780))
+		var arow := HBoxContainer.new()
+		arow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(arow)
+		if String(aud["state"]) == "offered":
+			for opt: Array in [["Accept", func() -> void: Game.accept_audit()],
+					["Ask for more time", func() -> void: Game.delay_audit()],
+					["Decline", func() -> void: Game.decline_audit()]]:
+				var ab := Button.new()
+				ab.text = String(opt[0])
+				ab.pressed.connect(func() -> void:
+					(opt[1] as Callable).call()
+					_refresh_ops()
+					_refresh_money())
+				arow.add_child(ab)
+		elif String(aud["state"]) == "findings":
+			for f_i: Dictionary in aud["findings"]:
+				ops_box.add_child(_label("      %s: %s (%s)" % [String(f_i["grade"]).to_upper(),
+					f_i["control"], f_i["why"]], 12,
+					Prefs.bad_colour() if String(f_i["grade"]) == "major finding"
+					else Color(1.0, 0.82, 0.5)))
+			var vb := Button.new()
+			vb.text = "Ask them to re-verify"
+			vb.pressed.connect(func() -> void:
+				var err: String = Game.verify_audit()
+				if err != "":
+					_toast(err)
+				_refresh_ops()
+				_refresh_money())
+			arow.add_child(vb)
 	ops_box.add_child(_section("STANDING DUTIES"))
 	if Game.staff.is_empty():
 		ops_box.add_child(_label("  Nobody on the payroll: every chore here is yours by hand.",

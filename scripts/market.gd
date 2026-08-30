@@ -303,6 +303,24 @@ static func tour_lead(premium: bool) -> Dictionary:
 		"from_tour": true,
 	}
 
+static func audit_lead(from_customer: String) -> Dictionary:
+	## Passing a review is what puts you on the list for regulated work.
+	return {
+		"id": "lead_audit_%s" % from_customer.to_lower().replace(" ", "_"),
+		"customer": "%s %s" % [NAMES[absi(from_customer.hash()) % NAMES.size()], SUFFIX[5]],
+		"kind": "secure_host",
+		"ctype": "enterprise",
+		"stage": "lead",
+		"heard": "%s told them you passed a controls review" % from_customer,
+		"size": 420,
+		"sla": 2,
+		"params": {"ip": "10.63.10.10"},
+		"load": 380,
+		"public": false,
+		"ttl": 12,
+		"from_audit": true,
+	}
+
 static func cost_to_serve(lead: Dictionary) -> Dictionary:
 	## An honest estimate, not an oracle. It amortises unavoidable hardware over
 	## the initial 18-cycle term and leaves the customer's hidden budget hidden.
