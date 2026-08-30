@@ -7732,6 +7732,47 @@ static func run() -> int:
 	db_l2.vtep = {}
 	db_l1.remote_macs = {}
 	Game.contract_debriefs = {}
+
+	# --- the encyclopedia keeps up with the simulation ---
+	var topic_titles: Array = []
+	for topic_row in Pedia.topics():
+		topic_titles.append(String(topic_row[0]))
+	var wanted_topics := ["The link that stays up and lies", "Naming what has no IPv6 address",
+		"Translating between two internets", "A segment that does not need a cable",
+		"Telling the other switches what you have", "Copper that is not a device",
+		"The window, and the point of no return", "Cutting the branch you are sitting on",
+		"The cabling debt nobody books"]
+	var missing_topics: Array = []
+	for wanted: String in wanted_topics:
+		if wanted not in topic_titles:
+			missing_topics.append(wanted)
+	check(missing_topics.is_empty(),
+		"pedia: everything added to the simulation has somewhere to read about it (%s)"
+			% ", ".join(PackedStringArray(missing_topics)))
+	# and the commands the entries suggest are commands the game accepts
+	var pd_rack := Game.add_rack(Vector2i(98, 1))
+	var pd_sw := Game.new_device("sw-8")
+	var pd_srv := Game.new_device("srv-1")
+	pd_rack.slots[0] = pd_sw
+	pd_rack.slots[1] = pd_srv
+	Game.connect_ifaces(pd_srv.ifaces[0], pd_sw.ifaces[0])
+	Game.add_vlan(pd_sw, 50, "tenant")
+	var pd_cli := CLI.new_session(pd_sw)
+	pd_cli.exec("en")
+	pd_cli.exec("conf t")
+	var pd_tried := ["show interfaces counters", "show lldp neighbors", "show vxlan"]
+	var pd_rejected: Array = []
+	for pd_cmd: String in pd_tried:
+		var pd_out := pd_cli.exec(pd_cmd)
+		if pd_out.begins_with("%") or pd_out.contains("bad command"):
+			pd_rejected.append(pd_cmd)
+	check(pd_rejected.is_empty(),
+		"pedia: the commands the new entries suggest are commands the console accepts (%s)"
+			% ", ".join(PackedStringArray(pd_rejected)))
+	var pd_srv_cli := CLI.new_session(pd_srv)
+	check(not pd_srv_cli.exec("dns64").contains("not found") \
+			and not pd_srv_cli.exec("dns add legacy.example.hu 10.0.0.9").begins_with("usage"),
+		"pedia: and so are the DNS64 ones, on the gear that runs them")
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)
