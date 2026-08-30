@@ -103,6 +103,11 @@ const UNLOCK_INTROS := {
 		"title": "There are two of them now.",
 		"body": "Chores can be handed over. What you give away costs money and a little control, and comes back done the way that person works.",
 		"where": "OPS  /  AUTOMATION", "action": "Assign something", "colour": "accent"},
+	"second_site": {
+		"kicker": "NEW GROUND  /  A SECOND BUILDING",
+		"title": "Everything you own is in one room.",
+		"body": "A second floor costs a fit-out and rent, splits the crew and doubles the diary. What it buys is the one thing another rack cannot: a service that is still there when this room is not, which is what the customers who ask about fires are paying for.",
+		"where": "COMPANY  /  MARKET", "action": "See what is available", "colour": "warm"},
 	"oncall": {
 		"kicker": "NEW ARRANGEMENT  /  THE PHONE",
 		"title": "The room is empty and something can still break.",

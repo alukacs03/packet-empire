@@ -117,7 +117,7 @@ var customer_arcs := {}  # stable customer id -> remembered story beats and outc
 
 const DISCOVERY_FEATURES := ["map", "market", "business", "log", "ops", "expand",
 	"facility", "renewals", "duties", "access", "compliance", "support",
-	"oncall", "handover", "failover"]
+	"oncall", "handover", "failover", "second_site"]
 const DISCOVERY_IGNORED_CYCLES := 6
 
 const ACHIEVEMENTS := [
@@ -413,6 +413,14 @@ func feature_unlocked(feature: String, reveal_all := false) -> bool:
 			return not handover.is_empty()
 		"failover":
 			return not dr_candidates().is_empty() and (stage >= 1 or deals.size() >= 2)
+		"second_site":
+			# the room is full, or the money is there and the customers are the
+			# sort who ask what happens when a building burns down
+			if site_count() > 1:
+				return false
+			var cap := capacity(0)
+			var full := int(cap.get("slots_used", 0)) >= int(cap.get("slots", 1)) - 2
+			return stage >= 1 and (full or (money > SITE_OFFERS[0]["setup"] * 2 and deals.size() >= 3))
 	return false
 
 func acknowledge_feature_intro(feature: String) -> void:

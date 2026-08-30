@@ -8464,6 +8464,31 @@ static func run() -> int:
 	check(oi_missing.is_empty(),
 		"onboarding: every discoverable system has a line written for it (%s)"
 			% ", ".join(PackedStringArray(oi_missing)))
+	# a second building is offered when one room is not enough any more
+	var ss_sites := Game.sites.duplicate(true)
+	Game.sites = [Game.sites[0]]
+	var ss_stage := Game.stage
+	Game.stage = 1
+	var ss_money := Game.money
+	Game.money = 10
+	check(not Game.feature_unlocked("second_site") or Game.capacity(0)["slots_used"] > 0,
+		"onboarding: a second building is not suggested to somebody with nothing in the first")
+	Game.money = int(Game.SITE_OFFERS[0]["setup"]) * 3
+	Game.deals = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+	check(Game.feature_unlocked("second_site"),
+		"onboarding: with the money and the customers, the second building is worth saying out loud")
+	Game.sites = ss_sites
+	if Game.site_count() > 1:
+		check(not Game.feature_unlocked("second_site"),
+			"onboarding: and never once there are two")
+	else:
+		Game.add_site("Spare room", Vector2i(5, 5), "leased", "Gyor")
+		check(not Game.feature_unlocked("second_site"),
+			"onboarding: and never once there are two")
+		Game.sites = ss_sites
+	Game.stage = ss_stage
+	Game.money = ss_money
+
 	# the three newest systems unlock on the state that makes them relevant
 	Game.handover = {"cycle": Game.cycle, "from": "night", "lines": ["x"], "read": false,
 		"substantive": 1}
