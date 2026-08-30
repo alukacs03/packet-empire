@@ -2396,25 +2396,39 @@ func _refresh_ops() -> void:
 		ops_box.add_child(redo)
 	ops_box.add_child(_section("RECEIVING"))
 	var order_btn := Button.new()
-	order_btn.text = "Order hardware (15% off, delivered in a few cycles)…"
-	order_btn.tooltip_text = "Cheaper than collecting it yourself. What turns up is a crate."
+	order_btn.text = "Order hardware…"
+	order_btn.tooltip_text = "Vendor tier decides the price and the wait. What turns up is a crate."
 	order_btn.pressed.connect(func() -> void:
 		var order_models: Array = []
 		var order_opts: Array = []
 		for m_id: String in Game.MODELS:
 			order_models.append(m_id)
-			order_opts.append("%s   $%d" % [Game.MODELS[m_id]["label"],
-				int(float(Game.MODELS[m_id]["price"]) * 0.85)])
+			order_opts.append("%s%s" % [Game.MODELS[m_id]["label"],
+				"   (on back order)" if Game.stocked_out(m_id) else ""])
 		_menu(order_btn, order_opts, func(id: int) -> void:
-			var err: String = Game.order_hardware(String(order_models[id]))
-			if err != "":
-				_toast(err)
-			_refresh_ops()
-			_refresh_money()))
+			var model_pick: String = String(order_models[id])
+			var tiers: Array = Game.VENDOR_TIERS.keys()
+			var tier_opts: Array = []
+			for t_id: String in tiers:
+				var spec: Dictionary = Game.VENDOR_TIERS[t_id]
+				tier_opts.append("%s   $%d   %d-%d cycles   %s" % [spec["label"],
+					Game.order_estimate(model_pick, t_id), int(spec["wait"][0]),
+					int(spec["wait"][1]), spec["blurb"]])
+			_menu(order_btn, tier_opts, func(tid: int) -> void:
+				var err: String = Game.order_hardware(model_pick, 1, String(tiers[tid]))
+				if err != "":
+					_toast(err)
+				_refresh_ops()
+				_refresh_money())))
 	ops_box.add_child(order_btn)
 	if Game.aisle_blocked():
 		ops_box.add_child(_wrap("  The receiving area is full and the aisle is not clear. Everything takes longer, and it is the first thing a visitor sees.",
 			12, Color(1.0, 0.72, 0.45), 780))
+	for r_rma: Dictionary in Game.rmas:
+		ops_box.add_child(_label("  RMA: %s away with the vendor, replacement due in %d cycle(s)%s"
+			% [Game.MODELS[r_rma["model"]]["label"], int(r_rma["due"]) - Game.cycle,
+				" (advance replacement)" if bool(r_rma["advance"]) else ""], 12,
+			Color(0.72, 0.8, 0.88)))
 	for crate: Dictionary in Game.crates:
 		var krow := HBoxContainer.new()
 		krow.add_theme_constant_override("separation", 8)
@@ -2505,6 +2519,16 @@ func _refresh_ops() -> void:
 			if err != "":
 				_toast(err))
 		frow.add_child(swap)
+		var rma_btn := Button.new()
+		rma_btn.text = "Send it back (RMA)"
+		rma_btn.tooltip_text = "Ship the dead unit to the vendor. With support cover the replacement comes first."
+		rma_btn.pressed.connect(func() -> void:
+			var err: String = Game.send_rma(d)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			get_parent().rebuild_racks())
+		frow.add_child(rma_btn)
 	ops_box.add_child(_section("PLAYBOOKS"))
 	if Game.playbooks.is_empty():
 		ops_box.add_child(_wrap("  Nothing saved yet. A playbook is a list of console commands you can run on many devices at once: the same thing you would type, typed for you.",

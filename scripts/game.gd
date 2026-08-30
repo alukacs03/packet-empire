@@ -247,6 +247,9 @@ var last_digest: Array = []  # what the crew handled, skipped, or needs you for
 var parts := {"patch": 40, "optic": 8, "power": 20, "blank": 12}  # the parts drawer
 var parts_auto := true  # reorder when it runs low, so it is a decision once
 var cable_debt := 0  # wrong-length leads somebody improvised with
+var latent_defects := {}  # model -> shelf units carrying somebody else's problem
+var stockouts := {}  # model -> the cycle supply comes back
+var rmas: Array = []  # dead units in transit, and what is coming back
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
@@ -958,16 +961,87 @@ func parts_tick() -> void:
 		log_event("PARTS: the standing order topped up %s ($%d). It runs itself until the money does not."
 			% [PART_LABELS[kind], price])
 
+const VENDOR_TIERS := {
+	"trade": {"label": "trade supplier", "price": 0.85, "wait": [4, 7],
+		"blurb": "Cheapest, and you wait."},
+	"distributor": {"label": "distributor", "price": 1.0, "wait": [2, 4],
+		"blurb": "The usual channel."},
+	"urgent": {"label": "urgent shipping", "price": 1.35, "wait": [1, 2],
+		"blurb": "Costs a premium, and is still not instant."},
+	"used": {"label": "second-hand", "price": 0.55, "wait": [2, 5],
+		"blurb": "Cheap, no warranty, somebody else's serial, and sometimes somebody else's problem."},
+}
+
+func stocked_out(model: String) -> bool:
+	return cycle < int(stockouts.get(model, -1))
+
+func substitutes_for(model: String) -> Array:
+	## What you can have instead when the popular one is on back order.
+	var out: Array = []
+	for other: String in MODELS:
+		if other != model and String(MODELS[other]["type"]) == String(MODELS[model]["type"]) \
+				and not stocked_out(other):
+			out.append(other)
+	return out
+
+func stockout_tick() -> void:
+	if biz_roll() > 0.03:
+		return
+	var models: Array = MODELS.keys()
+	var model: String = models[int(biz_roll() * models.size()) % models.size()]
+	if stocked_out(model):
+		return
+	stockouts[model] = cycle + 6 + int(biz_roll() * 8.0)
+	log_event("SUPPLY: %s is on back order until around cycle %d. Everybody wants that one."
+		% [MODELS[model]["label"], int(stockouts[model])])
+
+func order_estimate(model: String, tier: String) -> int:
+	var spec: Dictionary = VENDOR_TIERS.get(tier, VENDOR_TIERS["distributor"])
+	return int(float(MODELS[model]["price"]) * float(spec["price"]))
+
+func send_rma(dev: Net.NDevice) -> String:
+	## Ship the dead one back. With cover you get the replacement first.
+	if dev.status == "active":
+		return "%s is running" % dev.name
+	var advance := support_tier() >= 1
+	var wait := 2 if advance else 5
+	rmas.append({"model": dev.model, "device": dev.name, "due": cycle + wait,
+		"advance": advance})
+	uninstall_device(dev, false)
+	log_event("RMA: %s shipped back to the vendor.%s" % [dev.name,
+		"  Advance replacement is on its way on your support contract."
+		if advance else "  The replacement follows when they have seen it."])
+	topology_changed.emit()
+	return ""
+
+func rma_tick() -> void:
+	for r in rmas.duplicate():
+		if cycle < int(r["due"]):
+			continue
+		rmas.erase(r)
+		crates.append({"model": r["model"], "shipped": r["model"], "ordered": cycle,
+			"due": cycle, "arrived": cycle, "checked": false, "damaged": false,
+			"unpack_left": 2 if String(r["model"]) in HEAVY_MODELS else 1})
+		log_event("RMA: the replacement %s is on the dock." % MODELS[r["model"]]["label"])
+
 const RECEIVING_SPACE := 4  # crates the receiving area holds before it is an aisle problem
 const HEAVY_MODELS := ["sw-24", "srv-2", "rtr-edge", "crac-1", "lb-1"]
 
-func order_hardware(model: String, qty := 1) -> String:
+func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 	## Ordering is cheaper than collecting it yourself, and what turns up is a
 	## pallet rather than a working device.
 	if not MODELS.has(model):
 		return "no such model"
+	if not VENDOR_TIERS.has(tier):
+		return "nobody sells it like that"
+	if stocked_out(model):
+		var alts := substitutes_for(model)
+		return "%s is on back order until cycle %d%s" % [MODELS[model]["label"],
+			int(stockouts[model]),
+			"; they can send a %s instead" % MODELS[alts[0]]["label"] if not alts.is_empty() else ""]
 	qty = clampi(qty, 1, 4)
-	var price := int(float(MODELS[model]["price"]) * 0.85) * qty
+	var spec: Dictionary = VENDOR_TIERS[tier]
+	var price := order_estimate(model, tier) * qty
 	if not try_spend(price):
 		return "that order comes to $%d" % price
 	for i in qty:
@@ -976,10 +1050,13 @@ func order_hardware(model: String, qty := 1) -> String:
 		var damaged := randf() < 0.1
 		var wrong := "" if damaged or randf() > 0.1 else _wrong_model(model)
 		crates.append({"model": model, "shipped": wrong if wrong != "" else model,
-			"ordered": cycle, "due": cycle + randi_range(2, 4), "arrived": -1,
-			"checked": false, "damaged": damaged, "unpack_left": 2 if model in HEAVY_MODELS else 1})
-	log_event("ORDERED: %d x %s for $%d, delivered in a few cycles. Delivered is not installed."
-		% [qty, MODELS[model]["label"], price])
+			"ordered": cycle,
+			"due": cycle + randi_range(int(spec["wait"][0]), int(spec["wait"][1])), "arrived": -1,
+			"checked": false, "damaged": damaged, "used": tier == "used",
+			"unpack_left": 2 if model in HEAVY_MODELS else 1})
+	log_event("ORDERED: %d x %s from the %s for $%d, expected in %d to %d cycles."
+		% [qty, MODELS[model]["label"], spec["label"], price,
+			int(spec["wait"][0]), int(spec["wait"][1])])
 	return ""
 
 func _wrong_model(model: String) -> String:
@@ -1043,6 +1120,9 @@ func unpack_crate(crate: Dictionary) -> String:
 		return ""
 	var model := String(crate["shipped"])
 	spares[model] = int(spares.get(model, 0)) + 1
+	if bool(crate.get("used", false)) and randf() < 0.35:
+		# no warranty, old firmware, and something the last owner knew about
+		latent_defects[model] = int(latent_defects.get(model, 0)) + 1
 	log_event("RECEIVING: a %s is unpacked and on the shelf.%s" % [MODELS[model]["label"],
 		"" if model == String(crate["model"])
 		else "  It is not what you ordered, and nobody noticed at the dock."])
@@ -3696,6 +3776,11 @@ func swap_from_spares(dev: Net.NDevice) -> String:
 	if int(spares.get(dev.model, 0)) <= 0:
 		return "no spare %s on the shelf" % MODELS[dev.model]["label"]
 	spares[dev.model] = int(spares[dev.model]) - 1
+	if int(latent_defects.get(dev.model, 0)) > 0:
+		latent_defects[dev.model] = int(latent_defects[dev.model]) - 1
+		firmware_bugs[dev.name] = {"since": cycle, "model": dev.model}
+		log_event("SECOND-HAND: the shelf unit that went into %s has a fault the last owner never mentioned."
+			% dev.name)
 	dev.status = "active"
 	dev.installed_cycle = cycle
 	if not dev.startup.is_empty():
@@ -5087,6 +5172,8 @@ func sla_tick() -> void:
 	tac_tick()
 	remote_hands_tick()
 	receiving_tick()
+	stockout_tick()
+	rma_tick()
 	parts_tick()
 	duties_tick()
 	change_tick()
@@ -5908,7 +5995,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "parts": parts,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
+		"latent_defects": latent_defects, "parts": parts,
 		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
@@ -6240,6 +6328,9 @@ func _apply(data: Dictionary) -> void:
 	orphan_intel = data.get("orphan_intel", {})
 	remote_jobs = data.get("remote_jobs", [])
 	crates = data.get("crates", [])
+	stockouts = data.get("stockouts", {})
+	rmas = data.get("rmas", [])
+	latent_defects = data.get("latent_defects", {})
 	parts = data.get("parts", {"patch": 40, "optic": 8, "power": 20, "blank": 12})
 	parts_auto = bool(data.get("parts_auto", true))
 	duties = data.get("duties", {})

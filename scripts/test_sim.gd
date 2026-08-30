@@ -3650,6 +3650,74 @@ static func run() -> int:
 	Game.packaging = 0
 	Game.spares = {}
 
+	# --- procurement ---
+	Game.crates = []
+	Game.stockouts = {}
+	Game.rmas = []
+	Game.latent_defects = {}
+	Game.spares = {}
+	Game.money = 40000
+	check(Game.order_estimate("srv-1", "urgent") > Game.order_estimate("srv-1", "distributor") \
+			and Game.order_estimate("srv-1", "used") < Game.order_estimate("srv-1", "trade") \
+			and int(Game.VENDOR_TIERS["urgent"]["wait"][1]) < int(Game.VENDOR_TIERS["trade"]["wait"][0]),
+		"procurement: urgent shipping costs a premium and is still not instant")
+	Game.order_hardware("srv-1", 1, "urgent")
+	var urgent_crate: Dictionary = Game.crates[0]
+	check(int(urgent_crate["due"]) - Game.cycle >= int(Game.VENDOR_TIERS["urgent"]["wait"][0]),
+		"procurement: even the fast lane has a lead time you can plan around")
+	Game.crates = []
+	Game.stockouts["srv-1"] = Game.cycle + 8
+	var refused := Game.order_hardware("srv-1", 1, "trade")
+	check(refused != "" and "back order" in refused and not Game.substitutes_for("srv-1").is_empty(),
+		"procurement: a stock out forces a substitution, which is when the catalogue starts to matter")
+	Game.stockouts = {}
+	# second-hand is a real temptation with a real downside
+	Game.order_hardware("sw-8", 1, "used")
+	var used_crate: Dictionary = Game.crates[0]
+	used_crate["damaged"] = false
+	used_crate["shipped"] = "sw-8"
+	used_crate["arrived"] = Game.cycle
+	check(bool(used_crate["used"]),
+		"procurement: the second-hand market is its own channel, at about half the price")
+	Game.latent_defects = {}
+	Game.unpack_crate(used_crate)
+	Game.latent_defects["sw-8"] = 1  # this one came with somebody else's problem
+	var pr_rack := Game.add_rack(Vector2i(54, 1))
+	var pr_dead := Game.new_device("sw-8")
+	pr_rack.slots[0] = pr_dead
+	pr_dead.status = "offline"
+	Game.spares["sw-8"] = 1
+	Game.firmware_bugs = {}
+	Game.swap_from_spares(pr_dead)
+	check(Game.firmware_bugs.has(pr_dead.name) and pr_dead.status == "active",
+		"procurement: a second-hand unit can carry a latent defect that only shows once it is in service")
+	Game.firmware_bugs = {}
+	# and a dead unit can go back to the vendor
+	Game.renewals = []
+	pr_dead.status = "offline"
+	check(Game.support_tier() == 0 and Game.send_rma(pr_dead) == "" and Game.rmas.size() == 1 \
+			and not bool(Game.rmas[0]["advance"]) and Game.rack_of(pr_dead) == null,
+		"procurement: with no cover the dead unit goes back first and the replacement follows")
+	var slow_due: int = int(Game.rmas[0]["due"])
+	Game.rmas = []
+	Game.money = 8000
+	Game.buy_support(1)
+	var pr_dead2 := Game.new_device("sw-8")
+	pr_rack.slots[1] = pr_dead2
+	pr_dead2.status = "offline"
+	Game.send_rma(pr_dead2)
+	check(bool(Game.rmas[0]["advance"]) and int(Game.rmas[0]["due"]) < slow_due,
+		"procurement: advance replacement is what the support contract is actually for")
+	Game.cycle = int(Game.rmas[0]["due"])
+	Game.rma_tick()
+	check(Game.rmas.is_empty() and Game.crates.size() >= 1,
+		"procurement: the replacement arrives as a crate like everything else")
+	Game.crates = []
+	Game.rmas = []
+	Game.latent_defects = {}
+	Game.spares = {}
+	Game.renewals = []
+
 	# --- consumables ---
 	var pt_rack := Game.add_rack(Vector2i(48, 1))
 	var pt_sw := Game.new_device("sw-8")
