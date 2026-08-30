@@ -63,6 +63,15 @@ The network is half the job. The other half is the company around it:
 - **The people.** Staff with shifts, morale, and habits copied from what they
   watch you do; a standing duties board that trades money and control for
   time; blame after a human outage, which decides who reports the next one.
+  When nobody is on shift and something is live, you can phone somebody at
+  three in the morning: it costs a call-out fee and it costs their morale.
+- **A room that shows how it is run.** Tidiness is read off real things
+  (blanked gaps, labelled ports, saved configurations) and the floor and the
+  cabinets wear it: undressed leads, a carton nobody broke down, a cup on the
+  slab, all of it gone once the team keeps on top of it. Somebody signed in at
+  the door is a figure with a visitor badge, following an escort if the access
+  policy says so. Seasons move cooling headroom, work rate and who is
+  available, and the clock and the room say which one you are in.
 - **The company.** Four identities that change what work arrives and what it
   costs, decisions whose consequences land cycles later, rivals with grudges
   and favours, an ending with a scored report, and a table of past runs.
@@ -72,6 +81,12 @@ The network is half the job. The other half is the company around it:
 - **Content packs.** Scenarios are JSON: requirements written as data and
   verified against the live simulation, with a workshop that validates,
   previews, reloads and imports them. See `docs/PACKS.md`.
+- **Drills and scenarios.** Incident drills rebuild a known-good network with
+  hidden faults, including a services incident where nothing is unplugged and
+  the client still gets no address and no name. The set pieces are longer: an
+  inherited ISP, a campus wireless build, an audit, and an IPv6-only customer
+  who needs native v6, a name that answers, and a translator for the partner
+  nobody will renumber.
 - **Challenges.** Any drill is a short code (`PE1-31-abc`) that rebuilds the
   same network and faults anywhere, scored on recovery, time, configuration
   changes, hints and collateral.
