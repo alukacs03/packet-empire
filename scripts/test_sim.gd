@@ -7849,6 +7849,67 @@ static func run() -> int:
 		"onboarding: and once it has been said, it is not said again")
 	Game.restore(oi_state)
 	Game.feature_intros_seen = []
+
+	# --- the console commands the new faults need ---
+	var dx_rack2 := Game.add_rack(Vector2i(99, 1))
+	var dx_sw2 := Game.new_device("sw-8")
+	var dx_a2 := Game.new_device("srv-1")
+	var dx_b2 := Game.new_device("srv-1")
+	dx_rack2.slots[0] = dx_sw2
+	dx_rack2.slots[1] = dx_a2
+	dx_rack2.slots[2] = dx_b2
+	Game.connect_ifaces(dx_a2.ifaces[0], dx_sw2.ifaces[0])
+	Game.connect_ifaces(dx_b2.ifaces[0], dx_sw2.ifaces[1])
+	Game.add_ip(dx_a2.ifaces[0], "10.198.0.10/24")
+	Game.add_ip(dx_b2.ifaces[0], "10.198.0.11/24")
+	Game.add_static_route(dx_a2, "10.199.0.0", 24, "10.198.0.11")
+	Sim.flush_learned_state()
+	var dx_cli2 := CLI.new_session(dx_a2)
+	var clean := CLI.fmt_ping_repeat(dx_a2, "10.198.0.11", 10)
+	check(clean.contains("10 packets transmitted, 10 received, 0% packet loss") \
+			and clean.contains("rtt min/avg/max"),
+		"console: a repeated ping reports real loss and round-trip figures")
+	Game.grey_faults = {}
+	Game.inject_grey_fault(dx_sw2.ifaces[1], "loose_connector")
+	var flaky_out := CLI.fmt_ping_repeat(dx_a2, "10.198.0.11", 20)
+	check(not flaky_out.contains("0% packet loss") and not flaky_out.contains("100% packet loss"),
+		"console: an intermittent fault reads as intermittent loss, which is how it is found")
+	var sw_cli2 := CLI.new_session(dx_sw2)
+	var status := sw_cli2.exec("show interfaces status")
+	check(status.contains("InErrors") and status.contains(dx_a2.name) \
+			and status.contains("connected"),
+		"console: one line per port, with the neighbour and the error count on it")
+	var optics := sw_cli2.exec("show interfaces transceiver")
+	check(optics.contains("Rx(dBm)"),
+		"console: the optics report their receive level")
+	Game.inject_grey_fault(dx_sw2.ifaces[0], "dirty_optic")
+	check(sw_cli2.exec("show interfaces transceiver").contains("LOW"),
+		"console: and say so when it has fallen where a dying optic falls")
+	Game.grey_faults = {}
+	var filtered := sw_cli2.exec("show interfaces status | include connected")
+	check(filtered.contains("connected") and not filtered.contains("notconnect"),
+		"console: any show command can be filtered, because the tables are long now")
+	check(sw_cli2.exec("show interfaces status | include nonsense").contains("no lines matching"),
+		"console: a filter that matches nothing says so instead of printing nothing")
+	var dx_rtr := Game.new_device("rtr-edge")
+	dx_rack2.slots[4] = dx_rtr
+	Game.connect_ifaces(dx_rtr.ifaces[0], dx_sw2.ifaces[2])
+	Game.add_ip(dx_rtr.ifaces[0], "10.198.0.1/24")
+	Game.add_static_route(dx_rtr, "10.199.0.0", 24, "10.198.0.11")
+	var rtr_cli := CLI.new_session(dx_rtr)
+	var route_answer := rtr_cli.exec("show ip route for 10.199.0.5")
+	check(route_answer.contains("static") and route_answer.contains("longest match"),
+		"console: a route lookup for one address says which route wins and why")
+	check(rtr_cli.exec("show ip route for 10.198.0.20").contains("connected"),
+		"console: and prefers the connected route when it is the longer match")
+	check(rtr_cli.exec("show ip route for 203.0.113.1").contains("no route"),
+		"console: with no route it says so rather than inventing one")
+	var ros_dev2 := Game.new_device("sw-lite")
+	dx_rack2.slots[3] = ros_dev2
+	var ros_cli2 := CLI.new_session(ros_dev2)
+	check(ros_cli2.exec("/interface print | include ether").contains("ether"),
+		"console: PacketTik filters the same way")
+	Sim.flush_learned_state()
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

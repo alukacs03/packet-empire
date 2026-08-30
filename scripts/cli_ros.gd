@@ -24,6 +24,12 @@ func _iface(name: String) -> Net.Iface:
 	return null
 
 func exec(line: String) -> String:
+	var pipe := line.find("|")
+	if pipe > 0:
+		var tail := line.substr(pipe + 1).strip_edges().split(" ", false)
+		if tail.size() >= 2 and String(tail[0]) in ["include", "i", "grep"]:
+			return CLI.filter_output(exec(line.substr(0, pipe).strip_edges()),
+				" ".join(PackedStringArray(Array(tail).slice(1))))
 	var toks := Array(line.strip_edges().trim_prefix("/").split(" ", false))
 	if toks.is_empty():
 		return ""
@@ -42,9 +48,13 @@ func exec(line: String) -> String:
 			return _export()
 		"ping":
 			if args.size() >= 1:
-				return CLI.fmt_ping(dev, args[0], int(p.get("size", 64))
-					if String(p.get("size", "64")).is_valid_int() else 64)
-			return "usage: /ping <ip> [size=<bytes>]\n"
+				var ping_size := int(p.get("size", 64)) \
+					if String(p.get("size", "64")).is_valid_int() else 64
+				# count= is how PacketTik spells "keep going and tell me the loss"
+				if String(p.get("count", "")).is_valid_int():
+					return CLI.fmt_ping_repeat(dev, args[0], int(p["count"]), ping_size)
+				return CLI.fmt_ping(dev, args[0], ping_size)
+			return "usage: /ping <ip> [size=<bytes>] [count=<n>]\n"
 		"tool traceroute":
 			return CLI.fmt_traceroute(dev, args[0]) if args.size() >= 1 else "usage: /tool traceroute <ip>\n"
 		"system ssh":

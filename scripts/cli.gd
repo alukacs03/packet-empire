@@ -43,6 +43,52 @@ static func fmt_ping(dev: Net.NDevice, target: String, size := 64) -> String:
 		return out + "3 packets transmitted, 0 received, 100% packet loss\n"
 	return out + "ping: %s\n" % r["detail"]
 
+static func filter_output(text: String, needle: String) -> String:
+	## Keeps the lines that match, and says so when none do, rather than
+	## printing nothing and leaving somebody wondering.
+	var kept: Array = []
+	for line: String in text.split("\n"):
+		if needle.to_lower() in line.to_lower():
+			kept.append(line)
+	if kept.is_empty():
+		return "(no lines matching '%s')\n" % needle
+	return "\n".join(PackedStringArray(kept)) + "\n"
+
+static func fmt_ping_repeat(dev: Net.NDevice, target: String, count: int, size := 64) -> String:
+	## Real loss statistics: each probe is a separate trip through the
+	## simulation, so an intermittent fault shows up as intermittent.
+	var ip := Sim.resolve(dev, target)
+	if ip == "":
+		return "ping: %s: Name or service not known\n" % target
+	count = clampi(count, 1, 50)
+	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, size, size + 28]
+	var received := 0
+	var best := 9999.0
+	var worst := 0.0
+	var total := 0.0
+	var last_detail := ""
+	for seq in count:
+		var r := Sim.ping(dev, ip, 64, "", size)
+		if bool(r["ok"]):
+			received += 1
+			var rtt := maxf(0.04, float(r.get("rtt", 0.1)))
+			best = minf(best, rtt)
+			worst = maxf(worst, rtt)
+			total += rtt
+			out += "%d bytes from %s: icmp_seq=%d ttl=64 time=%.2f ms\n" % [size, r["from"],
+				seq + 1, rtt]
+		else:
+			last_detail = String(r.get("detail", "timeout"))
+			out += "icmp_seq=%d %s\n" % [seq + 1, last_detail]
+	var lost := count - received
+	out += "%d packets transmitted, %d received, %d%% packet loss\n" % [count, received,
+		int(round(100.0 * float(lost) / float(count)))]
+	if received > 0:
+		out += "rtt min/avg/max = %.2f/%.2f/%.2f ms\n" % [best, total / float(received), worst]
+	elif last_detail != "":
+		out += "every probe failed: %s\n" % last_detail
+	return out
+
 static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
 	var ip := Sim.resolve(dev, target)
 	if ip == "":
@@ -160,6 +206,7 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["spanning-tree", "priority"], "h": _stp_priority},
 			{"m": ["config"], "p": ["spanning-tree", "mst"], "h": _stp_mst},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
+			{"m": EP, "p": ["show", "ip", "route", "for"], "h": _show_route_for},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
 			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
 			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
@@ -168,6 +215,8 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["ntp", "server"], "h": _cfg_ntp},
 			{"m": EP, "p": ["show", "logging"], "h": _show_logging},
 			{"m": EP, "p": ["show", "tech-support"], "h": _show_tech_support},
+			{"m": EP, "p": ["show", "interfaces", "status"], "h": _show_if_status},
+			{"m": EP, "p": ["show", "interfaces", "transceiver"], "h": _show_transceiver},
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
@@ -285,9 +334,20 @@ class EOS extends Session:
 		]
 
 	func exec(line: String) -> String:
+		# output filtering, the way every real console has it
+		var filter := ""
+		var pipe := line.find("|")
+		if pipe > 0:
+			var tail := line.substr(pipe + 1).strip_edges()
+			var parts := tail.split(" ", false)
+			if parts.size() >= 2 and String(parts[0]) in ["include", "i", "grep"]:
+				filter = " ".join(PackedStringArray(Array(parts).slice(1)))
+				line = line.substr(0, pipe).strip_edges()
 		var toks := Array(line.strip_edges().split(" ", false))
 		if toks.is_empty():
 			return ""
+		if filter != "":
+			return CLI.filter_output(exec(line), filter)
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
 		if mode in ["config", "if", "vlan", "router", "ospf"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
@@ -416,12 +476,25 @@ class EOS extends Session:
 		return "" if Game.rename_device(dev, r[0]) else "% invalid or duplicate name\n"
 
 	func _ping(r: Array) -> String:
-		## ping <ip> [size <bytes>], the Arista-style spelling
-		if r.size() == 3 and String(r[1]) == "size" and String(r[2]).is_valid_int():
-			return CLI.fmt_ping(dev, String(r[0]), int(r[2]))
-		if r.size() != 1:
-			return "usage: ping <ip> [size <bytes>]\n"
-		return CLI.fmt_ping(dev, r[0])
+		## ping <ip> [size <bytes>] [repeat <n>], the Arista-style spelling
+		var size := 64
+		var repeat := 0
+		var target := String(r[0]) if not r.is_empty() else ""
+		var idx := 1
+		while idx + 1 < r.size():
+			match String(r[idx]):
+				"size":
+					size = int(String(r[idx + 1]))
+				"repeat":
+					repeat = int(String(r[idx + 1]))
+				_:
+					return "usage: ping <ip> [size <bytes>] [repeat <n>]\n"
+			idx += 2
+		if target == "" or idx != r.size():
+			return "usage: ping <ip> [size <bytes>] [repeat <n>]\n"
+		if repeat > 0:
+			return CLI.fmt_ping_repeat(dev, target, repeat, size)
+		return CLI.fmt_ping(dev, target, size)
 
 	func _traceroute(r: Array) -> String:
 		if r.size() != 1:
@@ -1706,6 +1779,67 @@ class EOS extends Session:
 			return "usage: ntp server <ip>\n"
 		dev.ntp_server = r[0]
 		return ""
+
+	func _show_route_for(r: Array) -> String:
+		## Longest prefix wins, and this says which one won and by how much.
+		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
+			return "usage: show ip route for <address>\n"
+		var dst := String(r[0])
+		var best := {}
+		var best_len := -1
+		for i: Net.Iface in dev.ifaces:
+			for cidr: String in i.ips:
+				var parts := String(cidr).split("/")
+				if parts.size() != 2 or Net.is_v6(String(parts[0])) != Net.is_v6(dst):
+					continue
+				var plen := int(parts[1])
+				if Net.same_subnet(dst, String(parts[0]), plen) and plen > best_len:
+					best_len = plen
+					best = {"how": "connected", "via": i.name, "prefix": "%s/%d" % [parts[0], plen]}
+		for route in dev.static_routes:
+			var plen2 := int(route["plen"])
+			if Net.is_v6(String(route["prefix"])) != Net.is_v6(dst):
+				continue
+			if Net.same_subnet(dst, String(route["prefix"]), plen2) and plen2 > best_len:
+				best_len = plen2
+				best = {"how": "static", "via": String(route["via"]),
+					"prefix": "%s/%d" % [route["prefix"], plen2]}
+		if best.is_empty():
+			return "no route to %s: nothing this device knows covers that address\n" % dst
+		return "%s is reached by the %s route %s (%s), chosen because /%d is the longest match\n" \
+			% [dst, best["how"], best["prefix"], best["via"], best_len]
+
+	func _show_if_status(_r: Array) -> String:
+		## One line per port, the way you actually scan a switch.
+		var out := "%-11s %-11s %-7s %-9s %s\n" % ["Port", "Status", "Speed", "InErrors", "Neighbour"]
+		for i: Net.Iface in dev.ifaces:
+			var peer := Game.effective_peer(i)
+			var status := "disabled"
+			if i.enabled:
+				status = "connected" if peer != null else "notconnect"
+			out += "%-11s %-11s %-7s %-9d %s\n" % [EOS._short(i.name), status,
+				("%dG" % (Game.iface_speed(i) / 1000)) if Game.iface_speed(i) >= 1000
+					else "%dM" % Game.iface_speed(i),
+				i.rx_errors, "%s %s" % [peer.dev.name, EOS._short(peer.name)] if peer != null else "-"]
+		return out
+
+	func _show_transceiver(_r: Array) -> String:
+		## The optic, and whether its receive level is where it should be.
+		var out := "%-11s %-9s %-9s %s\n" % ["Port", "Rx(dBm)", "State", "Note"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if Game.link_at(i) == null or i.name.begins_with("Management"):
+				continue
+			any = true
+			var state := "ok"
+			var note := ""
+			if i.light_dbm < -14.0:
+				state = "LOW"
+				note = "receive level is falling: a contaminated or dying optic looks like this"
+			elif i.rx_errors > 0:
+				note = "%d input error(s) since the counters were cleared" % i.rx_errors
+			out += "%-11s %-9.1f %-9s %s\n" % [EOS._short(i.name), i.light_dbm, state, note]
+		return out if any else "  (no cabled ports on this device)\n"
 
 	func _show_tech_support(_r: Array) -> String:
 		## What a vendor asks for, collected once, read-only, and safe to run
