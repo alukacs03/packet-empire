@@ -2663,6 +2663,125 @@ func maybe_upsell() -> void:
 			% [deal["customer"], extra_load, extra_fee])
 		return
 
+const DISPUTE_KINDS := [
+	{"id": "window",
+		"demand": "refuses the maintenance window: they want the work done live, at their busiest hour",
+		"stance": "no work happens outside an agreed window"},
+	{"id": "redundancy",
+		"demand": "has struck the second uplink off your quote: one path is good enough for them",
+		"stance": "the service is not delivered on a single path"},
+	{"id": "design",
+		"demand": "insists on the flat design you already advised against, because their last provider did it that way",
+		"stance": "the design you were told to build is the one you will not sign off"},
+]
+
+func dispute_kind(id: String) -> Dictionary:
+	for k: Dictionary in DISPUTE_KINDS:
+		if String(k["id"]) == id:
+			return k
+	return DISPUTE_KINDS[0]
+
+func maybe_dispute() -> void:
+	## The customer who argues. Being right does not prevent the outage: what
+	## the player controls is who is holding the paperwork afterwards.
+	for deal in deals:
+		if deal.has("dispute") or deal.has("upsell") or deal.has("renewal"):
+			continue
+		if deal.has("predicted_failure") or int(deal.get("cycles", 0)) < 8:
+			continue
+		if not bool(deal.get("healthy", false)) or bool(deal.get("guided", false)):
+			continue
+		if biz_roll() > 0.04:
+			continue
+		var kind: Dictionary = DISPUTE_KINDS[int(biz_roll() * DISPUTE_KINDS.size()) % DISPUTE_KINDS.size()]
+		# Sometimes they are simply right, so "always hold firm" cannot be
+		# played on autopilot.
+		deal["dispute"] = {"kind": String(kind["id"]), "warned": false, "raised": cycle,
+			"customer_right": biz_roll() < 0.25}
+		log_event("DISPUTE: %s %s. Put your advice in writing, concede, or hold firm."
+			% [deal["customer"], kind["demand"]])
+		return
+
+func warn_customer(deal: Dictionary) -> String:
+	if not deal.has("dispute"):
+		return "they are not arguing with you"
+	var dispute: Dictionary = deal["dispute"]
+	if bool(dispute.get("warned", false)):
+		return "your advice is already in writing"
+	dispute["warned"] = true
+	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.05)
+	log_event("ON RECORD: you wrote to %s explaining the risk. Nobody enjoys receiving that email."
+		% deal["customer"])
+	return ""
+
+func concede_dispute(deal: Dictionary) -> String:
+	if not deal.has("dispute"):
+		return "they are not arguing with you"
+	var dispute: Dictionary = deal["dispute"]
+	deal.erase("dispute")
+	if bool(dispute.get("customer_right", false)):
+		deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.1)
+		log_event("CONCEDED: %s got their way, and they were right. Nothing breaks."
+			% deal["customer"])
+		return ""
+	if bool(dispute.get("warned", false)):
+		deal["on_record"] = true
+	deal["predicted_failure"] = cycle + 3 + int(biz_roll() * 5.0)
+	log_event("CONCEDED: %s gets what they asked for. It will fail the way you said it would."
+		% deal["customer"])
+	return ""
+
+func hold_firm(deal: Dictionary) -> String:
+	if not deal.has("dispute"):
+		return "they are not arguing with you"
+	var dispute: Dictionary = deal["dispute"]
+	var kind := dispute_kind(String(dispute.get("kind", "")))
+	deal.erase("dispute")
+	var right := bool(dispute.get("customer_right", false))
+	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - (0.25 if right else 0.1))
+	if right:
+		reputation = maxi(0, reputation - 3)
+		log_event("HELD FIRM: you told %s that %s. They were right and you were not: that costs you."
+			% [deal["customer"], kind["stance"]])
+	else:
+		reputation = mini(100, reputation + (2 if bool(dispute.get("warned", false)) else 0))
+		log_event("HELD FIRM: %s backed down. The outage you predicted never happens, which nobody thanks you for."
+			% deal["customer"])
+	if biz_roll() < 0.3 - float(deal.get("loyalty", 0.6)) * 0.3:
+		deals.erase(deal)
+		reputation = maxi(0, reputation - 2)
+		log_event("LOST: %s took their business somewhere less argumentative." % deal["customer"])
+	return ""
+
+func dispute_tick() -> void:
+	## The predicted failure arrives on its own schedule, and lands on whoever
+	## the paperwork says it lands on.
+	for deal in deals:
+		if not deal.has("predicted_failure") or cycle < int(deal["predicted_failure"]):
+			continue
+		deal.erase("predicted_failure")
+		if not _break_deal_path(deal):
+			continue
+		stats["faults"] = int(stats.get("faults", 0)) + 1
+		if bool(deal.get("on_record", false)):
+			log_event("PREDICTED FAILURE: %s is down exactly as you warned them in writing. This one is theirs."
+				% deal["customer"])
+		else:
+			reputation = maxi(0, reputation - 4)
+			log_event("PREDICTED FAILURE: %s is down the way you expected. You never wrote it down, so it is yours."
+				% deal["customer"])
+		record_incident("dispute", "%s went down after overruling your advice" % deal["customer"])
+		topology_changed.emit()
+
+func _break_deal_path(deal: Dictionary) -> bool:
+	for l: Net.Link in _deal_path_links(deal):
+		for i: Net.Iface in [l.a, l.b]:
+			if i.enabled and not i.name.begins_with("Management"):
+				i.enabled = false
+				device_log(i.dev, "%s changed state to down (link fault)" % i.name)
+				return true
+	return false
+
 func accept_upsell(deal: Dictionary) -> String:
 	if not deal.has("upsell"):
 		return "they have not asked for anything"
@@ -3217,6 +3336,7 @@ func sla_tick() -> void:
 	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
 		"power": 0, "transit": 0}
 	_maybe_start_guided_outage()
+	dispute_tick()
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -3361,6 +3481,7 @@ func sla_tick() -> void:
 			if not was_healthy:
 				var state := "delivered" if first_delivery else "restored"
 				customer_service_changed.emit(String(deal["customer"]), state, int(deal["fee"]))
+				deal.erase("on_record")
 				log_event("SERVICE %s: %s is reachable. Billing %s at $%d/cycle."
 					% [state.to_upper(), deal["customer"], "started" if first_delivery else "resumed",
 						int(deal["fee"])])
@@ -3411,7 +3532,10 @@ func sla_tick() -> void:
 			deal["penalised"] = false
 		if not deal["healthy"]:
 			# customers forgive an outage they were told about far more readily
-			reputation = maxi(0, reputation - (2 if status_posted_recently() else 4))
+			var rep_hit := 2 if status_posted_recently() else 4
+			if bool(deal.get("on_record", false)):
+				rep_hit = maxi(1, rep_hit / 2)  # you warned them, in writing
+			reputation = maxi(0, reputation - rep_hit)
 			deal["degraded"] = false
 			deal["missed"] = int(deal.get("missed", 0)) + 1
 			var missed: int = deal["missed"]
@@ -3495,6 +3619,7 @@ func sla_tick() -> void:
 	quarter_profit += last_cycle_delta
 	quarter_depreciation += depreciation_this_cycle()
 	maybe_upsell()
+	maybe_dispute()
 	reference_tick()
 	lead_tick()
 	timeline_tick()

@@ -1614,6 +1614,84 @@ static func run() -> int:
 	check(Game.try_complete_contract(_contract("bandwidth_crunch")), "capacity: bandwidth-crunch contract verifies")
 	Game.deals.erase(cap_deal)
 
+	# --- the difficult customer: being right is not a defence ---
+	Game.reputation = 60
+	var arg_deal := {"id": "arg", "customer": "Stubborn Kft", "kind": "hosting",
+		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 100,
+		"healthy": true, "ever_healthy": true, "cycles": 12, "up_cycles": 12,
+		"loyalty": 0.9, "budget": 120}
+	Game.deals = [arg_deal]
+	arg_deal["dispute"] = {"kind": "redundancy", "warned": false, "raised": Game.cycle,
+		"customer_right": false}
+	check(Game.warn_customer(arg_deal) == "" and bool(arg_deal["dispute"]["warned"]) \
+			and Game.warn_customer(arg_deal) != "",
+		"dispute: the player can put the advice in writing exactly once")
+	check(Game.concede_dispute(arg_deal) == "" and not arg_deal.has("dispute") \
+			and bool(arg_deal["on_record"]) and int(arg_deal["predicted_failure"]) > Game.cycle,
+		"dispute: conceding schedules the failure you predicted and keeps the record")
+	Game.cycle = int(arg_deal["predicted_failure"])
+	var rep_before_fail := Game.reputation
+	Game.dispute_tick()
+	check(not arg_deal.has("predicted_failure") and not Market.check("hosting", arg_deal["params"]) \
+			and Game.reputation == rep_before_fail,
+		"dispute: the predicted failure breaks the live path, and a written warning carries the blame")
+	for l_fix in Game.links:  # put the customer back on the air
+		l_fix.a.enabled = true
+		l_fix.b.enabled = true
+	Game.topology_changed.emit()
+	# the same failure without a written warning is the player's to wear
+	var quiet_deal := arg_deal.duplicate(true)
+	quiet_deal["id"] = "arg2"
+	quiet_deal.erase("on_record")
+	Game.deals = [quiet_deal]
+	quiet_deal["dispute"] = {"kind": "window", "warned": false, "raised": Game.cycle,
+		"customer_right": false}
+	Game.concede_dispute(quiet_deal)
+	Game.cycle = int(quiet_deal["predicted_failure"])
+	var rep_unrecorded := Game.reputation
+	Game.dispute_tick()
+	check(Game.reputation < rep_unrecorded and not quiet_deal.has("on_record"),
+		"dispute: the same outage costs reputation when nothing was written down")
+	for l_fix2 in Game.links:
+		l_fix2.a.enabled = true
+		l_fix2.b.enabled = true
+	Game.topology_changed.emit()
+	# holding firm against a customer who happens to be right is not free
+	var right_deal := {"id": "arg3", "customer": "Correct Bt", "kind": "hosting",
+		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 100,
+		"healthy": true, "ever_healthy": true, "cycles": 12, "up_cycles": 12, "loyalty": 1.0}
+	Game.deals = [right_deal]
+	right_deal["dispute"] = {"kind": "design", "warned": true, "raised": Game.cycle,
+		"customer_right": true}
+	var rep_before_firm := Game.reputation
+	Game.hold_firm(right_deal)
+	check(Game.reputation < rep_before_firm and not right_deal.has("predicted_failure"),
+		"dispute: holding firm when the customer was right costs standing and prevents nothing")
+	var firm_deal := {"id": "arg4", "customer": "Wrong Zrt", "kind": "hosting",
+		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 100,
+		"healthy": true, "ever_healthy": true, "cycles": 12, "up_cycles": 12, "loyalty": 1.0}
+	Game.deals = [firm_deal]
+	firm_deal["dispute"] = {"kind": "redundancy", "warned": true, "raised": Game.cycle,
+		"customer_right": false}
+	var rep_before_win := Game.reputation
+	Game.hold_firm(firm_deal)
+	check(Game.reputation > rep_before_win and not firm_deal.has("predicted_failure"),
+		"dispute: warning them and holding firm is rewarded, and no outage follows")
+	# the argument has to actually arrive on its own, or none of this is reachable
+	var raised_deal := {"id": "arg5", "customer": "Argus Kft", "kind": "hosting",
+		"params": {"ip": "10.40.0.10"}, "fee": 100, "brief": "", "load": 100,
+		"healthy": true, "ever_healthy": true, "cycles": 12, "up_cycles": 12, "loyalty": 0.9}
+	Game.deals = [raised_deal]
+	for _d in 300:
+		Game.maybe_dispute()
+		if raised_deal.has("dispute"):
+			break
+	check(raised_deal.has("dispute") \
+			and String(Game.dispute_kind(String(raised_deal["dispute"]["kind"]))["id"]) \
+				== String(raised_deal["dispute"]["kind"]),
+		"dispute: a long-running healthy customer eventually picks the argument themselves")
+	Game.deals = []
+
 	# --- undelivered deals cancel ---
 	var ghost := {"id": "ghost", "customer": "NoShow Kft", "kind": "hosting",
 		"params": {"ip": "10.222.222.10"}, "fee": 50, "brief": "", "load": 100, "healthy": false}

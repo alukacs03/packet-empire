@@ -4005,6 +4005,36 @@ func _build_jobs_tab() -> void:
 				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
 					payment_copy],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
+			if deal.has("dispute"):
+				var dis: Dictionary = deal["dispute"]
+				var drow := HBoxContainer.new()
+				drow.add_theme_constant_override("separation", 8)
+				contracts_box.add_child(drow)
+				drow.add_child(_label("      they are arguing: %s" % Game.dispute_kind(
+					String(dis.get("kind", "")))["demand"], 13, Color(1.0, 0.72, 0.45)))
+				if not bool(dis.get("warned", false)):
+					var write_btn := Button.new()
+					write_btn.text = "Put it in writing"
+					write_btn.tooltip_text = "It does not stop the outage. It decides who wears it."
+					write_btn.pressed.connect(func() -> void:
+						Game.warn_customer(deal)
+						_refresh_contracts())
+					drow.add_child(write_btn)
+				var give_btn := Button.new()
+				give_btn.text = "Do it their way"
+				give_btn.tooltip_text = "Keep the customer happy now."
+				give_btn.pressed.connect(func() -> void:
+					Game.concede_dispute(deal)
+					_refresh_contracts())
+				drow.add_child(give_btn)
+				var firm_btn := Button.new()
+				firm_btn.text = "Hold firm"
+				firm_btn.tooltip_text = "Refuse. They may walk, and they may have been right."
+				_accent(firm_btn)
+				firm_btn.pressed.connect(func() -> void:
+					Game.hold_firm(deal)
+					_refresh_contracts())
+				drow.add_child(firm_btn)
 			if deal.has("upsell"):
 				var up: Dictionary = deal["upsell"]
 				var urow := HBoxContainer.new()
