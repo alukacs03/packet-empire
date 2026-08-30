@@ -3136,6 +3136,66 @@ static func run() -> int:
 	Game.nemesis = ""
 	Game.nemesis_reason = ""
 
+	# --- hand me your outage ---
+	var pz_rack := Game.add_rack(Vector2i(36, 1))
+	var pz_sw := Game.new_device("sw-8")
+	var pz_srv := Game.new_device("srv-1")
+	var pz_peer := Game.new_device("srv-1")
+	pz_rack.slots[0] = pz_sw
+	pz_rack.slots[1] = pz_srv
+	pz_rack.slots[2] = pz_peer
+	Game.connect_ifaces(pz_srv.ifaces[0], pz_sw.ifaces[0])
+	Game.connect_ifaces(pz_peer.ifaces[0], pz_sw.ifaces[1])
+	Game.add_ip(pz_srv.ifaces[0], "10.55.0.10/24")
+	Game.add_ip(pz_peer.ifaces[0], "10.55.0.11/24")
+	pz_sw.ifaces[0].enabled = false  # the actual fault, exactly as the player left it
+	var pz_deals := Game.deals.duplicate(true)
+	Game.deals = [{"id": "pz", "customer": "Szeged Klinika", "kind": "hosting",
+		"params": {"ip": "10.55.0.10"}, "fee": 100, "brief": "", "load": 100,
+		"healthy": false, "ever_healthy": true, "cycles": 9, "up_cycles": 8}]
+	var pz_money := Game.money
+	var exported := Puzzle.export_state("review")
+	var pz_payload: Dictionary = JSON.parse_string(exported)
+	check(int(pz_payload["puzzle"]) >= 1 and not pz_payload.has("money") \
+			and not pz_payload.has("deals") and String(pz_payload["symptom"]) != "",
+		"puzzle: an export carries the network and the symptom, and none of the company")
+	check("what I am missing" in String(pz_payload["note"]),
+		"puzzle: the same file can be framed as a question rather than a challenge")
+	check(Puzzle.import_state("{\"note\": \"a save, not a puzzle\"}") != "",
+		"puzzle: nonsense on the clipboard is refused rather than loaded")
+	check(Puzzle.import_state(exported) == "" and Puzzle.active() and Game.sandbox \
+			and Game.deals.is_empty(),
+		"puzzle: importing opens a scratch session with nothing of the recipient's at stake")
+	var imported_iface: Net.Iface = null
+	for pz_dev: Net.NDevice in Game.all_devices():
+		for pz_if: Net.Iface in pz_dev.ifaces:
+			if not pz_if.enabled and not pz_if.name.begins_with("Management"):
+				imported_iface = pz_if
+	check(imported_iface != null,
+		"puzzle: the fault itself travels, not a description of it")
+	imported_iface.enabled = true
+	var fix := Puzzle.solution("the access port was shut")
+	var fix_lines := Puzzle.read_solution(fix)
+	check(fix_lines.size() >= 2 and "is now up" in String(fix_lines[0]) \
+			and "they said:" in String(fix_lines[fix_lines.size() - 1]),
+		"puzzle: the answer that goes back names what was actually changed")
+	check(Puzzle.read_solution("{}").is_empty(),
+		"puzzle: an answer from somewhere else is ignored")
+	Puzzle.close()
+	check(not Puzzle.active() and Game.money == pz_money \
+			and Game.deals.size() == 1 and String(Game.deals[0]["customer"]) == "Szeged Klinika",
+		"puzzle: closing it puts the player back in their own company, untouched")
+	# blind mode gives both of them something to find
+	var blind_payload: Dictionary = JSON.parse_string(Puzzle.export_state("solve", true))
+	var blind_down := 0
+	for bd_name: String in blind_payload["devices"]:
+		for bi: Dictionary in blind_payload["devices"][bd_name].get("ifaces", []):
+			if not bool(bi.get("enabled", true)):
+				blind_down += 1
+	check(blind_down >= 2, "puzzle: a blind export adds a fault the sender has not seen either")
+	Game.deals = pz_deals
+	Game.sandbox = false
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

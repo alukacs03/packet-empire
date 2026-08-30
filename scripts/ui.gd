@@ -2443,6 +2443,41 @@ func _build_menu() -> void:
 			hud_toast("Difficulty set to %s. Starting cash reset." % Game.DIFFICULTIES[id]["name"], true)
 			_refresh_money()))
 	v.add_child(diff_btn)
+	var puzzle_btn := Button.new()
+	puzzle_btn.text = "Hand somebody this fault…"
+	puzzle_btn.tooltip_text = "Copy the live topology, configs and symptom to the clipboard, or open one somebody sent you"
+	puzzle_btn.pressed.connect(func() -> void:
+		_menu(puzzle_btn, [
+			"Copy it as \"solve this\"",
+			"Copy it as \"what am I missing\"",
+			"Copy it blind (an extra fault neither of us has seen)",
+			"Open a puzzle from the clipboard",
+			"Copy the fix I found" if Puzzle.active() else "Read a fix from the clipboard",
+			"Close the puzzle and go home" if Puzzle.active() else "(no puzzle open)",
+		], func(id: int) -> void:
+			if id <= 2:
+				DisplayServer.clipboard_set(Puzzle.export_state(
+					"review" if id == 1 else "solve", id == 2))
+				hud_toast("Copied. Paste it to whoever you are asking.", true)
+			elif id == 3:
+				var err: String = Puzzle.import_state(DisplayServer.clipboard_get())
+				hud_toast(err if err != "" else "Puzzle open. Nothing here can cost you anything.",
+					err == "")
+				get_parent().rebuild_racks()
+			elif id == 4 and Puzzle.active():
+				DisplayServer.clipboard_set(Puzzle.solution())
+				hud_toast("Your fix is on the clipboard. Send it back.", true)
+			elif id == 4:
+				var lines: Array = Puzzle.read_solution(DisplayServer.clipboard_get())
+				for line: String in lines:
+					Game.log_event("PUZZLE ANSWER: %s" % line)
+				hud_toast("Read %d line(s) of answer into the log." % lines.size(),
+					not lines.is_empty())
+			elif Puzzle.active():
+				Puzzle.close()
+				get_parent().rebuild_racks()
+				hud_toast("Back in your own datacenter.", true)))
+	v.add_child(puzzle_btn)
 	var drill_btn := Button.new()
 	drill_btn.text = "Incident drill  (fix a broken network, +$%d)" % Drill.REWARD
 	drill_btn.pressed.connect(func() -> void:
