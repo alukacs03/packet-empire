@@ -141,6 +141,8 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 		m["morale"] = clampi(int(m.get("morale", 70)) + drift, 0, 100)
 		if int(m["morale"]) <= 12 and randf() < 0.35:
 			Game.staff.erase(m)
+			if String(m.get("name", "")) == Game.oncall:
+				Game.oncall = ""
 			Game.reputation = maxi(0, Game.reputation - 1)
 			Game.log_event("STAFF: %s has resigned. Morale was %d and the pay was %s."
 				% [m["name"], int(m["morale"]),
@@ -149,10 +151,17 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 		elif int(m["morale"]) <= 25:
 			Game.log_event("STAFF: %s is close to walking out." % m["name"])
 
+const ONCALL_RETAINER := 45  # what carrying the phone is worth per cycle
+
+static func on_call(member: Dictionary) -> bool:
+	return String(member.get("name", "")) == Game.oncall and Game.oncall != ""
+
 static func payroll() -> int:
 	var total := 0
 	for m in Game.staff:
 		total += int(m["salary"])
+		if on_call(m):
+			total += ONCALL_RETAINER  # the phone is paid for whether it rings or not
 	return total
 
 ## How many repairs the team can attempt in one cycle, and how good they are.

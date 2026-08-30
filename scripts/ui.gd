@@ -4562,6 +4562,16 @@ func _build_business_tab() -> void:
 		srow.add_child(sl)
 		contracts_box.add_child(_wrap("      how they work: %s" % Staff.habit_read(m), 12,
 			Color(0.6, 0.68, 0.78), 640))
+		var oncall_btn := Button.new()
+		oncall_btn.text = "On call" if Staff.on_call(m) else "Not on call"
+		oncall_btn.tooltip_text = "Who carries the phone out of hours. The retainer is $%d a cycle, and calling them out is cheaper on the money and on them." % Staff.ONCALL_RETAINER
+		if Staff.on_call(m):
+			_accent(oncall_btn)
+		oncall_btn.pressed.connect(func() -> void:
+			Game.set_oncall("" if Staff.on_call(m) else String(m["name"]))
+			_refresh_contracts()
+			_refresh_money())
+		srow.add_child(oncall_btn)
 		var shift_btn := Button.new()
 		shift_btn.text = Staff.SHIFTS[Staff.shift_of(m)]["label"]
 		shift_btn.tooltip_text = "Which part of the day they cover. Nights cost a premium."

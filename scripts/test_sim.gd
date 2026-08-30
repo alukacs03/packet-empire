@@ -2939,6 +2939,23 @@ static func run() -> int:
 	Game.duties.erase("parts")
 	Game.cycle = Game.callout_until + 1
 	check(not Staff.anyone_on_shift(), "call-out: and they go home again afterwards")
+	# with somebody carrying the phone it is an arrangement, not an imposition
+	var co_pay := Staff.payroll()
+	check(Game.set_oncall(String(Game.staff[0]["name"])) == "" \
+			and Staff.payroll() == co_pay + Staff.ONCALL_RETAINER,
+		"on call: the retainer is paid whether the phone rings or not")
+	Game.callout_who = ""
+	Game.callout_until = -1
+	Game.staff[0]["morale"] = 80
+	Game.staff[0]["tired_until"] = -1
+	var oc_money := Game.money
+	check(Game.call_someone_out() == "" and Game.money == oc_money - Game.CALLOUT_FEE / 2,
+		"on call: calling the person carrying the phone costs half")
+	check(int(Game.staff[0]["morale"]) == 75,
+		"on call: and costs them less, because they were expecting it")
+	Game.fire(Game.staff[0])
+	check(Game.oncall == "", "on call: the retainer stops when they leave")
+	Game.hire(Staff.make_candidate(RandomNumberGenerator.new(), Game.habits))
 	Game.staff = co_staff
 	Game.hazards = co_haz
 	Game.cycle = co_cycle

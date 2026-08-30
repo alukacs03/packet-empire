@@ -259,6 +259,7 @@ var stockouts := {}  # model -> the cycle supply comes back
 var rmas: Array = []  # dead units in transit, and what is coming back
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
+var oncall := ""         # who is carrying the phone this rota, if anyone
 var callout_who := ""    # who was phoned out of hours, if anyone
 var callout_until := -1  # the last cycle they are counted as being on the floor
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
@@ -901,6 +902,18 @@ func callout_ready() -> bool:
 			return true
 	return false
 
+func set_oncall(name: String) -> String:
+	## One person carries the phone. It is paid for, and it is why a call-out
+	## at three in the morning is an arrangement rather than an imposition.
+	if name == "":
+		oncall = ""
+		return ""
+	if Staff.by_name(name).is_empty():
+		return "nobody by that name works here"
+	oncall = name
+	log_event("ROTA: %s is on call. The retainer is $%d a cycle." % [name, Staff.ONCALL_RETAINER])
+	return ""
+
 func call_someone_out() -> String:
 	## The thing every operator does at three in the morning: phone somebody.
 	## It costs money and it costs them, which is what makes thin nights a bet.
@@ -910,18 +923,23 @@ func call_someone_out() -> String:
 		return "somebody is already on shift"
 	if not callout_ready():
 		return "nothing is happening that is worth waking somebody for"
-	var picked: Dictionary = {}
-	for m in staff:
-		if picked.is_empty() or int(m.get("morale", 70)) > int(picked.get("morale", 70)):
-			picked = m
-	if not spend_on("call-out", CALLOUT_FEE):
-		return "a call-out costs $%d and the account will not carry it" % CALLOUT_FEE
-	picked["morale"] = maxi(0, int(picked.get("morale", 70)) - 12)
+	# whoever is carrying the phone expects it; anybody else is being imposed on
+	var picked: Dictionary = Staff.by_name(oncall)
+	var expected := not picked.is_empty()
+	if not expected:
+		for m in staff:
+			if picked.is_empty() or int(m.get("morale", 70)) > int(picked.get("morale", 70)):
+				picked = m
+	var fee := CALLOUT_FEE / 2 if expected else CALLOUT_FEE
+	if not spend_on("call-out", fee):
+		return "a call-out costs $%d and the account will not carry it" % fee
+	picked["morale"] = maxi(0, int(picked.get("morale", 70)) - (5 if expected else 12))
 	picked["tired_until"] = cycle + 2  # the real cost arrives tomorrow
 	callout_who = String(picked["name"])
 	callout_until = cycle + 1
-	log_event("CALL-OUT: %s was phoned at %s and is coming in. It cost $%d and it cost them."
-		% [callout_who, day_name(), CALLOUT_FEE])
+	log_event("CALL-OUT: %s was phoned at %s and is coming in. It cost $%d%s."
+		% [callout_who, day_name(), fee,
+			", which is what the retainer is for" if expected else ", and it cost them"])
 	Sfx.play("phone")
 	return ""
 
@@ -5578,6 +5596,8 @@ func hire(candidate: Dictionary) -> String:
 
 func fire(member: Dictionary) -> void:
 	staff.erase(member)
+	if String(member.get("name", "")) == oncall:
+		oncall = ""  # nobody is carrying the phone until somebody else is asked
 	reputation = maxi(0, reputation - 1)
 	log_event("LET GO: %s has left the company." % member["name"])
 	money_changed.emit()
@@ -8810,7 +8830,7 @@ func _serialize() -> Dictionary:
 		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
-		"callout_who": callout_who, "callout_until": callout_until,
+		"callout_who": callout_who, "callout_until": callout_until, "oncall": oncall,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
 		"customer_arcs": customer_arcs,
@@ -9151,6 +9171,7 @@ func _apply(data: Dictionary) -> void:
 	nemesis_reason = String(data.get("nemesis_reason", ""))
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
+	oncall = String(data.get("oncall", ""))
 	callout_who = String(data.get("callout_who", ""))
 	callout_until = int(data.get("callout_until", -1))
 	incidents = data.get("incidents", [])
