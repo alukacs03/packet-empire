@@ -241,6 +241,7 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var tour := {}  # a scheduled visit: who is coming, and when
 var facility := {}  # task id -> the cycle it was last done
 var facility_auto := {}  # task id -> the crew keeps it on schedule
 var heat_wave_until := -1  # the weather does not care how busy you are
@@ -581,6 +582,128 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const TOUR_KINDS := {
+	"prospect": {"label": "a prospective enterprise customer",
+		"cares": "how the floor looks and whether the racks look deliberate",
+		"weights": {"tidy": 0.5, "deliberate": 0.35, "docs": 0.15}},
+	"investor": {"label": "an investor",
+		"cares": "whether this looks like a business or a hobby",
+		"weights": {"tidy": 0.35, "deliberate": 0.35, "docs": 0.3}},
+	"auditor": {"label": "an auditor",
+		"cares": "documentation, records and what you can prove",
+		"weights": {"docs": 0.6, "records": 0.4}},
+	"press": {"label": "a journalist",
+		"cares": "the picture they will publish",
+		"weights": {"tidy": 0.6, "deliberate": 0.4}},
+}
+
+func tour_factor(name: String) -> float:
+	## Every input is something a visitor could actually see or ask for.
+	match name:
+		"tidy":
+			return floor_tidiness()
+		"deliberate":
+			var racked := 0
+			var orphaned := 0
+			for r: Net.Rack in racks_on(current_site):
+				for d in r.slots:
+					if d == null:
+						continue
+					racked += 1
+					var cabled := false
+					for i: Net.Iface in d.ifaces:
+						if link_at(i) != null:
+							cabled = true
+					if not cabled:
+						orphaned += 1
+			return 1.0 if racked == 0 else clampf(1.0 - float(orphaned) / float(racked), 0.0, 1.0)
+		"docs":
+			var devs := all_devices()
+			if devs.is_empty():
+				return 1.0
+			var documented := 0
+			for d: Net.NDevice in devs:
+				if not d.note.is_empty() and not config_dirty(d):
+					documented += 1
+			return clampf(float(documented) / float(devs.size()), 0.0, 1.0)
+		"records":
+			var open_reviews := 0
+			for inc: Dictionary in incidents:
+				if not bool(inc.get("reviewed", false)):
+					open_reviews += 1
+			var score := 1.0 - 0.15 * float(open_reviews) - 0.2 * float(audit_findings().size())
+			return clampf(score, 0.0, 1.0)
+	return 0.5
+
+func tour_score(kind: String) -> float:
+	var weights: Dictionary = TOUR_KINDS[kind]["weights"]
+	var total := 0.0
+	for name: String in weights:
+		total += float(weights[name]) * tour_factor(name)
+	return clampf(total + float(tour.get("crammed", 0.0)), 0.0, 1.0)
+
+func maybe_schedule_tour() -> void:
+	if not tour.is_empty() or deals.is_empty() or cycle < 30 or biz_roll() > 0.03:
+		return
+	var kinds: Array = TOUR_KINDS.keys()
+	var kind: String = kinds[int(biz_roll() * kinds.size()) % kinds.size()]
+	tour = {"kind": kind, "cycle": cycle + 5, "crammed": 0.0}
+	log_event("VISIT BOOKED: %s is walking the floor in 5 cycles. They care about %s."
+		% [TOUR_KINDS[kind]["label"], TOUR_KINDS[kind]["cares"]])
+
+func cram_for_tour() -> String:
+	## A frantic tidy-up before a visit. It helps, and it cannot fake months.
+	if tour.is_empty():
+		return "nobody is coming"
+	if float(tour.get("crammed", 0.0)) >= 0.1:
+		return "the place is as presentable as money can make it today"
+	if not try_spend(600):
+		return "a crew at this notice costs $600"
+	tour["crammed"] = 0.1
+	log_event("SCRAMBLE: cleaners, cable ties and a skip, at short notice and full price. It will show, a little.")
+	return ""
+
+func tour_tick() -> void:
+	if tour.is_empty() or cycle < int(tour["cycle"]):
+		return
+	var kind := String(tour["kind"])
+	var score := tour_score(kind)
+	tour = {}
+	var verdict := "impressed" if score >= 0.7 else ("unconvinced" if score >= 0.45 else "alarmed")
+	log_event("VISIT: %s walked the floor and left %s (%d%%)."
+		% [TOUR_KINDS[kind]["label"], verdict, int(score * 100.0)])
+	match kind:
+		"prospect":
+			if score >= 0.7:
+				leads.append(Market.tour_lead(true))
+				log_event("VISIT RESULT: they want a quote, on their terms and at their size. A floor that looks run wins work.")
+			elif score >= 0.45:
+				leads.append(Market.tour_lead(false))
+			else:
+				reputation = maxi(0, reputation - 2)
+				log_event("VISIT RESULT: they will not be sending anything here. You could see them deciding it in the aisle.")
+		"investor":
+			if score >= 0.7:
+				money += 6000
+				money_changed.emit()
+				log_event("VISIT RESULT: a $6000 tranche, because it looks like a business rather than a hobby.")
+			else:
+				log_event("VISIT RESULT: no money. They have seen enough rooms to know what a tidy one means.")
+		"auditor":
+			if score >= 0.6:
+				reputation = mini(100, reputation + 5)
+				log_event("VISIT RESULT: no findings. Everything you claimed, you could show.")
+			else:
+				reputation = maxi(0, reputation - 6)
+				money -= 900
+				money_changed.emit()
+				record_incident("audit", "an audit found documentation and records wanting")
+				log_event("VISIT RESULT: findings raised and $900 of remediation. You could not show what you said you did.")
+		"press":
+			reputation = clampi(reputation + (4 if score >= 0.7 else -4), 0, 100)
+			log_event("VISIT RESULT: the photograph they chose is %s."
+				% ("a room that looks run" if score >= 0.7 else "the cable spaghetti behind rack one"))
 
 const FACILITY_TASKS := {
 	"filters": {"label": "Dust filter change", "every": 40, "cost": 120,
@@ -3989,6 +4112,8 @@ func sla_tick() -> void:
 	report_tick()
 	habit_tick()
 	facility_tick()
+	maybe_schedule_tour()
+	tour_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
@@ -4785,7 +4910,7 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "heat_wave_until": heat_wave_until, "habits": habits,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -5109,6 +5234,7 @@ func _apply(data: Dictionary) -> void:
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
 	facility = data.get("facility", {})
+	tour = data.get("tour", {})
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))
 	destruction_certs = data.get("destruction_certs", [])

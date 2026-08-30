@@ -284,6 +284,25 @@ static func rival_referral_lead(from_rival: String) -> Dictionary:
 		"from_rival": from_rival,
 	}
 
+static func tour_lead(premium: bool) -> Dictionary:
+	## What a good walk round the floor is actually worth: a real job to quote.
+	return {
+		"id": "lead_tour_%s" % ("premium" if premium else "modest"),
+		"customer": "%s %s" % [NAMES[absi("tour".hash()) % NAMES.size()],
+			SUFFIX[0 if premium else 1]],
+		"kind": "secure_host" if premium else "hosting",
+		"ctype": "enterprise" if premium else "smb",
+		"stage": "lead",
+		"heard": "they walked your floor and liked what they saw",
+		"size": 340 if premium else 130,
+		"sla": 1 if premium else 0,
+		"params": {"ip": "10.62.10.10"},
+		"load": 300 if premium else 120,
+		"public": false,
+		"ttl": 12,
+		"from_tour": true,
+	}
+
 static func cost_to_serve(lead: Dictionary) -> Dictionary:
 	## An honest estimate, not an oracle. It amortises unavoidable hardware over
 	## the initial 18-cycle term and leaves the customer's hidden budget hidden.

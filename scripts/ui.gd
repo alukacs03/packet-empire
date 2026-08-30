@@ -1994,6 +1994,23 @@ func _refresh_ops() -> void:
 		UIW.colour("warm") if Game.stage >= 1 else UIW.colour("muted"), 780)
 	meter_label.add_theme_font_override("font", mono)
 	meter.add_child(meter_label)
+	if not Game.tour.is_empty():
+		ops_box.add_child(_section("A VISIT IS BOOKED"))
+		var kind: String = String(Game.tour["kind"])
+		var tk: Dictionary = Game.TOUR_KINDS[kind]
+		ops_box.add_child(_wrap("  %s arrives in %d cycle(s). They care about %s. On what they would see right now, you score %d%%."
+			% [tk["label"], int(Game.tour["cycle"]) - Game.cycle, tk["cares"],
+				int(Game.tour_score(kind) * 100.0)], 13, Color(1.0, 0.82, 0.5), 780))
+		var cram_btn := Button.new()
+		cram_btn.text = "Bring in a crew at short notice ($600)"
+		cram_btn.tooltip_text = "It helps a little. It cannot fake months of neglect."
+		cram_btn.pressed.connect(func() -> void:
+			var err: String = Game.cram_for_tour()
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		ops_box.add_child(cram_btn)
 	ops_box.add_child(_section("FACILITY SCHEDULE"))
 	if Game.heat_wave():
 		ops_box.add_child(_wrap("  HEAT WAVE  /  Cooling headroom is down a tenth while it lasts.",

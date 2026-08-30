@@ -3348,6 +3348,69 @@ static func run() -> int:
 	Game.money = money_before_fac
 	Game.facility_auto = {}
 
+	# --- the tour ---
+	var tour_leads := Game.leads.duplicate(true)
+	var tour_incidents := Game.incidents.duplicate(true)
+	Game.leads = []
+	Game.incidents = []
+	Game.data_risks = []
+	Game.tour = {"kind": "prospect", "cycle": Game.cycle + 5, "crammed": 0.0}
+	var messy_score := Game.tour_score("prospect")
+	var tour_rack := Game.add_rack(Vector2i(42, 1))
+	var tour_sw := Game.new_device("sw-8")
+	var tour_srv := Game.new_device("srv-1")
+	tour_rack.slots[0] = tour_sw
+	tour_rack.slots[1] = tour_srv
+	Game.connect_ifaces(tour_srv.ifaces[0], tour_sw.ifaces[0])
+	for tour_slot in Net.Rack.SLOTS:
+		if tour_rack.slots[tour_slot] == null:
+			Game.toggle_blanking(tour_rack, tour_slot)
+	Game.set_note(tour_srv.ifaces[0], "customer A")
+	Game.set_note(tour_sw.ifaces[0], "customer A uplink")
+	Game.set_note(tour_sw, "core access switch")
+	Game.set_note(tour_srv, "customer A host")
+	tour_sw.startup = Game.device_config(tour_sw)
+	tour_srv.startup = Game.device_config(tour_srv)
+	var kept_score := Game.tour_score("prospect")
+	check(kept_score > messy_score,
+		"tour: the score is built out of things a visitor could actually see")
+	var before_cram := Game.tour_score("prospect")
+	Game.money = 5000
+	check(Game.cram_for_tour() == "" and Game.tour_score("prospect") > before_cram \
+			and Game.cram_for_tour() != "" \
+			and Game.tour_score("prospect") - before_cram <= 0.11,
+		"tour: cramming helps a little, costs money, and cannot be repeated into a clean sheet")
+	# a floor that looks run wins work
+	Game.tour["crammed"] = 0.0
+	Game.tour["kind"] = "prospect"
+	Game.tour["cycle"] = Game.cycle
+	var forced := Game.tour_score("prospect")
+	Game.tour_tick()
+	check(Game.tour.is_empty() and (Game.leads.size() == 1 if forced >= 0.45 else Game.leads.is_empty()),
+		"tour: the outcome is a real contract to quote, or nothing, and it follows the score")
+	# and an auditor asks for what you can prove
+	Game.leads = []
+	Game.data_risks = [{"device": "srv99", "model": "srv-1", "cycle": Game.cycle}]
+	Game.incidents = [{"kind": "test", "summary": "something nobody wrote up", "cycle": Game.cycle,
+		"reviewed": false, "by": ""}]
+	var audit_score := Game.tour_score("auditor")
+	Game.data_risks = []
+	Game.incidents = []
+	check(Game.tour_score("auditor") > audit_score,
+		"tour: an auditor scores the records, and an unwritten incident is visible in them")
+	var rep_before_tour := Game.reputation
+	Game.tour = {"kind": "auditor", "cycle": Game.cycle, "crammed": 0.0}
+	Game.data_risks = [{"device": "srv98", "model": "srv-1", "cycle": Game.cycle}]
+	for tour_dev: Net.NDevice in Game.all_devices():
+		tour_dev.note = {}
+	Game.tour_tick()
+	check(Game.reputation < rep_before_tour and not Game.incidents.is_empty(),
+		"tour: neglect cannot be hidden from somebody whose job is asking for proof")
+	Game.data_risks = []
+	Game.leads = tour_leads
+	Game.incidents = tour_incidents
+	Game.tour = {}
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")
