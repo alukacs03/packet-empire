@@ -5468,10 +5468,13 @@ func clock_tick() -> void:
 
 ## Words that decide how loudly an event should be shouted. Matched against
 ## the start of the message, which is why every log line leads with a tag.
-const SEVERE := ["SLA BREACH", "SECURITY", "WRITTEN OFF", "LOST", "PORT SECURITY",
-	"FAULT", "ATTACK", "POWER"]
+const SEVERE := ["SLA BREACH", "SLA PENALTY", "SECURITY", "WRITTEN OFF", "LOST", "PORT SECURITY",
+	"FAULT", "ATTACK", "POWER", "FIRE", "DATA INCIDENT", "LOCKED OUT", "HAZARD",
+	"PREDICTED FAILURE", "OVERRUN", "CANCELLED"]
 const WARNING := ["LATE", "CONGESTION", "RENEWAL", "POACH", "STAFF", "HEAT",
-	"STORM CONTROL", "DHCP snooping", "ARP inspection", "RIVAL"]
+	"STORM CONTROL", "DHCP snooping", "ARP inspection", "RIVAL", "MONITOR ALERT", "MONITOR OK", "FIELD",
+	"ACHIEVEMENT", "UPSTREAM", "ALARM", "LAPSED", "DUE", "BLAME", "DISPUTE", "ACCESS",
+	"FIRMWARE", "SUPPLY", "IMPROVISED", "BLOCKED", "GENERATOR TEST", "SUPPRESSION"]
 
 static func event_severity(text: String) -> String:
 	var body := text
@@ -5489,14 +5492,68 @@ var unread_events := 0  # since the player last looked at the log
 
 var events_logged := 0  # monotonic: events is capped, so its size cannot count
 
+const DIGEST_PREFIX := "SHIFT NOTES"
+## Lines that are routine on their own but must never be folded away: anything
+## that asks for a decision, names a customer, or is the game teaching.
+const DIGEST_EXEMPT := ["DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
+	"TICKET", "VISIT", "VISIT BOOKED", "AUDIT", "AUDIT OFFERED", "AUDIT RESULT", "DEBRIEF READY",
+	"RELATIONSHIP", "THE END", "CHALLENGE", "PACK", "HEADS UP", "CARRIED IT", "DROPPED IT",
+	"CONSEQUENCE", "LATER", "IDENTITY", "NEMESIS", "REFERRAL", "MASTERED"]
+var digest := {}  # cycle -> the routine lines folded into that cycle's note
+
+func _digest_exempt(text: String) -> bool:
+	var head := text.substr(0, maxi(0, text.find(":")))
+	return head in DIGEST_EXEMPT
+
+func _digest_line(at: int) -> String:
+	var lines: Array = digest.get(at, [])
+	var preview: Array = []
+	for line: String in lines.slice(0, 2):
+		preview.append(String(line).substr(0, 48))
+	return "cycle %d: %s: %d routine thing(s) handled — %s" % [at, DIGEST_PREFIX, lines.size(),
+		"; ".join(PackedStringArray(preview))]
+
 func log_event(text: String) -> void:
-	events.push_front("cycle %d: %s" % [cycle, text])
 	events_logged += 1
-	if event_severity(text) != "info":
-		unread_events += 1
+	if event_severity(text) == "info" and not _digest_exempt(text):
+		# routine work folds into one note per cycle: nothing is dropped, and
+		# the log stops burying the line that mattered
+		var lines: Array = digest.get(cycle, [])
+		lines.append(text)
+		digest[cycle] = lines
+		for idx in events.size():
+			if String(events[idx]).begins_with("cycle %d: %s" % [cycle, DIGEST_PREFIX]):
+				events[idx] = _digest_line(cycle)
+				events_changed.emit()
+				return
+		events.push_front(_digest_line(cycle))
+	else:
+		events.push_front("cycle %d: %s" % [cycle, text])
+		if event_severity(text) != "info":
+			unread_events += 1
 	if events.size() > 60:
 		events.pop_back()
+	if digest.size() > 40:
+		var oldest := cycle
+		for key in digest:
+			oldest = mini(oldest, int(key))
+		digest.erase(oldest)
 	events_changed.emit()
+
+func digest_for(at: int) -> Array:
+	return digest.get(at, [])
+
+func log_contains(text: String) -> bool:
+	## Folded lines are still in the log, which is the promise: nothing is
+	## dropped, only tucked into the cycle's shift notes.
+	for e: String in events:
+		if text in e:
+			return true
+	for at in digest:
+		for line: String in digest[at]:
+			if text in line:
+				return true
+	return false
 
 func mark_events_read() -> void:
 	unread_events = 0

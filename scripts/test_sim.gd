@@ -1118,7 +1118,7 @@ static func run() -> int:
 	check(Market.check("redundant_gw", {"vip": "10.40.0.1"}), "market: redundant-gw kind verifies the VRRP setup")
 	check(not Market.check("redundant_gw", {"vip": "10.99.99.1"}), "market: redundant-gw fails for absent vip")
 	Game._field_fault()  # either a port fault or a power-blip reboot
-	check("FIELD" in Game.events[0], "field: a fault is logged for the operator to find")
+	check(Game.log_contains("FIELD"), "field: a fault is logged for the operator to find")
 	var faulted: Net.Iface = null
 	for l in Game.links:
 		for ifc in [l.a, l.b]:
@@ -2319,11 +2319,7 @@ static func run() -> int:
 	Scenarios.finish(true)
 	check(not Game.drill_active and Game.all_devices().size() == devs_before_sc,
 		"scenario: your own datacenter comes back untouched")
-	var passed := false
-	for ev in Game.events:
-		if "SCENARIO passed" in ev:
-			passed = true
-	check(passed, "scenario: passing is recorded")
+	check(Game.log_contains("SCENARIO passed"), "scenario: passing is recorded")
 	Scenarios.start(Scenarios.all()[1])
 	check(not Scenarios.solved(), "scenario: the campus starts unbuilt")
 	Scenarios.finish(false)
@@ -2769,7 +2765,7 @@ static func run() -> int:
 	Game.cycle += late_delay
 	Game.report_tick()
 	check(Game.incidents.size() == 1 and Game.pending_reports.is_empty() \
-			and "nobody mentioned it" in String(Game.events[0]),
+			and Game.log_contains("nobody mentioned it"),
 		"blame: it surfaces later, once the damage has had time to run")
 	# the player's own mistake sets what the team believes is safe
 	Game.incidents = []
@@ -4711,11 +4707,7 @@ static func run() -> int:
 	for i in 10:
 		Game.make_report()
 	check(Game.reports.size() == 8, "report: only the recent quarters are kept")
-	var reported := false
-	for ev in Game.events:
-		if "QUARTER" in ev:
-			reported = true
-	check(reported, "report: closing a quarter is announced")
+	check(Game.log_contains("QUARTER"), "report: closing a quarter is announced")
 
 	# --- tunnels over an untrusted path ---
 	var tun_rack := Game.add_rack(Vector2i(20, 1))
@@ -7773,6 +7765,34 @@ static func run() -> int:
 	check(not pd_srv_cli.exec("dns64").contains("not found") \
 			and not pd_srv_cli.exec("dns add legacy.example.hu 10.0.0.9").begins_with("usage"),
 		"pedia: and so are the DNS64 ones, on the gear that runs them")
+
+	# --- the log folds the routine work ---
+	Game.events = []
+	Game.digest = {}
+	Game.unread_events = 0
+	var lg_cycle := Game.cycle
+	Game.log_event("PARTS: the standing order topped up patch leads ($60).")
+	Game.log_event("DUTIES: Fekete Julia kept the drawer stocked.")
+	Game.log_event("FACILITY: dust filter change done for $120.")
+	check(Game.events.size() == 1 and String(Game.events[0]).contains(Game.DIGEST_PREFIX) \
+			and Game.digest_for(lg_cycle).size() == 3,
+		"log: three routine lines become one note, and the note counts them")
+	check(Game.log_contains("dust filter change"),
+		"log: nothing is dropped, only folded")
+	Game.log_event("SLA BREACH: 'Two roofs' is down: fees suspended.")
+	check(Game.events.size() == 2 and String(Game.events[0]).contains("SLA BREACH") \
+			and Game.unread_events == 1,
+		"log: anything that matters stays at full size, on top, and counts as unread")
+	Game.log_event("DECISION: somebody wants an answer.")
+	check(Game.events.size() == 3 and String(Game.events[0]).contains("DECISION"),
+		"log: a line that asks the player for something is never folded")
+	Game.cycle += 1
+	Game.log_event("PARTS: topped up again.")
+	check(Game.events.size() == 4 and Game.digest_for(Game.cycle).size() == 1,
+		"log: each cycle gets its own shift notes rather than one growing pile")
+	Game.cycle = lg_cycle
+	Game.events = []
+	Game.digest = {}
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

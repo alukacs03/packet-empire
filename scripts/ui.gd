@@ -4038,6 +4038,7 @@ func check_demo_end() -> void:
 
 var contracts_tab := "Jobs"
 var log_filter := "all"
+var expanded_digest := -1  # which cycle's shift notes are open
 var replay_for := -1  # which incident's timeline is expanded
 
 func _build_contracts_overlay() -> void:
@@ -4969,7 +4970,28 @@ func _build_log_tab() -> void:
 		var l := _label(ev, 12, col)
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.custom_minimum_size = Vector2(580, 0)
-		contracts_box.add_child(l)
+		if not ev.contains(Game.DIGEST_PREFIX):
+			contracts_box.add_child(l)
+			continue
+		# a folded cycle: nothing is lost, it is one line until you ask
+		var at := int(ev.substr(6, ev.find(":") - 6).strip_edges())
+		var drow := HBoxContainer.new()
+		drow.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(drow)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		drow.add_child(l)
+		var open_btn := Button.new()
+		open_btn.text = "Hide" if expanded_digest == at else "Read it"
+		open_btn.pressed.connect(func() -> void:
+			expanded_digest = -1 if expanded_digest == at else at
+			_refresh_contracts())
+		drow.add_child(open_btn)
+		if expanded_digest == at:
+			for folded: String in Game.digest_for(at):
+				var fl := _label("      %s" % folded, 12, Color(0.62, 0.68, 0.78))
+				fl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				fl.custom_minimum_size = Vector2(560, 0)
+				contracts_box.add_child(fl)
 
 func _customer_eye_card(eye: Dictionary) -> PanelContainer:
 	var state := String(eye.get("state", "waiting"))
