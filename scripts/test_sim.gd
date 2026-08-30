@@ -73,6 +73,9 @@ static func demo_world() -> void:
 	Sim.ping(srv1, "10.0.0.2")
 	Game.topology_changed.emit()
 
+static func _map_key(r: Net.Rack) -> int:
+	return int(r.site) * 100000 + r.tile.x + r.tile.y * 100
+
 static func ui_smoke(world: Node2D) -> int:
 	## Exercise every overlay so UI-only runtime errors surface in CI output.
 	print("---- ui smoke ----")
@@ -211,6 +214,25 @@ static func ui_smoke(world: Node2D) -> int:
 		"ui: with two floors, operations says which floor it is about")
 	Game.sites = ops_sites
 	ui._refresh_ops()
+	# the map groups cabinets by building rather than interleaving them
+	var map_sites := Game.sites.duplicate(true)
+	var map_new := Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	var map_far := Game.add_rack(Vector2i(0, 0), map_new)
+	var map_order: Array = Game.racks.duplicate()
+	map_order.sort_custom(func(x, y): return _map_key(x) < _map_key(y))
+	var map_grouped := true
+	var map_seen := {}
+	var map_last := -1
+	for map_r: Net.Rack in map_order:
+		if int(map_r.site) != map_last:
+			if map_seen.has(int(map_r.site)):
+				map_grouped = false  # we came back to a building we had left
+			map_seen[int(map_r.site)] = true
+			map_last = int(map_r.site)
+	check(map_grouped, "map: cabinets from one building sit together, not interleaved")
+	Game.racks.erase(map_far)
+	Game.sites = map_sites
+
 	# switching language rebuilds the menu the player switched it from
 	Prefs.language = "hu"
 	Loc.language = "hu"

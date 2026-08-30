@@ -518,7 +518,9 @@ class TopoMap extends Control:
 		const GAP_Y := 34.0
 		const TOP := 142.0
 		var racks := Game.racks.duplicate()
-		racks.sort_custom(func(x, y): return x.tile.x + x.tile.y * 100 < y.tile.x + y.tile.y * 100)
+		# by building first: with two sites the cabinets were interleaved, and a
+		# wall of cards with nothing grouping them is not a map of anything
+		racks.sort_custom(func(x, y): return _map_order(x) < _map_order(y))
 		var cols: int = mini(maxi(1, int((size.x - 96.0 + GAP_X) / (CARD_W + GAP_X))),
 			maxi(1, racks.size()))
 		var max_devices := 1
@@ -548,14 +550,18 @@ class TopoMap extends Control:
 				start_y + row_i * (card_h + GAP_Y))
 			var box := Rect2(origin, Vector2(CARD_W, card_h))
 			draw_rect(box, UIW.colour("surface"))
-			draw_rect(Rect2(box.position, Vector2(5, box.size.y)), UIW.colour("accent"))
+			# the same colour the floor of that building is cast in
+			var site_col: Color = UIW.colour("accent") if Game.site_count() <= 1 \
+				else Color.from_hsv(Game.site_hue(Game.site_name(r.site)), 0.5, 1.0)
+			draw_rect(Rect2(box.position, Vector2(5, box.size.y)), site_col)
 			draw_rect(Rect2(box.position, Vector2(box.size.x, 42)), Color("203854"))
 			draw_rect(box, UIW.colour("border_strong"), false, 1.0)
 			draw_line(origin + Vector2(18, 42), origin + Vector2(CARD_W - 18, 42),
 				Color(UIW.colour("accent"), 0.42), 1.0)
 			var site_tag: String = "" if Game.site_count() <= 1 else "  ·  " + Game.site_name(r.site)
 			draw_string(_mono, origin + Vector2(18, 27), "RACK  /  " + r.name + site_tag,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIW.colour("text_strong"))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+				UIW.colour("text_strong") if Game.site_count() <= 1 else site_col)
 			draw_string(_mono, origin + Vector2(CARD_W - 78, 27), "%02d NODES" % filled.size(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("muted"))
 			var y := origin.y + 52
@@ -643,6 +649,10 @@ class TopoMap extends Control:
 		elif drag_note != "" and Time.get_ticks_msec() / 1000.0 < _reject_until:
 			draw_string(_mono, Vector2(30, ly - 32), drag_note,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.55, 0.45))
+
+	func _map_order(r: Net.Rack) -> int:
+		## building first, then position, so one site's cabinets sit together
+		return int(r.site) * 100000 + r.tile.x + r.tile.y * 100
 
 	func _flow(pa: Vector2, pb: Vector2, col: Color, load: int, cap: int) -> void:
 		## dots travelling the link, more of them the busier it is. A link
