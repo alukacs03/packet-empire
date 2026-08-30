@@ -8139,8 +8139,17 @@ static func run() -> int:
 
 	# the workshop: find them, read them, import one, explain the broken ones
 	var rows := Pack.workshop_rows()
-	check(not rows.is_empty() and bool(rows[0]["ok"]) and rows[0]["scenarios"].size() >= 4,
+	check(not rows.is_empty() and bool(rows[0]["ok"]) and rows[0]["scenarios"].size() >= 5,
 		"workshop: every pack found is listed with its status and what is in it")
+	var starter_kinds := {}
+	for st_pack: Dictionary in Pack.loaded:
+		if String(st_pack.get("id", "")) != "packetempire.starter":
+			continue
+		for st_sc: Dictionary in st_pack.get("scenarios", []):
+			for st_req in st_sc.get("requirements", []):
+				starter_kinds[String((st_req as Dictionary).get("kind", ""))] = true
+	check(starter_kinds.has("resolves") and starter_kinds.has("survives_device_loss"),
+		"workshop: the worked example shows the hardest requirements, not only the easy one")
 	var preview_lines := Pack.preview(pk, pk["scenarios"][1])
 	check(preview_lines.size() > 3 and String(preview_lines[preview_lines.size() - 1]).begins_with("  · "),
 		"workshop: a scenario can be previewed before anybody starts it")

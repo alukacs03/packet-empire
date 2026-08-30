@@ -13,8 +13,16 @@
       "brief": "Buy a rack, install a switch and two servers, and cable both servers to the switch. Nothing has to answer yet: this is the physical half.",
       "hint": "R places a rack. Open it, buy from the slot menu, then click a server port and run a cable to the switch.",
       "requirements": [
-        {"kind": "device_count", "type": "switch", "min": 1},
-        {"kind": "device_count", "type": "server", "min": 2}
+        {
+          "kind": "device_count",
+          "type": "switch",
+          "min": 1
+        },
+        {
+          "kind": "device_count",
+          "type": "server",
+          "min": 2
+        }
       ]
     },
     {
@@ -25,9 +33,19 @@
       "brief": "Address two servers in the same subnet and make them reach each other. 10.90.0.10/24 and 10.90.0.11/24.",
       "hint": "'ip addr add 10.90.0.10/24 dev eth0' on one, the .11 on the other, then ping.",
       "requirements": [
-        {"kind": "has_address", "ip": "10.90.0.10"},
-        {"kind": "has_address", "ip": "10.90.0.11"},
-        {"kind": "reachable", "from": "10.90.0.10", "to": "10.90.0.11"}
+        {
+          "kind": "has_address",
+          "ip": "10.90.0.10"
+        },
+        {
+          "kind": "has_address",
+          "ip": "10.90.0.11"
+        },
+        {
+          "kind": "reachable",
+          "from": "10.90.0.10",
+          "to": "10.90.0.11"
+        }
       ]
     },
     {
@@ -38,10 +56,19 @@
       "brief": "Put two customers on one switch and keep them apart: VLAN 10 and VLAN 20, one connected access port each, and no path between them.",
       "hint": "'vlan 10' then 'switchport access vlan 10' on the port (EOS), or '/interface bridge vlan add vlan-ids=10' on PacketTik.",
       "requirements": [
-        {"kind": "all", "of": [
-          {"kind": "vlan_access", "vid": 10},
-          {"kind": "vlan_access", "vid": 20}
-        ]}
+        {
+          "kind": "all",
+          "of": [
+            {
+              "kind": "vlan_access",
+              "vid": 10
+            },
+            {
+              "kind": "vlan_access",
+              "vid": 20
+            }
+          ]
+        }
       ]
     },
     {
@@ -52,13 +79,56 @@
       "brief": "Something on the floor stopped forwarding. Find it, fix it, and save the configuration so it survives the next reboot.",
       "hint": "Start at the monitor, then the physical port, then the interface state.",
       "setup": [
-        {"kind": "message", "text": "INCIDENT: a customer service has stopped answering."}
+        {
+          "kind": "message",
+          "text": "INCIDENT: a customer service has stopped answering."
+        }
       ],
       "requirements": [
-        {"kind": "reachable", "from": "10.90.0.10", "to": "10.90.0.11"}
+        {
+          "kind": "reachable",
+          "from": "10.90.0.10",
+          "to": "10.90.0.11"
+        }
       ],
       "on_complete": [
-        {"kind": "message", "text": "The service is back, and the configuration is written down."}
+        {
+          "kind": "message",
+          "text": "The service is back, and the configuration is written down."
+        }
+      ]
+    },
+    {
+      "id": "name_and_spare",
+      "title": "A name, and a second copy",
+      "customer": "Alpha Systems",
+      "reward": 900,
+      "brief": "They want the service reachable by name, and they want it to still be there when one box is switched off. Run DNS for app.pkt, and make sure the answer survives losing the machine that usually serves it.",
+      "hint": "A record on a server they can reach, then a second copy of the service so switching one off changes nothing.",
+      "setup": [
+        {
+          "kind": "message",
+          "text": "ALPHA SYSTEMS: 'We would like to type a name, and we would like it to keep working.'"
+        }
+      ],
+      "requirements": [
+        {
+          "kind": "resolves",
+          "from": "10.90.0.10",
+          "name": "app.pkt"
+        },
+        {
+          "kind": "survives_device_loss",
+          "device": "srv1",
+          "from": "10.90.0.10",
+          "to": "10.90.0.11"
+        }
+      ],
+      "on_complete": [
+        {
+          "kind": "message",
+          "text": "It answers by name, and it answers with a box switched off."
+        }
       ]
     }
   ]
