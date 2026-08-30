@@ -6825,15 +6825,48 @@ const REVIEW_FOLLOW_UP := {
 	"a configuration that was never saved": "Save what is running, and put somebody on the labelling and documentation duty so it stops being your job to remember.",
 }
 
+func cause_supported(cause: String) -> bool:
+	## Does the floor bear the story out? Everything here is something the
+	## simulation already knows, so a write-up cannot be a formality.
+	match cause:
+		"a change nobody reviewed":
+			return not in_maintenance() or float(habits.get("windows", 0.5)) < 0.5
+		"a single point of failure we knew about":
+			var redundant := false
+			for l in links:
+				if lag_members(l).size() >= 2:
+					redundant = true
+			for d in all_devices():
+				for i: Net.Iface in d.ifaces:
+					if i.vrrp.get("vip", "") != "":
+						redundant = true
+			return not redundant
+		"capacity we never planned for":
+			var cap := capacity(current_site)
+			return int(cap.get("slots_used", 0)) * 4 >= int(cap.get("slots", 1)) * 3 \
+				or overheating()
+		"a monitor that did not exist":
+			return monitors.is_empty()
+		"a configuration that was never saved":
+			for d2 in all_devices():
+				if config_dirty(d2):
+					return true
+			return false
+	return false
+
 func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	if bool(inc.get("reviewed", false)):
 		return "that one is already written up"
 	inc["reviewed"] = true
 	observe_habit("documents", true)
 	inc["cause"] = REVIEW_CAUSES[clampi(cause_idx, 0, REVIEW_CAUSES.size() - 1)]
-	reputation = mini(100, reputation + 3)
-	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. Customers appreciate the candour."
-		% [inc["summary"], inc["cause"]])
+	# a cause the floor bears out is worth more than one that was convenient
+	var supported := cause_supported(String(inc["cause"]))
+	inc["supported"] = supported
+	reputation = mini(100, reputation + (3 if supported else 1))
+	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. %s"
+		% [inc["summary"], inc["cause"], "Customers appreciate the candour."
+			if supported else "Nothing on the floor says that is what happened, and it reads that way."])
 	# the one moment the player is thinking about why: answer with the thing
 	# that would actually catch it next time, and name a tool that exists
 	var follow := String(REVIEW_FOLLOW_UP.get(String(inc["cause"]), ""))

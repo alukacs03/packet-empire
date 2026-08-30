@@ -3017,6 +3017,28 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# a cause the floor bears out is worth more than a convenient one
+	var pm_monitors := Game.monitors.duplicate(true)
+	Game.monitors = []
+	check(Game.cause_supported("a monitor that did not exist"),
+		"post-mortem: with no monitors, that cause is supported by the floor")
+	Game.monitors = [{"kind": "ping", "device": "x", "target": "10.0.0.1", "failing": false}]
+	check(not Game.cause_supported("a monitor that did not exist"),
+		"post-mortem: and not supported once the checks exist")
+	Game.incidents = []
+	Game.record_incident("test", "something broke")
+	var pm_rep := Game.reputation
+	Game.review_incident(Game.incidents[0], 3)  # the unsupported one
+	var pm_gain_weak := Game.reputation - pm_rep
+	Game.monitors = []
+	Game.incidents = []
+	Game.record_incident("test", "something else broke")
+	pm_rep = Game.reputation
+	Game.review_incident(Game.incidents[0], 3)  # now the evidence agrees
+	check(Game.reputation - pm_rep > pm_gain_weak,
+		"post-mortem: looking is worth more than writing down whatever fits")
+	Game.monitors = pm_monitors
+
 	# a post-mortem answers back with what would catch it next time
 	Game.incidents = []
 	Game.record_incident("test", "the thing that broke")
