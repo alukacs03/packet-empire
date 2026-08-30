@@ -51,6 +51,8 @@ Every requirement is one of these, and they compose with `all`, `any`, `not`:
 | `config_saved` | `device` | that device is not running an unsaved configuration |
 | `money_at_least` | `amount` | the bank balance is at least that |
 | `survives_link_loss` | `a`, `b`, `from`, `to` | `from` still reaches `to` with the `a`–`b` link down |
+| `survives_device_loss` | `device`, `from`, `to` | `from` still reaches `to` with `device` switched off, which is how you ask for a second copy |
+| `resolves` | `from`, `name`, optional `to`, `v6`, `reach` | `from` looks the name up and (unless `reach` is false) reaches the answer; `to` pins the address, `v6` asks for AAAA |
 
 Each one produces a readable line for the checklist and a specific reason
 when it fails, so a player is told what is missing rather than that something

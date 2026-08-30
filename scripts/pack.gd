@@ -92,7 +92,7 @@ static func validate(pack: Dictionary) -> Array:
 
 const PREDICATES := ["all", "any", "not", "device_count", "link_between", "reachable",
 	"not_reachable", "has_address", "vlan_access", "config_saved", "money_at_least",
-	"survives_link_loss"]
+	"survives_link_loss", "survives_device_loss", "resolves"]
 
 static func _validate_predicate(pred: Variant, where: String) -> Array:
 	if not (pred is Dictionary):
@@ -116,6 +116,18 @@ static func _validate_predicate(pred: Variant, where: String) -> Array:
 		"has_address":
 			if not _is_address(String(pred.get("ip", ""))):
 				errors.append("%s.ip: '%s' is not an address" % [where, pred.get("ip", "")])
+		"resolves":
+			if String(pred.get("name", "")).strip_edges() == "":
+				errors.append("%s.name: a name to look up is required" % where)
+			if not _is_address(String(pred.get("from", ""))):
+				errors.append("%s.from: '%s' is not an address" % [where, pred.get("from", "")])
+		"survives_device_loss":
+			if String(pred.get("device", "")).strip_edges() == "":
+				errors.append("%s.device: name the device to switch off" % where)
+			for field2: String in ["from", "to"]:
+				if not _is_address(String(pred.get(field2, ""))):
+					errors.append("%s.%s: '%s' is not an address" % [where, field2,
+						pred.get(field2, "")])
 		"vlan_access":
 			var vid := int(pred.get("vid", 0))
 			if vid < 1 or vid > 4094:
@@ -260,6 +272,39 @@ static func _eval(pred: Dictionary) -> Dictionary:
 				return {"ok": still, "why": "" if still
 					else "%s stops reaching %s when that link goes" % [probe_from, probe_to]}
 			return {"ok": false, "why": "%s and %s are not cabled together" % [pred["a"], pred["b"]]}
+		"resolves":
+			var asker := Contracts._owner(String(pred.get("from", "")))
+			if asker == null:
+				return {"ok": false, "why": "nothing owns %s yet" % pred.get("from", "")}
+			var want6 := bool(pred.get("v6", false))
+			var answer := Sim.resolve(asker, String(pred["name"]), false, want6)
+			if answer == "":
+				return {"ok": false, "why": "%s does not resolve for %s"
+					% [pred["name"], pred.get("from", "")]}
+			if pred.has("to") and answer != String(pred["to"]):
+				return {"ok": false, "why": "%s resolves to %s, not %s"
+					% [pred["name"], answer, pred["to"]]}
+			if not bool(pred.get("reach", true)):
+				return {"ok": true, "why": ""}
+			var got: bool = Sim.ping(asker, answer)["ok"]
+			return {"ok": got, "why": "" if got
+				else "%s resolves to %s and nothing answers there" % [pred["name"], answer]}
+		"survives_device_loss":
+			var victim := _device(String(pred["device"]))
+			var src3 := Contracts._owner(String(pred.get("from", "")))
+			if victim == null:
+				return {"ok": false, "why": "there is no device called %s" % pred["device"]}
+			if src3 == null:
+				return {"ok": false, "why": "nothing owns %s yet" % pred.get("from", "")}
+			var was_status := victim.status
+			victim.status = "offline"
+			Sim.flush_learned_state()
+			var alive: bool = Sim.ping(src3, String(pred["to"]))["ok"]
+			victim.status = was_status
+			Sim.flush_learned_state()
+			return {"ok": alive, "why": "" if alive
+				else "%s stops reaching %s when %s is switched off"
+					% [pred.get("from", ""), pred.get("to", ""), pred["device"]]}
 	return {"ok": false, "why": "unknown requirement"}
 
 static func _device(name: String) -> Net.NDevice:
@@ -302,6 +347,12 @@ static func describe(pred: Dictionary) -> String:
 		"survives_link_loss":
 			return "%s still reaches %s with the %s–%s link down" % [pred.get("from", ""),
 				pred.get("to", ""), pred.get("a", ""), pred.get("b", "")]
+		"resolves":
+			return "%s resolves %s%s" % [pred.get("from", ""), pred.get("name", ""),
+				" and reaches it" if bool(pred.get("reach", true)) else ""]
+		"survives_device_loss":
+			return "%s still reaches %s with %s switched off" % [pred.get("from", ""),
+				pred.get("to", ""), pred.get("device", "")]
 	return "an unknown requirement"
 
 ## ---------- actions ----------

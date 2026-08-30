@@ -8122,6 +8122,18 @@ static func run() -> int:
 		"packs: the action set can pay and can break a link, deterministically")
 	Pack.run_actions([{"kind": "restore_links"}])
 	check(pk_sw.ifaces[0].enabled, "packs: and can put it back")
+	# the two things the game teaches most, expressible by an author
+	check(Pack._validate_predicate({"kind": "resolves", "from": "10.90.0.10",
+		"name": "app.pkt"}, "r").is_empty(),
+		"packs: a name lookup is a requirement an author can write")
+	check(not Pack._validate_predicate({"kind": "resolves", "from": "nonsense"}, "r").is_empty(),
+		"packs: and a malformed one is refused with the field named")
+	check(Pack._validate_predicate({"kind": "survives_device_loss", "device": "sw1",
+		"from": "10.90.0.10", "to": "10.90.0.11"}, "r").is_empty(),
+		"packs: so is a service that has to survive losing a device")
+	check(Pack.describe({"kind": "survives_device_loss", "device": "sw1", "from": "a",
+		"to": "b"}).contains("switched off"),
+		"packs: and both read as sentences in the checklist")
 	check(Pack._validate_action({"kind": "rm -rf"}, "x")[0].contains("unknown action"),
 		"packs: nothing outside the action set is even a word")
 
