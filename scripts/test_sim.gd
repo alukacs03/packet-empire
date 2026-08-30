@@ -1934,6 +1934,23 @@ static func run() -> int:
 		Game.sites = world_sites
 		Game.current_site = world_here
 		Game.circuits = world_circuits
+	# switching floors during a drill must not leave the player on a floor the
+	# restored world does not have
+	if rooms_seed > 0:
+		var sw_sites := Game.sites.duplicate(true)
+		var sw_here := Game.current_site
+		var sw_circuits := Game.circuits.duplicate(true)
+		Game.sites = [Game.sites[0]]
+		Game.current_site = 0
+		Drill.start(3, rooms_seed)
+		Game.current_site = Game.site_count() - 1  # they wandered into the other room
+		Drill.finish(false)
+		check(Game.current_site >= 0 and Game.current_site < Game.site_count(),
+			"drill: finishing leaves the player on a floor that exists")
+		Game.sites = sw_sites
+		Game.current_site = sw_here
+		Game.circuits = sw_circuits
+
 	# the same code has to rebuild the same incident, including a two-room one
 	if rooms_seed > 0:
 		var ch_world := Game.sites.duplicate(true)
