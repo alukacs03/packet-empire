@@ -5370,7 +5370,7 @@ func _toggle_cli() -> void:
 		cli_out.append_text(cli_session.banner())
 		if cur_dev != null and Game.locked_out(cur_dev):
 			# it is running your new configuration and nothing can reach it
-			cli_out.append_text("\n% no route to %s: console server, a walk to the rack, or a site visit\n"
+			cli_out.append_text("\n%% no route to %s: console server, a walk to the rack, or a site visit\n"
 				% cur_dev.name)
 		cli_in.call_deferred("grab_focus")
 		_scroll_to_bottom.call_deferred()

@@ -478,6 +478,19 @@ static func _campaign() -> Array:
 			],
 		},
 		{
+			"id": "overlay_tenant",
+			"title": "The tenant that outgrew the VLAN",
+			"customer": "Turul Mobil (again)",
+			"reward": 5200,
+			"brief": "Turul Mobil have outgrown a stretched VLAN and want their segment on two different leaf switches with a routed network in between: no trunk, no cable between the leaves. Build the underlay first (an SVI on each leaf, a router between them, and each leaf able to ping the other's address), then put the tenant on top with VXLAN: 'vxlan source <this leaf's address>', 'vxlan vlan 70 vni 7000' and 'vxlan peer <the other leaf>' on both. Their hosts are 192.168.70.10 and 192.168.70.11. Put a second tenant in VLAN 71 on one leaf, unmapped, and prove it cannot see any of it. Then turn on 'vxlan evpn' so the leaves tell each other what they have instead of flooding.",
+			"reqs": [
+				{"d": "The two leaves reach each other over a routed underlay", "t": func() -> bool: return _overlay_underlay()},
+				{"d": "One VNI carries the tenant across both leaves", "t": func() -> bool: return _overlay_mapped(7000) and _ping("192.168.70.10", "192.168.70.11", true)},
+				{"d": "A second tenant on the same leaf sees none of it", "t": func() -> bool: return _overlay_isolated()},
+				{"d": "The control plane advertises instead of flooding", "t": func() -> bool: return _overlay_evpn()},
+			],
+		},
+		{
 			"id": "build_a_fabric",
 			"title": "Build a fabric",
 			"customer": "Panonia Data (consulting)",
@@ -837,6 +850,51 @@ static func _owner(ip: String) -> Net.NDevice:
 				if Net.addr_eq(cidr.split("/")[0], ip):
 					return d
 	return null
+
+static func _overlay_vteps() -> Array:
+	var out: Array = []
+	for d in Game.all_devices():
+		if not d.vtep.is_empty() and String(d.vtep.get("src", "")) != "":
+			out.append(d)
+	return out
+
+static func _overlay_underlay() -> bool:
+	## Two VTEPs that can reach each other's source address, with no layer 2
+	## between them: that is what an overlay is built on.
+	var vteps := _overlay_vteps()
+	if vteps.size() < 2:
+		return false
+	for a: Net.NDevice in vteps:
+		for b: Net.NDevice in vteps:
+			if a == b:
+				continue
+			if Sim.ping(a, String(b.vtep["src"]))["ok"]:
+				return true
+	return false
+
+static func _overlay_mapped(vni: int) -> bool:
+	var carrying := 0
+	for d: Net.NDevice in _overlay_vteps():
+		for vlan: int in d.vtep.get("map", {}):
+			if int(d.vtep["map"][vlan]) == vni:
+				carrying += 1
+	return carrying >= 2
+
+static func _overlay_isolated() -> bool:
+	## A VLAN nobody mapped to a VNI stays where it is, which is the whole
+	## point of tenant separation.
+	for d: Net.NDevice in _overlay_vteps():
+		for vlan: int in d.vlans:
+			if int(vlan) == 71 and not d.vtep.get("map", {}).has(71):
+				return true
+	return false
+
+static func _overlay_evpn() -> bool:
+	var learning := 0
+	for d: Net.NDevice in _overlay_vteps():
+		if bool(d.vtep.get("evpn", false)) and not d.remote_macs.is_empty():
+			learning += 1
+	return learning >= 1
 
 static func _v6_router() -> Net.NDevice:
 	for d in Game.all_devices():

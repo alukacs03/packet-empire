@@ -7033,5 +7033,120 @@ static func run() -> int:
 		"challenge: there is a featured code each day, and manual codes always work offline")
 	Challenge.active = {}
 
+	# --- VXLAN and EVPN-lite: one segment over a routed network ---
+	var vx_rack := Game.add_rack(Vector2i(82, 1))
+	var vx_rack2 := Game.add_rack(Vector2i(83, 1))
+	var vx_leaf1 := Game.new_device("sw-24")
+	var vx_leaf2 := Game.new_device("sw-24")
+	var vx_spine := Game.new_device("rtr-edge")
+	var vx_a := Game.new_device("srv-1")
+	var vx_b := Game.new_device("srv-1")
+	vx_rack.slots[0] = vx_leaf1
+	vx_rack.slots[1] = vx_a
+	vx_rack2.slots[0] = vx_leaf2
+	vx_rack2.slots[1] = vx_b
+	var vx_rack3 := Game.add_rack(Vector2i(84, 1))
+	vx_rack3.slots[0] = vx_spine
+	Game.connect_ifaces(vx_a.ifaces[0], vx_leaf1.ifaces[0])
+	Game.connect_ifaces(vx_b.ifaces[0], vx_leaf2.ifaces[0])
+	Game.connect_ifaces(vx_leaf1.ifaces[1], vx_spine.ifaces[0])
+	Game.connect_ifaces(vx_leaf2.ifaces[1], vx_spine.ifaces[1])
+	# the tenant lives in VLAN 50 on both leaves, and the two leaves are only
+	# joined by a routed underlay: without an overlay this cannot work
+	# the underlay rides its own VLAN on each leaf, terminated on an SVI, which
+	# is how an L3 switch does routing
+	for vx_sw: Net.NDevice in [vx_leaf1, vx_leaf2]:
+		Game.add_vlan(vx_sw, 50, "tenant")
+		Game.add_vlan(vx_sw, 60, "underlay")
+		vx_sw.ifaces[0].mode = "access"
+		vx_sw.ifaces[0].untagged_vlan = 50
+		vx_sw.ifaces[1].mode = "access"
+		vx_sw.ifaces[1].untagged_vlan = 60
+	var vx_svi1 := Game.add_svi(vx_leaf1, 60)
+	var vx_svi2 := Game.add_svi(vx_leaf2, 60)
+	Game.add_ip(vx_svi1, "10.200.1.2/30")
+	Game.add_ip(vx_spine.ifaces[0], "10.200.1.1/30")
+	Game.add_ip(vx_svi2, "10.200.2.2/30")
+	Game.add_ip(vx_spine.ifaces[1], "10.200.2.1/30")
+	Game.add_static_route(vx_leaf1, "10.200.2.0", 30, "10.200.1.1")
+	Game.add_static_route(vx_leaf2, "10.200.1.0", 30, "10.200.2.1")
+	Game.add_ip(vx_a.ifaces[0], "192.168.50.10/24")
+	Game.add_ip(vx_b.ifaces[0], "192.168.50.11/24")
+	Sim.flush_learned_state()
+	check(Sim.ping(vx_leaf1, "10.200.2.2")["ok"],
+		"vxlan: the underlay routes between the two leaves")
+	check(not Sim.ping(vx_a, "192.168.50.11")["ok"],
+		"vxlan: the tenant cannot cross a routed network without an overlay")
+	var vx_c1 := CLI.new_session(vx_leaf1)
+	var vx_c2 := CLI.new_session(vx_leaf2)
+	for vx_cli: CLI.Session in [vx_c1, vx_c2]:
+		vx_cli.exec("en")
+		vx_cli.exec("conf t")
+	check(vx_c1.exec("vxlan source 10.200.1.2") == "" \
+			and vx_c1.exec("vxlan vlan 50 vni 5000") == "" \
+			and vx_c1.exec("vxlan peer 10.200.2.2") == "",
+		"vxlan: a VTEP is a source address, a VLAN-to-VNI mapping and a peer")
+	check(vx_c1.exec("vxlan vlan 99 vni 9900").contains("not on this switch"),
+		"vxlan: you cannot map a VLAN the switch does not carry")
+	vx_c2.exec("vxlan source 10.200.2.2")
+	vx_c2.exec("vxlan vlan 50 vni 5000")
+	vx_c2.exec("vxlan peer 10.200.1.2")
+	Sim.flush_learned_state()
+	check(Sim.ping(vx_a, "192.168.50.11")["ok"],
+		"vxlan: with the overlay up, the tenant is one segment again")
+	check(String(vx_leaf1.remote_macs.get(50, {}).get(vx_b.ifaces[0].mac, "")) == "10.200.2.2",
+		"vxlan: what came out of the tunnel is remembered as being behind that VTEP")
+	check(vx_c1.exec("show vxlan").contains("5000") and vx_c1.exec("show vxlan").contains("BEHIND VTEP"),
+		"vxlan: the mapping and the remote addresses are visible from the console")
+	# a VNI nobody carries is dropped rather than leaked into another tenant
+	vx_c2.exec("vxlan vlan 50 vni 5001")
+	Sim.flush_learned_state()
+	vx_leaf1.remote_macs = {}
+	vx_leaf2.remote_macs = {}
+	check(not Sim.ping(vx_a, "192.168.50.11")["ok"],
+		"vxlan: a mismatched VNI is dropped, not delivered to the wrong tenant")
+	vx_c2.exec("vxlan vlan 50 vni 5000")
+	Sim.flush_learned_state()
+	# EVPN-lite: the far end learns without anybody flooding to it
+	vx_leaf1.remote_macs = {}
+	vx_leaf2.remote_macs = {}
+	vx_c1.exec("vxlan evpn")
+	vx_c2.exec("vxlan evpn")
+	check(bool(vx_leaf1.vtep["evpn"]),
+		"evpn: the control plane is a setting on the VTEP, not a separate box")
+	Sim.ping(vx_a, "192.168.50.10")  # anything that makes leaf1 learn its own port
+	Sim.flush_learned_state()
+	Sim.ping(vx_a, "192.168.50.11")
+	check(String(vx_leaf2.remote_macs.get(50, {}).get(vx_a.ifaces[0].mac, "")) == "10.200.1.2",
+		"evpn: a locally learned address is advertised to the other VTEPs")
+	Sim.evpn_advertise(vx_leaf1, 50, vx_a.ifaces[0].mac, true)
+	check(not vx_leaf2.remote_macs.get(50, {}).has(vx_a.ifaces[0].mac),
+		"evpn: and withdrawn again when it is no longer there")
+
+	# the contract that only closes when the overlay is genuinely built
+	var ov := _contract("overlay_tenant")
+	check(not Game.try_complete_contract(ov),
+		"overlay lab: the job is not done by having the commands typed somewhere")
+	for vx_sw2: Net.NDevice in [vx_leaf1, vx_leaf2]:
+		Game.add_vlan(vx_sw2, 70, "turul")
+		vx_sw2.ifaces[2].mode = "access"
+		vx_sw2.ifaces[2].untagged_vlan = 70
+	Game.add_vlan(vx_leaf1, 71, "second tenant")
+	var ov_a := Game.new_device("srv-1")
+	var ov_b := Game.new_device("srv-1")
+	var ov_rack := Game.add_rack(Vector2i(85, 1))
+	ov_rack.slots[0] = ov_a
+	ov_rack.slots[1] = ov_b
+	Game.connect_ifaces(ov_a.ifaces[0], vx_leaf1.ifaces[2])
+	Game.connect_ifaces(ov_b.ifaces[0], vx_leaf2.ifaces[2])
+	Game.add_ip(ov_a.ifaces[0], "192.168.70.10/24")
+	Game.add_ip(ov_b.ifaces[0], "192.168.70.11/24")
+	vx_c1.exec("vxlan vlan 70 vni 7000")
+	vx_c2.exec("vxlan vlan 70 vni 7000")
+	Sim.flush_learned_state()
+	Sim.ping(ov_a, "192.168.70.11")
+	check(Game.try_complete_contract(ov),
+		"overlay lab: underlay, one VNI across two leaves, an unmapped neighbour and EVPN learning")
+
 	print("---- %d failures" % fails)
 	return fails

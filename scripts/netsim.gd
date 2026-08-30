@@ -1297,7 +1297,11 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			mf["vlan"] = 0 if o2.mode == "access" else vlan
 			_tx(o2, mf)
 		return
+	var was_local: Net.Iface = dev.mac_table[vlan].get(frame["src"])
 	dev.mac_table[vlan][frame["src"]] = in_if
+	if was_local != in_if and String(frame.get("vxlan_from", "")) == "":
+		# newly learned behind a local port: tell the other VTEPs about it
+		evpn_advertise(dev, vlan, String(frame["src"]))
 	if in_if.mlag > 0:
 		# the pair keeps one view of the world: whatever one member learns,
 		# the other must know about, pointing at its own side of the bundle
@@ -1318,6 +1322,8 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			return
 		if frame["dst"] == BCAST:
 			_host_rx(dev, svi, frame)  # e.g. ARP for the gateway; still flooded below
+	# VXLAN: this VLAN may extend over the routed network to other switches
+	_vxlan_tx(dev, in_if, vlan, frame)
 	var known: Net.Iface = dev.mac_table[vlan].get(frame["dst"])
 	if known != null and known.mlag > 0 and not _mlag_live(known):
 		known = mlag_peerlink(dev)  # our leg of the bundle is gone: go via the peer
@@ -1514,6 +1520,10 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 					if recs[nm] == l4["q"]:
 						_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"], "answer": nm, "id": l4["id"]})
 						break
+		elif l4["proto"] == "vxlan":
+			_vxlan_rx(dev, String(p["src_ip"]), l4)
+		elif l4["proto"] == "evpn":
+			_evpn_rx(dev, String(p["src_ip"]), l4)
 		elif l4["proto"] == "dns-resp":
 			_dns_results.append(l4)
 		elif l4["proto"] == "dhcp-relay" and l4["op"] == "discover":
@@ -1701,3 +1711,91 @@ static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 			if Net.addr_eq(cidr.split("/")[0], ip):
 				return true
 	return false
+
+
+## ---------- VXLAN: a layer 2 segment carried over the routed network ----------
+
+static func vtep_vni(dev: Net.NDevice, vlan: int) -> int:
+	return int(dev.vtep.get("map", {}).get(vlan, 0))
+
+static func _vxlan_tx(dev: Net.NDevice, in_if: Net.Iface, vlan: int, frame: Dictionary) -> void:
+	if dev.vtep.is_empty() or String(dev.vtep.get("src", "")) == "":
+		return
+	var vni := vtep_vni(dev, vlan)
+	if vni == 0:
+		return
+	if String(frame.get("vxlan_from", "")) != "":
+		return  # it arrived over the overlay: it does not go back out over it
+	var payload := {"proto": "vxlan", "vni": vni, "frame": frame.duplicate(true),
+		"id": int(frame.get("pl", {}).get("l4", {}).get("id", 0)) if frame.get("pl") is Dictionary
+			else 0}
+	var dst_mac := String(frame["dst"])
+	var known_remote: String = String(dev.remote_macs.get(vlan, {}).get(dst_mac, ""))
+	var targets: Array = []
+	if dst_mac != BCAST and known_remote != "":
+		targets.append(known_remote)  # the control plane knows exactly where it is
+	elif dst_mac == BCAST or not dev.mac_table.get(vlan, {}).has(dst_mac):
+		targets = dev.vtep.get("peers", []).duplicate()  # flood to the peers we know
+	for peer: String in targets:
+		if peer == String(dev.vtep["src"]):
+			continue
+		_send_ip(dev, peer, 64, payload)
+
+static func _vxlan_rx(dev: Net.NDevice, from_ip: String, l4: Dictionary) -> void:
+	if dev.vtep.is_empty():
+		return
+	var vni := int(l4.get("vni", 0))
+	var vlan := 0
+	for mapped_vlan: int in dev.vtep.get("map", {}):
+		if int(dev.vtep["map"][mapped_vlan]) == vni:
+			vlan = int(mapped_vlan)
+	if vlan == 0 or not dev.vlans.has(vlan):
+		return  # a VNI this switch does not carry: drop it, quietly, like real gear
+	var inner: Dictionary = l4.get("frame", {}).duplicate(true)
+	if inner.is_empty():
+		return
+	# whatever came out of the tunnel lives behind that VTEP, not behind a port
+	if not dev.remote_macs.has(vlan):
+		dev.remote_macs[vlan] = {}
+	dev.remote_macs[vlan][String(inner["src"])] = from_ip
+	inner["vxlan_from"] = from_ip
+	inner["vlan"] = vlan
+	for out_if: Net.Iface in dev.ifaces:
+		if out_if.mode == "access" and out_if.untagged_vlan == vlan and out_if.enabled:
+			var copy := inner.duplicate(true)
+			copy["vlan"] = 0
+			_tx(out_if, copy)
+	for svi: Net.Iface in dev.ifaces:
+		if svi.name == "Vlan%d" % vlan and svi.enabled:
+			_host_rx(dev, svi, inner)
+
+## ---------- EVPN-lite: telling the other VTEPs what is behind you ----------
+
+static func evpn_advertise(dev: Net.NDevice, vlan: int, mac: String, withdraw := false) -> void:
+	if dev.vtep.is_empty() or not bool(dev.vtep.get("evpn", false)):
+		return
+	var vni := vtep_vni(dev, vlan)
+	if vni == 0:
+		return
+	for peer: String in dev.vtep.get("peers", []):
+		if peer == String(dev.vtep.get("src", "")):
+			continue
+		_send_ip(dev, peer, 64, {"proto": "evpn", "op": "withdraw" if withdraw else "advertise",
+			"vni": vni, "mac": mac, "vtep": String(dev.vtep["src"])})
+
+static func _evpn_rx(dev: Net.NDevice, _from_ip: String, l4: Dictionary) -> void:
+	if dev.vtep.is_empty():
+		return
+	var vni := int(l4.get("vni", 0))
+	var vlan := 0
+	for mapped_vlan: int in dev.vtep.get("map", {}):
+		if int(dev.vtep["map"][mapped_vlan]) == vni:
+			vlan = int(mapped_vlan)
+	if vlan == 0:
+		return
+	if not dev.remote_macs.has(vlan):
+		dev.remote_macs[vlan] = {}
+	if String(l4.get("op", "")) == "withdraw":
+		dev.remote_macs[vlan].erase(String(l4["mac"]))
+	else:
+		dev.remote_macs[vlan][String(l4["mac"])] = String(l4["vtep"])

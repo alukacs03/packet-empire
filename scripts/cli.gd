@@ -174,6 +174,16 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
+			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source},
+			{"m": ["config"], "p": ["vxlan", "vlan"], "h": _cfg_vxlan_vlan},
+			{"m": ["config"], "p": ["vxlan", "peer"], "h": _cfg_vxlan_peer},
+			{"m": ["config"], "p": ["vxlan", "evpn"], "h": _cfg_vxlan_evpn},
+			{"m": ["config"], "p": ["no", "vxlan"], "h": func(_r):
+				dev.vtep = {}
+				dev.remote_macs = {}
+				Game.topology_changed.emit()
+				return ""},
+			{"m": EP, "p": ["show", "vxlan"], "h": _show_vxlan},
 			{"m": ["config"], "p": ["no", "nat64"], "h": func(_r):
 				dev.services.erase("nat64")
 				dev.nat64_flows.clear()
@@ -662,7 +672,7 @@ class EOS extends Session:
 			if d.name == other:
 				peer = d
 		if peer == null:
-			return "% no device named %s\n" % other
+			return "%% no device named %s\n" % other
 		if peer == dev or peer.type != "switch":
 			return "% the peer must be another switch\n"
 		dev.mlag_peer = peer.name
@@ -1491,6 +1501,60 @@ class EOS extends Session:
 				"discarding" if blocked else "forwarding",
 				" ".join(PackedStringArray(per))]
 		return out if any else out + "  (no switch-to-switch links)\n"
+
+	func _vtep() -> Dictionary:
+		if dev.vtep.is_empty():
+			dev.vtep = {"src": "", "peers": [], "map": {}, "evpn": false}
+		return dev.vtep
+
+	func _cfg_vxlan_source(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
+			return "% usage: vxlan source <this switch's own address>\n"
+		_vtep()["src"] = String(r[0])
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_vxlan_vlan(r: Array) -> String:
+		# vxlan vlan <id> vni <id>
+		if r.size() != 3 or String(r[1]) != "vni" or not String(r[0]).is_valid_int() \
+				or not String(r[2]).is_valid_int():
+			return "% usage: vxlan vlan <vlan-id> vni <vni>\n"
+		if not dev.vlans.has(int(r[0])):
+			return "%% vlan %s is not on this switch\n" % r[0]
+		_vtep()["map"][int(r[0])] = int(r[2])
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_vxlan_peer(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
+			return "% usage: vxlan peer <remote vtep address>\n"
+		var peers: Array = _vtep()["peers"]
+		if String(r[0]) not in peers:
+			peers.append(String(r[0]))
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_vxlan_evpn(r: Array) -> String:
+		_vtep()["evpn"] = r.is_empty() or String(r[0]) != "off"
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_vxlan(_r: Array) -> String:
+		if dev.vtep.is_empty():
+			return "vxlan is not configured on this device\n"
+		var out := "source %s   control plane %s\n" % [dev.vtep.get("src", "-"),
+			"evpn" if bool(dev.vtep.get("evpn", false)) else "flood-and-learn"]
+		out += "peers %s\n" % ", ".join(PackedStringArray(dev.vtep.get("peers", [])))
+		for v: int in dev.vtep.get("map", {}):
+			out += "vlan %-6d vni %d\n" % [v, int(dev.vtep["map"][v])]
+		var any := false
+		for v2: int in dev.remote_macs:
+			for mac: String in dev.remote_macs[v2]:
+				if not any:
+					out += "%-18s %-8s %s\n" % ["REMOTE MAC", "VLAN", "BEHIND VTEP"]
+					any = true
+				out += "%-18s %-8d %s\n" % [mac, v2, dev.remote_macs[v2][mac]]
+		return out
 
 	func _cfg_nat64(r: Array) -> String:
 		# nat64 prefix <64:ff9b::> pool <ipv4>
