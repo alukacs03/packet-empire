@@ -227,6 +227,8 @@ func show_new_game(is_demo: bool) -> void:
 		panel_box.add_child(_para("%s ran for %d cycles, earned $%d, and %s. You may take two things with you."
 			% [Legacy.epitaph.get("company", "It"), int(Legacy.epitaph.get("cycles", 0)),
 				int(Legacy.epitaph.get("earned", 0)), Legacy.epitaph.get("why", "ended")]))
+		for line: String in Legacy.epitaph.get("profile", []):
+			panel_box.add_child(_lbl("· %s" % line, 12, MUTED))
 		for entry: Dictionary in Legacy.offered:
 			var lb := Button.new()
 			lb.toggle_mode = true

@@ -236,6 +236,9 @@ var incidents: Array = []  # things worth reviewing afterwards
 const HABITS := ["saves", "documents", "windows", "tidy"]
 const HABIT_ALPHA := 0.06  # what you did today barely moves what you are
 var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
+var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
+var skill_fumbles := {}  # skill id -> how many times it went the other way
+var pending_recognition: Array = []  # lines waiting for a quiet moment
 var upstream := {}  # a live fault that is somebody else's to fix
 var last_upstream_cycle := -999
 const UPSTREAM_GAP := 60  # rare by design: this is spice, not a staple
@@ -2143,6 +2146,8 @@ func outage_open() -> bool:
 func post_status(text: String) -> String:
 	if text.strip_edges() == "":
 		return "say something useful"
+	if outage_open() or upstream_active():
+		Skills.observe("incident_comms")
 	status_posts.push_front({"cycle": cycle, "text": text.strip_edges()})
 	if status_posts.size() > 12:
 		status_posts.pop_back()
@@ -2656,6 +2661,7 @@ func upstream_tick() -> void:
 			% upstream["party"])
 	else:
 		reputation = maxi(0, reputation - 8)
+		Skills.fumble("incident_comms")
 		log_event("UPSTREAM CLEARED: %s is back. You said nothing for %d cycles and your customers had to ask. That is the part they will remember."
 			% [upstream["party"], cycle - int(upstream["started"])])
 	record_incident("upstream", "%s failed upstream of you for %d cycles"
@@ -2808,6 +2814,7 @@ func replay_line(entry: Dictionary) -> String:
 ## simulation draws from, or adding a business feature silently changes the
 ## outcome of an unrelated technical test.
 var _biz_rng := RandomNumberGenerator.new()
+var _fault_watch := -1  # the cycle a field fault landed
 var _biz_ready := false
 
 func biz_roll() -> float:
@@ -3029,6 +3036,7 @@ func dispute_tick() -> void:
 				% deal["customer"])
 		else:
 			reputation = maxi(0, reputation - 4)
+			Skills.fumble("change_control")
 			log_event("PREDICTED FAILURE: %s is down the way you expected. You never wrote it down, so it is yours."
 				% deal["customer"])
 		record_incident("dispute", "%s went down after overruling your advice" % deal["customer"],
@@ -3518,6 +3526,8 @@ func _field_fault() -> void:
 			log_event("FIELD: %s rebooted after a power blip: %s" % [rebooted.name,
 				"startup-config restored it." if had_startup
 				else "it had NO saved config and came back blank. Use 'write memory'!"])
+			if not had_startup:
+				Skills.fumble("saved_configs")
 			return
 	var victim: Net.Iface = candidates[randi() % candidates.size()]
 	victim.enabled = false
@@ -3602,6 +3612,7 @@ func sla_tick() -> void:
 	dispute_tick()
 	report_tick()
 	habit_tick()
+	Skills.recognition_tick()
 	upstream_tick()
 	var incidents := _security_sweep()
 	if incidents != 0:
@@ -3654,6 +3665,7 @@ func sla_tick() -> void:
 	for d in all_devices():  # transit invoices
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
+				Skills.observe("bgp_peering")
 				last_pl["transit ports"] = int(last_pl.get("transit ports", 0)) - TRANSIT_FEE
 				last_business["transit"] = int(last_business.get("transit", 0)) + TRANSIT_FEE
 				earned -= TRANSIT_FEE
@@ -3722,6 +3734,7 @@ func sla_tick() -> void:
 		refresh_candidates(true)  # the job market moves
 	if stage >= 2 and randf() < 0.25 * fault_scale():
 		_field_fault()
+		_fault_watch = cycle
 	var link_load := {}
 	var deal_links := {}
 	for deal in deals:
@@ -3753,6 +3766,8 @@ func sla_tick() -> void:
 			deal["ever_healthy"] = true
 			deal["payment_state"] = "billing"
 			if not was_healthy:
+				if first_delivery:
+					Skills.observe("service_delivery")
 				var state := "delivered" if first_delivery else "restored"
 				customer_service_changed.emit(String(deal["customer"]), state, int(deal["fee"]))
 				deal.erase("on_record")
@@ -3778,6 +3793,15 @@ func sla_tick() -> void:
 				load += int(atk["mbps"])  # the flood rides the same path
 			for l in used:
 				link_load[l] = link_load.get(l, 0) + load
+	if _fault_watch == cycle and not deals.is_empty():
+		# a link died this cycle: if every customer is still up, the redundancy
+		# the player built is what did that
+		var all_up := true
+		for deal_check in deals:
+			if bool(deal_check.get("ever_healthy", false)) and not bool(deal_check.get("healthy", false)):
+				all_up = false
+		if all_up:
+			Skills.observe("resilient_design")
 	_guided_outage_check_recovery()
 	last_link_load = link_load
 	var protected := _qos_protect(link_load, deal_links)
@@ -4147,6 +4171,8 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	Sfx.play("cable")
 	topology_changed.emit()
 	observe_habit("windows", in_maintenance())
+	if in_maintenance():
+		Skills.observe("change_window")
 	return true
 
 func disconnect_iface(i: Net.Iface) -> void:
@@ -4194,6 +4220,12 @@ func set_access_vlan(i: Net.Iface, vid: int) -> bool:
 		return false
 	i.untagged_vlan = vid
 	topology_changed.emit()
+	var vlans_here := {}
+	for other: Net.Iface in i.dev.ifaces:
+		if other.mode == "access" and int(other.untagged_vlan) > 0 and link_at(other) != null:
+			vlans_here[int(other.untagged_vlan)] = true
+	if vlans_here.size() >= 2:
+		Skills.observe("l2_isolation")
 	return true
 
 func add_ip(i: Net.Iface, cidr: String) -> bool:
@@ -4366,7 +4398,8 @@ func _serialize() -> Dictionary:
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear, "habits": habits,
-		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle, "pending_reports": pending_reports,
+		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
+		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -4686,6 +4719,9 @@ func _apply(data: Dictionary) -> void:
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
 	upstream = data.get("upstream", {})
+	skill_log = data.get("skill_log", {})
+	skill_fumbles = data.get("skill_fumbles", {})
+	pending_recognition = []
 	last_upstream_cycle = int(data.get("last_upstream_cycle", -999))
 	habits = data.get("habits", {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5})
 	pending_reports = data.get("pending_reports", [])

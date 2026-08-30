@@ -2997,6 +2997,55 @@ static func run() -> int:
 	Legacy.offered = []
 	Legacy.selected = []
 
+	# --- name the skill, and be honest about the fumbles ---
+	var sk_log := Game.skill_log.duplicate(true)
+	var sk_fumbles := Game.skill_fumbles.duplicate(true)
+	var sk_deals := Game.deals.duplicate(true)
+	Game.skill_log = {}
+	Game.skill_fumbles = {}
+	Game.pending_recognition = []
+	Game.deals = []
+	Game.events = []
+	Skills.observe("service_delivery")
+	check(int(Game.skill_log["service_delivery"]["count"]) == 1 \
+			and Game.pending_recognition == ["service_delivery"],
+		"skills: doing the thing records it, and the line waits rather than firing mid-action")
+	Game.deals = [{"id": "sk", "customer": "Down Kft", "kind": "hosting", "params": {},
+		"fee": 10, "brief": "", "load": 10, "healthy": false, "ever_healthy": true}]
+	Skills.recognition_tick()
+	check(Game.pending_recognition.size() == 1 and Game.events.is_empty(),
+		"skills: recognition never interrupts a live incident")
+	Game.deals = []
+	Skills.recognition_tick()
+	check(Game.pending_recognition.is_empty() and "LEARNED:" in String(Game.events[0]) \
+			and "service turn-up" in String(Game.events[0]),
+		"skills: once the floor is quiet it names the real-world skill, with somewhere to read more")
+	var said_events := Game.events.size()
+	Skills.observe("service_delivery")
+	Skills.recognition_tick()
+	check(Game.events.size() == said_events and int(Game.skill_log["service_delivery"]["count"]) == 2,
+		"skills: it is said once, and counted every time")
+	for _r in 2:
+		Skills.observe("service_delivery")
+	var once_profile := Skills.profile()
+	Skills.observe("l2_isolation")
+	var mixed_profile := Skills.profile()
+	check(String(once_profile[0]).begins_with("Reliably") \
+			and String(mixed_profile[1]).begins_with("Has once"),
+		"skills: doing it four times is a claim, doing it once is only a story")
+	Skills.fumble("saved_configs")
+	var honest_profile := Skills.profile()
+	check("Also has lost a running configuration" in String(honest_profile[honest_profile.size() - 1]),
+		"skills: the profile includes the parts that went badly, in the same voice")
+	var sk_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(sk_payload["skill_log"].has("service_delivery") \
+			and sk_payload["skill_fumbles"].has("saved_configs"),
+		"skills: what the player demonstrated persists with the campaign")
+	Game.skill_log = sk_log
+	Game.skill_fumbles = sk_fumbles
+	Game.pending_recognition = []
+	Game.deals = sk_deals
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

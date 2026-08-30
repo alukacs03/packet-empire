@@ -29,7 +29,7 @@ static func harvest(why: String) -> void:
 	## here comes from what actually happened, including the consolation.
 	if Game.demo or Game.cycle < 10:
 		return
-	epitaph = {"company": Game.company_name, "cycles": Game.cycle,
+	epitaph = {"company": Game.company_name, "cycles": Game.cycle, "profile": Skills.profile(),
 		"earned": int(Game.stats.get("earned", 0)), "reputation": Game.reputation,
 		"deals": int(Game.stats.get("deals", 0)), "why": why}
 	offered = []
