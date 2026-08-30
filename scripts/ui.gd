@@ -3734,6 +3734,15 @@ func _show_drill_banner() -> void:
 		c.queue_free()
 	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
 	drill_box.add_child(_label(Drill.scenario, 13, Color(0.9, 0.85, 0.8)))
+	if Game.site_count() > 1:
+		# a fault may be in the room they are not standing in, and a player who
+		# has never seen a two-site world will hunt for a switch in another city
+		var floor_names: Array = []
+		for si in Game.site_count():
+			floor_names.append(Game.site_name(si))
+		drill_box.add_child(_wrap("This network is on %d floors: %s. The switcher in the toolbar moves between them."
+			% [Game.site_count(), ", ".join(PackedStringArray(floor_names))], 12,
+			UIW.colour("warm"), 620))
 	if Drill.outcome.has("survive_ip"):
 		drill_box.add_child(_wrap("%s must still answer %s with either building out of service."
 			% [Drill.outcome["survive_ip"], Drill.outcome["from_ip"]], 13,

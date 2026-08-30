@@ -254,6 +254,31 @@ static func ui_smoke(world: Node2D) -> int:
 	Game.racks.erase(map_far)
 	Game.sites = map_sites
 
+	# a drill on two floors says so, or the player hunts for a switch that is in
+	# another city
+	var banner_sites := Game.sites.duplicate(true)
+	var banner_here := Game.current_site
+	var banner_circuits := Game.circuits.duplicate(true)
+	var banner_seed := -1
+	for b_try in range(1, 30):
+		Drill.start(3, b_try)
+		if Drill.scenario.begins_with("Two rooms"):
+			banner_seed = b_try
+			break
+		Drill.finish(false)
+	if banner_seed > 0:
+		ui._show_drill_banner()
+		var said_floors := false
+		for banner_child in ui.drill_box.get_children():
+			if banner_child is Label \
+					and String((banner_child as Label).text).contains("floors"):
+				said_floors = true
+		check(said_floors, "ui: a drill on two floors says so, and names them")
+		Drill.finish(false)
+	Game.sites = banner_sites
+	Game.current_site = banner_here
+	Game.circuits = banner_circuits
+
 	# switching language rebuilds the menu the player switched it from
 	Prefs.language = "hu"
 	Loc.language = "hu"
