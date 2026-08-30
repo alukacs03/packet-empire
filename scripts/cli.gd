@@ -2080,11 +2080,21 @@ class Linux extends Session:
 				for l in dev.logs.slice(maxi(0, dev.logs.size() - 15)):
 					out += "  %s\n" % l
 				return out if out != "" else "(no logs)\n"
+			"dns64":
+				# the same setting, reachable as its own command because that is
+				# what people go looking for
+				t = ["dns", "dns64"] + t.slice(1)
+				return exec(" ".join(PackedStringArray(t)))
 			"dns":
 				if t.size() >= 4 and t[1] == "add" and String(t[3]).is_valid_ip_address():
 					if not dev.services.has("dns"):
 						dev.services["dns"] = {"records": {}}
-					dev.services["dns"]["records"][t[2]] = t[3]
+					if Net.is_v6(String(t[3])):
+						if not dev.services["dns"].has("records6"):
+							dev.services["dns"]["records6"] = {}
+						dev.services["dns"]["records6"][t[2]] = t[3]
+					else:
+						dev.services["dns"]["records"][t[2]] = t[3]
 					if t.size() > 4 and String(t[4]).is_valid_int():
 						if not dev.services["dns"].has("ttls"):
 							dev.services["dns"]["ttls"] = {}
@@ -2099,6 +2109,20 @@ class Linux extends Session:
 					dev.services["dns"]["delegations"][t[2]] = t[3]
 					Game.topology_changed.emit()
 					return "%s delegated to %s\n" % [t[2], t[3]]
+				if t.size() >= 2 and t[1] == "dns64":
+					if not dev.services.has("dns"):
+						dev.services["dns"] = {"records": {}}
+					if t.size() == 3 and t[2] == "off":
+						dev.services["dns"]["dns64"] = {"prefix": "", "enabled": false}
+						return "dns64 disabled\n"
+					if t.size() == 3:
+						if not String(t[2]).ends_with("::") or not (String(t[2]) + "1").is_valid_ip_address():
+							return "dns64: prefix must be an IPv6 prefix ending in :: (e.g. 64:ff9b::)\n"
+						dev.services["dns"]["dns64"] = {"prefix": String(t[2]), "enabled": true}
+						return "dns64 synthesizing AAAA answers from %s\n" % t[2]
+					var cfg64: Dictionary = dev.services["dns"].get("dns64", {})
+					return "dns64: %s\n" % ("off" if not bool(cfg64.get("enabled", false))
+						else "on, prefix %s" % cfg64.get("prefix", ""))
 				if t.size() == 2 and t[1] == "flush":
 					dev.dns_cache.clear()
 					return "resolver cache cleared\n"
@@ -2120,13 +2144,25 @@ class Linux extends Session:
 					for k in recs:
 						out += "%-24s A   %-16s ttl %d\n" % [k, recs[k],
 							int(svc_d.get("ttls", {}).get(k, Sim.DEFAULT_TTL))]
+					for k6 in svc_d.get("records6", {}):
+						out += "%-24s AAAA %-15s ttl %d\n" % [k6, svc_d["records6"][k6],
+							int(svc_d.get("ttls", {}).get(k6, Sim.DEFAULT_TTL))]
+					var cfg_show: Dictionary = svc_d.get("dns64", {})
+					if bool(cfg_show.get("enabled", false)):
+						out += "dns64                    ON   prefix %s\n" % cfg_show.get("prefix", "")
 					for z in dels:
 						out += "%-24s NS  %s\n" % [z, dels[z]]
 					return out
-				return "usage: dns add <name> <ip> [ttl] | dns delegate <zone> <ns-ip> | dns list | dns cache | dns flush\n"
+				return "usage: dns add <name> <ip> [ttl] | dns delegate <zone> <ns-ip> | dns64 <prefix>|off | dns list | dns cache | dns flush\n"
 			"nslookup":
+				if t.size() == 3 and t[1] == "-6":
+					var v6addr := Sim.resolve(dev, String(t[2]), true, true)
+					if v6addr == "":
+						return "** server can't find %s: no AAAA\n" % t[2]
+					return "%s   has AAAA address %s   (%s)\n" % [t[2], v6addr,
+						Sim.last_answer_kind]
 				if t.size() != 2:
-					return "usage: nslookup <name|ip>\n"
+					return "usage: nslookup [-6] <name|ip>\n"
 				if String(t[1]).is_valid_ip_address():
 					var nm := Sim.reverse_lookup(dev, t[1])
 					if nm == "":

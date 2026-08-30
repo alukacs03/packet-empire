@@ -155,14 +155,32 @@ static func reverse_lookup(dev: Net.NDevice, ip: String) -> String:
 			return r["answer"]
 	return ""
 
-static func resolve(dev: Net.NDevice, name: String, use_cache := true) -> String:
+static var last_answer_kind := ""  # "native" | "cached" | "synthesized" | ""
+
+static func synth64(prefix: String, v4: String) -> String:
+	## A DNS64 answer is the NAT64 prefix with the IPv4 address embedded in it,
+	## which is why the result is deterministic and readable.
+	if not prefix.ends_with("::") or Net.is_v6(v4) or not v4.is_valid_ip_address():
+		return ""
+	var octets := v4.split(".")
+	if octets.size() != 4:
+		return ""
+	# the four octets become the last two groups, which is what RFC 6052 does
+	var synth := "%s%x:%x" % [prefix,
+		int(octets[0]) * 256 + int(octets[1]), int(octets[2]) * 256 + int(octets[3])]
+	return synth if synth.is_valid_ip_address() else ""
+
+static func resolve(dev: Net.NDevice, name: String, use_cache := true, want_v6 := false) -> String:
 	## DNS lookup via the device's configured resolver, following delegations
 	## the way a real resolver does, and honouring the TTL it was given.
+	last_answer_kind = ""
 	if name.is_valid_ip_address():
 		return name
+	var cache_key := ("6|" if want_v6 else "") + name
 	if use_cache:
-		var hit: Dictionary = dev.dns_cache.get(name, {})
+		var hit: Dictionary = dev.dns_cache.get(cache_key, {})
 		if not hit.is_empty() and Game.cycle < int(hit["expires"]):
+			last_answer_kind = "cached"
 			return String(hit["ip"])
 	if dev.resolver == "":
 		return ""
@@ -170,7 +188,7 @@ static func resolve(dev: Net.NDevice, name: String, use_cache := true) -> String
 	for _hop in MAX_REFERRALS:
 		_dns_id += 1
 		_dns_results = []
-		_send_ip(dev, server, 64, {"proto": "dns", "q": name, "id": _dns_id})
+		_send_ip(dev, server, 64, {"proto": "dns", "q": name, "id": _dns_id, "v6": want_v6})
 		var answered := ""
 		var referred := ""
 		var ttl := DEFAULT_TTL
@@ -182,8 +200,9 @@ static func resolve(dev: Net.NDevice, name: String, use_cache := true) -> String
 			elif r.has("answer"):
 				answered = String(r["answer"])
 				ttl = int(r.get("ttl", DEFAULT_TTL))
+				last_answer_kind = String(r.get("kind", "native"))
 		if answered != "":
-			dev.dns_cache[name] = {"ip": answered, "expires": Game.cycle + maxi(0, ttl)}
+			dev.dns_cache[cache_key] = {"ip": answered, "expires": Game.cycle + maxi(0, ttl)}
 			return answered
 		if referred == "":
 			return ""
@@ -1428,10 +1447,24 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			var svc_dns: Dictionary = dev.services.get("dns", {})
 			var recs: Dictionary = svc_dns.get("records", {})
 			var zones: Dictionary = svc_dns.get("delegations", {})
-			if recs.has(l4["q"]):
+			var want6: bool = bool(l4.get("v6", false))
+			var recs6: Dictionary = svc_dns.get("records6", {})
+			var ttl_for := int(svc_dns.get("ttls", {}).get(l4["q"], DEFAULT_TTL))
+			if want6 and recs6.has(l4["q"]):
+				# a native AAAA always wins: synthesis is a last resort
 				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"],
-					"answer": recs[l4["q"]], "id": l4["id"],
-					"ttl": int(svc_dns.get("ttls", {}).get(l4["q"], DEFAULT_TTL))})
+					"answer": recs6[l4["q"]], "id": l4["id"], "kind": "native", "ttl": ttl_for})
+			elif want6 and recs.has(l4["q"]) and bool(svc_dns.get("dns64", {}).get("enabled", false)) \
+					and synth64(String(svc_dns["dns64"].get("prefix", "")), String(recs[l4["q"]])) != "":
+				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"],
+					"answer": synth64(String(svc_dns["dns64"]["prefix"]), String(recs[l4["q"]])),
+					"id": l4["id"], "kind": "synthesized", "ttl": ttl_for})
+			elif want6:
+				pass  # no AAAA, no synthesis: the query fails honestly
+			elif recs.has(l4["q"]):
+				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"],
+					"answer": recs[l4["q"]], "id": l4["id"], "kind": "native",
+					"ttl": ttl_for})
 			elif _delegation_for(zones, String(l4["q"])) != "":
 				# not ours, but we know who to ask: that is a referral
 				_send_ip(dev, p["src_ip"], 64, {"proto": "dns-resp", "q": l4["q"],

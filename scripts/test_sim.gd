@@ -6022,6 +6022,38 @@ static func run() -> int:
 	check(dz_ccli.exec("dns flush").contains("cleared"), "dns: and cleared")
 	check(dz_rcli.exec("dns list").contains("NS"), "dns: delegations show in the zone listing")
 
+	# --- DNS64: synthesizing AAAA for an IPv4-only service ---
+	dz_ccli.exec("dns flush")
+	dz_rcli.exec("dns add legacy.example.hu 10.220.9.7")
+	check(Sim.resolve(dz_client, "legacy.example.hu", false, true) == "",
+		"dns64: an IPv4-only service has no AAAA, and the query fails honestly")
+	check(dz_rcli.exec("dns64 nonsense").contains("must be an IPv6 prefix"),
+		"dns64: a malformed prefix is refused rather than half-configured")
+	check(dz_rcli.exec("dns64 64:ff9b::").contains("synthesizing"),
+		"dns64: the resolver takes a NAT64 prefix")
+	var synth := Sim.resolve(dz_client, "legacy.example.hu", false, true)
+	check(synth == "64:ff9b::adc:907" and Sim.last_answer_kind == "synthesized",
+		"dns64: the answer is the prefix with the IPv4 address embedded, and it says so")
+	check(not Sim.ping(dz_client, synth)["ok"],
+		"dns64: naming it does not reach it: that still needs a translator")
+	dz_rcli.exec("dns add native.example.hu 10.220.9.8")
+	dz_rcli.exec("dns add native.example.hu fd00:220::8")
+	check(Sim.resolve(dz_client, "native.example.hu", false, true) == "fd00:220::8" \
+			and Sim.last_answer_kind == "native",
+		"dns64: a real AAAA always wins, and nothing is synthesized over it")
+	check(Sim.resolve(dz_client, "native.example.hu", false) == "10.220.9.8",
+		"dns64: the A record is untouched by any of this")
+	check(Sim.resolve(dz_client, "legacy.example.hu", true, true) == synth \
+			and Sim.last_answer_kind == "cached",
+		"dns64: a synthesized answer caches like any other, and says it came from cache")
+	dz_ccli.exec("dns flush")
+	check(dz_rcli.exec("dns64 off").contains("disabled") \
+			and Sim.resolve(dz_client, "legacy.example.hu", false, true) == "",
+		"dns64: disabled means disabled, with no leftover synthesis")
+	check(dz_rcli.exec("dns list").contains("AAAA"),
+		"dns64: AAAA records and the DNS64 setting are visible in the zone listing")
+	dz_rcli.exec("dns64 64:ff9b::")
+
 	# --- carrier outages and diversity ---
 	Game.circuits = []
 	Game.carrier_outage = {}
