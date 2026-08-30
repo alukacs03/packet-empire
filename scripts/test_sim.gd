@@ -7242,5 +7242,48 @@ static func run() -> int:
 		"history: a single record can be removed, and saves are not involved")
 	Game.forget_all_runs()
 
+	# --- notes on everything, and where they matter ---
+	var nt_rack := Game.add_rack(Vector2i(88, 1))
+	var nt_sw := Game.new_device("sw-8")
+	var nt_srv := Game.new_device("srv-1")
+	nt_rack.slots[0] = nt_sw
+	nt_rack.slots[1] = nt_srv
+	Game.connect_ifaces(nt_srv.ifaces[0], nt_sw.ifaces[0])
+	var nt_link := Game.link_at(nt_srv.ifaces[0])
+	Game.set_note(nt_link, "temporary, remove after the migration")
+	check(String(nt_link.note["text"]) == "temporary, remove after the migration",
+		"notes: a cable run can be labelled like anything else")
+	var nt_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	var nt_saved := false
+	for nt_row in nt_payload["links"]:
+		if nt_row.size() > 4 and String(nt_row[4].get("text", "")).contains("migration"):
+			nt_saved = true
+	check(nt_saved, "notes: the label on a run survives the save")
+	var nt_deal := {"id": "nt", "customer": "Note Kft", "kind": "hosting", "params": {},
+		"fee": 100, "brief": "", "load": 100, "healthy": false, "ever_healthy": true}
+	var nt_deals := Game.deals.duplicate(true)
+	Game.deals = [nt_deal]
+	Game.set_deal_note(nt_deal, "their finance person only answers on Tuesdays")
+	check(String(nt_deal["note"]["text"]).contains("Tuesdays") and Game.deal_note_age(nt_deal) == 0,
+		"notes: a customer can be annotated, and the note carries its age")
+	var nt_incident_notes := Game.incident_notes()
+	var nt_found := false
+	for nt_line: String in nt_incident_notes:
+		if nt_line.contains("Tuesdays"):
+			nt_found = true
+	check(nt_found,
+		"notes: when their service is down, what you wrote about them is put in front of you")
+	Game.set_note(nt_sw, "console cable is behind the rack")
+	nt_sw.status = "offline"
+	var nt_dev_notes := Game.incident_notes()
+	var nt_dev_found := false
+	for nt_line2: String in nt_dev_notes:
+		if nt_line2.contains("console cable"):
+			nt_dev_found = true
+	check(nt_dev_found,
+		"notes: and the same for a device that is in trouble right now")
+	nt_sw.status = "active"
+	Game.deals = nt_deals
+
 	print("---- %d failures" % fails)
 	return fails

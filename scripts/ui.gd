@@ -1848,6 +1848,12 @@ func _refresh_search() -> void:
 			for vid in d.vlans:
 				if q == str(vid):
 					why = "VLAN %s (%s)" % [vid, d.vlans[vid]]
+			if why == "" and q in String(d.note.get("text", "")).to_lower():
+				why = "note: %s" % d.note["text"]
+			if why == "":
+				for i2: Net.Iface in d.ifaces:
+					if q in String(i2.note.get("text", "")).to_lower():
+						why = "%s note: %s" % [i2.name, i2.note["text"]]
 		if why == "":
 			continue
 		hits += 1
@@ -2062,6 +2068,11 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+	var past_you: Array = Game.incident_notes()
+	if not past_you.is_empty():
+		ops_box.add_child(_section("WHAT YOU WROTE ABOUT THESE"))
+		for note_line: String in past_you:
+			ops_box.add_child(_wrap("  %s" % note_line, 12, Color(1.0, 0.85, 0.55), 780))
 	var stranded: Array = []
 	for d_lock: Net.NDevice in Game.all_devices():
 		if Game.locked_out(d_lock):
@@ -5073,6 +5084,24 @@ func _build_jobs_tab() -> void:
 				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
 					payment_copy],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
+			var note_row := HBoxContainer.new()
+			note_row.add_theme_constant_override("separation", 8)
+			contracts_box.add_child(note_row)
+			if not deal.get("note", {}).is_empty():
+				note_row.add_child(_wrap("      note: \"%s\" (%d cycle(s) ago)"
+					% [deal["note"]["text"], Game.deal_note_age(deal)], 12,
+					Color(0.85, 0.8, 0.6), 520))
+			var note_edit := LineEdit.new()
+			note_edit.placeholder_text = "note about this customer (for you, never read by anything)"
+			note_edit.custom_minimum_size = Vector2(320, 0)
+			note_edit.text = String(deal.get("note", {}).get("text", ""))
+			note_row.add_child(note_edit)
+			var note_save := Button.new()
+			note_save.text = "Keep"
+			note_save.pressed.connect(func() -> void:
+				Game.set_deal_note(deal, note_edit.text)
+				_refresh_contracts())
+			note_row.add_child(note_save)
 			if deal.has("dispute"):
 				var dis: Dictionary = deal["dispute"]
 				var drow := HBoxContainer.new()

@@ -109,6 +109,7 @@ class NDevice:
 class Link:
 	var a: Iface
 	var b: Iface
+	var note := {}  # player-authored {text, cycle}; the run itself, labelled
 	func _init(pa: Iface, pb: Iface) -> void:
 		a = pa
 		b = pb

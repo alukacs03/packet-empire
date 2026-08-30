@@ -3243,6 +3243,55 @@ func toggle_blanking(r: Net.Rack, idx: int) -> bool:
 	topology_changed.emit()
 	return true
 
+func deal_note_age(deal: Dictionary) -> int:
+	var note: Dictionary = deal.get("note", {})
+	return maxi(0, cycle - int(note.get("cycle", cycle))) if not note.is_empty() else 0
+
+func set_deal_note(deal: Dictionary, text: String) -> void:
+	## Customers get the same opaque note as everything else.
+	text = text.strip_edges().left(140)
+	if text == "":
+		deal.erase("note")
+	else:
+		deal["note"] = {"text": text, "cycle": cycle}
+	observe_habit("documents", text != "")
+
+func incident_notes() -> Array:
+	## Whatever past-you wrote on the things that are currently in trouble.
+	var out: Array = []
+	var seen := {}
+	var trouble: Array = []
+	for haz: Dictionary in hazards:
+		var r := _hazard_rack(String(haz["rack"]))
+		if r != null:
+			trouble.append(r)
+	for name: String in firmware_bugs:
+		for d: Net.NDevice in all_devices():
+			if d.name == name:
+				trouble.append(d)
+	for key: String in grey_faults:
+		for d2: Net.NDevice in all_devices():
+			for i: Net.Iface in d2.ifaces:
+				if iface_key(i) == key:
+					trouble.append(i)
+	for d3: Net.NDevice in all_devices():
+		if locked_out(d3) or d3.status != "active":
+			trouble.append(d3)
+	for deal in deals:
+		if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)) \
+				and not deal.get("note", {}).is_empty():
+			out.append("%s: \"%s\" (written %d cycle(s) ago)" % [deal["customer"],
+				deal["note"]["text"], deal_note_age(deal)])
+	for thing in trouble:
+		if seen.has(thing) or thing.note.is_empty():
+			continue
+		seen[thing] = true
+		var label: String = String(thing.name) if not (thing is Net.Iface) \
+			else "%s %s" % [(thing as Net.Iface).dev.name, (thing as Net.Iface).name]
+		out.append("%s: \"%s\" (written %d cycle(s) ago)" % [label, thing.note["text"],
+			note_age(thing)])
+	return out
+
 func set_note(target: Variant, text: String) -> void:
 	## Notes are deliberately opaque. No keyword, date, or promise written here
 	## ever changes the simulation; it is past-you talking to future-you.
@@ -8013,7 +8062,7 @@ func _serialize() -> Dictionary:
 			"slots": slot_names, "blanked": r.blanked.keys(), "note": r.note})
 	var link_data: Array = []
 	for l in links:
-		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
+		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name, l.note])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,
 		"last_customer_outage_cycle": last_customer_outage_cycle,
@@ -8561,7 +8610,10 @@ func _apply(data: Dictionary) -> void:
 		var a := _find_iface(by_name[ld[0]], ld[1])
 		var b := _find_iface(by_name[ld[2]], ld[3])
 		if a and b:
-			links.append(Net.Link.new(a, b))
+			var restored := Net.Link.new(a, b)
+			if ld.size() > 4 and ld[4] is Dictionary:
+				restored.note = (ld[4] as Dictionary).duplicate(true)  # the label on the run
+			links.append(restored)
 	while stage < STAGES.size() - 1 and _rack_outside_grid():
 		stage += 1  # grandfather old saves placed on the bigger legacy floor
 		log_event("Legacy floor grandfathered: you keep the %s you already built on." % STAGES[stage]["name"])
