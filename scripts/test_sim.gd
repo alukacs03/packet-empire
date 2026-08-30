@@ -2937,6 +2937,66 @@ static func run() -> int:
 	check(Sfx.last_cue == "", "sound: muting the game really does silence every cue")
 	Sfx.muted = was_muted
 
+	# --- something survives the run ---
+	Legacy.path = "user://legacy_test.json"
+	var leg_staff := Game.staff.duplicate(true)
+	var leg_refs := Game.references.duplicate(true)
+	var leg_templates := Game.templates.duplicate(true)
+	Game.staff = [{"name": "Toth Eszter", "role": "engineer", "skill": 4, "salary": 500,
+		"morale": 80, "shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.9, "documents": 0.7, "windows": 0.6, "tidy": 0.8}}]
+	Game.references = ["Balaton Zrt"]
+	Game.templates = [{"name": "edge switch", "type": "switch", "cfg": {}}]
+	Game.reputation = 70
+	Game.demo = false
+	Game.cycle = maxi(Game.cycle, 40)
+	Legacy.harvest("ran out of money")
+	var carried_ids: Array = []
+	for entry: Dictionary in Legacy.offered:
+		carried_ids.append(String(entry["id"]))
+	check("colleague" in carried_ids and "reference" in carried_ids \
+			and "runbooks" in carried_ids and "lesson" in carried_ids,
+		"legacy: a finished run leaves people, a customer, the documentation, and a lesson")
+	check(int(Legacy.epitaph["cycles"]) == Game.cycle \
+			and String(Legacy.epitaph["why"]) == "ran out of money",
+		"legacy: the company gets an epitaph describing the run that actually happened")
+	Legacy.selected = []
+	check(Legacy.carry_toggle("colleague") and Legacy.carry_toggle("reference") \
+			and not Legacy.carry_toggle("runbooks") and Legacy.selected.size() == 2,
+		"legacy: carrying is a choice with a hard limit, not an accumulation")
+	# the next run starts with them, and with nothing else
+	var fresh_money := Game.money
+	Game.staff = []
+	Game.references = []
+	Game.templates = []
+	Game.leads = []
+	Game.reputation = 50
+	Legacy.apply_carried()
+	check(Game.staff.size() == 1 and int(Game.staff[0]["skill"]) == 4 \
+			and int(Game.staff[0]["morale"]) <= 60,
+		"legacy: the colleague comes back with their skill and the fatigue you left them with")
+	check("Balaton Zrt" in Game.references and Game.reputation == 55 \
+			and Game.leads.size() == 1 and int(Game.leads[0]["size"]) < 150,
+		"legacy: the reference customer follows you as one small early contract")
+	check(Game.templates.is_empty() and Game.money == fresh_money and Legacy.selected.is_empty(),
+		"legacy: what you did not choose does not arrive, and nothing carries cash")
+	# losing badly with nothing to your name still leaves the lesson
+	Game.staff = []
+	Game.references = []
+	Game.templates = []
+	Game.blueprints = []
+	Game.rivals = []
+	Legacy.harvest("insolvent")
+	check(Legacy.offered.size() == 1 and String(Legacy.offered[0]["id"]) == "lesson",
+		"legacy: a run that leaves nothing material still leaves something to carry")
+	Game.staff = leg_staff
+	Game.references = leg_refs
+	Game.templates = leg_templates
+	Game.rivals = Rivals.spawn()
+	Legacy.epitaph = {}
+	Legacy.offered = []
+	Legacy.selected = []
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

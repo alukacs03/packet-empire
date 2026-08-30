@@ -1607,6 +1607,8 @@ func _ready() -> void:
 	if OS.get_environment("PACKET_TEST") == "1":
 		save_path = "user://save_test.json"  # never touch the real save from tests
 		slot_prefix = "user://slot_test"
+		Legacy.path = "user://legacy_test.json"
+	Legacy.load_file()
 	topology_changed.connect(Sim.flush_learned_state)
 	cycle_timer = Timer.new()
 	cycle_timer.wait_time = SLA_PERIOD
@@ -1620,12 +1622,14 @@ func _ready() -> void:
 func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	## start over from the state the game boots into, rather than trying to
 	## remember by hand which of the several dozen fields need clearing
+	Legacy.harvest("the company was wound up")  # the outgoing run, before it is gone
 	_apply(_pristine.duplicate(true))
 	company_name = company if company.strip_edges() != "" else "Packet Empire"
 	demo = is_demo
 	apply_difficulty(diff)
 	rivals = Rivals.spawn()
 	_scale_rival_aggression()
+	Legacy.apply_carried()
 	topology_changed.emit()
 
 func respond_offer(offer: Dictionary, quote: int) -> String:

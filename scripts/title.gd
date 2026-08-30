@@ -222,6 +222,25 @@ func show_new_game(is_demo: bool) -> void:
 			b.pressed.connect(func() -> void: diff = i)
 			diff_row.add_child(b)
 
+	if not is_demo and not Legacy.epitaph.is_empty():
+		panel_box.add_child(_lbl("The last company", 13, MUTED))
+		panel_box.add_child(_para("%s ran for %d cycles, earned $%d, and %s. You may take two things with you."
+			% [Legacy.epitaph.get("company", "It"), int(Legacy.epitaph.get("cycles", 0)),
+				int(Legacy.epitaph.get("earned", 0)), Legacy.epitaph.get("why", "ended")]))
+		for entry: Dictionary in Legacy.offered:
+			var lb := Button.new()
+			lb.toggle_mode = true
+			lb.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			lb.add_theme_font_size_override("font_size", 12)
+			lb.text = String(entry["label"])
+			lb.tooltip_text = String(entry["detail"])
+			lb.button_pressed = String(entry["id"]) in Legacy.selected
+			lb.toggled.connect(func(on: bool) -> void:
+				var taken: bool = Legacy.carry_toggle(String(entry["id"]))
+				if on and not taken:
+					lb.set_pressed_no_signal(false))
+			panel_box.add_child(lb)
+
 	var go := Button.new()
 	go.text = "Start" if not is_demo else "Start the demo"
 	go.custom_minimum_size = Vector2(0, 40)

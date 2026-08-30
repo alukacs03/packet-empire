@@ -203,6 +203,25 @@ static func kiskacsa_referral_lead() -> Dictionary:
 		"story_referral": "kiskacsa",
 	}
 
+static func legacy_referral_lead(customer: String) -> Dictionary:
+	## The customer who followed you. Small on purpose: it opens a door, it
+	## does not hand over the first act of the game.
+	return {
+		"id": "lead_legacy_%s" % customer.to_lower().replace(" ", "_"),
+		"customer": customer,
+		"kind": "hosting",
+		"ctype": "smb",
+		"stage": "lead",
+		"heard": "they were your customer at the last company and followed you here",
+		"size": 90,
+		"sla": 0,
+		"params": {"ip": "10.60.10.10"},
+		"load": 90,
+		"public": false,
+		"ttl": 14,
+		"legacy": true,
+	}
+
 static func cost_to_serve(lead: Dictionary) -> Dictionary:
 	## An honest estimate, not an oracle. It amortises unavoidable hardware over
 	## the initial 18-cycle term and leaves the customer's hidden budget hidden.
