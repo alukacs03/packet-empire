@@ -8117,6 +8117,15 @@ static func run() -> int:
 		"score: and the small hours sound like the small hours")
 	var sc_muted: bool = Sfx.muted
 	Sfx.muted = true
+	# the worst pairing on the map: light-cased starter gear, dark model ink
+	var lite_fill := Color(UIW.MODEL_VISUALS["sw-lite"]["base"]).darkened(0.30)
+	var lite_ink: Color = UIW.readable_on(lite_fill, Color(UIW.MODEL_VISUALS["sw-lite"]["ink"]))
+	check(absf(lite_ink.get_luminance() - lite_fill.get_luminance()) >= 0.32,
+		"map: starter gear is readable on its own card")
+	var dark_ink: Color = UIW.readable_on(Color(UIW.MODEL_VISUALS["sw-8"]["base"]).darkened(0.30),
+		Color(UIW.MODEL_VISUALS["sw-8"]["ink"]))
+	check(dark_ink == Color(UIW.MODEL_VISUALS["sw-8"]["ink"]),
+		"map: a model that already contrasts keeps its own ink")
 	check(Sfx.mood_for({"incident": true, "heat": true}) == "incident",
 		"score: a real incident outranks the weather")
 	check(Sfx.mood_for({"heat": true}) == "heat" \

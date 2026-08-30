@@ -303,6 +303,15 @@ const MODEL_VISUALS := {
 	"crac-1": {"base": Color("233c4b"), "accent": Color("70c8ff"), "ink": Color("edfaff"), "mark": "cooling"},
 }
 
+static func readable_on(fill: Color, preferred: Color) -> Color:
+	## Text is chosen against what it lands on. A model identity keeps its ink
+	## wherever the two are far enough apart, and falls back to plain black or
+	## white where they are not, which is how the light-cased starter gear
+	## ended up writing dark grey on a dark olive card.
+	if absf(preferred.get_luminance() - fill.get_luminance()) >= 0.32:
+		return preferred
+	return Color("0b1016") if fill.get_luminance() > 0.42 else Color("eef4f7")
+
 static func model_visual(model: String) -> Dictionary:
 	return MODEL_VISUALS.get(model, {"base": colour("surface_raised"),
 		"accent": colour("info"), "ink": colour("text_strong"), "mark": "open"})
@@ -600,15 +609,16 @@ class TopoMap extends Control:
 			var rect: Rect2 = _nodes[dev]
 			var identity: Dictionary = UIW.model_visual(dev.model)
 			var col: Color = identity["accent"]
-			draw_rect(rect, Color(identity["base"]).darkened(0.30))
+			var fill := Color(identity["base"]).darkened(0.30)
+			draw_rect(rect, fill)
 			draw_rect(Rect2(rect.position, Vector2(5, rect.size.y)), col)
 			draw_rect(rect, col if dev.status == "active" else UIW.colour("danger"), false, 1.5)
 			draw_circle(rect.position + Vector2(rect.size.x - 16, 14), 3.5,
 				UIW.colour("success") if dev.status == "active" else UIW.colour("danger"))
-			var ink: Color = identity["ink"]
+			var ink := UIW.readable_on(fill, Color(identity["ink"]))
 			draw_string(_mono, rect.position + Vector2(13, 17), dev.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ink)
 			draw_string(_mono, rect.position + Vector2(13, 32), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
-				ink.darkened(0.20) if ink.get_luminance() > 0.55 else ink.lightened(0.35))
+				ink.lerp(fill, 0.28))
 		# legend
 		draw_rect(Rect2(0, size.y - 58, size.x, 58), Color("0d1d31"))
 		draw_line(Vector2(0, size.y - 58), Vector2(size.x, size.y - 58),
