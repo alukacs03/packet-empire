@@ -7993,6 +7993,53 @@ static func run() -> int:
 	Game.crates = fl_crates
 	Game.packaging = fl_packaging
 	Game.hazards = fl_hazards
+
+	# --- somebody is on the phone ---
+	var ph_deals := Game.deals.duplicate(true)
+	Game.reputation = 60
+	var ph_deal := {"id": "ph", "customer": "Fonix Klinika", "ctype": "smb", "kind": "hosting",
+		"params": {}, "fee": 150, "brief": "", "load": 150, "healthy": false,
+		"ever_healthy": true, "cycles": 12, "up_cycles": 10, "loyalty": 0.7, "missed": 1}
+	Game.deals = [ph_deal]
+	Game.call_tick()
+	check(not ph_deal.has("call"),
+		"the call: they do not ring the moment something blinks")
+	ph_deal["missed"] = 2
+	Game.call_tick()
+	check(ph_deal.has("call") and String(ph_deal["call"]["words"]) != "",
+		"the call: after a couple of cycles down, somebody rings, in their own words")
+	Game.call_tick()
+	check(int(ph_deal["call"]["raised"]) == Game.cycle,
+		"the call: and rings once, not every cycle")
+	check(Game.answer_call(ph_deal, "shrug") != "",
+		"the call: there are three things you can say and no others")
+	var ph_missed := int(ph_deal["missed"])
+	check(Game.answer_call(ph_deal, "honest") == "" and not ph_deal.has("call") \
+			and int(ph_deal["missed"]) < ph_missed and String(ph_deal["last_answer"]) == "honest",
+		"the call: telling them what you know costs nothing and buys a little patience")
+	# a promise buys more, and costs more
+	ph_deal["missed"] = 2
+	ph_deal["call"] = {"words": "again?", "raised": Game.cycle}
+	check(Game.answer_call(ph_deal, "promise") == "" and ph_deal.has("promised_by") \
+			and int(ph_deal["missed"]) == 0,
+		"the call: promising a time buys real patience now")
+	var rep_promise := Game.reputation
+	var loyal_promise: float = float(ph_deal["loyalty"])
+	Game.cycle = int(ph_deal["promised_by"]) + 1
+	Game.call_tick()
+	check(not ph_deal.has("promised_by") and Game.reputation < rep_promise \
+			and float(ph_deal["loyalty"]) < loyal_promise and int(ph_deal["missed"]) > 0,
+		"the call: and missing it costs more than never having promised")
+	# keeping it is worth something too
+	ph_deal["healthy"] = true
+	ph_deal["promised_by"] = Game.cycle + 2
+	var rep_keep := Game.reputation
+	Game.call_tick()
+	check(not ph_deal.has("promised_by") and Game.reputation > rep_keep,
+		"the call: being back inside the window you promised is worth saying you did")
+	check(ph_deal["said"].has("honest") and ph_deal["said"].has("promise"),
+		"the call: what you said is remembered, and travels with the customer")
+	Game.deals = ph_deals
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

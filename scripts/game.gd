@@ -262,6 +262,7 @@ var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
 var lockout_state := {}  # device name -> was it unreachable last cycle
 var grey_faults := {}  # "device|iface" -> {kind, since}: up, and lying
+var calls: Array = []  # customers on the phone, waiting for an answer
 var tickets: Array = []  # what customers say, which is not what is wrong
 var _ticket_seq := 0
 var confirm_commits := {}  # device name -> {cfg, due}: revert unless somebody confirms
@@ -1463,6 +1464,87 @@ func _maybe_grey_fault() -> void:
 	if cable_debt > 0 and biz_roll() < 0.5:
 		kind = "one_way"  # the improvised lead somebody put in at 2am
 	inject_grey_fault(victim, kind)
+
+## Somebody rings while you are still working out what is wrong. Three answers,
+## all defensible, and the one you give is remembered.
+const CALL_ANSWERS := [
+	{"id": "honest", "label": "Tell them what you know so far",
+		"blurb": "Costs nothing, buys a little patience, and is true."},
+	{"id": "promise", "label": "Promise them a time",
+		"blurb": "Buys real patience now, and costs double if you miss it."},
+	{"id": "callback", "label": "Say you will call back",
+		"blurb": "Cheapest thing to say, and the worst thing to have said if this drags."},
+]
+
+func _call_words(deal: Dictionary) -> String:
+	var biz := Market.business_for(deal)
+	var arc := story_arc(story_key(String(deal.get("customer", ""))))
+	if not arc.is_empty() and int(arc.get("outages", 0)) > 2:
+		return "This is the third time. I am not asking you to grovel, I am asking what is happening."
+	return "%s What do I tell people?" % String(biz["down"])
+
+func maybe_call(deal: Dictionary) -> void:
+	## They ring when it has gone on long enough to be somebody's problem, and
+	## only once per outage.
+	if int(deal.get("missed", 0)) != 2 or deal.has("call"):
+		return
+	deal["call"] = {"words": _call_words(deal), "raised": cycle}
+	log_event("THE PHONE: %s is on the line about their service." % deal["customer"])
+	Sfx.play("alert")
+
+func answer_call(deal: Dictionary, answer: String) -> String:
+	var call: Dictionary = deal.get("call", {})
+	if call.is_empty():
+		return "nobody is on the phone"
+	var known := false
+	for option: Dictionary in CALL_ANSWERS:
+		if String(option["id"]) == answer:
+			known = true
+	if not known:
+		return "that is not one of the things you can say"
+	deal.erase("call")
+	deal["last_answer"] = answer
+	var said: Array = deal.get("said", [])
+	said.append(answer)
+	deal["said"] = said
+	match answer:
+		"honest":
+			deal["missed"] = maxi(0, int(deal.get("missed", 0)) - 1)
+			deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.03)
+			log_event("YOU SAID: what you actually knew. %s will wait a little longer for that."
+				% deal["customer"])
+		"promise":
+			deal["missed"] = maxi(0, int(deal.get("missed", 0)) - 2)
+			deal["promised_by"] = cycle + 3
+			log_event("YOU SAID: it will be back within three cycles. %s wrote that down."
+				% deal["customer"])
+		"callback":
+			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.05)
+			log_event("YOU SAID: you would call back. %s is still waiting to hear from somebody."
+				% deal["customer"])
+	return ""
+
+func call_tick() -> void:
+	## A promise is only worth what it costs to miss it.
+	for deal in deals:
+		if bool(deal.get("healthy", false)):
+			if deal.has("promised_by") and cycle <= int(deal["promised_by"]):
+				deal.erase("promised_by")
+				deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.12)
+				reputation = mini(100, reputation + 2)
+				log_event("KEPT IT: %s was back inside the window you promised them."
+					% deal["customer"])
+			deal.erase("promised_by")
+			continue
+		maybe_call(deal)
+		if deal.has("promised_by") and cycle > int(deal["promised_by"]):
+			deal.erase("promised_by")
+			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.25)
+			reputation = maxi(0, reputation - 6)
+			deal["missed"] = int(deal.get("missed", 0)) + 2
+			log_event("BROKEN PROMISE: you told %s three cycles. It has been longer, and they heard it from you rather than found it out."
+				% deal["customer"])
+			record_incident("promise", "a repair time promised to %s was missed" % deal["customer"])
 
 const TICKET_AREAS := ["network", "power", "customer side", "upstream"]
 const TICKET_WORDS := {
@@ -7554,6 +7636,7 @@ func sla_tick() -> void:
 	remote_hands_tick()
 	lockout_tick()
 	ticket_tick()
+	call_tick()
 	remediation_tick()
 	_maybe_grey_fault()
 	receiving_tick()

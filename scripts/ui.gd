@@ -5210,6 +5210,31 @@ func _build_jobs_tab() -> void:
 				"%s: %s   $%d/cycle%s" % [deal["customer"], Market.label_for(deal["kind"]), int(deal["fee"]),
 					payment_copy],
 				14, Color(0.55, 0.85, 0.62) if ok else Color(0.95, 0.6, 0.45)))
+			if deal.has("call"):
+				# somebody is on the phone: it waits here rather than interrupting
+				var call_panel := UIW.style_panel(PanelContainer.new(), "console", "md")
+				contracts_box.add_child(call_panel)
+				var call_box := VBoxContainer.new()
+				call_box.add_theme_constant_override("separation", UIW.space("sm"))
+				call_panel.add_child(call_box)
+				call_box.add_child(_label("THE PHONE  /  %s" % String(deal["customer"]).to_upper(),
+					12, UIW.colour("warm")))
+				call_box.add_child(_wrap("“%s”" % deal["call"]["words"], 14,
+					UIW.colour("text_strong"), 620))
+				var call_row := HBoxContainer.new()
+				call_row.add_theme_constant_override("separation", 8)
+				call_box.add_child(call_row)
+				for option: Dictionary in Game.CALL_ANSWERS:
+					var ob2 := Button.new()
+					ob2.text = String(option["label"])
+					ob2.tooltip_text = String(option["blurb"])
+					ob2.pressed.connect(func() -> void:
+						Game.answer_call(deal, String(option["id"]))
+						_refresh_contracts())
+					call_row.add_child(ob2)
+			if deal.has("promised_by"):
+				contracts_box.add_child(_label("      you promised them it would be back by cycle %d"
+					% int(deal["promised_by"]), 12, Color(1.0, 0.82, 0.5)))
 			var note_row := HBoxContainer.new()
 			note_row.add_theme_constant_override("separation", 8)
 			contracts_box.add_child(note_row)
