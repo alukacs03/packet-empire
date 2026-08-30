@@ -65,6 +65,11 @@ The network is half the job. The other half is the company around it:
   time; blame after a human outage, which decides who reports the next one.
   When nobody is on shift and something is live, you can phone somebody at
   three in the morning: it costs a call-out fee and it costs their morale.
+- **Proving it.** A failover test you book, announced ahead so it can be
+  prepared for: the upstream goes away on purpose and the result is judged on
+  whether customers noticed. Strict-tier customers ask for it in writing, an
+  auditor asks when it last passed, and a shift that ends leaves a handover
+  for the one coming in, which costs you if nobody reads it.
 - **A room that shows how it is run.** Tidiness is read off real things
   (blanked gaps, labelled ports, saved configurations) and the floor and the
   cabinets wear it: undressed leads, a carton nobody broke down, a cup on the
