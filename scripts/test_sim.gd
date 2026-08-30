@@ -3483,6 +3483,11 @@ static func run() -> int:
 	Game.best_outage_streak = 0
 	check(Game.best_streak() >= Game.cycles_since_customer_outage(),
 		"trend: the record is never behind the streak you are already having")
+	var tr_room := false
+	for tr_l in Game.trend_read():
+		if String(tr_l).begins_with("The room reads as"):
+			tr_room = true
+	check(tr_room, "trend: it says what the room itself looks like, which is where the player is")
 	check(tr_lines.size() >= 4 and String(tr_lines[0]).begins_with("Reliability:"),
 		"trend: the panel reads reliability, the floor, the documentation and the habits")
 	check(Game._trend_word(0.9, 0.4, true) == "getting better" \

@@ -1907,6 +1907,15 @@ func trend_read() -> Array:
 		out.append("What the team copies from you: %s most (%d%%), %s least (%d%%)." % [
 			best_habit, int(float(habits[best_habit]) * 100.0),
 			worst_habit, int(float(habits[worst_habit]) * 100.0)])
+	# the four above are also what the room itself looks like, which is worth
+	# saying out loud, because the floor is where the player actually is
+	var settled := room_maturity()
+	var room_word := "still new: nothing about it says anybody has been here long"
+	if settled >= 0.6:
+		room_word = "settled: the aisle is walked clean and the matting is down"
+	elif settled >= 0.35:
+		room_word = "starting to look kept: there is a walked aisle down the middle"
+	out.append("The room reads as %s." % room_word)
 	return out
 
 func read_handover() -> void:
