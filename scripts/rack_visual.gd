@@ -75,6 +75,33 @@ func _front_quad(s: Vector2, e: Vector2, up: Vector2, x0: float, x1: float,
 		_front_point(s, e, up, x1, y1), _front_point(s, e, up, x0, y1),
 	])
 
+const LEAD_COLOURS := [Color("2f6f8f"), Color("8a5a3c"), Color("5f7a3c"), Color("7a3c58")]
+
+func _draw_loose_leads(e: Vector2, s: Vector2, up: Vector2) -> void:
+	## A cabinet nobody dresses wears it: patch leads left hanging down the
+	## side, as many as the tidiness score is short by. Everything is derived
+	## from the cabinet name, so the mess stands still.
+	var slack := 1.0 - Game.rack_tidiness(rack)
+	var count := int(round(clampf(slack, 0.0, 1.0) * 5.0))
+	if count <= 0:
+		return
+	var seed_h := hash(rack.name)
+	for i in count:
+		var h := (seed_h >> (i * 3)) & 0xff
+		# down the near-right face, clear of the badge and the note tab
+		var along := 0.22 + float(h % 5) * 0.14
+		var top := (s.lerp(e, along)) + up * (0.32 + float((h >> 3) % 4) * 0.11)
+		var drop := 16.0 + float((h >> 5) % 5) * 7.0
+		var sway := 5.0 + float(h % 4) * 3.5
+		var col: Color = LEAD_COLOURS[(h + i) % LEAD_COLOURS.size()]
+		var curve := PackedVector2Array()
+		for k in 7:
+			var t := float(k) / 6.0
+			curve.append(top + Vector2(sway * sin(t * PI) * (1.0 if i % 2 == 0 else -1.0),
+				drop * t))
+		draw_polyline(curve, Color(col, 0.85), 1.6)
+		draw_circle(curve[curve.size() - 1], 1.4, Color(col.lightened(0.25), 0.9))
+
 func _draw() -> void:
 	var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)
 	var base := Color("493f3a").lerp(Color("294b67"), progress)
@@ -222,6 +249,7 @@ func _draw() -> void:
 			Color("67552c"), 1.0)
 		draw_line(paper.position + Vector2(3, 11), paper.position + Vector2(10, 11),
 			Color("67552c"), 1.0)
+	_draw_loose_leads(e, s, up)
 	# a cabinet with something actually happening in it says so on the cabinet
 	for haz: Dictionary in Game.hazards:
 		if String(haz.get("rack", "")) != rack.name:

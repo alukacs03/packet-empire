@@ -162,6 +162,20 @@ func _shoot_all() -> void:
 			Game.stage = Game.STAGES.size() - 1
 			rebuild_racks()
 			queue_redraw()],
+		["floor_untidy", func() -> void:
+			# a cabinet nobody dresses, next to one somebody does
+			Game.stage = 0
+			rebuild_racks()
+			Game.cycle = 1
+			if Game.racks.size() > 1:
+				var kept: Net.Rack = Game.racks[1]
+				for slot_i in Net.Rack.SLOTS:
+					if kept.slots[slot_i] == null:
+						kept.blanked[slot_i] = true
+				var loose: Net.Rack = Game.racks[0]
+				loose.blanked = {}
+			Game.topology_changed.emit()
+			$Floor.queue_redraw()],
 		["floor_summer", func() -> void:
 			# the season the cooling finds out about, with the borrowed fan
 			Game.stage = 0
