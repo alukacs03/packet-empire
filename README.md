@@ -164,6 +164,15 @@ The simulation layer (`net.gd`, `netsim.gd`, `cli.gd`, `cli_ros.gd`,
 be lifted into a different game wholesale. `docs/REUSE.md` lists exactly what
 a host game has to provide.
 
+## Recording a showcase
+
+`./run_film.sh /tmp/film packet-empire.mp4` plays a scripted tour of the game
+and records every rendered frame with a caption strip: the floor and the people
+on it, cabinets that wear their own tidiness, a second building with its own
+colour and its own dock, the map, a booked failover test, the phone ringing out
+of hours, the handover, an incident spanning two rooms, and the trend read. It
+needs ffmpeg; the frames are deleted afterwards.
+
 ## Tests
 
 ```sh

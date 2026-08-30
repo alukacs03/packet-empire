@@ -1,4 +1,8 @@
 extends Node2D
+
+## The film harness is preloaded rather than autoloaded: it only exists for
+## PACKET_FILM runs and has no business in a player's build.
+const Film := preload("res://scripts/film.gd")
 ## Floor-level interaction: place racks, open rack view, draw inter-rack cables.
 
 enum Mode { SELECT, PLACE_RACK }
@@ -21,13 +25,18 @@ func _ready() -> void:
 		return
 	ui = UILayer.new()
 	add_child(ui)
-	add_child(Techs.new())
+	var crew_node := Techs.new()
+	crew_node.name = "Techs"  # $Techs has to resolve for the harnesses
+	add_child(crew_node)
 	Sfx.install(self)
 	Sfx.muted = not Prefs.sound
 	get_tree().root.content_scale_factor = Prefs.ui_scale
 	Game.topology_changed.connect(queue_redraw)
 	if OS.get_environment("PACKET_SHOT") != "":
 		_shoot_all.call_deferred()
+		return
+	if Film.active():
+		_film_all.call_deferred()
 		return
 	Game.topology_changed.connect(_site_watch)
 	show_title()
@@ -73,6 +82,167 @@ func _continue(slot: int) -> void:
 		return
 	_leave_title()
 
+func _film_all() -> void:
+	## PACKET_FILM=<dir>: record the game running, with captions, then quit.
+	## The scenes are the same fixtures the stills use, held long enough for the
+	## room to move.
+	var dir := OS.get_environment("PACKET_FILM")
+	Game.history_path = "user://run_history_film.json"
+	Film.begin(dir)
+	Film._install_caption(self)
+	SimTests.demo_world()
+	rebuild_racks()
+	# a film is not an onboarding: every tool is available and nothing pops up
+	# over the shot to introduce itself
+	Prefs.show_everything = true
+	Game.feature_intros_seen = Game.DISCOVERY_FEATURES.duplicate()
+	ui._dismiss_unlock_intro()
+	ui._refresh_feature_discovery()
+	Game.set_speed(1)
+	show_title()
+	Film.say("PACKET EMPIRE", "A datacenter you run, on a network that actually works")
+	await Film.hold(self, 3.0)
+	title.visible = false
+	ui.visible = true
+	ui.close_everything()
+
+	Film.say("The floor", "Your room, your people, and the state of it read off real things")
+	Game.stage = 0
+	Game.habits["tidy"] = 0.35
+	rebuild_racks()
+	await Film.hold(self, 4.0)
+
+	Film.say("A cabinet nobody dresses", "Undressed leads hang where the tidiness score is short")
+	if Game.racks.size() > 1:
+		Game.racks[0].blanked = {}
+		for slot_i in Net.Rack.SLOTS:
+			if Game.racks[1].slots[slot_i] == null:
+				Game.racks[1].blanked[slot_i] = true
+	Game.topology_changed.emit()
+	await Film.hold(self, 3.5)
+
+	Film.say("Somebody signed in at the door", "A visitor is a figure with a badge, escorted if the policy says so")
+	Game.access_policy = "escorted"
+	Game.visitors = []
+	Game.admit_visitor("Vas Elektro", "aircon service")
+	$Techs._resize_crew()
+	await Film.hold(self, 3.5)
+	Game.visitors = []
+	$Techs._resize_crew()
+
+	Film.say("Seasons", "Cooling headroom, work rate and who is available all move with the season")
+	Game.cycle = int(float(Game.SEASON_LENGTH) / 4.0) + 1
+	queue_redraw()
+	await Film.hold(self, 3.0)
+
+	Film.say("A second building", "Its own colour, its own diary, its own dock: the wrong floor is the expensive mistake")
+	if Game.site_count() < 2:
+		Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	Game.carrier_outage = {}
+	Game.buy_circuit(0, 1, 1)
+	Game.buy_parts("optic", 6)
+	var near_sw: Net.NDevice = null
+	for d in Game.devices_on(0):
+		if d.type == "switch":
+			near_sw = d
+			break
+	var far_rack := Game.add_rack(Vector2i(1, 1), 1)
+	var far_sw := Game.new_device("sw-8")
+	far_rack.slots[0] = far_sw
+	if near_sw != null:
+		Game.connect_ifaces(near_sw.ifaces[7], far_sw.ifaces[7])
+	rebuild_racks()
+	await Film.hold(self, 4.0)
+
+	Film.say("Where the cable leaves the building", "A circuit to another city, and whether the carrier behind it is up")
+	await Film.hold(self, 3.0)
+
+	Film.say("The map", "Cabinets grouped by building, in that building's colour")
+	ui.close_everything()
+	ui.toggle_map()
+	await Film.hold(self, 4.0)
+	ui.close_everything()
+
+	Film.say("Proving it", "Book a failover test: the upstream goes away on purpose, on a cycle you chose")
+	Game.dr_test = {}
+	Game.book_dr_test()
+	ui.toggle_ops()
+	ui.ops_tab = "Facility"
+	ui._refresh_ops()
+	await Film.hold(self, 4.0)
+	ui.close_everything()
+
+	Film.say("The phone, out of hours", "Something is live and the room is empty: get somebody in, or let it wait")
+	Game.staff = []
+	var film_rng := RandomNumberGenerator.new()
+	film_rng.seed = 3
+	Game.money = maxi(Game.money, 5000)
+	var film_hire := Staff.make_candidate(film_rng, Game.habits)
+	film_hire["salary"] = int(film_hire.get("ask", 150))
+	Game.hire(film_hire)
+	Staff.set_shift(Game.staff[0], "day")
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 7
+	Game.hazards = [{"kind": "smoke", "rack": Game.racks[0].name, "site": 0, "tile": [0, 0],
+		"severity": 2, "started": Game.cycle, "detected": true, "zone": [Game.racks[0].name]}]
+	Game.night_call = {}
+	Game.night_call_tick()
+	Game.active_contract_debrief = {}
+	ui.contracts_tab = "Jobs"
+	ui.open_contracts()
+	await Film.hold(self, 4.5)
+	ui.close_everything()
+	Game.hazards = []
+
+	Film.say("The handover", "What the shift going home left for the one coming in, and it costs you if nobody reads it")
+	Game._handover_slot = -1
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 2
+	Game.handover_tick()
+	ui.contracts_tab = "Log"
+	ui.open_contracts()
+	await Film.hold(self, 4.5)
+	ui.close_everything()
+
+	Film.say("An incident that spans two buildings", "One address in two rooms, broken so it only shows when one goes dark")
+	var film_seed := -1
+	for f_try in range(1, 30):
+		Drill.start(3, f_try)
+		if Drill.scenario.begins_with("Two rooms"):
+			film_seed = f_try
+			break
+		Drill.finish(false)
+	rebuild_racks()
+	if film_seed > 0:
+		ui._show_drill_banner()
+	await Film.hold(self, 4.5)
+	Drill.finish(false)
+	rebuild_racks()
+	ui.close_everything()
+	if ui.drill_panel != null:
+		ui.drill_panel.visible = false  # the banner outlives the drill otherwise
+
+	Film.say("A room that has been run well", "A long clear run, a kept floor, and a redundancy somebody tested")
+	Game.last_customer_outage_cycle = Game.cycle - 200
+	Game.stats["failovers_passed"] = 2
+	Game.habits["tidy"] = 1.0
+	for settled_rack: Net.Rack in Game.racks_on(0):
+		for slot_i2 in Net.Rack.SLOTS:
+			if settled_rack.slots[slot_i2] == null:
+				settled_rack.blanked[slot_i2] = true
+	Game.topology_changed.emit()
+	await Film.hold(self, 4.0)
+
+	Film.say("How the place is trending", "The slow measures, with a direction, while there is still time")
+	ui.toggle_ops()
+	ui.ops_tab = "Company"
+	ui._refresh_ops()
+	await Film.hold(self, 4.5)
+	ui.close_everything()
+
+	Film.say("Packet Empire", "Real switches, real routing, real consequences")
+	await Film.hold(self, 2.5)
+	print("film: %d frames" % Film.frames())
+	get_tree().quit()
+
 func _shoot_all() -> void:
 	## PACKET_SHOT=<dir>: photograph every screen, then quit
 	var dir := OS.get_environment("PACKET_SHOT")
@@ -94,7 +264,6 @@ func _shoot_all() -> void:
 			sw = d
 		if d.model == "sw-lite":
 			packet_sw = d
-	add_child(Techs.new())
 	var shots: Array = [
 		["title", func() -> void: show_title()],
 		["title_slots", func() -> void: title.show_slots()],

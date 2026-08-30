@@ -110,7 +110,7 @@ static func _build_services() -> void:
 static func _build_two_rooms() -> void:
 	## two floors, one address, and a customer who only cares whether it is
 	## still answering when a building goes dark
-	scenario = "Two rooms: 10.75.0.10 must answer with either building dark."
+	scenario = "Two rooms: 10.75.0.10 must stay reachable with either building dark."
 	Game.sites = [{"name": "Alpha room", "grid": [4, 4], "kind": "own", "city": "Budapest"}]
 	var other := Game.add_site("Beta room", Vector2i(4, 4), "leased", "Debrecen")
 	Game.carrier_outage = {}
