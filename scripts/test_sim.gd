@@ -3017,6 +3017,29 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# --- the report credits what was practised, not only what was built ---
+	var fs_base := Game.finale_snapshot("retired")
+	fs_base["tidiness"] = 0.2      # a middling run, so the cap is not doing the talking
+	fs_base["drift"] = 0.7
+	fs_base["controls"] = 1
+	fs_base["data_risks"] = 0
+	fs_base["open_reviews"] = 0
+	fs_base["cable_debt"] = 0
+	var fs_plain := Game.finale_score(fs_base)
+	var fs_practised := fs_base.duplicate(true)
+	fs_practised["failovers_passed"] = 2
+	fs_practised["oncall_covered"] = 1
+	fs_practised["handovers_read"] = 6
+	check(int(Game.finale_score(fs_practised)["categories"]["discipline"])
+			> int(fs_plain["categories"]["discipline"]),
+		"report: testing the failover, covering the phone and reading the notes count for something")
+	var fs_old := fs_base.duplicate(true)
+	fs_old.erase("failovers_passed")
+	fs_old.erase("oncall_covered")
+	fs_old.erase("handovers_read")
+	check(int(Game.finale_score(fs_old)["total"]) > 0,
+		"report: a snapshot written before any of that still scores")
+
 	# --- how exposed a route is, before the digger arrives ---
 	var cdx_circuits := Game.circuits.duplicate(true)
 	var cdx_sites := Game.sites.duplicate(true)

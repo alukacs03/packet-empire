@@ -1811,8 +1811,9 @@ func trend_read() -> Array:
 	return out
 
 func read_handover() -> void:
-	if not handover.is_empty():
+	if not handover.is_empty() and not bool(handover.get("read", false)):
 		handover["read"] = true
+		stats["handovers_read"] = int(stats.get("handovers_read", 0)) + 1
 
 func call_tick() -> void:
 	## A promise is only worth what it costs to miss it.
@@ -4596,6 +4597,7 @@ func dr_tick() -> void:
 	if failed.is_empty():
 		reputation = mini(100, reputation + 5)
 		control_evidence["failover"] = cycle
+		stats["failovers_passed"] = int(stats.get("failovers_passed", 0)) + 1
 		log_event("FAILOVER TEST: passed. The upstream was gone for %d cycle(s) and no customer noticed."
 			% DR_LENGTH)
 	else:
@@ -4823,8 +4825,12 @@ func finale_snapshot(ending: String) -> Dictionary:
 		"controls": controls_passing, "tidiness": floor_tidiness(),
 		"drift": drift_factor(), "faults": int(stats.get("faults", 0)),
 		"incidents": int(stats.get("incidents", 0)), "data_risks": data_risks.size(),
-		"cable_debt": cable_debt_score(), "best_streak": best_outage_streak,
-		"trust_marker": trust_marker}
+		"cable_debt": cable_debt_score(), "best_streak": best_streak(),
+		"trust_marker": trust_marker,
+		# what was actually practised, not only what was built
+		"failovers_passed": int(stats.get("failovers_passed", 0)),
+		"oncall_covered": 1 if oncall != "" else 0,
+		"handovers_read": int(stats.get("handovers_read", 0))}
 
 func finale_score(snap: Dictionary) -> Dictionary:
 	## Six categories, each capped, and the money one measured per cycle so a
@@ -4840,7 +4846,12 @@ func finale_score(snap: Dictionary) -> Dictionary:
 			+ int(snap.get("contracts", 0)) * 5, 0, 200),
 		"discipline": clampi(int(float(snap.get("tidiness", 0.0)) * 80.0)
 			+ int((1.0 - float(snap.get("drift", 0.0))) * 60.0)
-			+ int(snap.get("controls", 0)) * 8 - int(snap.get("open_reviews", 0)) * 10
+			+ int(snap.get("controls", 0)) * 8
+			# things that are only true because somebody practised them
+			+ mini(int(snap.get("failovers_passed", 0)), 3) * 12
+			+ int(snap.get("oncall_covered", 0)) * 10
+			+ mini(int(snap.get("handovers_read", 0)), 10) * 2
+			- int(snap.get("open_reviews", 0)) * 10
 			- int(snap.get("data_risks", 0)) * 15 - int(snap.get("cable_debt", 0)) * 2, 0, 200),
 		"growth": clampi(int(snap.get("stage", 0)) * 40 + int(snap.get("sites", 1)) * 20
 			+ int(snap.get("racks", 0)) * 4 + int(snap.get("staff", 0)) * 10, 0, 200),
