@@ -508,7 +508,7 @@ func _refresh_money() -> void:
 		Game.money, debt_s, Game.reputation, power]
 	if Game.stage >= 1:
 		money_lbl.tooltip_text = "Cash and reputation. Power: %dW nameplate, %dW billed at $%.3f per watt per cycle = $%d next cycle. Cooling capacity: %dW." % [
-			Game.power_draw(), Game.effective_draw(), Game.energy_rate(), Game.power_bill(),
+			Game.power_draw_all(), Game.effective_draw(), Game.energy_rate(), Game.power_bill(),
 			Game.cooling_capacity()]
 	else:
 		money_lbl.tooltip_text = "Cash and reputation. Electricity and cooling are included in this colo lease."
@@ -2133,7 +2133,7 @@ func _refresh_ops() -> void:
 	var meter_copy := "COLO POWER INCLUDED  /  Your cost is $0 per watt in this cage. Reference rate for an owned room right now: $%.3f per watt per cycle." % Game.energy_rate()
 	if Game.stage >= 1:
 		meter_copy = "LIVE METER  /  %dW nameplate → %dW billed after efficiency  ×  $%.3f per watt per cycle  =  $%d next cycle" % [
-			Game.power_draw(), Game.effective_draw(), Game.energy_rate(), Game.power_bill()]
+			Game.power_draw_all(), Game.effective_draw(), Game.energy_rate(), Game.power_bill()]
 	var meter_label := _wrap(meter_copy, 13,
 		UIW.colour("warm") if Game.stage >= 1 else UIW.colour("muted"), 780)
 	meter_label.add_theme_font_override("font", mono)
@@ -4298,7 +4298,7 @@ func _build_business_tab() -> void:
 	if Game.stage >= 1:
 		contracts_box.add_child(_wrap(
 			"Drawing %dW of a nameplate %dW. The %s rate is $%.3f per watt per cycle, so the next bill is $%d. Electricity is dearest exactly when your customers are busiest."
-			% [Game.effective_draw(), Game.power_draw(),
+			% [Game.effective_draw(), Game.power_draw_all(),
 				"fixed" if Game.fixed_tariff else "spot", Game.energy_rate(), Game.power_bill()],
 			13, Color(0.75, 0.82, 0.9), 560))
 		var e_row := HBoxContainer.new()

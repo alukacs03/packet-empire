@@ -3511,19 +3511,29 @@ func facility_due_in(task: String, site := -1) -> int:
 func facility_overdue(task: String, site := -1) -> int:
 	return maxi(0, -facility_due_in(task, site))
 
-func filter_dirt() -> float:
+func filter_dirt(site := -1) -> float:
 	## Neglect degrades along a curve the player can watch, not a coin flip.
-	return clampf(float(facility_overdue("filters")) / 120.0, 0.0, 1.0)
+	return clampf(float(facility_overdue("filters", site)) / 120.0, 0.0, 1.0)
 
 func heat_wave() -> bool:
 	return cycle <= heat_wave_until
 
-func cooling_capacity() -> int:
+func devices_on(site := -1) -> Array:
+	## Everything racked on one floor. Heat and power are properties of a room.
+	var idx := current_site if site < 0 else site
+	var out: Array = []
+	for r: Net.Rack in racks_on(idx):
+		for d in r.slots:
+			if d != null and d not in out:
+				out.append(d)
+	return out
+
+func cooling_capacity(site := -1) -> int:
 	var c := BASE_COOLING
-	for d in all_devices():
+	for d in devices_on(site):
 		if d.type == "cooling" and d.status == "active":
 			c += int(MODELS[d.model].get("cools", 0))
-	c = int(round(float(c) * (1.0 - 0.2 * filter_dirt())))  # dirty filters cost headroom first
+	c = int(round(float(c) * (1.0 - 0.2 * filter_dirt(site))))  # dirty filters cost headroom first
 	if stage >= 1:
 		# in somebody else's colo the cooling is their problem; in your own room
 		# the outside air is part of it
@@ -3588,8 +3598,8 @@ func facility_tick() -> void:
 		log_event("FACILITY: the UPS battery on %s was flat when it was needed. Nobody had checked it."
 			% site_name(current_site))
 
-func overheating() -> bool:
-	return stage >= 1 and power_draw() > cooling_capacity()
+func overheating(site := -1) -> bool:
+	return stage >= 1 and power_draw(site) > cooling_capacity(site)
 
 # ---------- airflow: where the heat is, not just how much ----------
 
@@ -4661,7 +4671,7 @@ func capacity(site: int) -> Dictionary:
 					ports_used += 1
 	return {"tiles": tiles, "tiles_used": used_tiles,
 		"slots": slots_total, "slots_used": slots_used,
-		"watts": watts, "cooling": cooling_capacity() if site == 0 else 0,
+		"watts": watts, "cooling": cooling_capacity(site),
 		"ports": ports_total, "ports_used": ports_used}
 
 func make_report() -> Dictionary:
@@ -5145,7 +5155,15 @@ func link_capacity(l: Net.Link) -> int:
 			total += mini(iface_speed(m.a), iface_speed(m.b))
 	return total
 
-func power_draw() -> int:
+func power_draw(site := -1) -> int:
+	## The draw of one floor. The bill is the company's; the heat is the room's.
+	var w := 0
+	for d in devices_on(site):
+		if d.status == "active":
+			w += WATTS.get(d.model, 0)
+	return w
+
+func power_draw_all() -> int:
 	var w := 0
 	for d in all_devices():
 		if d.status == "active":
@@ -7630,7 +7648,7 @@ func efficiency_factor() -> float:
 	return maxf(0.55, 1.0 - EFFICIENCY_STEP * float(efficiency))
 
 func effective_draw() -> int:
-	return int(round(float(power_draw()) * efficiency_factor()))
+	return int(round(float(power_draw_all()) * efficiency_factor()))
 
 func power_bill() -> int:
 	return int(round(float(effective_draw()) * energy_rate()))

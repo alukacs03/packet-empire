@@ -3017,6 +3017,25 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# heat is a property of a room, not of a company
+	var heat_sites := Game.sites.duplicate(true)
+	var heat_here := Game.current_site
+	var heat_home := Game.cooling_capacity(0)
+	var heat_new := Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	var heat_new_before := Game.cooling_capacity(heat_new)
+	var heat_rack := Game.add_rack(Vector2i(90, 1), 0)
+	var heat_crac := Game.new_device("crac-1")
+	heat_rack.slots[0] = heat_crac
+	check(Game.cooling_capacity(0) > heat_home,
+		"heat: a cooling unit helps the room it is standing in")
+	check(Game.cooling_capacity(heat_new) == heat_new_before,
+		"heat: and does nothing for a building three hundred kilometres away")
+	check(Game.power_draw(heat_new) == 0 and Game.power_draw(0) > 0,
+		"heat: and the draw of a floor is the hardware standing on it")
+
+	Game.sites = heat_sites
+	Game.current_site = heat_here
+
 	# protection is fitted in a room, not in a company
 	var prot_state := Game.protection.duplicate(true)
 	var prot_sites := Game.sites.duplicate(true)
