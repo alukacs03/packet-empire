@@ -4771,7 +4771,12 @@ func _build_business_tab() -> void:
 		for i2 in Game.site_count():
 			for j2 in range(i2 + 1, Game.site_count()):
 				var route := Game.circuits_between(i2, j2)
-				if route.size() >= 2 and not Game.carrier_diverse(i2, j2):
+				if route.size() == 1:
+					contracts_box.add_child(_wrap(
+						"  %s ⇄ %s rides one circuit from %s. When they have a bad afternoon, so do you."
+						% [Game.site_name(i2), Game.site_name(j2),
+							String(route[0].get("carrier", "?"))], 12, Color(1.0, 0.8, 0.5), 560))
+				elif route.size() >= 2 and not Game.carrier_diverse(i2, j2):
 					contracts_box.add_child(_wrap(
 						"  %s ⇄ %s has two circuits from the same carrier. That is one bad afternoon away from being no circuits at all."
 						% [Game.site_name(i2), Game.site_name(j2)], 12, Color(1.0, 0.8, 0.5), 560))

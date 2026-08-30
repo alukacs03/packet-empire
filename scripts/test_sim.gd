@@ -3017,6 +3017,25 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# --- how exposed a route is, before the digger arrives ---
+	var cdx_circuits := Game.circuits.duplicate(true)
+	var cdx_sites := Game.sites.duplicate(true)
+	var cdx_b := Game.add_site("Miskolc annex", Vector2i(5, 5), "acquired", "Miskolc")
+	Game.circuits = []
+	Game.buy_circuit(0, cdx_b, 1, Game.CARRIERS[0])
+	check(not Game.carrier_diverse(0, cdx_b) and Game.circuits_between(0, cdx_b).size() == 1,
+		"circuits: one circuit is not diversity, and the panel has a line for it")
+	Game.buy_circuit(0, cdx_b, 1, Game.CARRIERS[1])
+	check(Game.carrier_diverse(0, cdx_b),
+		"circuits: two carriers on a route is what diversity means")
+	Game.carrier_outage[Game.CARRIERS[0]] = Game.cycle + 3
+	check(not Game.carrier_up(Game.CARRIERS[0]) \
+			and not Game.circuit_between(0, cdx_b).is_empty(),
+		"circuits: one carrier having an afternoon does not take the route with it")
+	Game.carrier_outage = {}
+	Game.circuits = cdx_circuits
+	Game.sites = cdx_sites
+
 	# --- a service that actually survives losing a room ---
 	var xs_sites := Game.sites.duplicate(true)
 	var xs_here := Game.current_site
