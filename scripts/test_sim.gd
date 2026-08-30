@@ -3285,6 +3285,19 @@ static func run() -> int:
 	Game.sites = prot_sites
 	Game.current_site = prot_here
 
+	# a finished job must not un-finish itself when the log scrolls
+	var mig_events := Game.events.duplicate()
+	var mig_stats := int(Game.stats.get("migrations", 0))
+	Game.stats["migrations"] = 1
+	Game.events = []
+	check(Contracts._vm_migrated(),
+		"campaign: a migration that happened stays true after the log has scrolled away")
+	Game.stats["migrations"] = 0
+	check(not Contracts._vm_migrated(),
+		"campaign: and is not true for a run where it never happened")
+	Game.stats["migrations"] = mig_stats
+	Game.events = mig_events
+
 	# the campaign asks for the exercise, not a description of it
 	var pv_contract := {}
 	for pv_c: Dictionary in Contracts.all():

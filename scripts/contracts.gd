@@ -659,6 +659,10 @@ static func _vm_at(ip: String) -> Net.Iface:
 	return null
 
 static func _vm_migrated() -> bool:
+	## The event log is trimmed to the last sixty lines, so reading the fact out
+	## of it meant a finished job quietly un-finished itself an hour later.
+	if int(Game.stats.get("migrations", 0)) > 0:
+		return true
 	for ev in Game.events:
 		if "MIGRATION:" in ev:
 			return true

@@ -3959,6 +3959,7 @@ func migrate_vm(name: String, target: Net.NDevice) -> String:
 	source.ifaces.erase(nic)
 	nic.dev = target
 	target.ifaces.append(nic)
+	stats["migrations"] = int(stats.get("migrations", 0)) + 1  # the log is trimmed; this is not
 	log_event("MIGRATION: %s moved from %s to %s, keeping %s."
 		% [name, source.name, target.name,
 			", ".join(PackedStringArray(nic.ips)) if not nic.ips.is_empty() else "no address"])
