@@ -241,6 +241,8 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var destruction_certs: Array = []  # proof a disk was wiped before it left
+var data_risks: Array = []  # drives that left with their data on them
 var upstream := {}  # a live fault that is somebody else's to fix
 var last_upstream_cycle := -999
 const UPSTREAM_GAP := 60  # rare by design: this is spice, not a staple
@@ -2662,6 +2664,97 @@ func audio_alerts() -> Array:
 		cues.append("alert")
 	return cues
 
+const DECOM_STEPS := ["wipe", "cabling", "reclaim"]
+
+func decommission(dev: Net.NDevice, steps: Array) -> Dictionary:
+	## Turning it off is the fast half. Each step here can be skipped, is
+	## cheaper to skip, and has one specific consequence later.
+	var price := int(MODELS[dev.model]["price"])
+	var wiped := "wipe" in steps
+	var tidy := "cabling" in steps
+	var reclaimed := "reclaim" in steps
+	# resale rewards gear that is wiped and complete, and punishes the rest
+	var value := int(round(float(price) * (0.6 if wiped and tidy else (0.45 if wiped else 0.3))))
+	var left_behind: Array = []
+	if wiped:
+		destruction_certs.append({"device": dev.name, "model": dev.model, "cycle": cycle})
+	else:
+		data_risks.append({"device": dev.name, "model": dev.model, "cycle": cycle})
+		left_behind.append("no certificate of destruction")
+		log_event("DECOM: %s left the building with its disks intact. There is no certificate for it."
+			% dev.name)
+	if reclaimed:
+		var ips: Array = []
+		for i: Net.Iface in dev.ifaces:
+			for cidr in i.ips:
+				ips.append(String(cidr).split("/")[0])
+		for m in monitors.duplicate():
+			if String(m.get("target", "")) in ips:
+				monitors.erase(m)
+		for other: Net.NDevice in all_devices():
+			if other == dev:
+				continue
+			for route in other.static_routes.duplicate():
+				if String(route.get("via", "")) in ips:
+					other.static_routes.erase(route)
+	else:
+		left_behind.append("addresses, routes and checks still pointing at it")
+		log_event("DECOM: %s is gone but its addresses, routes and checks are not. Somebody will find those later."
+			% dev.name)
+	if not tidy:
+		left_behind.append("its patch leads still in the cabinet")
+	uninstall_device(dev, false)
+	_refund(value)
+	log_event("DECOM: %s decommissioned for $%d.%s" % [dev.name, value,
+		"" if left_behind.is_empty() else " Skipped: %s." % ", ".join(PackedStringArray(left_behind))])
+	return {"value": value, "skipped": left_behind, "certified": wiped}
+
+func decommission_by_tech(dev: Net.NDevice) -> Dictionary:
+	## Delegated, which means done the way that person works: the boring steps
+	## are exactly the ones a hurried technician drops.
+	var who: Dictionary = Staff.best_of("tech")
+	if who.is_empty():
+		who = Staff.best_of("engineer")
+	if who.is_empty():
+		return decommission(dev, DECOM_STEPS)
+	var habits := Staff.habits_of(who)
+	var steps: Array = []
+	if float(habits.get("documents", 0.5)) > 0.5:
+		steps.append("wipe")
+	if float(habits.get("tidy", 0.5)) > 0.5:
+		steps.append("cabling")
+	if float(habits.get("saves", 0.5)) > 0.5:
+		steps.append("reclaim")
+	log_event("DECOM: %s took the decommission of %s. They did it their way."
+		% [who["name"], dev.name])
+	return decommission(dev, steps)
+
+func audit_findings() -> Array:
+	var out: Array = []
+	if not data_risks.is_empty():
+		out.append("%d unit(s) left without a certificate of destruction" % data_risks.size())
+	var orphan := 0
+	for m in monitors:
+		if bool(m.get("failing", false)) and m.get("orphan", false):
+			orphan += 1
+	if orphan > 0:
+		out.append("%d check(s) watching addresses nobody serves any more" % orphan)
+	return out
+
+func decom_tick() -> void:
+	## A drive that left with its data on it does not stay gone forever.
+	for risk in data_risks.duplicate():
+		if cycle - int(risk["cycle"]) < 6 or randf() > 0.02:
+			continue
+		data_risks.erase(risk)
+		reputation = maxi(0, reputation - 12)
+		money -= 1500
+		money_changed.emit()
+		record_incident("data", "a disk from %s resurfaced with customer data on it" % risk["device"])
+		log_event("DATA INCIDENT: a disk from the decommissioned %s turned up on a resale site with customer data still on it. $1500 and a great deal of trust."
+			% risk["device"])
+		return
+
 func rack_tidiness(r: Net.Rack) -> float:
 	## How well kept one cabinet is, read off the real thing: blanked gaps,
 	## labelled live ports, and configurations that are actually saved.
@@ -3806,6 +3899,7 @@ func sla_tick() -> void:
 	dispute_tick()
 	report_tick()
 	habit_tick()
+	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
 	upstream_tick()
@@ -4316,7 +4410,7 @@ func free_slots(rack: Net.Rack, dev: Net.NDevice) -> void:
 		if rack.covered[key] == dev:
 			rack.covered.erase(key)
 
-func uninstall_device(dev: Net.NDevice) -> void:
+func uninstall_device(dev: Net.NDevice, refund := true) -> void:
 	for i: Net.Iface in dev.ifaces:
 		disconnect_iface(i)
 	var r := rack_of(dev)
@@ -4324,7 +4418,8 @@ func uninstall_device(dev: Net.NDevice) -> void:
 		free_slots(r, dev)
 		if r.visual:
 			r.visual.queue_redraw()
-	_refund(MODELS[dev.model]["price"] / 2)
+	if refund:
+		_refund(MODELS[dev.model]["price"] / 2)
 	topology_changed.emit()
 
 func _new_mac() -> String:
@@ -4598,7 +4693,8 @@ func _serialize() -> Dictionary:
 		"feature_discovery_trace": feature_discovery_trace,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
-		"incidents": incidents, "blame_fear": blame_fear, "habits": habits,
+		"incidents": incidents, "blame_fear": blame_fear,
+		"destruction_certs": destruction_certs, "data_risks": data_risks, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -4921,6 +5017,8 @@ func _apply(data: Dictionary) -> void:
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
+	destruction_certs = data.get("destruction_certs", [])
+	data_risks = data.get("data_risks", [])
 	upstream = data.get("upstream", {})
 	skill_log = data.get("skill_log", {})
 	skill_fumbles = data.get("skill_fumbles", {})

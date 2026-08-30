@@ -3238,6 +3238,65 @@ static func run() -> int:
 		"quiet: while something is down the game says nothing about tidying up")
 	Game.deals = qt_deals
 
+	# --- decommission properly ---
+	Game.destruction_certs = []
+	Game.data_risks = []
+	var dc_rack := Game.add_rack(Vector2i(40, 1))
+	var dc_sw := Game.new_device("sw-8")
+	var dc_a := Game.new_device("srv-1")
+	var dc_b := Game.new_device("srv-1")
+	dc_rack.slots[0] = dc_sw
+	dc_rack.slots[1] = dc_a
+	dc_rack.slots[2] = dc_b
+	Game.connect_ifaces(dc_a.ifaces[0], dc_sw.ifaces[0])
+	Game.connect_ifaces(dc_b.ifaces[0], dc_sw.ifaces[1])
+	Game.add_ip(dc_a.ifaces[0], "10.66.0.10/24")
+	Game.add_ip(dc_b.ifaces[0], "10.66.0.11/24")
+	Game.add_static_route(dc_b, "10.99.0.0", 24, "10.66.0.10")
+	Game.monitors.append({"kind": "ping", "from": dc_b.name, "target": "10.66.0.10",
+		"label": "customer A", "failing": false})
+	var monitors_before := Game.monitors.size()
+	var money_before_dc := Game.money
+	var rushed := Game.decommission(dc_a, [])
+	check(int(rushed["value"]) > 0 and not bool(rushed["certified"]) \
+			and Game.data_risks.size() == 1 and Game.monitors.size() == monitors_before,
+		"decom: pulling it out pays something now and leaves the disks and the leftovers behind")
+	check(Game.audit_findings().size() >= 1 \
+			and "certificate" in String(Game.audit_findings()[0]),
+		"decom: a missing sanitisation record is an audit finding that stands until it bites")
+	Game.cycle += 8
+	var rep_before_leak := Game.reputation
+	for _dc in 400:
+		Game.decom_tick()
+		if Game.data_risks.is_empty():
+			break
+	check(Game.data_risks.is_empty() and Game.reputation < rep_before_leak \
+			and Game.money < money_before_dc + int(rushed["value"]),
+		"decom: the drive resurfaces eventually, and that is the expensive half")
+	# the same unit, done properly
+	var money_before_proper := Game.money
+	Game.monitors.append({"kind": "ping", "from": dc_sw.name, "target": "10.66.0.11",
+		"label": "customer B", "failing": false})
+	var monitors_now := Game.monitors.size()
+	var proper := Game.decommission(dc_b, Game.DECOM_STEPS)
+	check(int(proper["value"]) > int(rushed["value"]) and bool(proper["certified"]) \
+			and Game.destruction_certs.size() == 1 and Game.data_risks.is_empty() \
+			and Game.monitors.size() == monitors_now - 1,
+		"decom: doing it properly returns more money, keeps the certificate and reclaims the leftovers")
+	check(Game.money == money_before_proper + int(proper["value"]),
+		"decom: the resale is the only thing that pays, and it pays once")
+	# delegated, which means done the way that person works
+	var dc_staff := Game.staff.duplicate(true)
+	Game.staff = [{"name": "Varga Karoly", "role": "tech", "skill": 3, "salary": 300,
+		"morale": 70, "shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.2, "documents": 0.2, "windows": 0.5, "tidy": 0.2}}]
+	var hurried := Game.decommission_by_tech(dc_sw)
+	check(hurried["skipped"].size() >= 2 and Game.data_risks.size() == 1,
+		"decom: a technician who cuts corners cuts exactly the boring ones")
+	Game.staff = dc_staff
+	Game.data_risks = []
+	Game.destruction_certs = []
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

@@ -1256,13 +1256,33 @@ func _build_dev_overlay() -> void:
 			Sfx.play("good"))
 	btn_row.add_child(save_cfg_btn)
 	var uninstall := Button.new()
-	uninstall.text = "Uninstall (50% refund)"
+	uninstall.text = "Decommission…"
+	uninstall.tooltip_text = "Pulling it is the fast half. What you skip is what an auditor asks about later."
 	uninstall.pressed.connect(func() -> void:
-		var dev := cur_dev
-		close_dev()
-		Game.uninstall_device(dev)
-		if cur_rack:
-			_show_overlay(rack_overlay))
+		_menu(uninstall, [
+			"Properly: wipe and certify, strip the cabling, reclaim the addresses (best resale)",
+			"Wipe it, leave the rest (less back, and the addresses linger)",
+			"Just pull it out (cheapest now, and there is no certificate)",
+			"Hand it to a technician (they will do it their way)",
+		], func(id: int) -> void:
+			var dev := cur_dev
+			close_dev()
+			var out: Dictionary = {}
+			match id:
+				0:
+					out = Game.decommission(dev, Game.DECOM_STEPS)
+				1:
+					out = Game.decommission(dev, ["wipe"])
+				2:
+					out = Game.decommission(dev, [])
+				_:
+					out = Game.decommission_by_tech(dev)
+			hud_toast("Decommissioned for $%d.%s" % [int(out["value"]),
+				"" if out["skipped"].is_empty() else "  Skipped %d step(s)." % out["skipped"].size()],
+				out["skipped"].is_empty())
+			_refresh_money()
+			if cur_rack:
+				_show_overlay(rack_overlay)))
 	btn_row.add_child(uninstall)
 
 	cap_box = VBoxContainer.new()
