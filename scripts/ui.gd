@@ -4199,7 +4199,9 @@ func _build_demo_end() -> void:
 		"THE NETWORK  /  DHCP · DNS · NAT · BGP · OSPF · VRRP · MLAG · IPv6 · NAT64 · VXLAN · EVPN · WIREGUARD · 802.1X · MULTI-SITE WAN",
 		"THE BUSINESS  /  customers who remember how you treated them, rivals with grudges and favours, decisions whose bill arrives later",
 		"THE BUILDING  /  power, cooling, filters, fire, water, badges, contractors, and the paperwork somebody eventually asks to see",
-		"THE PEOPLE  /  a crew who copy your habits, standing duties, and who takes the blame when it was one of them",
+		"THE PEOPLE  /  a crew who copy your habits, standing duties, somebody carrying the phone at three in the morning, and who takes the blame when it was one of them",
+		"THE ROOMS  /  a second building with its own diary, its own fire protection and its own dock, and hardware that gets there on a van",
+		"PROVING IT  /  a failover test you book, that takes the upstream away on purpose, and customers who ask for the result in writing",
 		"THE RUN  /  it ends: sold, retired, or broke. It is scored, and something survives into the next one."]:
 		var l3 := _wrap(line, 12, UIW.colour("muted"), 700)
 		l3.add_theme_font_override("font", mono)
