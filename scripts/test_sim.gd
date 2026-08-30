@@ -1909,6 +1909,24 @@ static func run() -> int:
 		Game.sites = world_sites
 		Game.current_site = world_here
 		Game.circuits = world_circuits
+	# the same code has to rebuild the same incident, including a two-room one
+	if rooms_seed > 0:
+		var ch_world := Game.sites.duplicate(true)
+		var ch_here := Game.current_site
+		var ch_circuits := Game.circuits.duplicate(true)
+		Drill.start(3, rooms_seed)
+		var ch_scenario := Drill.scenario
+		var ch_faults := Drill.faults.duplicate()
+		Drill.finish(false)
+		var ch_code := Challenge.encode(3, 1, rooms_seed)
+		check(Challenge.start(ch_code) == "", "challenge: a code for that incident starts it")
+		check(Drill.scenario == ch_scenario and Drill.faults == ch_faults,
+			"challenge: and rebuilds the same network with the same faults")
+		Drill.finish(false)
+		Challenge.active = {}
+		Game.sites = ch_world
+		Game.current_site = ch_here
+		Game.circuits = ch_circuits
 	Drill.start(2, 7)
 	var during := Game.all_devices().size()
 	Drill.finish(false)  # the quit path: abandon restores before saving
