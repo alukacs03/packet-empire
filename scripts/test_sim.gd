@@ -211,6 +211,22 @@ static func ui_smoke(world: Node2D) -> int:
 		"ui: with two floors, operations says which floor it is about")
 	Game.sites = ops_sites
 	ui._refresh_ops()
+	# switching language rebuilds the menu the player switched it from
+	Prefs.language = "hu"
+	Loc.language = "hu"
+	ui._rebuild_localised()
+	var menu_hu := false
+	var menu_stack: Array = [ui.menu_overlay]
+	while not menu_stack.is_empty():
+		var node: Node = menu_stack.pop_back()
+		for kid in node.get_children():
+			menu_stack.append(kid)
+		if node is Button and String((node as Button).text) == "Mentés és kilépés":
+			menu_hu = true
+	check(menu_hu, "ui: the system menu is rebuilt in the language just chosen")
+	Prefs.language = "en"
+	Loc.language = "en"
+	ui._rebuild_localised()
 	ui.ops_tab = "Company"
 	ui._refresh_ops()
 	var trend_visible := false
