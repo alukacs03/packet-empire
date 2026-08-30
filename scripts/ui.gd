@@ -872,7 +872,7 @@ func _build_toolbar() -> void:
 	status_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(status_spacer)
 	clock_lbl = _label("", 11, Color(0.55, 0.65, 0.78))
-	clock_lbl.custom_minimum_size = Vector2(260, 0)
+	clock_lbl.custom_minimum_size = Vector2(330, 0)
 	clock_lbl.clip_text = true
 	h.add_child(clock_lbl)
 	for spec in [["⏸", 0, "Pause (Space)"], ["▶", 1, "Normal speed (1)"],
