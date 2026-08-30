@@ -8040,6 +8040,48 @@ static func run() -> int:
 	check(ph_deal["said"].has("honest") and ph_deal["said"].has("promise"),
 		"the call: what you said is remembered, and travels with the customer")
 	Game.deals = ph_deals
+
+	# --- arriving somewhere ---
+	var ar_state := Game.snapshot()
+	Game.demo = false
+	Game.events = []
+	Game.digest = {}
+	Game.identity = ""
+	Legacy.epitaph = {}
+	Legacy.selected = []
+	Game.company_name = "Kékfény Hálózat"
+	Game.arrival_note()
+	var ar_lines: Array = []
+	for ar_ev: String in Game.events:
+		if "ARRIVAL:" in ar_ev:
+			ar_lines.append(ar_ev)
+	check(ar_lines.size() >= 4,
+		"arrival: the opening is a place, a leftover, something true about this run, and a first job")
+	var first_run := "".join(PackedStringArray(ar_lines))
+	Game.events = []
+	Game.digest = {}
+	Game.company_name = "Turul Telekom"
+	Game.arrival_note()
+	var second_lines: Array = []
+	for ar_ev2: String in Game.events:
+		if "ARRIVAL:" in ar_ev2:
+			second_lines.append(ar_ev2)
+	check("".join(PackedStringArray(second_lines)) != first_run,
+		"arrival: a second company arrives somewhere slightly different")
+	Game.events = []
+	Game.digest = {}
+	Game.identity = "budget"
+	Game.arrival_note()
+	check(Game.log_contains("what sort of shop this is going to be"),
+		"arrival: and a run that already knows what it is says so")
+	Game.identity = ""
+	Game.demo = true
+	Game.events = []
+	Game.digest = {}
+	Game.arrival_note()
+	check(not Game.log_contains("ARRIVAL"),
+		"arrival: the demo keeps its own opening")
+	Game.restore(ar_state)
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

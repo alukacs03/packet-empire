@@ -3940,6 +3940,7 @@ func _build_welcome() -> void:
 	v.add_child(shift)
 	var body := _wrap(Loc.t("welcome.lede"), 17,
 		UIW.colour("text_strong"), 620)
+	welcome_overlay.set_meta("arrival_slot", true)
 	welcome_overlay.set_meta("body_label", body)
 	v.add_child(body)
 
@@ -4002,6 +4003,17 @@ func _rebuild_localised() -> void:
 		_refresh_ops()
 
 func show_welcome() -> void:
+	# the arrival lines are the first thing on the card, so the opening is a
+	# place and a person rather than a list of buttons
+	var arrival: Array = []
+	for line: String in Game.events_by_severity("all").map(func(r): return String(r["line"])):
+		if "ARRIVAL:" in line:
+			arrival.append(line.substr(line.find("ARRIVAL:") + 9))
+	if not arrival.is_empty():
+		var head2 := welcome_overlay.get_meta("body_label") as Label
+		if head2 != null:
+			arrival.reverse()
+			head2.text = " ".join(PackedStringArray(arrival))
 	if Demo.active():
 		var head := welcome_overlay.get_meta("title_label") as Label
 		if head != null:

@@ -5126,7 +5126,45 @@ func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	rivals = Rivals.spawn()
 	_scale_rival_aggression()
 	Legacy.apply_carried()
+	arrival_note()
 	topology_changed.emit()
+
+const ARRIVAL_LANDLORDS := [
+	{"who": "Bergendy, who owns the building and three others like it",
+		"line": "Bergendy shows you the corner, points at the meter, and leaves. The lease says the power is included; the lease is four years old."},
+	{"who": "a facilities manager who calls this cage 'the old bay'",
+		"line": "The facilities manager unlocks the cage, says the old bay has been empty since the last lot went under, and does not say why."},
+	{"who": "somebody from the colo who hands you a key and a fire briefing",
+		"line": "The colo hands you a key, a fire briefing nobody reads, and the number of a technician who no longer works here."},
+]
+const ARRIVAL_LEFTOVERS := [
+	"A coil of somebody else's patch cable is still hanging on the cage wall.",
+	"There is a rack rail and no rack, and a label that says PLEASE DO NOT REMOVE.",
+	"Someone left a chair, a kettle, and a printed diagram of a network that no longer exists.",
+]
+
+func arrival_note() -> void:
+	## The first two minutes are a place and a person, not a menu. Everything
+	## here is authored, deterministic per company name, and never blocking.
+	if demo:
+		return
+	var seed_key := absi((company_name + DIFFICULTIES[difficulty]["name"]).hash())
+	var landlord: Dictionary = ARRIVAL_LANDLORDS[seed_key % ARRIVAL_LANDLORDS.size()]
+	log_event("ARRIVAL: %s" % landlord["line"])
+	log_event("ARRIVAL: %s" % ARRIVAL_LEFTOVERS[(seed_key / 3) % ARRIVAL_LEFTOVERS.size()])
+	# one line that is true only for this run
+	if identity != "":
+		log_event("ARRIVAL: you already know what sort of shop this is going to be: %s."
+			% IDENTITIES[identity]["label"].to_lower())
+	elif not Legacy.selected.is_empty() or not Legacy.epitaph.is_empty():
+		log_event("ARRIVAL: %s ran for %d cycles before this. Some of it came with you."
+			% [Legacy.epitaph.get("company", "The last company"),
+				int(Legacy.epitaph.get("cycles", 0))])
+	else:
+		log_event("ARRIVAL: %s, on the %s footing: %s"
+			% [company_name, String(DIFFICULTIES[difficulty]["name"]).to_lower(),
+				DIFFICULTIES[difficulty]["blurb"]])
+	log_event("ARRIVAL: your first job is on the contracts board, and the customer is already waiting.")
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var blocked := can_accept_offer(offer)
@@ -5602,7 +5640,7 @@ var events_logged := 0  # monotonic: events is capped, so its size cannot count
 const DIGEST_PREFIX := "SHIFT NOTES"
 ## Lines that are routine on their own but must never be folded away: anything
 ## that asks for a decision, names a customer, or is the game teaching.
-const DIGEST_EXEMPT := ["DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
+const DIGEST_EXEMPT := ["ARRIVAL", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
 	"TICKET", "VISIT", "VISIT BOOKED", "AUDIT", "AUDIT OFFERED", "AUDIT RESULT", "DEBRIEF READY",
 	"RELATIONSHIP", "THE END", "CHALLENGE", "PACK", "HEADS UP", "CARRIED IT", "DROPPED IT",
 	"CONSEQUENCE", "LATER", "IDENTITY", "NEMESIS", "REFERRAL", "MASTERED"]
