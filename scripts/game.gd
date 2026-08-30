@@ -116,7 +116,8 @@ var feature_discovery_trace := {}  # counts/cycles only; never player-authored c
 var customer_arcs := {}  # stable customer id -> remembered story beats and outcomes
 
 const DISCOVERY_FEATURES := ["map", "market", "business", "log", "ops", "expand",
-	"facility", "renewals", "duties", "access", "compliance", "support"]
+	"facility", "renewals", "duties", "access", "compliance", "support",
+	"oncall", "handover", "failover"]
 const DISCOVERY_IGNORED_CYCLES := 6
 
 const ACHIEVEMENTS := [
@@ -405,6 +406,13 @@ func feature_unlocked(feature: String, reveal_all := false) -> bool:
 			return not audit.is_empty() or trust_marker
 		"support":
 			return not tac_cases.is_empty() or not firmware_bugs.is_empty()
+		"oncall":
+			# the first time the room is empty with somebody on the payroll
+			return not staff.is_empty() and not Staff.anyone_on_shift()
+		"handover":
+			return not handover.is_empty()
+		"failover":
+			return not dr_candidates().is_empty() and (stage >= 1 or deals.size() >= 2)
 	return false
 
 func acknowledge_feature_intro(feature: String) -> void:

@@ -103,6 +103,21 @@ const UNLOCK_INTROS := {
 		"title": "There are two of them now.",
 		"body": "Chores can be handed over. What you give away costs money and a little control, and comes back done the way that person works.",
 		"where": "OPS  /  AUTOMATION", "action": "Assign something", "colour": "accent"},
+	"oncall": {
+		"kicker": "NEW ARRANGEMENT  /  THE PHONE",
+		"title": "The room is empty and something can still break.",
+		"body": "Somebody can carry the phone for a retainer. When it rings it is them, it costs half, and it costs them less, because that is what the retainer bought.",
+		"where": "COMPANY  /  BUSINESS", "action": "Put somebody on call", "colour": "warm"},
+	"handover": {
+		"kicker": "NEW HABIT  /  THE HANDOVER",
+		"title": "The shift going home left you a note.",
+		"body": "What happened, what is still open, and what to look at first. Notes nobody reads stop being true, and the next shift finds out the hard way.",
+		"where": "COMPANY  /  LOG", "action": "Read it", "colour": "accent"},
+	"failover": {
+		"kicker": "NEW EXERCISE  /  PROVING IT",
+		"title": "Redundancy you have never tested is a belief.",
+		"body": "Book a failover test. The upstream goes away on purpose, at a cycle you chose, and the result is judged on whether any customer noticed.",
+		"where": "OPS  /  FACILITY", "action": "Book one", "colour": "accent"},
 	"access": {
 		"kicker": "NEW QUESTION  /  THE DOOR",
 		"title": "Somebody who does not work here is on the floor.",

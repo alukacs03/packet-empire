@@ -8285,6 +8285,14 @@ static func run() -> int:
 	check(oi_missing.is_empty(),
 		"onboarding: every discoverable system has a line written for it (%s)"
 			% ", ".join(PackedStringArray(oi_missing)))
+	# the three newest systems unlock on the state that makes them relevant
+	Game.handover = {"cycle": Game.cycle, "from": "night", "lines": ["x"], "read": false,
+		"substantive": 1}
+	check(Game.feature_unlocked("handover"),
+		"onboarding: the handover arrives with the first note somebody left")
+	Game.handover = {}
+	check(not Game.feature_unlocked("handover"),
+		"onboarding: and not before there is one")
 	Game.acknowledge_feature_intro("facility")
 	check("facility" in Game.feature_intros_seen,
 		"onboarding: and once it has been said, it is not said again")
