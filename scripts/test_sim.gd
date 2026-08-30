@@ -4289,6 +4289,63 @@ static func run() -> int:
 	Game.customer_arcs.erase("orban")
 	Game.references = []
 	Game.leads = []
+
+	# --- fire, smoke and water ---
+	Game.hazards = []
+	Game.protection = {}
+	Game.money = 20000
+	Game.difficulty = 1
+	var hz_rack := Game.add_rack(Vector2i(78, 1))
+	var hz_sw := Game.new_device("sw-8")
+	var hz_srv := Game.new_device("srv-1")
+	hz_rack.slots[0] = hz_sw
+	hz_rack.slots[1] = hz_srv
+	Game.connect_ifaces(hz_srv.ifaces[0], hz_sw.ifaces[0])
+	var hz_risk := Game.hazard_risk(hz_rack)
+	check(hz_risk >= 0.0 and hz_risk <= 1.0,
+		"hazards: risk is a number the player can read off heat, age, power and maintenance")
+	# undetected, an incident escalates on a schedule
+	var hz := Game.start_hazard(hz_rack, "smoke")
+	check(not bool(hz["detected"]) and String(hz["rack"]) == hz_rack.name,
+		"hazards: with nothing watching, the first anybody knows is the damage")
+	var hz_staff := Game.staff.duplicate(true)
+	Game.staff = []  # nobody on shift to deal with it by hand
+	for _hz in 3:
+		Game.hazard_tick()
+	check(String(Game.hazards[0]["kind"]) == "fire" and int(Game.hazards[0]["severity"]) >= 3,
+		"hazards: smoke nobody deals with becomes a fire, and it says so on the way")
+	var burnt := false
+	for _hz2 in 3:
+		Game.hazard_tick()
+		if hz_rack.slots[0] == null or hz_rack.slots[1] == null:
+			burnt = true
+	check(burnt, "hazards: an unprotected fire eventually costs hardware, not just uptime")
+	# the same incident, prepared for
+	Game.hazards = []
+	var hz_rack2 := Game.add_rack(Vector2i(79, 1))
+	var hz_sw2 := Game.new_device("sw-8")
+	var hz_srv2 := Game.new_device("srv-1")
+	hz_rack2.slots[0] = hz_sw2
+	hz_rack2.slots[1] = hz_srv2
+	check(Game.buy_protection("detection") == "" and Game.buy_protection("suppression") == "" \
+			and Game.protection_ready("detection") and Game.protection_ready("suppression"),
+		"hazards: detection and suppression are things you buy before you need them")
+	var hz2 := Game.start_hazard(hz_rack2, "smoke")
+	check(bool(hz2["detected"]),
+		"hazards: with detection fitted it is found in the cycle it starts")
+	Game.hazard_tick()
+	check(Game.hazards.is_empty() and hz_rack2.slots[0] != null \
+			and hz_sw2.status == "offline",
+		"hazards: suppression saves the hardware and shuts the cabinet down doing it")
+	# installed is not the same as maintained
+	Game.protection["suppression"]["serviced_cycle"] = Game.cycle - 200
+	check(not Game.protection_ready("suppression") \
+			and Game.service_protection("suppression") == "" \
+			and Game.protection_ready("suppression"),
+		"hazards: protection goes out of date until somebody inspects it")
+	Game.staff = hz_staff
+	Game.hazards = []
+	Game.protection = {}
 	Game.money = 20000
 	Game.reputation = 60
 	check(Game.DECISIONS.size() >= 12,

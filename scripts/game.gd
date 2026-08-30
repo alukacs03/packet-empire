@@ -269,6 +269,8 @@ var orphan_intel := {}  # orphan key -> how much digging the player has done (0-
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
+var hazards: Array = []  # fire, smoke and water, with a place and a clock
+var protection := {}  # kind -> {installed, serviced_cycle}: what is fitted, and how fresh it is
 var decisions: Array = []  # decisions waiting on the player, oldest first
 var consequences: Array = []  # what a past decision will do, and when
 var decisions_seen: Array = []
@@ -2103,6 +2105,157 @@ func renewal_tick() -> void:
 				and String(item["kind"]) in ["domain", "addresses"]:
 			# only the customer-facing lapses are visible from outside
 			reputation = maxi(0, reputation - 1)
+
+## Environmental hazards: bounded, telegraphed, and always traceable to a
+## reason the player could have seen coming.
+const HAZARD_KINDS := {
+	"smoke": {"label": "smoke", "spread": 1, "damage": "power",
+		"causes": "an overloaded feed or a cabinet running far too hot"},
+	"fire": {"label": "fire", "spread": 2, "damage": "device",
+		"causes": "smoke nobody dealt with, or ageing gear in a hot cabinet"},
+	"water": {"label": "water under the floor", "spread": 1, "damage": "power",
+		"causes": "cooling nobody has serviced"},
+}
+const PROTECTION := {
+	"detection": {"label": "Smoke and leak detection", "cost": 900, "service": 40,
+		"blurb": "Finds it in the cycle it starts instead of the cycle it spreads."},
+	"suppression": {"label": "Gas suppression", "cost": 2600, "service": 60,
+		"blurb": "Puts a fire out and shuts the affected cabinets down doing it."},
+	"drainage": {"label": "Under-floor drainage", "cost": 1100, "service": 50,
+		"blurb": "Water goes somewhere other than into the bottom of a rack."},
+}
+
+func protection_ready(kind: String) -> bool:
+	var p: Dictionary = protection.get(kind, {})
+	if p.is_empty() or not bool(p.get("installed", false)):
+		return false
+	# installed is not the same as maintained
+	return cycle - int(p.get("serviced_cycle", -999)) <= int(PROTECTION[kind]["service"])
+
+func buy_protection(kind: String) -> String:
+	if not PROTECTION.has(kind):
+		return "there is no such system"
+	if bool(protection.get(kind, {}).get("installed", false)):
+		return "%s is already fitted" % PROTECTION[kind]["label"]
+	if not try_spend(int(PROTECTION[kind]["cost"])):
+		return "%s costs $%d" % [PROTECTION[kind]["label"], int(PROTECTION[kind]["cost"])]
+	protection[kind] = {"installed": true, "serviced_cycle": cycle}
+	log_event("FACILITY: %s fitted. It is only worth what its last inspection says it is."
+		% PROTECTION[kind]["label"])
+	return ""
+
+func service_protection(kind: String) -> String:
+	if not bool(protection.get(kind, {}).get("installed", false)):
+		return "that is not fitted"
+	if not try_spend(int(PROTECTION[kind]["cost"]) / 6):
+		return "the inspection costs $%d" % (int(PROTECTION[kind]["cost"]) / 6)
+	protection[kind]["serviced_cycle"] = cycle
+	log_event("FACILITY: %s inspected and signed off." % PROTECTION[kind]["label"])
+	return ""
+
+func hazard_risk(r: Net.Rack) -> float:
+	## Everything here is something the player can already see: heat, an
+	## overloaded feed, ageing hardware, and cooling nobody has serviced.
+	var risk := 0.0
+	if rack_hot(r):
+		risk += 0.5
+	risk += 0.2 * clampf(float(rack_heat(r)) / maxf(1.0, float(rack_cooling(r))) - 0.7, 0.0, 1.0)
+	var oldest := 0
+	for d in r.slots:
+		if d != null:
+			oldest = maxi(oldest, device_age(d))
+	risk += 0.25 * clampf(float(oldest - 60) / 80.0, 0.0, 1.0)
+	risk += 0.25 * clampf(float(facility_overdue("aircon")) / 60.0, 0.0, 1.0)
+	if not bool(site_feeds(int(r.site)).get("A", true)) or not bool(site_feeds(int(r.site)).get("B", true)):
+		risk += 0.15
+	return clampf(risk, 0.0, 1.0)
+
+func start_hazard(r: Net.Rack, kind: String) -> Dictionary:
+	var haz := {"kind": kind, "rack": r.name, "site": int(r.site), "tile": [r.tile.x, r.tile.y],
+		"severity": 1, "started": cycle, "detected": protection_ready("detection"),
+		"zone": [r.name]}
+	hazards.append(haz)
+	if bool(haz["detected"]):
+		log_event("ALARM: %s detected in %s. The panel found it in the cycle it started."
+			% [HAZARD_KINDS[kind]["label"], r.name])
+		Sfx.play("alert")
+	else:
+		log_event("SOMETHING IS WRONG in %s, and nothing on this floor is watching for it."
+			% r.name)
+	record_incident("hazard", "%s in %s" % [HAZARD_KINDS[kind]["label"], r.name])
+	return haz
+
+func _hazard_rack(name: String) -> Net.Rack:
+	for r: Net.Rack in racks:
+		if r.name == name:
+			return r
+	return null
+
+func hazard_tick() -> void:
+	## Ignition is a slow function of visible risk, and Apprentice difficulty
+	## keeps a floor under how bad it can get.
+	if hazards.is_empty() and stage >= 1:
+		for r: Net.Rack in racks_on(current_site):
+			var risk := hazard_risk(r)
+			if risk < 0.5 or biz_roll() > 0.02 * risk * fault_scale():
+				continue
+			var kind := "water" if facility_overdue("aircon") > 40 else "smoke"
+			start_hazard(r, kind)
+			break
+	for haz in hazards.duplicate():
+		var rack := _hazard_rack(String(haz["rack"]))
+		if rack == null:
+			hazards.erase(haz)
+			continue
+		if not bool(haz["detected"]) and protection_ready("detection"):
+			haz["detected"] = true
+			log_event("ALARM: the panel has picked up the %s in %s."
+				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
+		var responded := false
+		if String(haz["kind"]) in ["smoke", "fire"] and protection_ready("suppression") \
+				and bool(haz["detected"]):
+			responded = true
+			for d in rack.slots:
+				if d != null and d.status == "active":
+					d.status = "offline"  # suppression shuts the cabinet down doing its job
+			log_event("SUPPRESSION: the system discharged in %s. Everything in that cabinet is down, and the building is not on fire."
+				% haz["rack"])
+		elif String(haz["kind"]) == "water" and protection_ready("drainage") and bool(haz["detected"]):
+			responded = true
+			log_event("DRAINAGE: the water went under the floor and out, which is what it is for.")
+		if responded:
+			hazards.erase(haz)
+			topology_changed.emit()
+			continue
+		# nobody is dealing with it: it gets worse on a schedule you can watch
+		if Staff.anyone_on_shift() and bool(haz["detected"]) and biz_roll() < 0.4:
+			hazards.erase(haz)
+			log_event("RESPONSE: the crew dealt with the %s in %s by hand."
+				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
+			continue
+		haz["severity"] = int(haz["severity"]) + 1
+		var cap := 3 if difficulty == 0 else 5  # Apprentice keeps a floor under it
+		if int(haz["severity"]) > cap:
+			haz["severity"] = cap
+		if String(haz["kind"]) == "smoke" and int(haz["severity"]) >= 3:
+			haz["kind"] = "fire"
+			log_event("FIRE: the smoke in %s has become a fire." % haz["rack"])
+		match String(HAZARD_KINDS[haz["kind"]]["damage"]):
+			"power":
+				for d in rack.slots:
+					if d != null and d.status == "active":
+						d.status = "offline"
+						log_event("HAZARD: %s in %s took %s down."
+							% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"], d.name])
+						break
+			"device":
+				for d in rack.slots:
+					if d != null:
+						# it goes, and so does every cable that was in it
+						uninstall_device(d, false)
+						log_event("LOST: %s did not survive the fire in %s." % [d.name, haz["rack"]])
+						break
+		topology_changed.emit()
 
 ## Decisions where both answers are defensible and the bill arrives later.
 const DECISIONS := [
@@ -6533,6 +6686,7 @@ func sla_tick() -> void:
 	maybe_offer_decision()
 	consequence_tick()
 	story_tick()
+	hazard_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
@@ -7404,7 +7558,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
+		"protection": protection,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
 		"confirm_commits": confirm_commits, "tickets": tickets, "grey_faults": grey_faults, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
@@ -7739,6 +7894,8 @@ func _apply(data: Dictionary) -> void:
 	tour = data.get("tour", {})
 	audit = data.get("audit", {})
 	decisions = data.get("decisions", [])
+	hazards = data.get("hazards", [])
+	protection = data.get("protection", {})
 	consequences = data.get("consequences", [])
 	decisions_seen = data.get("decisions_seen", [])
 	decision_notes = data.get("decision_notes", [])

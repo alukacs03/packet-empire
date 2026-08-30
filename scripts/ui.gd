@@ -2289,6 +2289,42 @@ func _refresh_ops() -> void:
 				item["auto"] = on
 				_refresh_ops())
 			rrow.add_child(auto_r)
+	ops_box.add_child(_section("FIRE, SMOKE AND WATER"))
+	for prot_id: String in Game.PROTECTION:
+		var prot: Dictionary = Game.PROTECTION[prot_id]
+		var prow2 := HBoxContainer.new()
+		prow2.add_theme_constant_override("separation", 8)
+		ops_box.add_child(prow2)
+		var fitted: bool = bool(Game.protection.get(prot_id, {}).get("installed", false))
+		var ready: bool = Game.protection_ready(prot_id)
+		var pl2 := _label("  %-30s %s" % [prot["label"],
+			("not fitted" if not fitted else ("in date" if ready else "OVERDUE INSPECTION"))], 12,
+			Color(0.72, 0.84, 0.8) if ready else Color(1.0, 0.82, 0.5))
+		pl2.add_theme_font_override("font", mono)
+		pl2.tooltip_text = String(prot["blurb"])
+		pl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		prow2.add_child(pl2)
+		var pbtn := Button.new()
+		pbtn.text = ("Fit it ($%d)" % int(prot["cost"])) if not fitted \
+			else ("Inspect ($%d)" % (int(prot["cost"]) / 6))
+		pbtn.pressed.connect(func() -> void:
+			var err: String = Game.buy_protection(prot_id) if not fitted \
+				else Game.service_protection(prot_id)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		prow2.add_child(pbtn)
+	for r_risk: Net.Rack in Game.racks_on(Game.current_site):
+		var risk_here: float = Game.hazard_risk(r_risk)
+		if risk_here < 0.35:
+			continue
+		ops_box.add_child(_label("  %s is at %d%% hazard risk (heat, age, power, unserviced cooling)"
+			% [r_risk.name, int(risk_here * 100.0)], 12, Color(1.0, 0.82, 0.5)))
+	for haz_i: Dictionary in Game.hazards:
+		ops_box.add_child(_label("  LIVE: %s in %s, severity %d%s" % [
+			Game.HAZARD_KINDS[haz_i["kind"]]["label"], haz_i["rack"], int(haz_i["severity"]),
+			"" if bool(haz_i["detected"]) else ", undetected"], 12, Prefs.bad_colour()))
 	ops_box.add_child(_section("FACILITY SCHEDULE"))
 	if Game.heat_wave():
 		ops_box.add_child(_wrap("  HEAT WAVE  /  Cooling headroom is down a tenth while it lasts.",
