@@ -3526,6 +3526,72 @@ static func run() -> int:
 	Game.tac_cases = []
 	Game.renewals = tac_renewals
 
+	# --- zombie assets ---
+	Game.orphan_intel = {}
+	Game.money = 8000
+	var zr := Game.add_rack(Vector2i(46, 1))
+	var z_sw := Game.new_device("sw-8")
+	var z_srv := Game.new_device("srv-1")
+	var z_lonely := Game.new_device("srv-1")   # cabled to nothing at all
+	var z_useful := Game.new_device("rtr-lite")  # also uncabled, and still routed through
+	zr.slots[0] = z_sw
+	zr.slots[1] = z_srv
+	zr.slots[2] = z_lonely
+	var zr2 := Game.add_rack(Vector2i(47, 1))
+	zr2.slots[0] = z_useful
+	Game.connect_ifaces(z_srv.ifaces[0], z_sw.ifaces[0])
+	Game.add_ip(z_srv.ifaces[0], "10.77.0.10/24")
+	Game.add_ip(z_useful.ifaces[0], "10.77.0.1/24")
+	Game.add_static_route(z_srv, "10.78.0.0", 24, "10.77.0.1")
+	Game.add_vlan(z_sw, 77, "nobody")
+	var zombies := Game.orphan_list()
+	var z_keys: Array = []
+	for z: Dictionary in zombies:
+		z_keys.append(String(z["key"]))
+	check("device|%s" % z_lonely.name in z_keys and "device|%s" % z_useful.name in z_keys \
+			and "vlan|%s|77" % z_sw.name in z_keys,
+		"zombies: uncabled hardware and an empty VLAN show up on their own, without bookkeeping")
+	check("nobody claims" in String(Game.audit_findings()[Game.audit_findings().size() - 1]),
+		"zombies: an auditor counts them as exactly the sloppiness they are")
+	var lonely_orphan := {}
+	var useful_orphan := {}
+	for z2: Dictionary in zombies:
+		if String(z2["key"]) == "device|%s" % z_lonely.name:
+			lonely_orphan = z2
+		elif String(z2["key"]) == "device|%s" % z_useful.name:
+			useful_orphan = z2
+	check(Game.orphan_load_bearing(lonely_orphan) == "" \
+			and Game.orphan_load_bearing(useful_orphan) != "",
+		"zombies: one of them is quietly load bearing, and it is a fact about the network")
+	var rep_before_zombie := Game.reputation
+	var incidents_before_zombie := Game.incidents.size()
+	Game.investigate_orphan(useful_orphan)  # half a look, which tells you nothing
+	check(Game.retire_orphan(useful_orphan) == "" and Game.reputation < rep_before_zombie \
+			and Game.incidents.size() > incidents_before_zombie,
+		"zombies: switching one off half-investigated discovers what it was carrying the hard way")
+	# the same situation, looked at properly first
+	var z_useful2 := Game.new_device("rtr-lite")
+	zr2.slots[1] = z_useful2
+	Game.add_ip(z_useful2.ifaces[0], "10.79.0.1/24")
+	Game.add_static_route(z_srv, "10.80.0.0", 24, "10.79.0.1")
+	var second_orphan := {}
+	for z3: Dictionary in Game.orphan_list():
+		if String(z3["key"]) == "device|%s" % z_useful2.name:
+			second_orphan = z3
+	var rep_before_safe := Game.reputation
+	Game.investigate_orphan(second_orphan)
+	Game.investigate_orphan(second_orphan)
+	check(Game.orphan_intel_of(second_orphan) == 2 \
+			and Game.retire_orphan(second_orphan) != "" and Game.reputation == rep_before_safe \
+			and Game.rack_of(z_useful2) != null,
+		"zombies: investigating first is measurably safer, because it stops you doing it")
+	var money_before_reclaim := Game.money
+	check(Game.retire_orphan(lonely_orphan) == "" \
+			and Game.money > money_before_reclaim \
+			and Game.rack_of(z_lonely) == null,
+		"zombies: turning off something genuinely unused reclaims space and money")
+	Game.orphan_intel = {}
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

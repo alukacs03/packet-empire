@@ -241,6 +241,7 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var orphan_intel := {}  # orphan key -> how much digging the player has done (0-2)
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
@@ -585,6 +586,126 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+func orphan_list() -> Array:
+	## Things nobody claims: read off the live estate rather than remembered.
+	var out: Array = []
+	for r: Net.Rack in racks_on(current_site):
+		for d in r.slots:
+			if d == null or d.status != "active" or d.type == "cooling":
+				continue
+			var cabled := false
+			for i: Net.Iface in d.ifaces:
+				if link_at(i) != null:
+					cabled = true
+			if not cabled:
+				out.append({"kind": "device", "key": "device|%s" % d.name, "ref": d.name,
+					"label": "%s (%s) is racked, powered and cabled to nothing"
+						% [d.name, MODELS[d.model]["label"]]})
+	for d: Net.NDevice in all_devices():
+		if d.type != "switch":
+			continue
+		for vid: int in d.vlans:
+			if int(vid) == 1:
+				continue
+			var used := false
+			for i: Net.Iface in d.ifaces:
+				if i.mode == "access" and int(i.untagged_vlan) == int(vid) and link_at(i) != null:
+					used = true
+				elif i.mode == "trunk" and link_at(i) != null:
+					used = true
+			if not used:
+				out.append({"kind": "vlan", "key": "vlan|%s|%d" % [d.name, vid], "ref": d.name,
+					"vid": int(vid),
+					"label": "VLAN %d on %s has no member port and no traffic" % [vid, d.name]})
+	for m: Dictionary in monitors:
+		if Contracts._owner(String(m.get("target", ""))) == null:
+			out.append({"kind": "monitor", "key": "monitor|%s" % m.get("target", ""), "ref": m,
+				"label": "a check is still watching %s, which nothing serves" % m.get("target", "")})
+	return out
+
+func orphan_load_bearing(orphan: Dictionary) -> String:
+	## The truth, computed from the live network. Investigation reveals it;
+	## switching things off blind discovers it the hard way.
+	match String(orphan["kind"]):
+		"device":
+			for d: Net.NDevice in all_devices():
+				if d.name == String(orphan["ref"]):
+					var ips: Array = []
+					for i: Net.Iface in d.ifaces:
+						for cidr in i.ips:
+							ips.append(String(cidr).split("/")[0])
+					for other: Net.NDevice in all_devices():
+						if other == d:
+							continue
+						for route in other.static_routes:
+							if String(route.get("via", "")) in ips:
+								return "%s still routes through it" % other.name
+					for m: Dictionary in monitors:
+						if String(m.get("target", "")) in ips:
+							return "a live check is pointed at it"
+			return ""
+		"vlan":
+			for d: Net.NDevice in all_devices():
+				if d.type != "switch" or d.name == String(orphan["ref"]):
+					continue
+				if d.vlans.has(int(orphan["vid"])):
+					for i: Net.Iface in d.ifaces:
+						if i.mode == "access" and int(i.untagged_vlan) == int(orphan["vid"]) \
+								and link_at(i) != null:
+							return "%s carries customer ports in that VLAN" % d.name
+			return ""
+	return ""
+
+func orphan_intel_of(orphan: Dictionary) -> int:
+	return int(orphan_intel.get(String(orphan["key"]), 0))
+
+func investigate_orphan(orphan: Dictionary) -> String:
+	## Uses the tools already here: counters, logs, and asking somebody.
+	var level := orphan_intel_of(orphan)
+	if level >= 2:
+		return "you already know what that is"
+	if not try_spend(50):
+		return "an afternoon of somebody's time costs $50"
+	orphan_intel[String(orphan["key"])] = level + 1
+	if level + 1 < 2:
+		log_event("INVESTIGATION: counters and logs pulled for %s. Nothing conclusive yet."
+			% orphan["label"])
+		return ""
+	var bearing := orphan_load_bearing(orphan)
+	log_event("INVESTIGATION: %s. %s" % [orphan["label"],
+		("It is load bearing: %s." % bearing) if bearing != ""
+		else "Nothing has touched it and nothing depends on it. It can go."])
+	return ""
+
+func retire_orphan(orphan: Dictionary) -> String:
+	var bearing := orphan_load_bearing(orphan)
+	if bearing != "" and orphan_intel_of(orphan) >= 2:
+		return "you know what that is carrying: %s" % bearing
+	match String(orphan["kind"]):
+		"device":
+			for d: Net.NDevice in all_devices():
+				if d.name == String(orphan["ref"]):
+					decommission(d, DECOM_STEPS)
+					break
+		"vlan":
+			for d: Net.NDevice in all_devices():
+				if d.name == String(orphan["ref"]):
+					d.vlans.erase(int(orphan["vid"]))
+					break
+		"monitor":
+			monitors.erase(orphan["ref"])
+	orphan_intel.erase(String(orphan["key"]))
+	if bearing == "":
+		log_event("RECLAIMED: %s. Power, space and addresses back." % orphan["label"])
+	else:
+		# diagnosable, and exactly what the investigation would have told you
+		reputation = maxi(0, reputation - 3)
+		log_event("IT WAS LOAD BEARING: %s. %s. Nobody looked first."
+			% [orphan["label"], bearing.capitalize()])
+		record_incident("zombie", "something nobody claimed turned out to be carrying traffic")
+	topology_changed.emit()
+	return ""
 
 const SUPPORT_TIERS := [
 	{"label": "no contract", "cost": 0, "wait": 8, "escalate": 4},
@@ -3189,6 +3310,9 @@ func audit_findings() -> Array:
 	var out: Array = []
 	if not data_risks.is_empty():
 		out.append("%d unit(s) left without a certificate of destruction" % data_risks.size())
+	var orphans := orphan_list().size()
+	if orphans > 0:
+		out.append("%d thing(s) on the floor that nobody claims" % orphans)
 	var orphan := 0
 	for m in monitors:
 		if bool(m.get("failing", false)) and m.get("orphan", false):
@@ -5167,7 +5291,7 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -5495,6 +5619,7 @@ func _apply(data: Dictionary) -> void:
 	tour = data.get("tour", {})
 	renewals = data.get("renewals", [])
 	tac_cases = data.get("tac_cases", [])
+	orphan_intel = data.get("orphan_intel", {})
 	firmware_bugs = data.get("firmware_bugs", {})
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))

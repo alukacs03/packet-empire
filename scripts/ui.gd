@@ -2011,6 +2011,43 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+	var orphans: Array = Game.orphan_list()
+	if not orphans.is_empty():
+		ops_box.add_child(_section("NOBODY CLAIMS THESE"))
+		for orphan: Dictionary in orphans:
+			var orow := HBoxContainer.new()
+			orow.add_theme_constant_override("separation", 8)
+			ops_box.add_child(orow)
+			var known: int = Game.orphan_intel_of(orphan)
+			var suffix := ""
+			if known >= 2:
+				var bearing: String = Game.orphan_load_bearing(orphan)
+				suffix = "   (%s)" % (bearing if bearing != "" else "nothing depends on it")
+			var ol := _wrap("  %s%s" % [orphan["label"], suffix], 12,
+				Color(1.0, 0.82, 0.5) if known < 2 else Color(0.72, 0.8, 0.88), 560)
+			ol.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			orow.add_child(ol)
+			if known < 2:
+				var dig := Button.new()
+				dig.text = "Investigate ($50)"
+				dig.tooltip_text = "Counters, logs and asking somebody. Twice and you will know."
+				dig.pressed.connect(func() -> void:
+					var err: String = Game.investigate_orphan(orphan)
+					if err != "":
+						_toast(err)
+					_refresh_ops()
+					_refresh_money())
+				orow.add_child(dig)
+			var kill := Button.new()
+			kill.text = "Turn it off"
+			kill.tooltip_text = "Reclaims power, space and addresses. Assuming nothing needed it."
+			kill.pressed.connect(func() -> void:
+				var err: String = Game.retire_orphan(orphan)
+				if err != "":
+					_toast(err)
+				_refresh_ops()
+				_refresh_money())
+			orow.add_child(kill)
 	ops_box.add_child(_section("VENDOR SUPPORT"))
 	var tier_row := HBoxContainer.new()
 	tier_row.add_theme_constant_override("separation", 8)
