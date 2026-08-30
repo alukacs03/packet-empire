@@ -3575,6 +3575,74 @@ static func run() -> int:
 		"remote hands: an unclear instruction gets the neighbouring port, which is a real wrong outcome")
 	Game.remote_jobs = []
 	Game.current_site = 0
+
+	# --- receiving ---
+	Game.crates = []
+	Game.packaging = 0
+	Game.spares = {}
+	Game.money = 20000
+	var rc_staff := Game.staff.duplicate(true)
+	Game.staff = []
+	var money_order := Game.money
+	check(Game.order_hardware("srv-1") == "" \
+			and Game.money == money_order - int(float(Game.MODELS["srv-1"]["price"]) * 0.85) \
+			and Game.crates.size() == 1 and Game.crates_waiting().is_empty(),
+		"receiving: ordering is cheaper than collecting it, and what you have bought is not here yet")
+	var crate: Dictionary = Game.crates[0]
+	crate["damaged"] = false
+	crate["shipped"] = "srv-1"
+	Game.cycle = int(crate["due"])
+	Game.receiving_tick()
+	check(Game.crates_waiting().size() == 1 and Game.spares.is_empty(),
+		"receiving: it arrives as a crate in the receiving area, not as a working device")
+	check(Game.check_crate(crate) == "" and bool(crate["checked"]) \
+			and Game.check_crate(crate) != "",
+		"receiving: checking it against the order records the serial, once")
+	check(Game.unpack_crate(crate) == "" and int(Game.spares.get("srv-1", 0)) == 1 \
+			and Game.crates.is_empty() and Game.packaging == 1,
+		"receiving: unpacking puts it on the shelf and leaves the cardboard behind")
+	# damage found at the dock goes back; damage found later does not
+	Game.order_hardware("srv-1")
+	var broken: Dictionary = Game.crates[0]
+	broken["damaged"] = true
+	broken["arrived"] = Game.cycle
+	var money_claim := Game.money
+	check(Game.check_crate(broken) == "" and Game.money > money_claim and Game.crates.is_empty(),
+		"receiving: damage caught on receipt goes straight back with the money")
+	Game.order_hardware("srv-1")
+	var missed: Dictionary = Game.crates[0]
+	missed["damaged"] = true
+	missed["arrived"] = Game.cycle
+	var spares_before_missed: int = int(Game.spares.get("srv-1", 0))
+	Game.unpack_crate(missed)
+	check(int(Game.spares.get("srv-1", 0)) == spares_before_missed and Game.crates.is_empty(),
+		"receiving: the same damage discovered in the aisle is simply yours")
+	# heavy gear needs a second pair of hands or a second afternoon
+	Game.order_hardware("sw-24")
+	var heavy: Dictionary = Game.crates[0]
+	heavy["damaged"] = false
+	heavy["shipped"] = "sw-24"
+	heavy["arrived"] = Game.cycle
+	check(Game.unpack_crate(heavy) == "" and Game.crates.size() == 1,
+		"receiving: a deep, heavy unit does not come out of its crate in one afternoon alone")
+	Game.staff = [{"name": "Toth Gabor", "role": "tech", "skill": 3, "salary": 300, "morale": 70,
+		"shift": "day", "training_left": 0, "certs": []}]
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3  # somebody on shift
+	Game.unpack_crate(heavy)
+	check(Game.crates.is_empty() and int(Game.spares.get("sw-24", 0)) == 1,
+		"receiving: a second pair of hands is exactly what it needed")
+	# and the packaging is a consequence in itself
+	Game.packaging = 5
+	var tidy_with_boxes := Game.tour_factor("tidy")
+	var blocked_chance := Game.fault_chance()
+	Game.packaging = 0
+	check(Game.tour_factor("tidy") > tidy_with_boxes and Game.fault_chance() < blocked_chance \
+			and Game.clear_packaging() != "",
+		"receiving: cardboard in the aisle is visible sloppiness and gets in the way of the work")
+	Game.staff = rc_staff
+	Game.crates = []
+	Game.packaging = 0
+	Game.spares = {}
 	Game.money = 8000
 	var zr := Game.add_rack(Vector2i(46, 1))
 	var z_sw := Game.new_device("sw-8")

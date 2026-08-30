@@ -2303,6 +2303,71 @@ func _refresh_ops() -> void:
 				hud_toast("UPS installed.", true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
+	ops_box.add_child(_section("RECEIVING"))
+	var order_btn := Button.new()
+	order_btn.text = "Order hardware (15% off, delivered in a few cycles)…"
+	order_btn.tooltip_text = "Cheaper than collecting it yourself. What turns up is a crate."
+	order_btn.pressed.connect(func() -> void:
+		var order_models: Array = []
+		var order_opts: Array = []
+		for m_id: String in Game.MODELS:
+			order_models.append(m_id)
+			order_opts.append("%s   $%d" % [Game.MODELS[m_id]["label"],
+				int(float(Game.MODELS[m_id]["price"]) * 0.85)])
+		_menu(order_btn, order_opts, func(id: int) -> void:
+			var err: String = Game.order_hardware(String(order_models[id]))
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money()))
+	ops_box.add_child(order_btn)
+	if Game.aisle_blocked():
+		ops_box.add_child(_wrap("  The receiving area is full and the aisle is not clear. Everything takes longer, and it is the first thing a visitor sees.",
+			12, Color(1.0, 0.72, 0.45), 780))
+	for crate: Dictionary in Game.crates:
+		var krow := HBoxContainer.new()
+		krow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(krow)
+		var state := "in transit, due in %d" % (int(crate["due"]) - Game.cycle)
+		if int(crate["arrived"]) >= 0:
+			state = "on the dock%s" % ("" if bool(crate["checked"]) else ", unchecked")
+		var kl := _label("  crate: %-22s %s" % [Game.MODELS[crate["model"]]["label"], state], 12,
+			Color(0.78, 0.84, 0.9))
+		kl.add_theme_font_override("font", mono)
+		kl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		krow.add_child(kl)
+		if int(crate["arrived"]) >= 0:
+			if not bool(crate["checked"]):
+				var chk := Button.new()
+				chk.text = "Check against the order"
+				chk.tooltip_text = "Damage and wrong items go back free. Discovered later, they do not."
+				chk.pressed.connect(func() -> void:
+					var err: String = Game.check_crate(crate)
+					if err != "":
+						_toast(err)
+					_refresh_ops()
+					_refresh_money())
+				krow.add_child(chk)
+			var unp := Button.new()
+			unp.text = "Unpack"
+			unp.pressed.connect(func() -> void:
+				var err: String = Game.unpack_crate(crate)
+				if err != "":
+					_toast(err)
+				_refresh_ops())
+			krow.add_child(unp)
+	if Game.packaging > 0:
+		var prow := HBoxContainer.new()
+		prow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(prow)
+		prow.add_child(_label("  %d pile(s) of cardboard and wrap in the aisle" % Game.packaging,
+			12, Color(1.0, 0.82, 0.5)))
+		var clear_btn := Button.new()
+		clear_btn.text = "Take it out"
+		clear_btn.pressed.connect(func() -> void:
+			Game.clear_packaging()
+			_refresh_ops())
+		prow.add_child(clear_btn)
 	ops_box.add_child(_section("ASSETS AND SPARES"))
 	var shelf: Array = []
 	for m in Game.spares:

@@ -241,6 +241,8 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var crates: Array = []  # what the courier left in the receiving area
+var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
 var orphan_intel := {}  # orphan key -> how much digging the player has done (0-2)
 var tac_cases: Array = []  # vendor support cases and how far each one has got
@@ -587,6 +589,116 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const RECEIVING_SPACE := 4  # crates the receiving area holds before it is an aisle problem
+const HEAVY_MODELS := ["sw-24", "srv-2", "rtr-edge", "crac-1", "lb-1"]
+
+func order_hardware(model: String, qty := 1) -> String:
+	## Ordering is cheaper than collecting it yourself, and what turns up is a
+	## pallet rather than a working device.
+	if not MODELS.has(model):
+		return "no such model"
+	qty = clampi(qty, 1, 4)
+	var price := int(float(MODELS[model]["price"]) * 0.85) * qty
+	if not try_spend(price):
+		return "that order comes to $%d" % price
+	for i in qty:
+		# a small proportion of every delivery is wrong or broken, and you only
+		# find out if somebody checks it against the order
+		var damaged := randf() < 0.1
+		var wrong := "" if damaged or randf() > 0.1 else _wrong_model(model)
+		crates.append({"model": model, "shipped": wrong if wrong != "" else model,
+			"ordered": cycle, "due": cycle + randi_range(2, 4), "arrived": -1,
+			"checked": false, "damaged": damaged, "unpack_left": 2 if model in HEAVY_MODELS else 1})
+	log_event("ORDERED: %d x %s for $%d, delivered in a few cycles. Delivered is not installed."
+		% [qty, MODELS[model]["label"], price])
+	return ""
+
+func _wrong_model(model: String) -> String:
+	for other: String in MODELS:
+		if other != model and String(MODELS[other]["type"]) == String(MODELS[model]["type"]):
+			return other
+	return model
+
+func crates_waiting() -> Array:
+	var out: Array = []
+	for c: Dictionary in crates:
+		if int(c["arrived"]) >= 0:
+			out.append(c)
+	return out
+
+func aisle_blocked() -> bool:
+	## Crates and cardboard occupy the room whether you look at them or not.
+	return crates_waiting().size() + packaging > RECEIVING_SPACE
+
+func check_crate(crate: Dictionary) -> String:
+	if int(crate["arrived"]) < 0:
+		return "it has not arrived yet"
+	if bool(crate["checked"]):
+		return "you have already checked that one"
+	crate["checked"] = true
+	if bool(crate["damaged"]):
+		log_event("RECEIVING: the %s arrived damaged. Checked on receipt, so it goes straight back and the money comes with it."
+			% MODELS[crate["model"]]["label"])
+		crates.erase(crate)
+		_refund(int(float(MODELS[crate["model"]]["price"]) * 0.85))
+		return ""
+	if String(crate["shipped"]) != String(crate["model"]):
+		log_event("RECEIVING: they shipped a %s instead of a %s. Caught at the dock; the right one is on its way."
+			% [MODELS[crate["shipped"]]["label"], MODELS[crate["model"]]["label"]])
+		crate["shipped"] = crate["model"]
+		crate["due"] = cycle + 3
+		crate["arrived"] = -1
+		return ""
+	log_event("RECEIVING: the %s matches the order and the serial is written down."
+		% MODELS[crate["model"]]["label"])
+	return ""
+
+func unpack_crate(crate: Dictionary) -> String:
+	## Heavy gear needs a second pair of hands or a second afternoon.
+	if int(crate["arrived"]) < 0:
+		return "it has not arrived yet"
+	var hands := 1
+	for m: Dictionary in staff:
+		if Staff.on_shift(m):
+			hands += 1
+	crate["unpack_left"] = int(crate["unpack_left"]) - (2 if hands >= 2 else 1)
+	if int(crate["unpack_left"]) > 0:
+		log_event("RECEIVING: the %s is half out of its crate. It is deep, and it is heavy."
+			% MODELS[crate["model"]]["label"])
+		return ""
+	crates.erase(crate)
+	packaging += 1
+	if bool(crate["damaged"]) and not bool(crate["checked"]):
+		log_event("RECEIVING: the %s came out of the crate with a bent chassis. Nobody checked it at the dock, so that is now yours."
+			% MODELS[crate["model"]]["label"])
+		return ""
+	var model := String(crate["shipped"])
+	spares[model] = int(spares.get(model, 0)) + 1
+	log_event("RECEIVING: a %s is unpacked and on the shelf.%s" % [MODELS[model]["label"],
+		"" if model == String(crate["model"])
+		else "  It is not what you ordered, and nobody noticed at the dock."])
+	return ""
+
+func clear_packaging() -> String:
+	if packaging <= 0:
+		return "the aisle is clear"
+	packaging = 0
+	log_event("RECEIVING: the cardboard and pallet wrap are out of the aisle.")
+	return ""
+
+func receiving_tick() -> void:
+	for c in crates:
+		if int(c["arrived"]) < 0 and cycle >= int(c["due"]):
+			c["arrived"] = cycle
+			log_event("DELIVERY: a crate is in the receiving area. Check it against the order before it is unpacked.")
+	# the crew absorb this work when they have hands free
+	if not staff.is_empty() and Staff.anyone_on_shift() and cycle % 2 == 0:
+		var waiting := crates_waiting()
+		if not waiting.is_empty():
+			unpack_crate(waiting[0])
+		elif packaging > 0:
+			clear_packaging()
 
 const REMOTE_ACTIONS := {
 	"reseat": "reseat the cable in",
@@ -1074,7 +1186,9 @@ func tour_factor(name: String) -> float:
 	## Every input is something a visitor could actually see or ask for.
 	match name:
 		"tidy":
-			return floor_tidiness()
+			# open crates and cardboard in the aisle are the first thing anybody sees
+			return clampf(floor_tidiness() - 0.15 * float(packaging)
+				- (0.2 if aisle_blocked() else 0.0), 0.0, 1.0)
 		"deliberate":
 			var racked := 0
 			var orphaned := 0
@@ -3418,6 +3532,8 @@ func audit_findings() -> Array:
 	var out: Array = []
 	if not data_risks.is_empty():
 		out.append("%d unit(s) left without a certificate of destruction" % data_risks.size())
+	if packaging > 2 or aisle_blocked():
+		out.append("cardboard and crates in the aisle: a fire load and a trip hazard")
 	var orphans := orphan_list().size()
 	if orphans > 0:
 		out.append("%d thing(s) on the floor that nobody claims" % orphans)
@@ -3509,7 +3625,8 @@ func housekeeping_suggestion() -> String:
 func fault_chance() -> float:
 	## A kept floor genuinely breaks less: cables are seated, gaps are blanked,
 	## and the person who fixes it knows where everything is.
-	return 0.25 * fault_scale() * (1.0 - 0.4 * floor_tidiness())
+	var blocked := 1.35 if aisle_blocked() else 1.0  # you cannot work around a pallet
+	return 0.25 * fault_scale() * (1.0 - 0.4 * floor_tidiness()) * blocked
 
 func housekeeping_tick() -> void:
 	if not quiet_now():
@@ -4593,6 +4710,7 @@ func sla_tick() -> void:
 	renewal_tick()
 	tac_tick()
 	remote_hands_tick()
+	receiving_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -5400,7 +5518,7 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -5730,6 +5848,8 @@ func _apply(data: Dictionary) -> void:
 	tac_cases = data.get("tac_cases", [])
 	orphan_intel = data.get("orphan_intel", {})
 	remote_jobs = data.get("remote_jobs", [])
+	crates = data.get("crates", [])
+	packaging = int(data.get("packaging", 0))
 	firmware_bugs = data.get("firmware_bugs", {})
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))
