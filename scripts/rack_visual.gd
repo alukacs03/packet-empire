@@ -230,6 +230,20 @@ func _draw() -> void:
 					Color(0.62, 0.67, 0.68, 0.28), 0.8)
 		else:
 			draw_line(lo, hi, Color(0.28, 0.32, 0.34, 0.58), 0.8)
+	# somebody else's kit, still wearing their asset tag
+	var inherited := ""
+	for slot_dev in rack.slots:
+		if slot_dev != null and String(slot_dev.acquired_from) != "":
+			inherited = String(slot_dev.acquired_from)
+			break
+	if inherited != "":
+		var tag := Rect2(Vector2(-4, -H + 34), Vector2(22, 9))
+		draw_rect(tag, Color("d9c27a"))
+		draw_rect(tag, Color("6b5a2c"), false, 1.0)
+		draw_line(tag.position + Vector2(3, 4), tag.position + Vector2(19, 4),
+			Color("6b5a2c"), 1.0)
+		draw_line(tag.position + Vector2(3, 6), tag.position + Vector2(14, 6),
+			Color("6b5a2c"), 1.0)
 	# name badge
 	var badge_pos := Vector2(-16, -H - 7)
 	var plate_col := Color("47352a").lerp(Color("17314c"), progress)

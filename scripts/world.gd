@@ -201,6 +201,20 @@ func _shoot_all() -> void:
 				loose.blanked = {}
 			Game.topology_changed.emit()
 			$Floor.queue_redraw()],
+		["floor_acquired",
+			func() -> void:
+				# a cabinet still wearing somebody else's asset tag
+				ui.close_everything()
+				Game.stage = 0
+				Game.current_site = 0
+				rebuild_racks()
+				var tagged := Game.racks_on(0)
+				if not tagged.is_empty():
+					for slot_i in Net.Rack.SLOTS:
+						var kit: Net.NDevice = tagged[0].slots[slot_i]
+						if kit != null:
+							kit.acquired_from = "Kabel Bela Bt"
+				queue_redraw()],
 		["floor_settled",
 			func() -> void:
 				# a floor that has been run properly for a long time
