@@ -76,6 +76,9 @@ func _continue(slot: int) -> void:
 func _shoot_all() -> void:
 	## PACKET_SHOT=<dir>: photograph every screen, then quit
 	var dir := OS.get_environment("PACKET_SHOT")
+	# photographing the finale ends a run; that must never touch the player's
+	# real history file
+	Game.history_path = "user://run_history_shots.json"
 	SimTests.demo_world()
 	var shot_offers := Game.offers.duplicate(true)
 	var shot_deals := Game.deals.duplicate(true)

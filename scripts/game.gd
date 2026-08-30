@@ -4681,6 +4681,16 @@ func record_run(snap: Dictionary) -> Dictionary:
 		"categories": scored["categories"], "at": int(Time.get_unix_time_from_system()),
 		"money_at_end": int(snap.get("money", 0)), "reputation_at_end": int(snap.get("reputation", 0))}
 	var rows := run_history()
+	# the same run ended twice (a reopened save, a harness that replays the
+	# finale) is one run, not two: identical in company, ending, cycle and
+	# score means it is the row already at the top
+	if not rows.is_empty():
+		var top: Dictionary = rows[0]
+		if String(top.get("company", "")) == String(row["company"]) \
+				and String(top.get("ending", "")) == String(row["ending"]) \
+				and int(top.get("cycle", -1)) == int(row["cycle"]) \
+				and int(top.get("total", -1)) == int(row["total"]):
+			return top
 	# wall-clock seconds are not unique enough to order two quick runs
 	var seq := 0
 	for prior: Dictionary in rows:
