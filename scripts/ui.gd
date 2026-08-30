@@ -88,6 +88,36 @@ var vlan_section: VBoxContainer
 var vlan_box: VBoxContainer
 
 const UNLOCK_INTROS := {
+	"facility": {
+		"kicker": "NEW GROUND  /  THE BUILDING",
+		"title": "The building is yours to look after now.",
+		"body": "Filters, an aircon service, a generator test, a battery check. None of it is urgent until the afternoon it is, and by then it is expensive.",
+		"where": "OPS  /  FACILITY", "action": "See the schedule", "colour": "warm"},
+	"renewals": {
+		"kicker": "NEW DIARY  /  RENEWALS",
+		"title": "Something is about to lapse.",
+		"body": "Licences and contracts run out quietly. A lapsed licence does not break the device; it caps it, which is much harder to find.",
+		"where": "OPS  /  RECORDS", "action": "Open the calendar", "colour": "warning"},
+	"duties": {
+		"kicker": "NEW BOARD  /  DUTIES",
+		"title": "There are two of them now.",
+		"body": "Chores can be handed over. What you give away costs money and a little control, and comes back done the way that person works.",
+		"where": "OPS  /  AUTOMATION", "action": "Assign something", "colour": "accent"},
+	"access": {
+		"kicker": "NEW QUESTION  /  THE DOOR",
+		"title": "Somebody who does not work here is on the floor.",
+		"body": "An open floor is fastest and keeps no record of anything. Badges and escorts cost time on every visit and are the only reason you would ever know.",
+		"where": "OPS  /  FACILITY", "action": "Decide the policy", "colour": "warm"},
+	"compliance": {
+		"kicker": "NEW SCRUTINY  /  CONTROLS",
+		"title": "Somebody wants to see the paperwork.",
+		"body": "Eight controls, each answered by the live network rather than a checkbox. What you can prove is worth money to the customers who ask.",
+		"where": "OPS  /  RECORDS", "action": "Check readiness", "colour": "info"},
+	"support": {
+		"kicker": "NEW ROUTE  /  THE VENDOR",
+		"title": "This one is not yours to fix.",
+		"body": "A defect no configuration touches needs a case: evidence, a wait the length of your cover, and somebody who has seen it before.",
+		"where": "OPS  /  HARDWARE", "action": "Open the case", "colour": "danger"},
 	"map": {
 		"kicker": "NEW TOOL  /  WALL MAP",
 		"title": "The wall map is live.",
@@ -254,7 +284,7 @@ func _consider_unlock_intros() -> void:
 		_unlock_intro_active = ""
 		unlock_intro_panel.visible = false
 		return
-	for feature: String in ["map", "market", "business", "log", "ops", "expand"]:
+	for feature: String in Game.DISCOVERY_FEATURES:
 		if _feature_available(feature) and feature not in Game.feature_intros_seen \
 				and feature != _unlock_intro_active and feature not in _unlock_intro_pending:
 			_unlock_intro_pending.append(feature)
@@ -295,7 +325,7 @@ func _follow_unlock_intro() -> void:
 	match feature:
 		"map":
 			toggle_map()
-		"ops":
+		"ops", "facility", "renewals", "duties", "access", "compliance", "support":
 			toggle_ops()
 		"market", "business", "log":
 			contracts_tab = feature.capitalize()

@@ -115,7 +115,8 @@ var feature_intros_seen: Array = []  # one-time authored handoffs for newly reve
 var feature_discovery_trace := {}  # counts/cycles only; never player-authored content
 var customer_arcs := {}  # stable customer id -> remembered story beats and outcomes
 
-const DISCOVERY_FEATURES := ["map", "market", "business", "log", "ops", "expand"]
+const DISCOVERY_FEATURES := ["map", "market", "business", "log", "ops", "expand",
+	"facility", "renewals", "duties", "access", "compliance", "support"]
 const DISCOVERY_IGNORED_CYCLES := 6
 
 const ACHIEVEMENTS := [
@@ -377,6 +378,29 @@ func feature_unlocked(feature: String, reveal_all := false) -> bool:
 				or not monitors.is_empty() or not spares.is_empty()
 		"expand":
 			return "two_offices" in contracts_done or stage > 0
+		"facility":
+			# your own room: the building is your problem from here
+			if stage < 1:
+				return false
+			if not hazards.is_empty():
+				return true
+			for task: String in FACILITY_TASKS:
+				if facility_due_in(task) <= 4:
+					return true
+			return false
+		"renewals":
+			for item: Dictionary in renewals:
+				if renewal_due_in(item) <= 6 or bool(item.get("lapsed", false)):
+					return true
+			return false
+		"duties":
+			return staff.size() >= 2
+		"access":
+			return not visitors.is_empty() or access_policy != "open" or stage >= 2
+		"compliance":
+			return not audit.is_empty() or trust_marker
+		"support":
+			return not tac_cases.is_empty() or not firmware_bugs.is_empty()
 	return false
 
 func acknowledge_feature_intro(feature: String) -> void:

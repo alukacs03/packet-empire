@@ -7793,6 +7793,62 @@ static func run() -> int:
 	Game.cycle = lg_cycle
 	Game.events = []
 	Game.digest = {}
+
+	# --- the operational systems introduce themselves when they matter ---
+	var oi_state := Game.snapshot()
+	Game.sandbox = false
+	Prefs.show_everything = false
+	Game.feature_intros_seen = []
+	Game.staff = []
+	Game.visitors = []
+	Game.audit = {}
+	Game.trust_marker = false
+	Game.tac_cases = []
+	Game.firmware_bugs = {}
+	Game.renewals = []
+	Game.hazards = []
+	Game.facility = {}
+	Game.access_policy = "open"
+	Game.stage = 0
+	check(not Game.feature_unlocked("facility") and not Game.feature_unlocked("duties") \
+			and not Game.feature_unlocked("renewals") and not Game.feature_unlocked("compliance") \
+			and not Game.feature_unlocked("support"),
+		"onboarding: none of the operational systems announce themselves before they exist")
+	Game.stage = 1
+	Game.facility = {"filters": Game.cycle - int(Game.FACILITY_TASKS["filters"]["every"])}
+	check(Game.feature_unlocked("facility"),
+		"onboarding: the building introduces itself when its first job comes due")
+	Game.staff = [{"name": "A", "role": "noc", "skill": 2, "salary": 200, "morale": 70,
+		"shift": "day", "training_left": 0, "certs": []},
+		{"name": "B", "role": "tech", "skill": 2, "salary": 200, "morale": 70,
+		"shift": "day", "training_left": 0, "certs": []}]
+	check(Game.feature_unlocked("duties"),
+		"onboarding: the duties board arrives with the second pair of hands")
+	Game.add_renewal("licence", "feature licence on sw1", 180, 4, "sw1")
+	check(Game.feature_unlocked("renewals"),
+		"onboarding: the calendar arrives when something is about to lapse")
+	Game.admit_visitor("Vas Elektro", "aircon service")
+	check(Game.feature_unlocked("access"),
+		"onboarding: the door question arrives with somebody standing behind it")
+	Game.firmware_bugs["sw1"] = {"since": Game.cycle, "model": "sw-8"}
+	check(Game.feature_unlocked("support"),
+		"onboarding: the vendor route arrives with the first defect nobody can configure away")
+	Game.audit = {"state": "offered", "customer": "Someone", "scope": [], "reward": 1,
+		"deadline": Game.cycle, "findings": [], "history": []}
+	check(Game.feature_unlocked("compliance"),
+		"onboarding: and the controls arrive when somebody asks to see them")
+	var oi_missing: Array = []
+	for oi_feature: String in Game.DISCOVERY_FEATURES:
+		if not UILayer.UNLOCK_INTROS.has(oi_feature):
+			oi_missing.append(oi_feature)
+	check(oi_missing.is_empty(),
+		"onboarding: every discoverable system has a line written for it (%s)"
+			% ", ".join(PackedStringArray(oi_missing)))
+	Game.acknowledge_feature_intro("facility")
+	check("facility" in Game.feature_intros_seen,
+		"onboarding: and once it has been said, it is not said again")
+	Game.restore(oi_state)
+	Game.feature_intros_seen = []
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)
