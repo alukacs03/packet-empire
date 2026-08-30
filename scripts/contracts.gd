@@ -508,6 +508,17 @@ static func _campaign() -> Array:
 			],
 		},
 		{
+			"id": "prove_it",
+			"title": "The exercise",
+			"customer": "Tisza Bank",
+			"reward": 4600,
+			"brief": "Tisza Bank has read your last outage report and would like the exercise run rather than described. Book a failover test (Operations, Facility), let it take your upstream out of service on the cycle you chose, and have every customer still served when it comes back. They want the result either way: a test you fail and act on is worth more to them than one you never ran.",
+			"reqs": [
+				{"d": "A failover test has been passed", "t": func() -> bool: return int(Game.stats.get("failovers_passed", 0)) >= 1},
+				{"d": "Nobody is off the air right now", "t": func() -> bool: return not Game.customer_down_now()},
+			],
+		},
+		{
 			"id": "big_client",
 			"title": "The big client",
 			"customer": "Omega Holding",

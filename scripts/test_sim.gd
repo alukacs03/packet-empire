@@ -3285,6 +3285,19 @@ static func run() -> int:
 	Game.sites = prot_sites
 	Game.current_site = prot_here
 
+	# the campaign asks for the exercise, not a description of it
+	var pv_contract := {}
+	for pv_c: Dictionary in Contracts.all():
+		if String(pv_c["id"]) == "prove_it":
+			pv_contract = pv_c
+	check(not pv_contract.is_empty() and pv_contract["reqs"].size() == 2,
+		"campaign: there is a job that asks for the failover to be proved")
+	var pv_passed := int(Game.stats.get("failovers_passed", 0))
+	Game.stats["failovers_passed"] = 0
+	check(not bool((pv_contract["reqs"][0]["t"] as Callable).call()),
+		"campaign: and it is not satisfied by having built the redundancy")
+	Game.stats["failovers_passed"] = pv_passed
+
 	# --- proving the redundancy on a day you chose ---
 	var dr_deals := Game.deals.duplicate(true)
 	var dr_haz := Game.hazards.duplicate(true)
