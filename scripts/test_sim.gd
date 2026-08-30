@@ -3017,6 +3017,18 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# a post-mortem answers back with what would catch it next time
+	Game.incidents = []
+	Game.record_incident("test", "the thing that broke")
+	for pm_i in Game.REVIEW_CAUSES.size():
+		Game.incidents = []
+		Game.record_incident("test", "the thing that broke")
+		Game.review_incident(Game.incidents[0], pm_i)
+		check(String(Game.incidents[0].get("follow_up", "")) != "",
+			"post-mortem: every cause has a practical follow-through (%s)"
+				% Game.REVIEW_CAUSES[pm_i])
+	Game.incidents = []
+
 	# work that happens during the tick still happens somewhere
 	Game.crew_focus = {}
 	check(Game.crew_focus_rack() == "", "crew: with nothing done this cycle, nobody is sent anywhere")

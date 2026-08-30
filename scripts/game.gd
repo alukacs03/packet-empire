@@ -6817,6 +6817,14 @@ const REVIEW_CAUSES := [
 	"a configuration that was never saved",
 ]
 
+const REVIEW_FOLLOW_UP := {
+	"a change nobody reviewed": "The answer is not more care, it is a change window: declare one, do the work inside it, and let the log say when it started.",
+	"a single point of failure we knew about": "Pick the one you knew about and fix it, then book a failover test and take it away on purpose to find out whether you actually did.",
+	"capacity we never planned for": "The capacity panel has the runway figures. The one that runs out first is the one to buy, and it is cheaper before it runs out.",
+	"a monitor that did not exist": "Add the check that would have told you first. A monitor you add after an outage is the cheapest thing in this game.",
+	"a configuration that was never saved": "Save what is running, and put somebody on the labelling and documentation duty so it stops being your job to remember.",
+}
+
 func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	if bool(inc.get("reviewed", false)):
 		return "that one is already written up"
@@ -6826,6 +6834,12 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	reputation = mini(100, reputation + 3)
 	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. Customers appreciate the candour."
 		% [inc["summary"], inc["cause"]])
+	# the one moment the player is thinking about why: answer with the thing
+	# that would actually catch it next time, and name a tool that exists
+	var follow := String(REVIEW_FOLLOW_UP.get(String(inc["cause"]), ""))
+	if follow != "":
+		inc["follow_up"] = follow
+		log_event("POST-MORTEM: %s" % follow)
 	return ""
 
 func report_incident(kind: String, summary: String, by: String, text: String, delay: int) -> void:

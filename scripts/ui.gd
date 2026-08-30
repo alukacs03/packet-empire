@@ -5128,6 +5128,12 @@ func _build_log_tab() -> void:
 	for p: Dictionary in Game.status_posts.slice(0, 4):
 		contracts_box.add_child(_label("  cycle %d: %s" % [int(p["cycle"]), p["text"]], 12,
 			Color(0.7, 0.8, 0.85)))
+	# what a written-up incident told you to do about it, kept where it happened
+	for done_inc: Dictionary in Game.incidents:
+		if bool(done_inc.get("reviewed", false)) and String(done_inc.get("follow_up", "")) != "":
+			contracts_box.add_child(_wrap("  written up (%s): %s"
+				% [done_inc.get("cause", ""), done_inc["follow_up"]], 12,
+				Color(0.62, 0.82, 0.72), 640))
 	var open_reviews: Array = []
 	for inc: Dictionary in Game.incidents:
 		if not bool(inc.get("reviewed", false)):
