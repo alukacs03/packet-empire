@@ -936,7 +936,7 @@ func customer_eye(deal: Dictionary) -> Dictionary:
 	## This is deliberately derived at read time: the UI can never celebrate
 	## orders while the simulation says the customer is down.
 	if String(deal.get("customer", "")) != "Kiskacsa Kft":
-		return {}
+		return _general_customer_eye(deal)
 	var delivered := bool(deal.get("ever_healthy", false))
 	var healthy := bool(deal.get("healthy", false))
 	var degraded := bool(deal.get("degraded", false))
@@ -996,6 +996,99 @@ func customer_eye(deal: Dictionary) -> Dictionary:
 	else:
 		eye["voice"] = "“The next label just printed. That little sound means the shop is working.”"
 	return eye
+
+func _general_customer_eye(deal: Dictionary) -> Dictionary:
+	## Every customer is somebody doing something. Read off live state only:
+	## the panel can never celebrate orders while the service is down.
+	if deal.is_empty() or not deal.has("customer"):
+		return {}
+	var biz := Market.business_for(deal)
+	var delivered := bool(deal.get("ever_healthy", false))
+	var healthy := bool(deal.get("healthy", false))
+	var event := peak_event(deal)
+	var multiplier := peak_multiplier(deal)
+	var current_load := maxi(0, int(round(float(int(deal.get("load", 0))) * day_factor() * multiplier)))
+	var eye := {
+		"name": "%s  /  CUSTOMER EYE" % String(deal["customer"]).to_upper(),
+		"identity": "%s: %s." % [deal["customer"], biz["what"]],
+		"time": day_name().to_upper(),
+		"state": "waiting",
+		"metric": "NOT LIVE YET",
+		"activity": "They are waiting for the service they were promised.",
+		"voice": "“Tell us when it is ready.”",
+	}
+	if not event.is_empty():
+		eye["relationship"] = "%s  /  IN %d CYCLE%s" % [String(event["label"]).to_upper(),
+			int(event["cycle"]) - cycle, "" if int(event["cycle"]) - cycle == 1 else "S"]
+		eye["memory"] = "They have told you in advance: %s carries about %d times their normal traffic. They will remember how it went." \
+			% [event["label"], int(event["multiplier"])]
+	elif int(deal.get("peaks_carried", 0)) > 0:
+		eye["relationship"] = "CARRIED  /  %d BUSY NIGHT%s" % [int(deal["peaks_carried"]),
+			"" if int(deal["peaks_carried"]) == 1 else "S"]
+		eye["memory"] = "You held their busiest hours together, and they have said so out loud."
+	if not delivered:
+		return eye
+	if not healthy:
+		eye["state"] = "down"
+		eye["metric"] = "%s STOPPED" % String(biz["unit"]).to_upper()
+		eye["activity"] = String(biz["down"])
+		eye["voice"] = "“Please keep us updated; people are asking.”"
+		return eye
+	var people := maxi(2, int(round(float(current_load) / 6.0)))
+	var units := maxi(1, int(round(float(current_load) / 28.0)))
+	if bool(deal.get("degraded", false)):
+		eye["state"] = "degraded"
+		eye["metric"] = "~%d %s / RETRYING" % [people, String(biz["who"]).to_upper()]
+		eye["activity"] = String(biz["slow"])
+		eye["voice"] = "“It works, but only just. Can you steady it?”"
+		return eye
+	eye["state"] = "live"
+	eye["metric"] = "~%d %s  ·  ~%d %s/H" % [people, String(biz["who"]).to_upper(), units,
+		String(biz["unit"]).to_upper()]
+	eye["activity"] = String(biz["live"])
+	eye["voice"] = "“Nobody here is thinking about the network, which is how we like it.”"
+	return eye
+
+func peak_event(deal: Dictionary) -> Dictionary:
+	var event: Dictionary = deal.get("peak_event", {})
+	return event if not event.is_empty() and int(event.get("cycle", -1)) >= cycle else {}
+
+func peak_multiplier(deal: Dictionary) -> float:
+	var event: Dictionary = deal.get("peak_event", {})
+	return float(event.get("multiplier", 1.0)) if int(event.get("cycle", -1)) == cycle else 1.0
+
+func maybe_announce_peak() -> void:
+	## The night they have been planning for. Announced in advance, on purpose:
+	## the content is the preparation, not the surprise.
+	for deal in deals:
+		if deal.has("peak_event") or not bool(deal.get("ever_healthy", false)):
+			continue
+		if int(deal.get("cycles", 0)) < 6 or biz_roll() > 0.05:
+			continue
+		var biz := Market.business_for(deal)
+		var event := {"label": String(biz["peak"]), "cycle": cycle + 4, "multiplier": 3}
+		deal["peak_event"] = event
+		log_event("HEADS UP: %s has a %s in 4 cycles. Expect about three times their usual traffic; they will remember how it goes."
+			% [deal["customer"], biz["peak"]])
+		return
+
+func peak_tick(deal: Dictionary) -> void:
+	## Resolved on the night itself, against live delivery.
+	var event: Dictionary = deal.get("peak_event", {})
+	if event.is_empty() or int(event.get("cycle", -1)) != cycle:
+		return
+	deal.erase("peak_event")
+	if bool(deal.get("healthy", false)) and not bool(deal.get("degraded", false)):
+		deal["peaks_carried"] = int(deal.get("peaks_carried", 0)) + 1
+		deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.15)
+		reputation = mini(100, reputation + 3)
+		log_event("CARRIED IT: %s's %s went through your network without a wobble. They have written to say so."
+			% [deal["customer"], event["label"]])
+	else:
+		deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.2)
+		reputation = maxi(0, reputation - 4)
+		log_event("DROPPED IT: %s's %s was the one night that mattered, and your network did not carry it."
+			% [deal["customer"], event["label"]])
 
 func _kiskacsa_resilience_name(choice: String) -> String:
 	match choice:
@@ -3787,7 +3880,8 @@ func sla_tick() -> void:
 			var used := _deal_path_links(deal)
 			deal_links[deal["id"]] = used
 			# traffic follows the working day: quiet at night, heaviest at noon
-			var load := int(round(float(int(deal.get("load", 200))) * day_factor()))
+			var load := int(round(float(int(deal.get("load", 200))) * day_factor()
+				* peak_multiplier(deal)))
 			var atk := attack_on(deal["params"].get("ip", ""))
 			if not atk.is_empty() and not scrubbing and not attack_blackholed(atk):
 				load += int(atk["mbps"])  # the flood rides the same path
@@ -3868,6 +3962,8 @@ func sla_tick() -> void:
 		reputation = mini(100, reputation + 1)
 		if bool(deal.get("guided", false)):
 			advance_kiskacsa_arc(deal)
+	for deal_peak in deals:
+		peak_tick(deal_peak)  # the night they warned you about, judged on live delivery
 	_update_reliability_streak(customer_outage_now)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
@@ -3918,6 +4014,7 @@ func sla_tick() -> void:
 	quarter_depreciation += depreciation_this_cycle()
 	maybe_upsell()
 	maybe_dispute()
+	maybe_announce_peak()
 	reference_tick()
 	lead_tick()
 	timeline_tick()

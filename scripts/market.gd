@@ -55,6 +55,49 @@ const KIND_LABELS := {
 	"redundant_gw": "Redundant gateway",
 }
 
+## What each customer is actually doing with the service. The player is not
+## keeping a Mbps figure alive, they are keeping a shop, a clinic or a shift
+## on the air, and the panel should say so in those words.
+const BUSINESSES := [
+	{"id": "shop", "what": "a small webshop packing orders from a back room",
+		"unit": "orders", "who": "shoppers",
+		"live": "Checkout is accepting orders; each one prints a shipping label at the packing table.",
+		"slow": "Pages crawl and shoppers press pay twice. Orders arrive in bursts.",
+		"down": "Checkout cannot submit an order. The packing table is quiet.",
+		"peak": "sale night"},
+	{"id": "clinic", "what": "a clinic whose reception books appointments on your service",
+		"unit": "bookings", "who": "patients",
+		"live": "Reception is booking appointments as fast as people ring.",
+		"slow": "The booking screen hangs and reception has gone back to paper.",
+		"down": "Nobody can book. Reception is writing names on a pad and apologising.",
+		"peak": "Monday morning rush"},
+	{"id": "school", "what": "a school running its lessons and registers online",
+		"unit": "lessons", "who": "pupils",
+		"live": "Registers are being taken and lessons are loading in every room.",
+		"slow": "Video stalls mid-lesson and teachers are improvising.",
+		"down": "The lesson stopped. Thirty pupils are watching a spinner.",
+		"peak": "exam morning"},
+	{"id": "streaming", "what": "a small streaming service with a loyal audience",
+		"unit": "streams", "who": "viewers",
+		"live": "Streams are running clean and nobody is thinking about the network.",
+		"slow": "Playback is rebuffering and the chat has noticed.",
+		"down": "Every stream dropped at once, mid-sentence.",
+		"peak": "premiere night"},
+	{"id": "factory", "what": "a factory line whose scanners talk to your service",
+		"unit": "pallets", "who": "operators",
+		"live": "Scanners are clearing pallets and the line is moving.",
+		"slow": "Scanners retry and the line is running behind the belt.",
+		"down": "The line has stopped. A shift supervisor is standing by a dead terminal.",
+		"peak": "shipping deadline"},
+]
+
+static func business_for(deal: Dictionary) -> Dictionary:
+	## Stable per customer, so the same people recur with the same business.
+	if String(deal.get("customer", "")) == "Kiskacsa Kft":
+		return BUSINESSES[0]
+	var key := String(deal.get("customer", "")) + String(deal.get("kind", ""))
+	return BUSINESSES[absi(key.hash()) % BUSINESSES.size()]
+
 static func label_for(kind: String) -> String:
 	return KIND_LABELS.get(kind, kind)
 

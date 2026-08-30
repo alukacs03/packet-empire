@@ -3046,6 +3046,52 @@ static func run() -> int:
 	Game.pending_recognition = []
 	Game.deals = sk_deals
 
+	# --- somebody is actually using it ---
+	var eye_deals := Game.deals.duplicate(true)
+	var eye_deal := {"id": "eye", "customer": "Fonix Klinika", "kind": "hosting",
+		"params": {}, "fee": 120, "brief": "", "load": 300, "healthy": true,
+		"ever_healthy": true, "cycles": 12, "up_cycles": 12, "loyalty": 0.7}
+	Game.deals = [eye_deal]
+	var biz := Market.business_for(eye_deal)
+	check(Market.business_for(eye_deal)["id"] == biz["id"] and String(biz["unit"]) != "",
+		"customer eye: every customer runs a specific, stable business rather than a load figure")
+	var live_eye := Game.customer_eye(eye_deal)
+	check(String(biz["who"]).to_upper() in String(live_eye["metric"]) \
+			and String(live_eye["activity"]) == String(biz["live"]),
+		"customer eye: a healthy service reads as the people using it, not bytes")
+	eye_deal["healthy"] = false
+	var down_eye := Game.customer_eye(eye_deal)
+	check(String(down_eye["activity"]) == String(biz["down"]) \
+			and String(down_eye["state"]) == "down",
+		"customer eye: an outage shows their consequence, never a fabricated success")
+	eye_deal["healthy"] = true
+	# the night they told you about in advance
+	Game.reputation = 60
+	eye_deal["peak_event"] = {"label": String(biz["peak"]), "cycle": Game.cycle + 2, "multiplier": 3}
+	var warned_eye := Game.customer_eye(eye_deal)
+	check("IN 2 CYCLES" in String(warned_eye["relationship"]) \
+			and Game.peak_multiplier(eye_deal) == 1.0,
+		"customer eye: the busy night is announced in advance and carries no traffic until it arrives")
+	eye_deal["peak_event"]["cycle"] = Game.cycle
+	check(Game.peak_multiplier(eye_deal) == 3.0,
+		"customer eye: on the night itself their traffic really does triple")
+	var rep_before_peak := Game.reputation
+	eye_deal["degraded"] = false
+	Game.peak_tick(eye_deal)
+	check(int(eye_deal["peaks_carried"]) == 1 and Game.reputation > rep_before_peak \
+			and float(eye_deal["loyalty"]) > 0.7 and not eye_deal.has("peak_event"),
+		"customer eye: carrying their busiest night earns more than the money it paid")
+	check("CARRIED" in String(Game.customer_eye(eye_deal)["relationship"]),
+		"customer eye: and they keep saying so afterwards")
+	# dropping it is the other half
+	eye_deal["peak_event"] = {"label": String(biz["peak"]), "cycle": Game.cycle, "multiplier": 3}
+	eye_deal["healthy"] = false
+	var rep_before_drop := Game.reputation
+	Game.peak_tick(eye_deal)
+	check(int(eye_deal.get("peaks_carried", 0)) == 1 and Game.reputation < rep_before_drop,
+		"customer eye: dropping the one night that mattered costs standing and loyalty")
+	Game.deals = eye_deals
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")
