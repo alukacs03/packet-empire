@@ -7173,5 +7173,41 @@ static func run() -> int:
 		"map cabling: a run to another site says which prerequisite is missing")
 	Game.current_site = 0
 
+	# --- the run finale ---
+	Game.finale = {}
+	Game.sandbox = false
+	Game.sold_out = false
+	Game.money = 12000
+	Game.reputation = 70
+	check(Game.end_run("nonsense") != "" and Game.finale.is_empty(),
+		"finale: a run ends one of the three ways it can end")
+	check(Game.end_run("retired") == "" and not Game.finale.is_empty() \
+			and Game.end_run("sold") != "",
+		"finale: it freezes once, and the save is untouched")
+	var fin_snap: Dictionary = Game.finale.duplicate(true)
+	var fin_first := Game.finale_score(fin_snap)
+	Game.money = 999999  # the live world moves on; the report does not
+	Game.reputation = 10
+	var fin_again := Game.finale_score(fin_snap)
+	check(int(fin_first["total"]) == int(fin_again["total"]),
+		"finale: the categories reproduce exactly from the frozen snapshot")
+	check(fin_first["categories"].size() == 6,
+		"finale: six categories, each of which the player can influence")
+	# idling cannot out-earn playing: money is scored per cycle and capped
+	var fin_slow := fin_snap.duplicate(true)
+	fin_slow["cycle"] = int(fin_snap["cycle"]) * 10
+	check(int(Game.finale_score(fin_slow)["categories"]["financial"]) \
+			< int(fin_first["categories"]["financial"]) \
+			or int(fin_first["categories"]["financial"]) == 250,
+		"finale: ten times as long for the same money scores worse, not better")
+	var fin_callouts := Game.finale_callouts(fin_snap)
+	check(String(fin_callouts["strength"]) != "" and fin_callouts["losses"] is Array,
+		"finale: the report says what went well and what was avoidable")
+	var fin_report := Game.finale_report()
+	check(fin_report.size() > 6 and String(fin_report[1]).contains("walked away"),
+		"finale: every ending arrives at the same report")
+	Game.finale = {}
+	Game.money = 12000
+
 	print("---- %d failures" % fails)
 	return fails

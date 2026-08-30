@@ -2289,6 +2289,28 @@ func _refresh_ops() -> void:
 				item["auto"] = on
 				_refresh_ops())
 			rrow.add_child(auto_r)
+	if not Game.finale.is_empty():
+		ops_box.add_child(_section("HOW THIS RUN ENDED"))
+		for fin_line: String in Game.finale_report():
+			var fl := _label("  %s" % fin_line, 12, Color(0.85, 0.9, 0.95))
+			fl.add_theme_font_override("font", mono)
+			ops_box.add_child(fl)
+		var fin_copy := Button.new()
+		fin_copy.text = "Copy the report"
+		fin_copy.pressed.connect(func() -> void:
+			DisplayServer.clipboard_set("\n".join(PackedStringArray(Game.finale_report())))
+			hud_toast("The report is on your clipboard.", true))
+		ops_box.add_child(fin_copy)
+	elif Game.rank() == Game.RANKS[Game.RANKS.size() - 1][0]:
+		var retire := Button.new()
+		retire.text = "Retire at the top"
+		retire.tooltip_text = "Freeze the run and read the report. Your save is not touched."
+		retire.pressed.connect(func() -> void:
+			var err: String = Game.end_run("retired")
+			if err != "":
+				_toast(err)
+			_refresh_ops())
+		ops_box.add_child(retire)
 	ops_box.add_child(_section("WHAT KIND OF COMPANY THIS IS"))
 	if Game.identity == "":
 		if Game.identity_offered():

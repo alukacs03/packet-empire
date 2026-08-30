@@ -4069,6 +4069,150 @@ func decline_buyout() -> String:
 	log_event("APPROACH: you turned %s down. They are going to compete harder for it." % who)
 	return ""
 
+const FINALE_ENDINGS := {
+	"sold": "You sold the company.",
+	"retired": "You reached the top of the trade and walked away from it.",
+	"insolvent": "The money ran out.",
+}
+
+func finale_snapshot(ending: String) -> Dictionary:
+	## Frozen at the moment it ends, so the report can be recomputed exactly
+	## without the live world having to stand still.
+	var up := 0
+	var deal_cycles := 0
+	for h: Dictionary in history:
+		up += int(h.get("up", 0))
+		deal_cycles += int(h.get("deals", 0))
+	var techs := {}
+	for d: Net.NDevice in all_devices():
+		if not d.bgp.get("neighbors", []).is_empty():
+			techs["bgp"] = true
+		if not d.vtep.is_empty():
+			techs["vxlan"] = true
+		if d.type == "firewall":
+			techs["firewall"] = true
+		for i: Net.Iface in d.ifaces:
+			if i.mlag > 0:
+				techs["mlag"] = true
+			if i.vrrp.get("vip", "") != "":
+				techs["vrrp"] = true
+			for cidr in i.ips:
+				if Net.is_v6(String(cidr)):
+					techs["ipv6"] = true
+	var open_reviews := 0
+	for inc: Dictionary in incidents:
+		if not bool(inc.get("reviewed", false)):
+			open_reviews += 1
+	var controls_passing := 0
+	for c: Dictionary in CONTROLS:
+		if String(control_state(String(c["id"]))["status"]) == "compliant":
+			controls_passing += 1
+	return {"ending": ending, "cycle": cycle, "company": company_name,
+		"identity": identity_label(), "difficulty": DIFFICULTIES[difficulty]["name"],
+		"earned": int(stats.get("earned", 0)), "money": money, "reputation": reputation,
+		"references": references.size(), "deals": deals.size(),
+		"contracts": int(stats.get("contracts", 0)), "sites": site_count(),
+		"racks": racks.size(), "staff": staff.size(), "stage": stage,
+		"uptime": int(100.0 * float(up) / maxf(1.0, float(deal_cycles))),
+		"techs": techs.keys(), "open_reviews": open_reviews,
+		"controls": controls_passing, "tidiness": floor_tidiness(),
+		"drift": drift_factor(), "faults": int(stats.get("faults", 0)),
+		"incidents": int(stats.get("incidents", 0)), "data_risks": data_risks.size(),
+		"cable_debt": cable_debt_score(), "best_streak": best_outage_streak,
+		"trust_marker": trust_marker}
+
+func finale_score(snap: Dictionary) -> Dictionary:
+	## Six categories, each capped, and the money one measured per cycle so a
+	## long idle run cannot out-score a short sharp one.
+	var cycles := maxf(1.0, float(int(snap.get("cycle", 1))))
+	var per_cycle := float(int(snap.get("earned", 0))) / cycles
+	var categories := {
+		"financial": clampi(int(per_cycle * 2.0), 0, 250),
+		"reliability": clampi(int(snap.get("uptime", 0)) * 2, 0, 200),
+		"trust": clampi(int(snap.get("reputation", 0)) + int(snap.get("references", 0)) * 10
+			+ (20 if bool(snap.get("trust_marker", false)) else 0), 0, 200),
+		"ambition": clampi(int(snap.get("techs", []).size()) * 25
+			+ int(snap.get("contracts", 0)) * 5, 0, 200),
+		"discipline": clampi(int(float(snap.get("tidiness", 0.0)) * 80.0)
+			+ int((1.0 - float(snap.get("drift", 0.0))) * 60.0)
+			+ int(snap.get("controls", 0)) * 8 - int(snap.get("open_reviews", 0)) * 10
+			- int(snap.get("data_risks", 0)) * 15 - int(snap.get("cable_debt", 0)) * 2, 0, 200),
+		"growth": clampi(int(snap.get("stage", 0)) * 40 + int(snap.get("sites", 1)) * 20
+			+ int(snap.get("racks", 0)) * 4 + int(snap.get("staff", 0)) * 10, 0, 200),
+	}
+	var total := 0
+	for k: String in categories:
+		total += int(categories[k])
+	return {"categories": categories, "total": total}
+
+func finale_callouts(snap: Dictionary) -> Dictionary:
+	## What went well, and what it cost to do the things that did not.
+	var score := finale_score(snap)
+	var best := ""
+	var best_val := -1
+	for k: String in score["categories"]:
+		if int(score["categories"][k]) > best_val:
+			best_val = int(score["categories"][k])
+			best = k
+	var losses: Array = []
+	if int(snap.get("open_reviews", 0)) > 0:
+		losses.append("%d incident(s) never written up" % int(snap["open_reviews"]))
+	if int(snap.get("data_risks", 0)) > 0:
+		losses.append("%d unit(s) decommissioned without a certificate" % int(snap["data_risks"]))
+	if int(snap.get("cable_debt", 0)) > 4:
+		losses.append("%d pieces of cable debt nobody went back for" % int(snap["cable_debt"]))
+	if float(snap.get("drift", 0.0)) > 0.4:
+		losses.append("documentation that stopped describing the floor")
+	if int(snap.get("uptime", 0)) < 95:
+		losses.append("%d%% uptime across the run" % int(snap.get("uptime", 0)))
+	return {"strength": best, "losses": losses}
+
+func end_run(ending: String) -> String:
+	## Freeze it. The save is untouched: this is a report, not a deletion.
+	if not FINALE_ENDINGS.has(ending):
+		return "that is not an ending"
+	if not finale.is_empty():
+		return "this run has already finished"
+	finale = finale_snapshot(ending)
+	var scored := finale_score(finale)
+	finale["score"] = scored
+	log_event("THE END: %s  %s scored %d." % [FINALE_ENDINGS[ending], company_name,
+		int(scored["total"])])
+	Legacy.harvest(FINALE_ENDINGS[ending])
+	return ""
+
+func finale_report() -> Array:
+	if finale.is_empty():
+		return []
+	var scored := finale_score(finale)
+	var callouts := finale_callouts(finale)
+	var lines: Array = [
+		"%s  ·  %s  ·  %s" % [finale["company"], finale["identity"], finale["difficulty"]],
+		FINALE_ENDINGS.get(String(finale["ending"]), "It ended."),
+		"cycle %d   ·   score %d" % [int(finale["cycle"]), int(scored["total"])],
+	]
+	for k: String in scored["categories"]:
+		lines.append("  %-12s %d" % [k, int(scored["categories"][k])])
+	lines.append("Strongest: %s" % callouts["strength"])
+	for loss: String in callouts["losses"]:
+		lines.append("Avoidable: %s" % loss)
+	return lines
+
+func maybe_end_run() -> void:
+	## Insolvency is an ending, not a slow bleed: it needs a real hole and a
+	## few cycles of nobody fixing it.
+	if not finale.is_empty() or sandbox or drill_active:
+		return
+	if sold_out:
+		end_run("sold")
+		return
+	if money < -3000:
+		stats["insolvent_cycles"] = int(stats.get("insolvent_cycles", 0)) + 1
+		if int(stats["insolvent_cycles"]) >= 5:
+			end_run("insolvent")
+	else:
+		stats["insolvent_cycles"] = 0
+
 func rank_score() -> int:
 	## lifetime earnings, weighted by the scale and quality of the operation
 	var base: int = int(stats.get("earned", 0))
@@ -6258,6 +6402,7 @@ const EFFICIENCY_PRICE := 2600
 
 var buyout_offer := {}  # a rival's standing offer to buy you out
 var sold_out := false  # you took it; the game is over and the score is final
+var finale := {}  # the frozen ending: how it ended, and the numbers it ended on
 var accountant := false
 var fixed_tariff := false  # a flat rate: dearer on average, immune to peaks
 var efficiency := 0  # upgrades bought
@@ -6902,6 +7047,7 @@ func sla_tick() -> void:
 	maybe_offer_decision()
 	consequence_tick()
 	story_tick()
+	maybe_end_run()
 	hazard_tick()
 	access_incident_tick()
 	visitor_tick()
@@ -7815,7 +7961,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
-		"protection": protection, "access_policy": access_policy, "identity": identity, "cameras": cameras,
+		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "cameras": cameras,
 		"access_log": access_log, "visitors": visitors,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
@@ -8154,6 +8300,7 @@ func _apply(data: Dictionary) -> void:
 	hazards = data.get("hazards", [])
 	access_policy = String(data.get("access_policy", "open"))
 	identity = String(data.get("identity", ""))
+	finale = data.get("finale", {})
 	cameras = bool(data.get("cameras", false))
 	access_log = data.get("access_log", [])
 	visitors = data.get("visitors", [])
