@@ -6093,6 +6093,21 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 	inc["blame"] = choice
 	return ""
 
+func score_state() -> Dictionary:
+	## What the room should be feeling, from things the simulation already
+	## knows. The music never invents a mood the game is not in.
+	var incident := customer_outage_active or guided_outage_active() or not hazards.is_empty()
+	for deal in deals:
+		if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)):
+			incident = true
+	var celebrating := false
+	for deal2 in deals:
+		if bool(deal2.get("ever_healthy", false)) and int(deal2.get("cycles", 99)) <= 1:
+			celebrating = true
+	return {"incident": incident, "upstream": upstream_active(),
+		"night": day_slot() in [6, 7, 0, 1], "quiet": quiet_now(),
+		"first_light": celebrating}
+
 func audio_state() -> Dictionary:
 	## What the room should sound like right now, derived from live state only.
 	## Nothing here is decorative: every number and every cue is confirmable

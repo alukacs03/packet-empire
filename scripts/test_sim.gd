@@ -7910,6 +7910,40 @@ static func run() -> int:
 	check(ros_cli2.exec("/interface print | include ether").contains("ether"),
 		"console: PacketTik filters the same way")
 	Sim.flush_learned_state()
+
+	# --- the room has a mood ---
+	check(Sfx.MOODS.size() >= 5 and Sfx.mood_for({}) == "",
+		"score: a handful of moods, and silence when the room is not in any of them")
+	check(Sfx.mood_for({"quiet": true}) == "quiet" \
+			and Sfx.mood_for({"quiet": true, "night": true}) == "night" \
+			and Sfx.mood_for({"night": true, "incident": true}) == "incident" \
+			and Sfx.mood_for({"incident": true, "upstream": true}) == "upstream" \
+			and Sfx.mood_for({"incident": true, "first_light": true}) == "first_light",
+		"score: an outage outranks the hour, and the one celebration outranks everything")
+	var sc_deals := Game.deals.duplicate(true)
+	Game.deals = []
+	Game.hazards = []
+	Game.upstream = {}
+	Game.customer_outage_active = false
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3  # daytime
+	var sc_state := Game.score_state()
+	check(not bool(sc_state["incident"]) and not bool(sc_state["night"]),
+		"score: what the room feels is read off the simulation, not off a timer")
+	Game.deals = [{"id": "sc", "customer": "Down Kft", "kind": "hosting", "params": {},
+		"fee": 10, "brief": "", "load": 10, "healthy": false, "ever_healthy": true}]
+	check(bool(Game.score_state()["incident"]) \
+			and Sfx.mood_for(Game.score_state()) == "incident",
+		"score: a customer of yours being down is what an incident means")
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 7  # small hours
+	Game.deals = []
+	check(bool(Game.score_state()["night"]) and Sfx.mood_for(Game.score_state()) == "night",
+		"score: and the small hours sound like the small hours")
+	var sc_muted: bool = Sfx.muted
+	Sfx.muted = true
+	Sfx.score_tick(Game.score_state())
+	check(Sfx.score_mood == "", "score: muting the game silences the music with everything else")
+	Sfx.muted = sc_muted
+	Game.deals = sc_deals
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

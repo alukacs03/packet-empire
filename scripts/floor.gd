@@ -31,6 +31,7 @@ func _process(dt: float) -> void:
 	_sound_clock = 2.5
 	var audio: Dictionary = Game.audio_state()
 	Sfx.ambient_tick(float(audio["load"]), float(audio["heat"]))
+	Sfx.score_tick(Game.score_state())
 	# a cue repeats while its condition holds, from the cabinet responsible
 	var cues: Array = audio["cues"]
 	for cue: String in cues:

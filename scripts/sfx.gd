@@ -16,6 +16,8 @@ static var _node: Node = null
 static var muted := false
 static var last_cue := ""  # what actually reached a speaker; "" while muted
 static var _ambient: AudioStreamPlayer = null
+static var _score: AudioStreamPlayer = null
+static var score_mood := ""  # what the room is currently playing, if anything
 
 static func install(parent: Node) -> void:
 	## call once; safe to call again
@@ -54,6 +56,12 @@ static func install(parent: Node) -> void:
 	_node.add_child(_ambient)
 	if not muted:
 		_ambient.play()
+	_score = AudioStreamPlayer.new()
+	_score.bus = "Master"
+	_score.volume_db = -60.0
+	_node.add_child(_score)
+	for mood: String in MOODS:
+		_bank["score_%s" % mood] = _pad(MOODS[mood]["notes"], float(MOODS[mood]["seconds"]))
 
 static func play(cue: String) -> void:
 	if muted or _node == null or not is_instance_valid(_node) or not _bank.has(cue):
@@ -138,6 +146,86 @@ static func _fan() -> AudioStreamWAV:
 		# taper the seam so the loop point does not tick
 		var seam := minf(minf(float(i), float(frames - i)) / 400.0, 1.0)
 		var sample := int(clampf((smoothed * 2.2 + hum) * seam, -1.0, 1.0) * 32767.0)
+		data.append(sample & 0xFF)
+		data.append((sample >> 8) & 0xFF)
+	var st := AudioStreamWAV.new()
+	st.format = AudioStreamWAV.FORMAT_16_BITS
+	st.mix_rate = RATE
+	st.stereo = false
+	st.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	st.loop_end = frames
+	st.data = data
+	return st
+
+
+## ---------- the room's own music ----------
+## A few slow tones, generated like everything else, following the state of the
+## company rather than a playlist. It is deliberately sparse: this is a room
+## with a hum in it, not a soundtrack.
+const MOODS := {
+	"quiet": {"notes": [196.0, 261.6, 329.6], "seconds": 9.0, "db": -30.0,
+		"blurb": "nothing is wrong, and the invoices are landing"},
+	"night": {"notes": [146.8, 196.0, 220.0], "seconds": 11.0, "db": -32.0,
+		"blurb": "the small hours, with nobody else in the building"},
+	"incident": {"notes": [155.6, 207.7, 233.1], "seconds": 7.0, "db": -26.0,
+		"blurb": "something of yours is down"},
+	"upstream": {"notes": [130.8, 174.6, 196.0], "seconds": 8.0, "db": -28.0,
+		"blurb": "something somebody else owns is down"},
+	"first_light": {"notes": [261.6, 329.6, 392.0], "seconds": 6.0, "db": -24.0,
+		"blurb": "a customer is live for the first time"},
+}
+
+static func mood_for(state: Dictionary) -> String:
+	## The order is the priority: an outage outranks the hour, and the one
+	## celebration outranks everything because it only happens once.
+	if bool(state.get("first_light", false)):
+		return "first_light"
+	if bool(state.get("upstream", false)):
+		return "upstream"
+	if bool(state.get("incident", false)):
+		return "incident"
+	if bool(state.get("night", false)):
+		return "night"
+	if bool(state.get("quiet", false)):
+		return "quiet"
+	return ""
+
+static func score_tick(state: Dictionary) -> void:
+	if _score == null or not is_instance_valid(_score):
+		return
+	var mood := mood_for(state)
+	if muted or mood == "":
+		score_mood = ""
+		if _score.playing:
+			_score.stop()
+		return
+	if mood == score_mood and _score.playing:
+		return
+	score_mood = mood
+	_score.stream = _bank.get("score_%s" % mood)
+	_score.volume_db = float(MOODS[mood]["db"])
+	if _score.stream != null:
+		_score.play()
+
+static func _pad(notes: Array, seconds: float) -> AudioStreamWAV:
+	## A slow chord that breathes: three sine partials, a long attack, a longer
+	## release, and a loop point at a zero crossing so it never clicks.
+	var frames := int(RATE * seconds)
+	var data := PackedByteArray()
+	for i in frames:
+		var t := float(i) / RATE
+		var progress := float(i) / float(maxi(frames - 1, 1))
+		# one slow swell across the whole loop, so it never sits still
+		var swell: float = sin(PI * progress)
+		var v := 0.0
+		for n in notes.size():
+			var hz: float = float(notes[n])
+			# each partial drifts slightly against the others, which is what
+			# stops three sine waves sounding like a test tone
+			var drift: float = 1.0 + 0.0006 * sin(TAU * t / (3.0 + float(n)))
+			v += sin(TAU * hz * drift * t) * (0.5 / float(n + 1))
+		var seam: float = minf(minf(float(i), float(frames - i)) / (RATE * 0.4), 1.0)
+		var sample := int(clampf(v * swell * seam * 0.5, -1.0, 1.0) * 32767.0)
 		data.append(sample & 0xFF)
 		data.append((sample >> 8) & 0xFF)
 	var st := AudioStreamWAV.new()
