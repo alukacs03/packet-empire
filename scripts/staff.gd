@@ -20,7 +20,7 @@ const ROLES := {
 static func random_name(rng: RandomNumberGenerator) -> String:
 	return "%s %s" % [LAST[rng.randi() % LAST.size()], FIRST[rng.randi() % FIRST.size()]]
 
-static func make_candidate(rng: RandomNumberGenerator) -> Dictionary:
+static func make_candidate(rng: RandomNumberGenerator, culture := {}) -> Dictionary:
 	var role: String = ROLES.keys()[rng.randi() % ROLES.size()]
 	var skill := rng.randi_range(1, 5)
 	var base: int = int(ROLES[role]["base"])
@@ -28,7 +28,7 @@ static func make_candidate(rng: RandomNumberGenerator) -> Dictionary:
 	var ask := int(base * (0.7 + 0.18 * skill) * rng.randf_range(0.9, 1.15))
 	return {"name": random_name(rng), "role": role, "skill": skill, "salary": ask,
 		"ask": ask, "morale": 70, "hired_cycle": 0, "shift": "day",
-		"training_left": 0, "certs": []}
+		"training_left": 0, "certs": [], "habits": previous_employer(rng, culture)}
 
 static func label(member: Dictionary) -> String:
 	return ROLES[member["role"]]["label"]
@@ -197,11 +197,22 @@ static func work_cycle() -> void:
 			attempts -= 1
 			var who: Dictionary = Game.staff[rng.randi() % Game.staff.size()]
 			Game.log_event("STAFF: %s restored %s %s." % [who["name"], ifc.dev.name, ifc.name])
+			if float(habits_of(who).get("tidy", 0.5)) > 0.65 and ifc.note.is_empty():
+				# they label it because that is what they watched somebody do.
+				# written straight onto the port: staff work is not the player's habit
+				ifc.note = {"text": "%s: restored after a fault" % who["name"], "cycle": Game.cycle}
 			Game.topology_changed.emit()
 			break
 	_maybe_slip(rng)
-	# 2. an engineer keeps configurations saved, which is what saves you at 3am
+	# 2. whoever picked up the habit keeps configurations saved, which is what
+	# saves you at 3am. An engineer is best at it; anyone can have learned it.
 	var eng := best_of("engineer")
+	var saver: Dictionary = eng
+	for m in Game.staff:
+		if on_shift(m) and float(habits_of(m).get("saves", 0.5)) > 0.6 \
+				and (saver.is_empty() or float(habits_of(m)["saves"]) > float(habits_of(saver).get("saves", 0.0))):
+			saver = m
+	eng = saver
 	if not eng.is_empty():
 		for d in Game.all_devices():
 			if Game.config_dirty(d) and rng.randf() < 0.4 + 0.12 * int(eng["skill"]):
@@ -217,7 +228,9 @@ static func _maybe_slip(rng: RandomNumberGenerator) -> void:
 	if pool.is_empty():
 		return
 	var who: Dictionary = pool[rng.randi() % pool.size()]
-	var risk := 0.02 + 0.008 * float(5 - int(who.get("skill", 3)))
+	# somebody who never waits for a window is the one who breaks it live
+	var risk := (0.02 + 0.008 * float(5 - int(who.get("skill", 3)))) \
+		* (1.6 - float(habits_of(who).get("windows", 0.5)))
 	if int(who.get("morale", 70)) < 40:
 		risk += 0.03
 	if rng.randf() > risk:
@@ -240,3 +253,48 @@ static func _maybe_slip(rng: RandomNumberGenerator) -> void:
 		"HANDS: %s took %s %s down during a change." % [who["name"], victim.dev.name, victim.name],
 		delay)
 	Game.topology_changed.emit()
+
+## Habits are the part of a person that did not come from a course. They are
+## inherited from wherever they worked before, then slowly overwritten by what
+## they watch the player actually do.
+const SHADOW_ALPHA := 0.02  # a culture takes a very long time to move
+
+static func previous_employer(rng: RandomNumberGenerator, culture := {}) -> Dictionary:
+	var out := {}
+	for habit: String in Game.HABITS:
+		var base: float = float(culture.get(habit, rng.randf_range(0.25, 0.75)))
+		out[habit] = clampf(base + rng.randf_range(-0.08, 0.08), 0.0, 1.0)
+	return out
+
+static func habits_of(member: Dictionary) -> Dictionary:
+	if not member.has("habits"):
+		member["habits"] = {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
+	return member["habits"]
+
+static func shadow_tick() -> void:
+	## You do not tell people how to work. They watch you, and then they do
+	## that when you are asleep.
+	for m in Game.staff:
+		if not on_shift(m):
+			continue
+		var h := habits_of(m)
+		for habit: String in Game.HABITS:
+			h[habit] = clampf(lerpf(float(h.get(habit, 0.5)),
+				float(Game.habits.get(habit, 0.5)), SHADOW_ALPHA), 0.0, 1.0)
+
+static func habit_read(member: Dictionary) -> String:
+	## Plain words for how this person works, and nothing they have not shown.
+	var h := habits_of(member)
+	var bits: Array = []
+	bits.append("saves configurations without being asked" if float(h["saves"]) > 0.6
+		else ("leaves running configurations unsaved" if float(h["saves"]) < 0.4
+			else "saves configurations when reminded"))
+	bits.append("labels what they touch" if float(h["tidy"]) > 0.6
+		else ("leaves ports unlabelled" if float(h["tidy"]) < 0.4 else "labels the important ports"))
+	bits.append("waits for a change window" if float(h["windows"]) > 0.6
+		else ("works live, at any hour" if float(h["windows"]) < 0.4
+			else "takes a window when there is one"))
+	bits.append("writes the incident up afterwards" if float(h["documents"]) > 0.6
+		else ("fixes it and moves on" if float(h["documents"]) < 0.4
+			else "writes up the serious ones"))
+	return ", ".join(PackedStringArray(bits))

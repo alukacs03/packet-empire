@@ -233,6 +233,9 @@ var blueprints: Array = []  # rack layouts: {name, slots: [model|null]}
 var maintenance_until := -1  # cycle up to which planned work is excused
 var maintenance_used := 0  # windows taken this quarter: customers notice
 var incidents: Array = []  # things worth reviewing afterwards
+const HABITS := ["saves", "documents", "windows", "tidy"]
+const HABIT_ALPHA := 0.06  # what you did today barely moves what you are
+var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var blame_fear := 0  # how unsafe the team feels about owning up (0-5)
 var pending_reports: Array = []  # slips nobody has mentioned yet
 var status_posts: Array = []  # public incident communication
@@ -621,6 +624,7 @@ func toggle_blanking(r: Net.Rack, idx: int) -> bool:
 		r.blanked.erase(idx)
 	else:
 		r.blanked[idx] = true
+	observe_habit("tidy", r.blanked.get(idx, false))
 	Sfx.play("cable")
 	topology_changed.emit()
 	return true
@@ -634,6 +638,9 @@ func set_note(target: Variant, text: String) -> void:
 	else:
 		target.note = {"text": text, "cycle": cycle}
 	topology_changed.emit()
+	observe_habit("documents", text.strip_edges() != "")
+	if target is Net.Iface:
+		observe_habit("tidy", text.strip_edges() != "")
 
 func note_age(target: Variant) -> int:
 	return maxi(0, cycle - int(target.note.get("cycle", cycle))) if not target.note.is_empty() else 0
@@ -2114,6 +2121,7 @@ func declare_maintenance() -> String:
 	if maintenance_used >= 2:
 		return "customers will not accept a third window this quarter"
 	maintenance_until = cycle + MAINTENANCE_LENGTH
+	observe_habit("windows", true, 2.0)
 	maintenance_used += 1
 	log_event("MAINTENANCE: a planned window is open for %d cycles. Downtime in it is excused."
 		% MAINTENANCE_LENGTH)
@@ -2431,6 +2439,7 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	if bool(inc.get("reviewed", false)):
 		return "that one is already written up"
 	inc["reviewed"] = true
+	observe_habit("documents", true)
 	inc["cause"] = REVIEW_CAUSES[clampi(cause_idx, 0, REVIEW_CAUSES.size() - 1)]
 	reputation = mini(100, reputation + 3)
 	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. Customers appreciate the candour."
@@ -2510,6 +2519,31 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 			return "that is not one of the things you can say"
 	inc["blame"] = choice
 	return ""
+
+func observe_habit(habit: String, good: bool, weight := 1.0) -> void:
+	## Habits are read off what the player actually did, never off intent, and
+	## they move slowly in both directions.
+	if habit not in HABITS:
+		return
+	var a := clampf(HABIT_ALPHA * weight, 0.0, 1.0)
+	habits[habit] = clampf(lerpf(float(habits.get(habit, 0.5)), 1.0 if good else 0.0, a), 0.0, 1.0)
+
+func habit_tick() -> void:
+	## Once a cycle, the standing state of the estate is itself a habit: what
+	## is left unsaved, and what is left unexplained.
+	var devs := all_devices()
+	if not devs.is_empty():
+		var dirty := 0
+		for d: Net.NDevice in devs:
+			if config_dirty(d):
+				dirty += 1
+		observe_habit("saves", dirty == 0)
+	for inc: Dictionary in incidents:
+		if not bool(inc.get("reviewed", false)) and cycle - int(inc.get("cycle", cycle)) >= 5:
+			observe_habit("documents", false)
+			break
+	if in_maintenance():
+		observe_habit("windows", true, 0.5)
 
 func blame_said(inc: Dictionary) -> String:
 	for say: Array in BLAME_CHOICES:
@@ -3422,6 +3456,7 @@ func sla_tick() -> void:
 	_maybe_start_guided_outage()
 	dispute_tick()
 	report_tick()
+	habit_tick()
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -3524,6 +3559,7 @@ func sla_tick() -> void:
 		last_pl["salaries"] = -wages
 		earned -= wages
 		Staff.work_cycle()
+		Staff.shadow_tick()
 		# how hard a cycle it was for them: broken links, dead kit, breaches
 		var trouble := 0
 		for l in links:
@@ -3957,6 +3993,7 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	links.append(Net.Link.new(a, b))
 	Sfx.play("cable")
 	topology_changed.emit()
+	observe_habit("windows", in_maintenance())
 	return true
 
 func disconnect_iface(i: Net.Iface) -> void:
@@ -4175,7 +4212,7 @@ func _serialize() -> Dictionary:
 		"feature_discovery_trace": feature_discovery_trace,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
-		"incidents": incidents, "blame_fear": blame_fear, "pending_reports": pending_reports,
+		"incidents": incidents, "blame_fear": blame_fear, "habits": habits, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -4494,6 +4531,7 @@ func _apply(data: Dictionary) -> void:
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
+	habits = data.get("habits", {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5})
 	pending_reports = data.get("pending_reports", [])
 	status_posts = data.get("status_posts", [])
 	spares = data.get("spares", {})

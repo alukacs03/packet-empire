@@ -2763,6 +2763,65 @@ static func run() -> int:
 	Game.pending_reports = blame_pending
 	Game.blame_fear = 0
 
+	# --- juniors copy your habits ---
+	var hab_staff := Game.staff.duplicate(true)
+	var hab_player := Game.habits.duplicate(true)
+	Game.staff = []
+	Game.habits = {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
+	var hab_dev := Game.new_device("sw-8")
+	Game.set_note(hab_dev.ifaces[0], "customer handoff")
+	check(float(Game.habits["documents"]) > 0.5 and float(Game.habits["tidy"]) > 0.5,
+		"habits: labelling a port is read as a habit, from the act rather than the intent")
+	var before_window := float(Game.habits["windows"])
+	Game.maintenance_until = -1
+	Game.maintenance_used = 0
+	Game.declare_maintenance()
+	check(float(Game.habits["windows"]) > before_window,
+		"habits: taking the change window counts, and counts double")
+	# two identically hired people, two different players
+	var hab_rng := RandomNumberGenerator.new()
+	hab_rng.seed = 99
+	var careful: Dictionary = Staff.make_candidate(hab_rng, {"saves": 0.5, "documents": 0.5,
+		"windows": 0.5, "tidy": 0.5})
+	var hasty := careful.duplicate(true)
+	hasty["name"] = "Nagy Bence"
+	careful["shift"] = "day"
+	hasty["shift"] = "day"
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3  # both of them on shift
+	Game.staff = [careful]
+	Game.habits = {"saves": 1.0, "documents": 1.0, "windows": 1.0, "tidy": 1.0}
+	for _c in 60:
+		Staff.shadow_tick()
+	Game.staff = [hasty]
+	Game.habits = {"saves": 0.0, "documents": 0.0, "windows": 0.0, "tidy": 0.0}
+	for _c in 60:
+		Staff.shadow_tick()
+	check(float(Staff.habits_of(careful)["saves"]) > 0.6 \
+			and float(Staff.habits_of(hasty)["saves"]) < 0.4,
+		"habits: identical hires under different players end up working differently")
+	check("saves configurations without being asked" in Staff.habit_read(careful) \
+			and "works live" in Staff.habit_read(hasty),
+		"habits: the written read of a person matches what they actually picked up")
+	# and cleaning up a bad culture is possible, but slow
+	Game.staff = [hasty]
+	Game.habits = {"saves": 1.0, "documents": 1.0, "windows": 1.0, "tidy": 1.0}
+	var dirty_start := float(Staff.habits_of(hasty)["saves"])
+	for _c in 10:
+		Staff.shadow_tick()
+	var after_ten := float(Staff.habits_of(hasty)["saves"])
+	check(after_ten > dirty_start and after_ten < 0.5,
+		"habits: ten good cycles move a bad habit without erasing it")
+	for _c in 200:
+		Staff.shadow_tick()
+	check(float(Staff.habits_of(hasty)["saves"]) > 0.8,
+		"habits: a long stretch of doing it properly does eventually change the culture")
+	var hab_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(float(hab_payload["habits"]["saves"]) == 1.0,
+		"habits: the player's own working habits persist with the campaign")
+	Game.staff = hab_staff
+	Game.habits = hab_player
+	Game.maintenance_until = -1
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

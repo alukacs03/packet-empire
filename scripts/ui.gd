@@ -3392,6 +3392,8 @@ func _build_business_tab() -> void:
 			else "none"]
 		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sl)
+		contracts_box.add_child(_wrap("      how they work: %s" % Staff.habit_read(m), 12,
+			Color(0.6, 0.68, 0.78), 640))
 		var shift_btn := Button.new()
 		shift_btn.text = Staff.SHIFTS[Staff.shift_of(m)]["label"]
 		shift_btn.tooltip_text = "Which part of the day they cover. Nights cost a premium."
