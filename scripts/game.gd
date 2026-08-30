@@ -1627,7 +1627,7 @@ func night_call_tick() -> void:
 	if reason == "":
 		return
 	night_call = {"reason": reason, "cycle": cycle}
-	log_event("THE PHONE: %s." % reason.capitalize())
+	log_event("THE PHONE: %s." % sentence(reason))
 	Sfx.play("phone")
 
 func answer_night_call(get_them_in: bool) -> String:
@@ -6606,6 +6606,11 @@ func decom_tick() -> void:
 			% risk["device"])
 		return
 
+func sentence(text: String) -> String:
+	## First letter up, everything else left alone. capitalize() Title Cases a
+	## whole sentence and splits identifiers like R1 into "R 1".
+	return text.substr(0, 1).to_upper() + text.substr(1)
+
 func housekeeping_mess() -> int:
 	## How much the room shows the team's habits: coils nobody dressed, a
 	## carton nobody broke down, a cup on the slab. A tidy team leaves none.
@@ -7056,10 +7061,10 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 			lead["ttl"] = 5
 			lead["coach"] = String(result["why"])
 			log_event("PROPOSAL REVIEW: Kiskacsa did not sign yet: %s. Revise and resubmit."
-				% String(result["why"]).capitalize())
+				% sentence(String(result["why"])))
 			return "retry:" + String(result["why"])
 		leads.erase(lead)
-		log_event("LOST TENDER: %s. %s." % [lead["customer"], String(result["why"]).capitalize()])
+		log_event("LOST TENDER: %s. %s." % [lead["customer"], sentence(String(result["why"]))])
 		return "lost:" + String(result["why"])
 	leads.erase(lead)
 	var deal := {

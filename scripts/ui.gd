@@ -4810,7 +4810,7 @@ func _build_market_tab() -> void:
 		if lead.has("coach"):
 			var coaching := UIW.style_panel(PanelContainer.new(), "warning", "sm")
 			var coaching_text := _wrap("PROPOSAL REVIEW  /  %s. Revise and send it again—this first customer will wait."
-				% String(lead["coach"]).capitalize(), 12, UIW.colour("text_strong"), 600)
+				% Game.sentence(String(lead["coach"])), 12, UIW.colour("text_strong"), 600)
 			coaching.add_child(coaching_text)
 			lv.add_child(coaching)
 		lv.add_child(_label("Tender closes in %d cycle(s)." % int(lead["ttl"]), 12, MUTED))
@@ -5152,7 +5152,7 @@ func _build_jobs_tab() -> void:
 		nb.add_theme_constant_override("separation", UIW.space("sm"))
 		np.add_child(nb)
 		nb.add_child(_label("THE PHONE  /  OUT OF HOURS", 12, UIW.colour("warm")))
-		nb.add_child(_wrap("“%s.”" % String(Game.night_call["reason"]).capitalize(), 14,
+		nb.add_child(_wrap("“%s.”" % Game.sentence(String(Game.night_call["reason"])), 14,
 			UIW.colour("text_strong"), 620))
 		var nrow := HBoxContainer.new()
 		nrow.add_theme_constant_override("separation", 8)

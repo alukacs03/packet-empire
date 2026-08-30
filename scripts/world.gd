@@ -379,6 +379,22 @@ func _shoot_all() -> void:
 			Game.last_cycle_delta = 20
 			ui.contracts_tab = "Business"
 			ui.open_contracts()],
+		["night_call",
+			func() -> void:
+				# the phone, out of hours, with the floor empty
+				Game.staff = []
+				var ncrng := RandomNumberGenerator.new()
+				ncrng.seed = 3
+				Game.hire(Staff.make_candidate(ncrng, Game.habits))
+				Staff.set_shift(Game.staff[0], "day")
+				Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 7
+				Game.hazards = [{"kind": "smoke", "rack": "R1", "site": 0, "tile": [0, 0],
+					"severity": 2, "started": Game.cycle, "detected": true, "zone": ["R1"]}]
+				Game.night_call = {}
+				Game.night_call_tick()
+				Game.active_contract_debrief = {}
+				ui.contracts_tab = "Jobs"
+				ui.open_contracts()],
 		["business_staff",
 			func() -> void:
 				# the rota: shifts, who carries the phone, and who is tired

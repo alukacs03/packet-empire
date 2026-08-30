@@ -2983,6 +2983,8 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	check(Game.sentence("the panel is showing smoke in R1") == "The panel is showing smoke in R1",
+		"copy: a sentence gets one capital letter, and R1 stays R1")
 	check(not Game.night_call.is_empty() and String(Game.night_call["reason"]).contains("smoke"),
 		"night call: an empty floor with something live rings the phone, and says what it is")
 	check(Game.answer_night_call(false) == "" and Game.night_call.is_empty(),
