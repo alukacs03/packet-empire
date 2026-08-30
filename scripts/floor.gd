@@ -78,6 +78,7 @@ func _draw() -> void:
 		_outline(hover_tile, UIW.colour("focus"), 2.5)
 	_draw_season_cast(grid)
 	_draw_owned_edge(grid, progress)
+	_draw_building_exits(grid)
 	_draw_housekeeping(grid, progress)
 
 func _draw_owned_edge(grid: Vector2i, progress: float) -> void:
@@ -287,6 +288,41 @@ func _draw_site_plate(grid: Vector2i) -> void:
 	draw_rect(plate, Color.from_hsv(hue, 0.4, 1.0, 0.55), false, 1.0)
 	draw_string(font, plate.position + Vector2(14, 20), name,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIW.colour("text_strong"))
+
+func _draw_building_exits(grid: Vector2i) -> void:
+	## A cable to another city has no far end on this screen. Show where it
+	## leaves the room, where it is going, and whether the carrier behind it is
+	## up, so a digger through a duct is visible here and not only in the log.
+	var seen := {}
+	for l in Game.links:
+		var ra := Game.rack_of(l.a.dev)
+		var rb := Game.rack_of(l.b.dev)
+		if ra == null or rb == null or ra.site == rb.site:
+			continue
+		var here: Net.Rack = ra if ra.site == Game.current_site else rb
+		var there: Net.Rack = rb if here == ra else ra
+		if here.site != Game.current_site:
+			continue
+		var key := "%s|%d" % [here.name, there.site]
+		if seen.has(key):
+			continue
+		seen[key] = true
+		var from := Iso.tile_to_world(here.tile) + Vector2(0, Iso.TILE_H * 0.5)
+		var duct := Iso.tile_to_world(Vector2i(0, maxi(0, grid.y - 1))) + Vector2(-96, -26)
+		var live := Game.link_capacity(l) > 0
+		var col := Color("54d8dc") if live else Color(0.92, 0.42, 0.36)
+		draw_polyline(PackedVector2Array([from, from.lerp(duct, 0.5) + Vector2(0, -12), duct]),
+			Color(col, 0.75), 2.0)
+		# the duct itself: a plate on the wall where the fibre leaves
+		draw_rect(Rect2(duct - Vector2(9, 9), Vector2(18, 18)), Color(0.03, 0.05, 0.06, 0.85))
+		draw_rect(Rect2(duct - Vector2(9, 9), Vector2(18, 18)), col, false, 1.5)
+		draw_line(duct + Vector2(-5, 0), duct + Vector2(5, 0), col, 1.5)
+		var label := "→ %s" % Game.site_name(there.site)
+		if not live:
+			label += "  CARRIER DOWN"
+		# right-aligned so it ends at the duct rather than running into the room
+		draw_string(UIW.mono_font(), duct + Vector2(-234, 4), label,
+			HORIZONTAL_ALIGNMENT_RIGHT, 220, 12, col)
 
 func _draw_season_cast(grid: Vector2i) -> void:
 	## A season you can see. Summer hangs warm and close over the floor and

@@ -393,6 +393,29 @@ func _shoot_all() -> void:
 		["ops_failover_close",
 			func() -> void:
 				ui.toggle_ops()],
+		["floor_circuit",
+			func() -> void:
+				# a cable that leaves the building, and a carrier that is down
+				ui.close_contracts()
+				Game.stage = 0
+				Game.current_site = 0
+				if Game.site_count() < 2:
+					Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+				rebuild_racks()
+				Game.carrier_outage = {}
+				Game.buy_circuit(0, 1, 1)
+				Game.buy_parts("optic", 4)
+				var far_rack := Game.add_rack(Vector2i(1, 1), 1)
+				var far_sw := Game.new_device("sw-8")
+				far_rack.slots[0] = far_sw
+				var near_sw: Net.NDevice = null
+				for d in Game.devices_on(0):
+					if d.type == "switch":
+						near_sw = d
+						break
+				if near_sw != null:
+					Game.connect_ifaces(near_sw.ifaces[7], far_sw.ifaces[7])
+				queue_redraw()],
 		["floor_second_site",
 			func() -> void:
 				# a second floor, which must not be mistaken for the first
