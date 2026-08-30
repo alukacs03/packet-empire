@@ -2801,6 +2801,18 @@ static func run() -> int:
 	Game.set_note(hab_dev.ifaces[0], "customer handoff")
 	check(float(Game.habits["documents"]) > 0.5 and float(Game.habits["tidy"]) > 0.5,
 		"habits: labelling a port is read as a habit, from the act rather than the intent")
+	# somebody can be put on keeping the floor clear
+	Game.packaging = 3
+	Game.habits["tidy"] = 0.5
+	Game.do_housekeeping("Rey", true)
+	check(Game.packaging == 0 and float(Game.habits["tidy"]) > 0.5,
+		"housekeeping duty: a proper floor walk clears the aisle and reads as the habit")
+	Game.do_housekeeping("Rey", false)
+	check(Game.aisle_blocked() == false and Game.packaging > 0
+			and float(Game.habits["tidy"]) < 1.0,
+		"housekeeping duty: done badly it stacks cardboard for somebody to find later")
+	check(Game.DUTIES.has("housekeeping"), "housekeeping duty: it is on the board like any other")
+	Game.packaging = 0
 	# the floor shows what the habits are
 	Game.habits["tidy"] = 1.0
 	check(Game.housekeeping_mess() == 0, "housekeeping: a tidy team leaves nothing on the floor")

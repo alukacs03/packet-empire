@@ -835,6 +835,8 @@ const DUTIES := {
 		"blurb": "Check crates against the order, unpack them, clear the cardboard."},
 	"labels": {"label": "Label and document what changes",
 		"blurb": "Tag the ports somebody patched and save what is running."},
+	"housekeeping": {"label": "Walk the floor and keep it clear",
+		"blurb": "Coils dressed, cardboard broken down, cups off the slab."},
 }
 const DUTY_CAPACITY := 2  # what one person can actually hold and still do well
 
@@ -872,6 +874,17 @@ func _sync_duty_policies() -> void:
 		facility_auto[task] = duty_holder("facility") != ""
 	for item in renewals:
 		item["auto"] = duty_holder("renewals") != ""
+
+func do_housekeeping(name: String, good: bool) -> String:
+	## A floor walk, done well or done to look done. Failure is not a penalty
+	## here, it is cardboard in an aisle that somebody meets later.
+	if good:
+		clear_packaging()
+		observe_habit("tidy", true, 1.5)
+		return "%s walked the floor and cleared it" % name
+	packaging += 2
+	observe_habit("tidy", false)
+	return "%s tidied up by stacking it in the aisle" % name
 
 func duty_quality(id: String) -> float:
 	## Skill, tiredness, how much they are carrying, and how well the place is
@@ -927,6 +940,8 @@ func duties_tick() -> void:
 					unpack_crate(waiting[0])
 					last_digest.append("%s unpacked a crate without checking it against the order"
 						% name)
+			"housekeeping":
+				last_digest.append(do_housekeeping(name, good))
 			"labels":
 				var done := false
 				for d: Net.NDevice in all_devices():
