@@ -3411,6 +3411,52 @@ static func run() -> int:
 	Game.incidents = tour_incidents
 	Game.tour = {}
 
+	# --- renewals calendar ---
+	var ren_before := Game.renewals.duplicate(true)
+	Game.renewals = []
+	Game.money = 5000
+	var licensed := Game.new_device("sw-24")
+	check(Game.renewals.size() == 1 and String(Game.renewals[0]["kind"]) == "licence" \
+			and String(Game.renewals[0]["serial"]) == licensed.name,
+		"renewals: a licensed device arrives with a licence bound to its own serial")
+	var lic_item: Dictionary = Game.renewals[0]
+	var full_speed := Game.iface_speed(licensed.ifaces[0])
+	Game.cycle = int(lic_item["due"])
+	Game.renewal_tick()
+	check(not bool(lic_item["lapsed"]) and Game.iface_speed(licensed.ifaces[0]) == full_speed,
+		"renewals: the due date opens a grace period rather than breaking anything")
+	Game.cycle += Game.RENEWAL_GRACE
+	Game.renewal_tick()
+	check(bool(lic_item["lapsed"]) and licensed.status == "active" \
+			and Game.iface_speed(licensed.ifaces[0]) == full_speed / 2,
+		"renewals: a lapsed licence quietly caps the device instead of killing it")
+	var lapsed_price := Game.money
+	check(Game.renew_item(String(lic_item["id"])) == "" \
+			and Game.money == lapsed_price - int(lic_item["cost"]) * 2 \
+			and Game.iface_speed(licensed.ifaces[0]) == full_speed,
+		"renewals: a lapse is always recoverable, at the late premium")
+	# auto-renew is a real cash flow decision
+	lic_item["auto"] = true
+	Game.cycle = int(lic_item["due"])
+	var before_auto := Game.money
+	Game.renewal_tick()
+	check(Game.money == before_auto - int(lic_item["cost"]) \
+			and Game.renewal_due_in(lic_item) == int(lic_item["period"]),
+		"renewals: auto-renew takes the money on the day, whatever else is happening")
+	Game.money = 10
+	Game.cycle = int(lic_item["due"]) + Game.RENEWAL_GRACE
+	Game.renewal_tick()
+	check(bool(lic_item["lapsed"]),
+		"renewals: auto-renew with no cash in the account is not a renewal at all")
+	# and second-hand gear arrives on somebody else's licence
+	Game.money = 5000
+	Game.renewals = []
+	var used := Game.new_device("rtr-edge", true)
+	check(Game.renewals.size() == 1 and bool(Game.renewals[0]["lapsed"]) \
+			and Game.iface_speed(used.ifaces[0]) < int(Game.MODELS["rtr-edge"]["speed"]),
+		"renewals: second-hand hardware comes without a transferable licence, and is capped until you buy one")
+	Game.renewals = ren_before
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

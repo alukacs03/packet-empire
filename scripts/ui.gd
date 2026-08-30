@@ -2011,6 +2011,43 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+	if not Game.renewals.is_empty():
+		ops_box.add_child(_section("RENEWALS CALENDAR"))
+		for item: Dictionary in Game.renewals:
+			var due_in: int = Game.renewal_due_in(item)
+			var rrow := HBoxContainer.new()
+			rrow.add_theme_constant_override("separation", 8)
+			ops_box.add_child(rrow)
+			var state := "due in %d" % due_in
+			if bool(item["lapsed"]):
+				state = "LAPSED"
+			elif due_in <= 0:
+				state = "DUE NOW (%d cycle(s) of grace)" % (Game.RENEWAL_GRACE + due_in)
+			var rl := _label("  %-34s %-28s $%d" % [item["label"], state,
+				int(item["cost"]) * (2 if bool(item["lapsed"]) else 1)], 12,
+				Prefs.bad_colour() if bool(item["lapsed"]) or due_in <= 0
+				else Color(0.72, 0.8, 0.88))
+			rl.add_theme_font_override("font", mono)
+			rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			rrow.add_child(rl)
+			var pay := Button.new()
+			pay.text = "Renew"
+			pay.pressed.connect(func() -> void:
+				var err: String = Game.renew_item(String(item["id"]))
+				if err != "":
+					_toast(err)
+				_refresh_ops()
+				_refresh_money())
+			rrow.add_child(pay)
+			var auto_r := Button.new()
+			auto_r.toggle_mode = true
+			auto_r.button_pressed = bool(item["auto"])
+			auto_r.text = "Auto" if auto_r.button_pressed else "Manual"
+			auto_r.tooltip_text = "Auto-renew takes the money when it takes it, whatever else is happening"
+			auto_r.toggled.connect(func(on: bool) -> void:
+				item["auto"] = on
+				_refresh_ops())
+			rrow.add_child(auto_r)
 	ops_box.add_child(_section("FACILITY SCHEDULE"))
 	if Game.heat_wave():
 		ops_box.add_child(_wrap("  HEAT WAVE  /  Cooling headroom is down a tenth while it lasts.",

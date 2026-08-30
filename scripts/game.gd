@@ -241,6 +241,7 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var renewals: Array = []  # dated obligations: domains, allocations, support, licences
 var tour := {}  # a scheduled visit: who is coming, and when
 var facility := {}  # task id -> the cycle it was last done
 var facility_auto := {}  # task id -> the crew keeps it on schedule
@@ -582,6 +583,91 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const RENEWAL_GRACE := 4  # a lapse is always recoverable, at a price
+const LICENSED_MODELS := ["sw-24", "rtr-edge", "fw-1"]
+
+func add_renewal(kind: String, label: String, cost: int, period: int, serial := "") -> Dictionary:
+	var item := {"id": "%s_%d" % [kind, renewals.size()], "kind": kind, "label": label,
+		"cost": cost, "period": period, "due": cycle + period, "auto": false,
+		"serial": serial, "lapsed": false}
+	renewals.append(item)
+	return item
+
+func renewal_by_id(id: String) -> Dictionary:
+	for item: Dictionary in renewals:
+		if String(item["id"]) == id:
+			return item
+	return {}
+
+func renewal_due_in(item: Dictionary) -> int:
+	return int(item["due"]) - cycle
+
+func renew_item(id: String) -> String:
+	var item := renewal_by_id(id)
+	if item.is_empty():
+		return "there is no such renewal"
+	# a lapse is recoverable, at the premium everybody charges for late payment
+	var price := int(item["cost"]) * (2 if bool(item["lapsed"]) else 1)
+	if not try_spend(price):
+		return "that renewal costs $%d and you do not have it" % price
+	item["due"] = cycle + int(item["period"])
+	var was_lapsed: bool = item["lapsed"]
+	item["lapsed"] = false
+	log_event("RENEWED: %s for $%d%s." % [item["label"], price,
+		", out of lapse" if was_lapsed else ""])
+	topology_changed.emit()
+	return ""
+
+func licence_capped(dev: Net.NDevice) -> bool:
+	## A lapsed feature licence does not kill the device: it quietly caps it,
+	## which is exactly the kind of failure that is hard to find.
+	for item: Dictionary in renewals:
+		if String(item["kind"]) == "licence" and String(item["serial"]) == dev.name \
+				and bool(item["lapsed"]):
+			return true
+	return false
+
+func support_lapsed() -> bool:
+	for item: Dictionary in renewals:
+		if String(item["kind"]) == "support" and bool(item["lapsed"]):
+			return true
+	return false
+
+func renewal_tick() -> void:
+	for item in renewals:
+		var overdue := cycle - int(item["due"])
+		if overdue < 0:
+			continue
+		if bool(item["auto"]) and not bool(item["lapsed"]):
+			# auto-renew is a real cash flow decision: it takes the money when
+			# it takes it, whatever else is happening that cycle
+			if money >= int(item["cost"]):
+				money -= int(item["cost"])
+				money_changed.emit()
+				item["due"] = cycle + int(item["period"])
+				log_event("AUTO-RENEWED: %s, $%d taken." % [item["label"], int(item["cost"])])
+				continue
+		if overdue == 0:
+			log_event("DUE: %s is due now ($%d). There are %d cycles of grace after that."
+				% [item["label"], int(item["cost"]), RENEWAL_GRACE])
+		elif overdue == RENEWAL_GRACE and not bool(item["lapsed"]):
+			item["lapsed"] = true
+			match String(item["kind"]):
+				"licence":
+					log_event("LAPSED: the licence on %s has expired. The device is still up, and it is not running at the speed you think it is."
+						% item["serial"])
+				"support":
+					log_event("LAPSED: %s. Hardware failures are now yours to pay for in full."
+						% item["label"])
+				_:
+					log_event("LAPSED: %s. This gets more expensive and more visible from here."
+						% item["label"])
+			topology_changed.emit()
+		elif bool(item["lapsed"]) and overdue % 4 == 0 \
+				and String(item["kind"]) in ["domain", "addresses"]:
+			# only the customer-facing lapses are visible from outside
+			reputation = maxi(0, reputation - 1)
 
 const TOUR_KINDS := {
 	"prospect": {"label": "a prospective enterprise customer",
@@ -1598,7 +1684,8 @@ func iface_speed(i: Net.Iface) -> int:
 	## Mbps; management ports are 100M service ports
 	if i.name.begins_with("Management") or i.name == "lo":
 		return 100
-	return int(MODELS[i.dev.model].get("speed", 1000))
+	var speed := int(MODELS[i.dev.model].get("speed", 1000))
+	return speed / 2 if licence_capped(i.dev) else speed
 
 func lag_members(l: Net.Link) -> Array:
 	## all links in the same bundle as l (including l); [] means standalone
@@ -2139,7 +2226,7 @@ func buy_rival(r: Dictionary) -> String:
 		var slot := 0
 		var rack_switch: Net.NDevice = null
 		for model in rack_models:
-			var dev := new_device(model)
+			var dev := new_device(model, true)  # their serials, not your licences
 			dev.acquired_from = r["name"]
 			rack.slots[slot] = dev
 			slot += 1
@@ -3217,6 +3304,8 @@ func _ageing_tick() -> void:
 		var payout := 0
 		if insured:
 			payout = int(MODELS[d.model]["price"]) / 2
+			if support_lapsed():
+				payout = payout / 2  # no maintenance agreement, no help with the bill
 			money += payout
 			money_changed.emit()
 		log_event("HARDWARE: %s failed after %d cycles.%s" % [d.name, age,
@@ -4112,6 +4201,7 @@ func sla_tick() -> void:
 	report_tick()
 	habit_tick()
 	facility_tick()
+	renewal_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -4549,7 +4639,7 @@ func rack_of(dev: Net.NDevice) -> Net.Rack:
 
 # ---------- devices ----------
 
-func new_device(model: String) -> Net.NDevice:
+func new_device(model: String, second_hand := false) -> Net.NDevice:
 	if not MODELS.has(model):
 		model = TYPE_DEFAULTS[model]  # accept a bare type, pick its default model
 	var m: Dictionary = MODELS[model]
@@ -4589,6 +4679,15 @@ func new_device(model: String) -> Net.NDevice:
 		lo.mode = "routed"
 		lo.ips = ["8.8.8.8/32", "1.1.1.1/32"]  # "the internet"
 		d.ifaces.append(lo)
+	if model in LICENSED_MODELS:
+		var lic := add_renewal("licence", "feature licence on %s" % d.name, 180, 60, d.name)
+		if second_hand:
+			# licences follow serials, and a second-hand serial is somebody
+			# else's licence: this one arrives already expired
+			lic["due"] = cycle - RENEWAL_GRACE
+			lic["lapsed"] = true
+			log_event("LICENCE: %s came second-hand with no transferable licence. It is capped until you buy one."
+				% d.name)
 	return d
 
 static func model_height(model: String) -> int:
@@ -4910,7 +5009,7 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "heat_wave_until": heat_wave_until, "habits": habits,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -5235,6 +5334,7 @@ func _apply(data: Dictionary) -> void:
 	blame_fear = int(data.get("blame_fear", 0))
 	facility = data.get("facility", {})
 	tour = data.get("tour", {})
+	renewals = data.get("renewals", [])
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))
 	destruction_certs = data.get("destruction_certs", [])
