@@ -6237,12 +6237,27 @@ func buy_rival(r: Dictionary) -> String:
 	acquisitions.append({"rival": r["name"], "net": their_net, "vlan": their_vlan,
 		"hosts": host_ips, "site": target_site, "done": false,
 		"premises": Rivals.has_site(r)})
+	# Inherited customers are not blank: they were somebody's customers, and
+	# they have an opinion about the company that just bought them.
+	var standing := int(r.get("standing", 0))
+	var struggling := int(r.get("deals", 0)) <= 1 or not Rivals.has_site(r)
+	var stance := 0.55
+	if struggling:
+		stance += 0.15  # they were being let down and are willing to be pleased
+	stance += clampf(float(standing) * 0.05, -0.15, 0.15)
+	stance += clampf(float(reputation - 50) / 200.0, -0.15, 0.15)
+	stance = clampf(stance, 0.2, 0.9)
 	for i in int(r["deals"]):  # inherited customers, hosted on their kit
 		var served: String = host_ips[i % host_ips.size()] if not host_ips.is_empty() else ""
 		deals.append({"id": "acq_%s_%d" % [r["name"], i], "customer": "%s customer %d" % [r["name"], i + 1],
 			"kind": "hosting", "params": {"ip": served}, "fee": 90, "load": 150,
 			"brief": "Inherited from %s: their server at %s must stay reachable." % [r["name"], served],
-			"healthy": true, "acquired": true})
+			"healthy": true, "acquired": true, "loyalty": stance})
+	if int(r["deals"]) > 0:
+		log_event("ACQUISITION: %s's customers have been told. %s" % [r["name"],
+			"They were not being looked after and are prepared to like you."
+			if stance >= 0.65 else ("They are watching to see whether this was good news."
+			if stance >= 0.45 else "They did not ask to be sold, and it shows.")])
 	reputation = mini(100, reputation + 5)
 	if Rivals.has_site(r):
 		log_event("ACQUISITION: you bought %s for $%d, including their site '%s' with %d racks and %d contracts."

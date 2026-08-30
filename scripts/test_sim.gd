@@ -3376,6 +3376,32 @@ static func run() -> int:
 	Game.sites = tr_sites2
 	Game.current_site = tr_here2
 
+	# inherited customers arrive with an opinion, not blank
+	var acq_rivals := Game.rivals.duplicate(true)
+	var acq_deals := Game.deals.duplicate(true)
+	var acq_money := Game.money
+	var acq_rep := Game.reputation
+	Game.money = 500000
+	Game.deals = []
+	Game.reputation = 90
+	var acq_r: Dictionary = Game.rivals[0] if not Game.rivals.is_empty() else {}
+	if not acq_r.is_empty():
+		acq_r["bought"] = false
+		acq_r["deals"] = 2
+		var acq_err := Game.buy_rival(acq_r)
+		var acq_liked := 0.0
+		for acq_d: Dictionary in Game.deals:
+			if bool(acq_d.get("acquired", false)):
+				acq_liked = float(acq_d.get("loyalty", 0.0))
+		check(acq_err == "" and acq_liked > 0.0,
+			"acquisition: inherited customers arrive with a stance, not blank")
+		check(acq_liked >= 0.2 and acq_liked <= 0.9,
+			"acquisition: and it stays inside what a customer could plausibly feel")
+	Game.rivals = acq_rivals
+	Game.deals = acq_deals
+	Game.money = acq_money
+	Game.reputation = acq_rep
+
 	# an acquired building comes with the last owner's neglect on it
 	var acq_sites := Game.sites.duplicate(true)
 	var acq_facility := Game.facility.duplicate(true)
