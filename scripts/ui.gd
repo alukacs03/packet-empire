@@ -2303,6 +2303,49 @@ func _refresh_ops() -> void:
 				hud_toast("UPS installed.", true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
+	ops_box.add_child(_section("STANDING DUTIES"))
+	if Game.staff.is_empty():
+		ops_box.add_child(_label("  Nobody on the payroll: every chore here is yours by hand.",
+			12, Color(0.72, 0.8, 0.88)))
+	for duty_id: String in Game.DUTIES:
+		var duty: Dictionary = Game.DUTIES[duty_id]
+		var holder: String = Game.duty_holder(duty_id)
+		var drow := HBoxContainer.new()
+		drow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(drow)
+		var dl := _label("  %-34s %s" % [duty["label"],
+			("by hand" if holder == "" else "%s (%d%% as good as you)"
+				% [holder, int(Game.duty_quality(duty_id) * 100.0)])], 12,
+			Color(0.72, 0.8, 0.88) if holder == "" else Color(0.78, 0.86, 0.78))
+		dl.add_theme_font_override("font", mono)
+		dl.tooltip_text = String(duty["blurb"])
+		dl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		drow.add_child(dl)
+		var assign := Button.new()
+		assign.text = "Assign…" if holder == "" else "Take it back"
+		assign.pressed.connect(func() -> void:
+			if holder != "":
+				Game.assign_duty(duty_id, "")
+				_refresh_ops()
+				return
+			var names: Array = []
+			var name_opts: Array = []
+			for m_d: Dictionary in Game.staff:
+				names.append(String(m_d["name"]))
+				name_opts.append("%s  (%s, holding %d)" % [m_d["name"], Staff.label(m_d),
+					Game.duty_load(String(m_d["name"]))])
+			if name_opts.is_empty():
+				_toast("nobody to give it to")
+				return
+			_menu(assign, name_opts, func(id: int) -> void:
+				var err: String = Game.assign_duty(duty_id, String(names[id]))
+				if err != "":
+					_toast(err)
+				_refresh_ops()))
+		drow.add_child(assign)
+	if not Game.last_digest.is_empty():
+		ops_box.add_child(_label("  Last cycle: %s" % "; ".join(PackedStringArray(Game.last_digest)),
+			12, Color(0.68, 0.74, 0.82)))
 	ops_box.add_child(_section("THE PARTS DRAWER"))
 	var parts_row := HBoxContainer.new()
 	parts_row.add_theme_constant_override("separation", 8)

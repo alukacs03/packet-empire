@@ -241,6 +241,8 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var duties := {}  # duty id -> the name of whoever holds it
+var last_digest: Array = []  # what the crew handled, skipped, or needs you for
 var parts := {"patch": 40, "optic": 8, "power": 20, "blank": 12}  # the parts drawer
 var parts_auto := true  # reorder when it runs low, so it is a decision once
 var cable_debt := 0  # wrong-length leads somebody improvised with
@@ -592,6 +594,133 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const DUTIES := {
+	"parts": {"label": "Keep the parts drawer stocked",
+		"blurb": "Standing order for leads, optics and panels."},
+	"facility": {"label": "Keep the facility schedule",
+		"blurb": "Filters, service visits, load tests and battery checks."},
+	"renewals": {"label": "Handle the renewals",
+		"blurb": "Auto-renew everything on the calendar before it lapses."},
+	"receiving": {"label": "Work the receiving area",
+		"blurb": "Check crates against the order, unpack them, clear the cardboard."},
+	"labels": {"label": "Label and document what changes",
+		"blurb": "Tag the ports somebody patched and save what is running."},
+}
+const DUTY_CAPACITY := 2  # what one person can actually hold and still do well
+
+func duty_holder(id: String) -> String:
+	return String(duties.get(id, ""))
+
+func duty_load(name: String) -> int:
+	var held := 0
+	for id: String in duties:
+		if String(duties[id]) == name:
+			held += 1
+	return held
+
+func assign_duty(id: String, name: String) -> String:
+	if not DUTIES.has(id):
+		return "there is no such duty"
+	if name == "":
+		duties.erase(id)
+		_sync_duty_policies()
+		return ""
+	if Staff.by_name(name).is_empty():
+		return "%s is not on the payroll" % name
+	duties[id] = name
+	_sync_duty_policies()
+	if duty_load(name) > DUTY_CAPACITY:
+		log_event("DUTIES: %s now holds %d standing duties. Something will be done badly."
+			% [name, duty_load(name)])
+	return ""
+
+func _sync_duty_policies() -> void:
+	## The board is the single place these policies live.
+	parts_auto = duty_holder("parts") != ""
+	for task: String in FACILITY_TASKS:
+		facility_auto[task] = duty_holder("facility") != ""
+	for item in renewals:
+		item["auto"] = duty_holder("renewals") != ""
+
+func duty_quality(id: String) -> float:
+	## Skill, tiredness, how much they are carrying, and how well the place is
+	## documented. Never quite as good as doing it yourself.
+	var who := Staff.by_name(duty_holder(id))
+	if who.is_empty():
+		return 0.0
+	var q := 0.35 + 0.1 * float(int(who.get("skill", 1)))
+	q += 0.15 * (float(int(who.get("morale", 70))) / 100.0)
+	q -= 0.15 * float(maxi(0, duty_load(String(who["name"])) - DUTY_CAPACITY))
+	q += 0.1 * floor_tidiness()
+	return clampf(q, 0.05, 0.95)
+
+func duties_tick() -> void:
+	## Delegated work happens off screen and is reported, not played. When it
+	## goes wrong it surfaces as an ordinary fault, later.
+	last_digest = []
+	for id: String in DUTIES:
+		var name := duty_holder(id)
+		if name == "":
+			continue
+		var who := Staff.by_name(name)
+		if who.is_empty() or not Staff.on_shift(who):
+			last_digest.append("%s: nobody on shift to do it" % DUTIES[id]["label"])
+			continue
+		var good := randf() < duty_quality(id)
+		match id:
+			"parts":
+				if good:
+					last_digest.append("%s kept the drawer stocked" % name)
+				else:
+					# the wrong lengths, ordered in good faith
+					buy_parts("power", 5)
+					last_digest.append("%s restocked, and got the wrong parts in" % name)
+			"facility":
+				last_digest.append("%s is keeping the facility schedule" % name if good
+					else "%s let a facility job slide this cycle" % name)
+				if not good:
+					for task: String in FACILITY_TASKS:
+						facility_auto[task] = false
+					facility_auto["filters"] = true
+			"renewals":
+				last_digest.append("%s is watching the renewals calendar" % name)
+			"receiving":
+				var waiting := crates_waiting()
+				if waiting.is_empty():
+					last_digest.append("%s: nothing on the dock" % name)
+				elif good:
+					check_crate(waiting[0])
+					unpack_crate(waiting[0])
+					last_digest.append("%s checked and unpacked a crate" % name)
+				else:
+					unpack_crate(waiting[0])
+					last_digest.append("%s unpacked a crate without checking it against the order"
+						% name)
+			"labels":
+				var done := false
+				for d: Net.NDevice in all_devices():
+					for i: Net.Iface in d.ifaces:
+						if link_at(i) == null or not i.note.is_empty() \
+								or i.name.begins_with("Management"):
+							continue
+						if good:
+							i.note = {"text": "%s: patched %s" % [name, d.name], "cycle": cycle}
+							last_digest.append("%s labelled %s %s" % [name, d.name, i.name])
+						else:
+							# a tired tech puts the label on the wrong port, which
+							# is worse than no label and is found much later
+							var wrong: Net.Iface = d.ifaces[(d.ifaces.find(i) + 1) % d.ifaces.size()]
+							wrong.note = {"text": "%s: patched %s" % [name, d.name], "cycle": cycle}
+							last_digest.append("%s labelled a port on %s" % [name, d.name])
+						done = true
+						break
+					if done:
+						break
+				if not done:
+					last_digest.append("%s: everything is labelled" % name)
+	if not last_digest.is_empty():
+		log_event("DUTIES: %s." % "; ".join(PackedStringArray(last_digest)))
 
 const PART_PRICES := {"patch": 6, "optic": 45, "power": 8, "blank": 12}
 const PART_LABELS := {"patch": "patch leads", "optic": "optics", "power": "power cords",
@@ -4782,6 +4911,7 @@ func sla_tick() -> void:
 	remote_hands_tick()
 	receiving_tick()
 	parts_tick()
+	duties_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -5599,7 +5729,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "parts": parts,
-		"parts_auto": parts_auto, "cable_debt": cable_debt,
+		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -5932,6 +6062,7 @@ func _apply(data: Dictionary) -> void:
 	crates = data.get("crates", [])
 	parts = data.get("parts", {"patch": 40, "optic": 8, "power": 20, "blank": 12})
 	parts_auto = bool(data.get("parts_auto", true))
+	duties = data.get("duties", {})
 	cable_debt = int(data.get("cable_debt", 0))
 	packaging = int(data.get("packaging", 0))
 	firmware_bugs = data.get("firmware_bugs", {})

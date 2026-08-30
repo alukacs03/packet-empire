@@ -299,3 +299,9 @@ static func habit_read(member: Dictionary) -> String:
 		else ("fixes it and moves on" if float(h["documents"]) < 0.4
 			else "writes up the serious ones"))
 	return ", ".join(PackedStringArray(bits))
+
+static func by_name(name: String) -> Dictionary:
+	for m in Game.staff:
+		if String(m.get("name", "")) == name:
+			return m
+	return {}

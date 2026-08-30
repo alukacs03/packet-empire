@@ -3688,6 +3688,62 @@ static func run() -> int:
 		"parts: a standing order with no money behind it is not a delivery")
 	Game.parts = {"patch": 40, "optic": 8, "power": 20, "blank": 12}
 	Game.money = 5000
+
+	# --- standing duties ---
+	var dt_staff := Game.staff.duplicate(true)
+	Game.duties = {}
+	Game.staff = [{"name": "Fekete Julia", "role": "engineer", "skill": 5, "salary": 500,
+		"morale": 90, "shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.8, "documents": 0.8, "windows": 0.6, "tidy": 0.8}},
+		{"name": "Racz Peter", "role": "noc", "skill": 1, "salary": 200, "morale": 25,
+		"shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.3, "documents": 0.3, "windows": 0.3, "tidy": 0.3}}]
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3  # both on shift
+	Game.parts_auto = false
+	check(Game.assign_duty("parts", "Nobody Here") != "" \
+			and Game.assign_duty("parts", "Fekete Julia") == "" and Game.parts_auto,
+		"duties: a duty goes to a named person, and the standing policy follows the board")
+	check(Game.duty_quality("parts") > Game.duty_quality("labels") + 0.0 \
+			or Game.duty_holder("labels") == "",
+		"duties: an unheld duty is simply yours")
+	Game.assign_duty("labels", "Racz Peter")
+	check(Game.duty_quality("parts") > Game.duty_quality("labels"),
+		"duties: who holds it decides how well it is done, from skill and morale")
+	var solo := Game.duty_quality("parts")
+	Game.assign_duty("facility", "Fekete Julia")
+	Game.assign_duty("renewals", "Fekete Julia")
+	check(Game.duty_load("Fekete Julia") == 3 and Game.duty_quality("parts") < solo,
+		"duties: staff capacity is finite, and piling it on one person costs quality")
+	Game.assign_duty("facility", "")
+	Game.assign_duty("renewals", "")
+	check(Game.duty_holder("facility") == "" and not bool(Game.facility_auto.get("filters", false)),
+		"duties: any duty can be taken back by hand, and the policy comes back with it")
+	# delegated work is reported rather than played
+	var dt_rack := Game.add_rack(Vector2i(50, 1))
+	var dt_sw := Game.new_device("sw-8")
+	var dt_srv := Game.new_device("srv-1")
+	dt_rack.slots[0] = dt_sw
+	dt_rack.slots[1] = dt_srv
+	Game.connect_ifaces(dt_srv.ifaces[0], dt_sw.ifaces[0])
+	dt_sw.ifaces[0].note = {}
+	dt_srv.ifaces[0].note = {}
+	Game.last_digest = []
+	Game.duties_tick()
+	check(not Game.last_digest.is_empty(),
+		"duties: the cycle ends with a digest of what the crew handled")
+	var labelled_any := false
+	for _dt in 40:
+		Game.duties_tick()
+		for dt_dev: Net.NDevice in Game.all_devices():
+			for dt_if: Net.Iface in dt_dev.ifaces:
+				if "Racz Peter" in String(dt_if.note.get("text", "")):
+					labelled_any = true
+	check(labelled_any,
+		"duties: work handed over actually happens off screen, without the player touching it")
+	Game.duties = {}
+	Game.staff = dt_staff
+	Game.parts_auto = true
+	Game.facility_auto = {}
 	Game.money = 8000
 	var zr := Game.add_rack(Vector2i(46, 1))
 	var z_sw := Game.new_device("sw-8")
