@@ -7944,6 +7944,37 @@ static func run() -> int:
 	check(Sfx.score_mood == "", "score: muting the game silences the music with everything else")
 	Sfx.muted = sc_muted
 	Game.deals = sc_deals
+
+	# --- the crew say something ---
+	var cv_careful := {"name": "Toth Eszter", "role": "engineer", "skill": 4, "salary": 500,
+		"morale": 85, "shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.9, "documents": 0.9, "windows": 0.8, "tidy": 0.9}}
+	var cv_hurried := {"name": "Nagy Bence", "role": "tech", "skill": 2, "salary": 250,
+		"morale": 75, "shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.2, "documents": 0.2, "windows": 0.2, "tidy": 0.2}}
+	var cv_tired := {"name": "Kis Andras", "role": "noc", "skill": 1, "salary": 150,
+		"morale": 20, "shift": "night", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.9, "documents": 0.9, "windows": 0.9, "tidy": 0.9}}
+	check(Staff.voice_key(cv_careful) == "careful" and Staff.voice_key(cv_hurried) == "hurried" \
+			and Staff.voice_key(cv_tired) == "tired",
+		"crew: how somebody sounds comes from how they work, unless they are worn out")
+	check(Staff.says(cv_careful, "repair") != Staff.says(cv_hurried, "repair") \
+			and Staff.says(cv_careful, "repair").contains("Toth Eszter"),
+		"crew: the same event from two different people reads differently")
+	check(Staff.says(cv_careful, "repair") == Staff.says(cv_careful, "repair"),
+		"crew: and the same person sounds like the same person every time")
+	check(Staff.says(cv_careful, "blamed") != Staff.says(cv_careful, "defended"),
+		"crew: being blamed and being defended are not the same conversation")
+	check(Staff.says({}, "repair") == "" and Staff.says(cv_careful, "nonsense") == "",
+		"crew: nobody speaks for a moment that does not exist")
+	var cv_staff := Game.staff.duplicate(true)
+	Game.staff = [cv_tired]
+	Game.events = []
+	Game.digest = {}
+	Staff.say(cv_tired, "resigned")
+	check(Game.log_contains("Kis Andras") and Game.log_contains("CREW"),
+		"crew: what they say goes in the log, in their own words")
+	Game.staff = cv_staff
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

@@ -117,6 +117,7 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 				m["skill"] = mini(5, int(m["skill"]) + 1)
 				m["certs"] = m.get("certs", []) + [String(m.get("training", ""))]
 				Game.log_event("TRAINING: %s is back, now skill %d." % [m["name"], int(m["skill"])])
+				say(m, "trained")
 			continue
 		var drift := 0
 		if pressure > 1.5:
@@ -140,6 +141,7 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 			Game.log_event("STAFF: %s has resigned. Morale was %d and the pay was %s."
 				% [m["name"], int(m["morale"]),
 				"below market" if int(m["salary"]) < market_rate(m) else "not the problem"])
+			say(m, "resigned")
 		elif int(m["morale"]) <= 25:
 			Game.log_event("STAFF: %s is close to walking out." % m["name"])
 
@@ -199,6 +201,7 @@ static func work_cycle() -> void:
 			attempts -= 1
 			var who: Dictionary = Game.staff[rng.randi() % Game.staff.size()]
 			Game.log_event("STAFF: %s restored %s %s." % [who["name"], ifc.dev.name, ifc.name])
+			say(who, "repair")
 			if float(habits_of(who).get("tidy", 0.5)) > 0.65 and ifc.note.is_empty():
 				# they label it because that is what they watched somebody do.
 				# written straight onto the port: staff work is not the player's habit
@@ -255,6 +258,8 @@ static func _maybe_slip(rng: RandomNumberGenerator) -> void:
 		String(who["name"]),
 		"HANDS: %s took %s %s down during a change." % [who["name"], victim.dev.name, victim.name],
 		delay)
+	if delay == 0:
+		say(who, "slip")  # a frightened team says nothing until later, if at all
 	Game.topology_changed.emit()
 
 ## Habits are the part of a person that did not come from a course. They are
@@ -307,3 +312,62 @@ static func by_name(name: String) -> Dictionary:
 		if String(m.get("name", "")) == name:
 			return m
 	return {}
+
+
+## ---------- what people say ----------
+## One line, in the log, chosen by who they are: their role, how they work, how
+## they are doing, and what happened to them last time. Never a modal.
+const VOICE := {
+	"repair": {
+		"careful": ["I labelled it while I was in there.", "Traced it end to end before I touched anything."],
+		"hurried": ["Back up. I did not stop to write it down.", "Up again. Do not ask me which port it was."],
+		"tired": ["It is up. I am going home.", "Fixed. That is the third one tonight."]},
+	"slip": {
+		"careful": ["That was me. I was on the wrong port.", "My fault, and I have written down what I did."],
+		"hurried": ["Something went down while I was in there.", "That might have been me."],
+		"tired": ["I have been here since six. That one is on me.", "I read the wrong label. I am sorry."]},
+	"blamed": {
+		"careful": ["Understood. It will not happen twice.", "I would rather have been told first."],
+		"hurried": ["Right. Noted.", "Fine."],
+		"tired": ["I see.", "Understood."]},
+	"defended": {
+		"careful": ["You did not have to do that. Thank you.", "I will not forget that."],
+		"hurried": ["Cheers. I owe you one.", "Appreciated."],
+		"tired": ["Thank you. Genuinely.", "That means something at this hour."]},
+	"resigned": {
+		"careful": ["I have enjoyed most of it. The pay stopped making sense.", "I am handing over properly. That matters to me."],
+		"hurried": ["I am off. Somebody else can do the nights.", "I have had enough of this."],
+		"tired": ["I cannot keep doing the hours.", "I am too tired to argue about it."]},
+	"duty": {
+		"careful": ["I will keep on top of it.", "I will do it the way you have been doing it."],
+		"hurried": ["I will get to it.", "Sure, add it to the pile."],
+		"tired": ["If I have time.", "Right."]},
+	"trained": {
+		"careful": ["That was worth doing. I have notes.", "I know what I am looking at now."],
+		"hurried": ["Passed. Mostly slept through the second day.", "Done. Can I get back to work?"],
+		"tired": ["Passed. I needed the week off more than the course.", "Finished it. Barely."]},
+}
+
+static func voice_key(member: Dictionary) -> String:
+	## Which register this person speaks in right now: the habits they picked
+	## up, unless they are too worn out to sound like themselves.
+	if int(member.get("morale", 70)) < 40:
+		return "tired"
+	var h := habits_of(member)
+	var care := (float(h.get("documents", 0.5)) + float(h.get("tidy", 0.5))
+		+ float(h.get("windows", 0.5))) / 3.0
+	return "careful" if care >= 0.5 else "hurried"
+
+static func says(member: Dictionary, moment: String) -> String:
+	## Deterministic per person and moment, so the same colleague sounds like
+	## the same person rather than a random line generator.
+	if member.is_empty() or not VOICE.has(moment):
+		return ""
+	var lines: Array = VOICE[moment][voice_key(member)]
+	var pick: int = absi((String(member.get("name", "")) + moment).hash()) % lines.size()
+	return "%s: \"%s\"" % [member["name"], lines[pick]]
+
+static func say(member: Dictionary, moment: String) -> void:
+	var line := says(member, moment)
+	if line != "":
+		Game.log_event("CREW: %s" % line)

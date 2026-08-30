@@ -858,6 +858,7 @@ func assign_duty(id: String, name: String) -> String:
 		return "%s is not on the payroll" % name
 	duties[id] = name
 	_sync_duty_policies()
+	Staff.say(Staff.by_name(name), "duty")
 	if duty_load(name) > DUTY_CAPACITY:
 		log_event("DUTIES: %s now holds %d standing duties. Something will be done badly."
 			% [name, duty_load(name)])
@@ -6072,6 +6073,7 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 				who.erase("cautious")
 				log_event("BLAME: you took it for %s. They will not forget that, and neither will the rest of the team."
 					% who["name"])
+				Staff.say(who, "defended")
 			else:
 				log_event("BLAME: you said it was yours, because it was. The team heard that too.")
 		"name":
@@ -6088,6 +6090,7 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 				who.erase("shielded")
 				log_event("BLAME: you gave the customer %s's name. Your reputation is intact and %s will be very careful what they mention from now on."
 					% [who["name"], who["name"]])
+				Staff.say(who, "blamed")
 		_:
 			return "that is not one of the things you can say"
 	inc["blame"] = choice
