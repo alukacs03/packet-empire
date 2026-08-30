@@ -2089,7 +2089,9 @@ func _refresh_ops() -> void:
 			ops_box.add_child(_wrap("  %s" % note_line, 12, Color(1.0, 0.85, 0.55), 780))
 	var stranded: Array = []
 	for d_lock: Net.NDevice in Game.all_devices():
-		if Game.locked_out(d_lock):
+		# only a device that could be reached and now cannot: a device that was
+		# never addressed for remote management is not locked out, it is new
+		if Game.locked_out(d_lock) and bool(Game.lockout_state.get(d_lock.name, false)):
 			stranded.append(d_lock)
 	if not stranded.is_empty() or not Game.confirm_commits.is_empty():
 		ops_box.add_child(_section("UNREACHABLE"))
@@ -2407,12 +2409,12 @@ func _refresh_ops() -> void:
 				_refresh_money()))
 		ops_box.add_child(reb)
 	ops_box.add_child(_section("WHO IS ON THE FLOOR"))
+	ops_box.add_child(_wrap("  %s. %s%s" % [Game.ACCESS_POLICIES[Game.access_policy]["label"],
+		Game.ACCESS_POLICIES[Game.access_policy]["blurb"],
+		"  Cameras up." if Game.cameras else ""], 12, Color(0.72, 0.8, 0.88), 780))
 	var acc_row := HBoxContainer.new()
 	acc_row.add_theme_constant_override("separation", 8)
 	ops_box.add_child(acc_row)
-	acc_row.add_child(_wrap("  %s. %s%s" % [Game.ACCESS_POLICIES[Game.access_policy]["label"],
-		Game.ACCESS_POLICIES[Game.access_policy]["blurb"],
-		"  Cameras up." if Game.cameras else ""], 12, Color(0.72, 0.8, 0.88), 520))
 	for pol_id: String in Game.ACCESS_POLICIES:
 		if pol_id == Game.access_policy:
 			continue

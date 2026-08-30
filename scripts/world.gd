@@ -351,6 +351,33 @@ func _shoot_all() -> void:
 			ui.help_overlay.visible = false
 			ui.toggle_ops()],
 	]
+	# and every Operations tab, with enough state in them to be worth looking at
+	Game.decisions = [{"id": "workaround_vs_root", "raised": Game.cycle}]
+	Game.audit = {"state": "offered", "customer": "Tisza Bank",
+		"scope": ["incident_review", "config_history"], "reward": 4500,
+		"deadline": Game.cycle + 6, "findings": [], "history": []}
+	Game.tour = {"kind": "prospect", "cycle": Game.cycle + 3, "crammed": 0.0}
+	Game.staff = [{"name": "Fekete Julia", "role": "engineer", "skill": 4, "salary": 480,
+		"morale": 78, "shift": "day", "training_left": 0, "certs": [],
+		"habits": {"saves": 0.8, "documents": 0.7, "windows": 0.6, "tidy": 0.7}}]
+	Game.duties = {"parts": "Fekete Julia", "labels": "Fekete Julia"}
+	Game.protection = {"detection": {"installed": true, "serviced_cycle": Game.cycle}}
+	Game.crates = [{"model": "srv-1", "shipped": "srv-1", "ordered": Game.cycle,
+		"due": Game.cycle + 2, "arrived": -1, "checked": false, "damaged": false,
+		"unpack_left": 1}]
+	Game.identity = "reliability"
+	for tab_entry in UILayer.OPS_TABS:
+		shots.append(["ops_%s" % String(tab_entry[0]).to_lower(), func() -> void:
+			ui.ops_tab = String(tab_entry[0])
+			if not ui.ops_overlay.visible:
+				ui.toggle_ops()
+			ui._refresh_ops()])
+	shots.append(["finale", func() -> void:
+		ui.toggle_ops()
+		Game.end_run("retired")
+		ui.toggle_ops()
+		ui.ops_tab = "Company"
+		ui._refresh_ops()])
 	for shot in shots:
 		shot[1].call()
 		for _f in 16:  # let fades and layout settle
