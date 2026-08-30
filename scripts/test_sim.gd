@@ -4240,6 +4240,55 @@ static func run() -> int:
 	Game.decisions = []
 	Game.consequences = []
 	Game.decisions_seen = []
+
+	# --- named customers who remember ---
+	Game.customer_arcs.erase("fonix")
+	Game.customer_arcs.erase("tisza")
+	var st_deals := Game.deals.duplicate(true)
+	Game.reputation = 60
+	Game.references = []
+	Game.leads = []
+	check(Game.STORY_CUSTOMERS.size() >= 5,
+		"story: there are a handful of customers who come back, not one")
+	var st_deal := {"id": "st1", "customer": "Fonix Klinika", "ctype": "smb", "kind": "hosting",
+		"params": {}, "fee": 150, "brief": "", "load": 200, "healthy": true,
+		"ever_healthy": true, "cycles": 10, "up_cycles": 10, "loyalty": 0.7}
+	Game.deals = [st_deal]
+	Game.customer_arcs["fonix"] = {"beat": "arrival", "since": Game.cycle - 9, "outages": 0}
+	Game.story_tick()
+	var st_arc: Dictionary = Game.customer_arcs["fonix"]
+	check(String(st_arc["beat"]) == "complication" and int(st_deal["load"]) == 400,
+		"story: the complication is a change to their real service, not a line of dialogue")
+	var st_eye := Game.customer_eye(st_deal)
+	check(String(st_eye["relationship"]).contains("COMPLICATION") \
+			and String(st_eye["memory"]).contains("outage"),
+		"story: the customer card says which beat they are on and what they have on record")
+	# carrying it earns the payoff, and it is a fact about delivery
+	st_deal["degraded"] = false
+	Game.story_tick()
+	check(String(Game.customer_arcs["fonix"]["outcome"]) == "kept" \
+			and Game.references.has("Fonix Klinika") and Game.leads.size() == 1,
+		"story: carrying their growth ends the arc in a reference and a door")
+	# the same arc, the other way
+	Game.customer_arcs.erase("orban")
+	Game.references = []
+	Game.leads = []
+	var st_deal2 := {"id": "st2", "customer": "Orban es Tarsa", "ctype": "smb", "kind": "hosting",
+		"params": {}, "fee": 200, "brief": "", "load": 200, "healthy": true,
+		"ever_healthy": true, "cycles": 20, "up_cycles": 8, "loyalty": 0.7}
+	Game.deals = [st_deal2]
+	Game.customer_arcs["orban"] = {"beat": "complication", "since": Game.cycle,
+		"deadline": Game.cycle - 1, "outages": 3}
+	var rep_story := Game.reputation
+	Game.story_tick()
+	check(String(Game.customer_arcs["orban"]["outcome"]) == "lost" and Game.deals.is_empty() \
+			and Game.reputation < rep_story,
+		"story: the same arc ends materially differently when the build never happened")
+	Game.deals = st_deals
+	Game.customer_arcs.erase("fonix")
+	Game.customer_arcs.erase("orban")
+	Game.references = []
+	Game.leads = []
 	Game.money = 20000
 	Game.reputation = 60
 	check(Game.DECISIONS.size() >= 12,
@@ -5600,6 +5649,12 @@ static func run() -> int:
 	check(Game.acknowledge_guided_outage() == "" \
 			and Game.guided_outage_probe("monitor") != "",
 		"guided outage: ownership comes first and diagnosis waits for customer communication")
+	# the rest of the business is exercised elsewhere; this measures the outage
+	Game.tour = {}
+	Game.audit = {}
+	Game.decisions = []
+	Game.consequences = []
+	Game.upstream = {}
 	var rep_before_status_cycle := Game.reputation
 	check(Game.post_status("Kiskacsa hosting is unavailable; investigating the access path. Next update this cycle.") == "",
 		"guided outage: the operator can post a plain-language status update")

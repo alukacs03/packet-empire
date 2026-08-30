@@ -321,6 +321,45 @@ static func audit_lead(from_customer: String) -> Dictionary:
 		"from_audit": true,
 	}
 
+static func story_customer_lead(customer: String) -> Dictionary:
+	## One of the named few, arriving as ordinary work. What they turn into
+	## depends entirely on how the service goes.
+	var kinds: Array = ["hosting", "secure_host", "own_vlan"]
+	var kind: String = kinds[absi(customer.hash()) % kinds.size()]
+	return {
+		"id": "lead_named_%s" % customer.to_lower().replace(" ", "_"),
+		"customer": customer,
+		"kind": kind,
+		"ctype": "smb",
+		"stage": "lead",
+		"heard": "they asked around and your name came up",
+		"size": 200,
+		"sla": 1,
+		"params": {"ip": "10.65.%d.10" % (absi(customer.hash()) % 200)},
+		"load": 190,
+		"public": false,
+		"ttl": 14,
+		"story": true,
+	}
+
+static func story_referral_lead(from_customer: String) -> Dictionary:
+	## A relationship that went well is worth a door somebody opens for you.
+	return {
+		"id": "lead_story_%s" % from_customer.to_lower().replace(" ", "_"),
+		"customer": "%s %s" % [NAMES[absi((from_customer + "ref").hash()) % NAMES.size()], SUFFIX[0]],
+		"kind": "hosting",
+		"ctype": "smb",
+		"stage": "lead",
+		"heard": "%s told them what you did for them" % from_customer,
+		"size": 180,
+		"sla": 1,
+		"params": {"ip": "10.64.10.10"},
+		"load": 170,
+		"public": false,
+		"ttl": 12,
+		"from_story": from_customer,
+	}
+
 static func cost_to_serve(lead: Dictionary) -> Dictionary:
 	## An honest estimate, not an oracle. It amortises unavoidable hardware over
 	## the initial 18-cycle term and leaves the customer's hidden budget hidden.

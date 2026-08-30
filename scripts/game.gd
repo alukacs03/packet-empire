@@ -3244,6 +3244,101 @@ func customer_eye(deal: Dictionary) -> Dictionary:
 		eye["voice"] = "“The next label just printed. That little sound means the shop is working.”"
 	return eye
 
+## Five customers who come back, remember, and want different things. The
+## beats advance on live delivery, never on a line of dialogue.
+const STORY_CUSTOMERS := {
+	"kiskacsa": {"customer": "Kiskacsa Kft"},
+	"fonix": {"customer": "Fonix Klinika", "need": "capacity",
+		"complication": "their booking system has doubled its traffic and they will not tolerate a slow morning",
+		"payoff": "they put your name in front of the other two clinics in the group",
+		"failure": "they moved the booking system somewhere with more headroom"},
+	"madaras": {"customer": "Madaras Jatek Kft", "need": "protection",
+		"complication": "an attempted break-in has made them ask what actually sits in front of their server",
+		"payoff": "their board now treats your firewall as the reason they are still trading",
+		"failure": "they hired somebody else to do the security review, and then the hosting"},
+	"tisza": {"customer": "Tisza Logisztika", "need": "second_site",
+		"complication": "one warehouse burned an afternoon offline and they want the other site carrying it",
+		"payoff": "the two-site build is the thing they show visitors",
+		"failure": "they split the contract and gave the second half to somebody with two rooms"},
+	"orban": {"customer": "Orban es Tarsa", "need": "reliability",
+		"complication": "after a bad quarter they are counting every outage you have",
+		"payoff": "they stopped counting, which is the highest praise this trade offers",
+		"failure": "they left, politely, with a spreadsheet of every cycle you were down"},
+}
+
+func story_key(customer: String) -> String:
+	for key: String in STORY_CUSTOMERS:
+		if String(STORY_CUSTOMERS[key].get("customer", "")) == customer:
+			return key
+	return ""
+
+func story_arc(key: String) -> Dictionary:
+	return customer_arcs.get(key, {})
+
+func _story_need_met(key: String, deal: Dictionary) -> bool:
+	## Every one of these is a fact about the network or the service, not a
+	## conversation the player had.
+	match String(STORY_CUSTOMERS[key].get("need", "")):
+		"capacity":
+			# they doubled: the service has to still be delivered, undegraded
+			return bool(deal.get("healthy", false)) and not bool(deal.get("degraded", false)) \
+				and int(deal.get("load", 0)) >= int(deal.get("story_load", 0))
+		"protection":
+			var host := Contracts._owner(String(deal["params"].get("ip", "")))
+			if host == null:
+				return false
+			for d: Net.NDevice in all_devices():
+				if d.type == "firewall" and d.status == "active" and not d.acls.is_empty():
+					return true
+			return false
+		"second_site":
+			return site_count() > 1 and not circuits.is_empty()
+		"reliability":
+			return int(deal.get("cycles", 0)) > 0 \
+				and float(deal.get("up_cycles", 0)) / float(maxi(1, int(deal.get("cycles", 1)))) >= 0.95
+	return false
+
+func story_tick() -> void:
+	for deal in deals:
+		var key := story_key(String(deal.get("customer", "")))
+		if key == "" or key == "kiskacsa":
+			continue  # the guided customer has an arc of its own
+		var arc: Dictionary = customer_arcs.get(key, {"beat": "arrival", "since": cycle,
+			"outages": 0, "helped": false})
+		if not bool(deal.get("healthy", false)):
+			arc["outages"] = int(arc.get("outages", 0)) + 1
+		match String(arc.get("beat", "arrival")):
+			"arrival":
+				if cycle - int(arc.get("since", cycle)) >= 8 and bool(deal.get("ever_healthy", false)):
+					arc["beat"] = "complication"
+					arc["since"] = cycle
+					arc["deadline"] = cycle + 12
+					if String(STORY_CUSTOMERS[key].get("need", "")) == "capacity":
+						deal["load"] = int(deal.get("load", 200)) * 2
+						arc["story_load"] = int(deal["load"])
+						deal["story_load"] = int(deal["load"])
+					log_event("STORY: %s. %s" % [deal["customer"],
+						STORY_CUSTOMERS[key]["complication"]])
+			"complication":
+				if _story_need_met(key, deal):
+					arc["beat"] = "payoff"
+					arc["outcome"] = "kept"
+					deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.2)
+					reputation = mini(100, reputation + 4)
+					if String(deal["customer"]) not in references:
+						references.append(String(deal["customer"]))
+					leads.append(Market.story_referral_lead(String(deal["customer"])))
+					log_event("STORY PAYOFF: %s. %s" % [deal["customer"],
+						STORY_CUSTOMERS[key]["payoff"]])
+				elif cycle > int(arc.get("deadline", cycle + 12)):
+					arc["beat"] = "payoff"
+					arc["outcome"] = "lost"
+					deals.erase(deal)
+					reputation = maxi(0, reputation - 4)
+					log_event("STORY ENDING: %s. %s" % [deal["customer"],
+						STORY_CUSTOMERS[key]["failure"]])
+		customer_arcs[key] = arc
+
 func _general_customer_eye(deal: Dictionary) -> Dictionary:
 	## Every customer is somebody doing something. Read off live state only:
 	## the panel can never celebrate orders while the service is down.
@@ -3264,6 +3359,18 @@ func _general_customer_eye(deal: Dictionary) -> Dictionary:
 		"activity": "They are waiting for the service they were promised.",
 		"voice": "“Tell us when it is ready.”",
 	}
+	var story := story_key(String(deal.get("customer", "")))
+	if story != "" and not story_arc(story).is_empty():
+		var arc: Dictionary = story_arc(story)
+		eye["relationship"] = "%s  /  %s" % [String(arc.get("beat", "arrival")).to_upper(),
+			String(STORY_CUSTOMERS[story].get("need", "service")).to_upper()]
+		if String(arc.get("beat", "")) == "complication":
+			eye["memory"] = "%s They have %d outage(s) of yours on record." \
+				% [STORY_CUSTOMERS[story]["complication"], int(arc.get("outages", 0))]
+		elif String(arc.get("outcome", "")) == "kept":
+			eye["memory"] = STORY_CUSTOMERS[story]["payoff"]
+		else:
+			eye["memory"] = "They are watching how this one goes."
 	if not event.is_empty():
 		eye["relationship"] = "%s  /  IN %d CYCLE%s" % [String(event["label"]).to_upper(),
 			int(event["cycle"]) - cycle, "" if int(event["cycle"]) - cycle == 1 else "S"]
@@ -5479,7 +5586,29 @@ func lead_tick() -> void:
 	# bigger work arrives through people talking, not through a web form
 	var cap := 2 + int(marketing / MARKETING_STEP) + references.size()
 	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35:
-		leads.append(Market.gen_lead())
+		# one in four of them is somebody who will still be here in fifty
+		# cycles, with a story of their own
+		var named := _unmet_story_customer()
+		if named != "" and biz_roll() < 0.25:
+			leads.append(Market.story_customer_lead(named))
+		else:
+			leads.append(Market.gen_lead())
+
+func _unmet_story_customer() -> String:
+	for key: String in STORY_CUSTOMERS:
+		if key == "kiskacsa" or customer_arcs.has(key):
+			continue
+		var name := String(STORY_CUSTOMERS[key]["customer"])
+		var busy := false
+		for deal in deals:
+			if String(deal.get("customer", "")) == name:
+				busy = true
+		for lead: Dictionary in leads:
+			if String(lead.get("customer", "")) == name:
+				busy = true
+		if not busy:
+			return name
+	return ""
 
 func qualify_lead(lead: Dictionary) -> String:
 	## Go and find out what they actually want. Some of it turns out to be
@@ -6403,6 +6532,7 @@ func sla_tick() -> void:
 	audit_tick()
 	maybe_offer_decision()
 	consequence_tick()
+	story_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
