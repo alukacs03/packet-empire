@@ -3011,6 +3011,22 @@ static func run() -> int:
 	Game.handover_tick()
 	check(not Game.handover.is_empty() and String(Game.handover["from"]) == "day",
 		"handover: it is written at the shift change, by the shift going home")
+	check(int(Game.handover.get("substantive", 0)) > 0 and not bool(Game.handover["read"]),
+		"handover: a note with something in it starts unread")
+	# leaving it unread reads as the documentation habit it is
+	var ho_docs := float(Game.habits["documents"])
+	Game._handover_slot = -1
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 2
+	Game.handover_tick()
+	check(float(Game.habits["documents"]) < ho_docs,
+		"handover: notes nobody read cost the same as documentation nobody wrote")
+	Game.read_handover()
+	var ho_docs2 := float(Game.habits["documents"])
+	Game._handover_slot = -1
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 6
+	Game.handover_tick()
+	check(float(Game.habits["documents"]) >= ho_docs2,
+		"handover: and reading it costs nothing at all")
 	Game.handover = {}
 	Game.handover_tick()
 	check(Game.handover.is_empty(), "handover: and written once, not every cycle of that slot")

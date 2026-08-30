@@ -1691,10 +1691,23 @@ func handover_tick() -> void:
 			_handover_slot = -1
 		return
 	_handover_slot = slot
+	# a note nobody reads stops being true, which is the same failure the
+	# documentation drift models: the next shift finds out the hard way
+	if not handover.is_empty() and not bool(handover.get("read", false)) \
+			and int(handover.get("substantive", 0)) > 0:
+		observe_habit("documents", false)
+		log_event("HANDOVER: last shift's notes went unread, and the crew coming on found out the hard way.")
 	var going := "night" if slot == 2 else "day"
-	handover = {"cycle": cycle, "from": going, "lines": handover_lines()}
+	var written := handover_lines()
+	handover = {"cycle": cycle, "from": going, "lines": written, "read": false,
+		"substantive": 0 if written.size() == 1 and String(written[0]).begins_with("Nothing")
+			else written.size()}
 	log_event("HANDOVER: the %s shift left %d note(s) for the %s shift."
 		% [going, handover["lines"].size(), "day" if going == "night" else "night"])
+
+func read_handover() -> void:
+	if not handover.is_empty():
+		handover["read"] = true
 
 func call_tick() -> void:
 	## A promise is only worth what it costs to miss it.

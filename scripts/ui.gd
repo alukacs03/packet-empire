@@ -4916,6 +4916,16 @@ func _build_log_tab() -> void:
 		for line in Game.handover["lines"]:
 			contracts_box.add_child(_wrap("  · %s" % String(line), 13,
 				UIW.colour("text_strong"), 640))
+		if bool(Game.handover.get("read", false)):
+			contracts_box.add_child(_label("  read", 12, UIW.colour("success")))
+		else:
+			var ho_btn := Button.new()
+			ho_btn.text = "Read it"
+			ho_btn.tooltip_text = "Notes nobody reads stop being true, and the next shift finds out the hard way."
+			ho_btn.pressed.connect(func() -> void:
+				Game.read_handover()
+				_refresh_contracts())
+			contracts_box.add_child(ho_btn)
 	if Game.upstream_active():
 		contracts_box.add_child(_section("SOMEBODY ELSE'S OUTAGE"))
 		contracts_box.add_child(_wrap("  %s is down and you cannot fix it. What is left is everything else: the case, the chasing, and telling your customers before they ask." % Game.upstream["party"],
