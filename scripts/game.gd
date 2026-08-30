@@ -3106,6 +3106,8 @@ const CONTROLS := [
 		"blurb": "There is a way in when the network is the problem, and the floor is documented."},
 	{"id": "incident_review", "label": "Incident review",
 		"blurb": "Incidents are written up rather than left open."},
+	{"id": "failover", "label": "Proved failover",
+		"blurb": "The redundancy has been tested on purpose, recently, and it held."},
 	{"id": "patching", "label": "Maintenance and known defects",
 		"blurb": "Nothing is running on a lapsed licence or a known unfixed defect."},
 ]
@@ -3120,6 +3122,11 @@ func control_state(id: String) -> Dictionary:
 	var passing := false
 	var why := ""
 	match id:
+		"failover":
+			var proved := int(control_evidence.get("failover", -999))
+			passing = proved > 0 and cycle - proved <= EVIDENCE_STALE * 2
+			why = "no failover test has been passed" if proved <= 0 else \
+				"last passed at cycle %d" % proved
 		"segmentation":
 			var tenanted := 0
 			for d: Net.NDevice in control_devices():
@@ -4392,6 +4399,87 @@ func elsewhere(d: Net.NDevice) -> String:
 	if at == current_site:
 		return ""
 	return site_name(at)
+
+const DR_NOTICE := 3   # cycles of warning, so it can be prepared for
+const DR_LENGTH := 2   # how long the upstream stays away
+
+var dr_test := {}  # {booked, ends, taken: [device names], failed: [customers]}
+
+func dr_candidates() -> Array:
+	## What a failover test can take away: your upstreams on this floor.
+	var out: Array = []
+	for d in all_devices():
+		if d.type == "uplink" and d.status == "active" and site_of_device(d) == current_site:
+			out.append(d)
+	return out
+
+func book_dr_test() -> String:
+	## Announced, not sprung: the point of a test is that everybody knew.
+	if not dr_test.is_empty():
+		return "a failover test is already in the diary"
+	if dr_candidates().is_empty():
+		return "there is nothing here to take away yet"
+	dr_test = {"booked": cycle + DR_NOTICE, "ends": -1, "taken": [], "failed": []}
+	log_event("FAILOVER TEST: booked for cycle %d. The upstream on this floor goes away for %d cycle(s)."
+		% [int(dr_test["booked"]), DR_LENGTH])
+	return ""
+
+func cancel_dr_test() -> String:
+	if dr_test.is_empty():
+		return "nothing is booked"
+	if int(dr_test.get("ends", -1)) > 0:
+		return "it is running: it finishes when it finishes"
+	dr_test = {}
+	log_event("FAILOVER TEST: cancelled. Nothing was proved, which is the same as before.")
+	return ""
+
+func dr_running() -> bool:
+	return not dr_test.is_empty() and int(dr_test.get("ends", -1)) > 0
+
+func dr_tick() -> void:
+	if dr_test.is_empty():
+		return
+	if not dr_running():
+		if cycle < int(dr_test["booked"]):
+			return
+		var taken: Array = []
+		for d in dr_candidates():
+			d.status = "offline"
+			taken.append(d.name)
+		if taken.is_empty():
+			dr_test = {}
+			log_event("FAILOVER TEST: nothing left to take away. Cancelled.")
+			return
+		dr_test["taken"] = taken
+		dr_test["ends"] = cycle + DR_LENGTH
+		log_event("FAILOVER TEST: %s is out of service on purpose. Everything that is meant to survive it should now."
+			% ", ".join(PackedStringArray(taken)))
+		topology_changed.emit()
+		return
+	# running: judge it on customers, which is the only thing that counts
+	for deal in deals:
+		if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)):
+			var who := String(deal.get("customer", ""))
+			if who not in dr_test["failed"]:
+				dr_test["failed"].append(who)
+	if cycle < int(dr_test["ends"]):
+		return
+	for name: String in dr_test["taken"]:
+		for back in all_devices():
+			if back.name == name and back.status == "offline":
+				back.status = "active"
+	var failed: Array = dr_test["failed"]
+	if failed.is_empty():
+		reputation = mini(100, reputation + 5)
+		control_evidence["failover"] = cycle
+		log_event("FAILOVER TEST: passed. The upstream was gone for %d cycle(s) and no customer noticed."
+			% DR_LENGTH)
+	else:
+		reputation = maxi(0, reputation - 3)
+		log_event("FAILOVER TEST: failed. %s went down while the upstream was away, which is what the test was for."
+			% ", ".join(PackedStringArray(failed)))
+	dr_test = {}
+	topology_changed.emit()
 
 func buy_ups() -> String:
 	if ups.has(current_site) and int(ups.get(current_site, 0)) > 0:
@@ -8081,6 +8169,7 @@ func sla_tick() -> void:
 	lockout_tick()
 	ticket_tick()
 	call_tick()
+	dr_tick()
 	handover_tick()
 	night_call_tick()
 	rank_tick()
@@ -9034,7 +9123,7 @@ func _serialize() -> Dictionary:
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"callout_who": callout_who, "callout_until": callout_until, "oncall": oncall,
-		"night_call": night_call, "handover": handover,
+		"night_call": night_call, "handover": handover, "dr_test": dr_test,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
 		"customer_arcs": customer_arcs,
@@ -9378,6 +9467,7 @@ func _apply(data: Dictionary) -> void:
 	oncall = String(data.get("oncall", ""))
 	night_call = data.get("night_call", {})
 	handover = data.get("handover", {})
+	dr_test = data.get("dr_test", {})
 	callout_who = String(data.get("callout_who", ""))
 	callout_until = int(data.get("callout_until", -1))
 	incidents = data.get("incidents", [])

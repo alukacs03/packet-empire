@@ -382,6 +382,17 @@ func _shoot_all() -> void:
 			Game.last_cycle_delta = 20
 			ui.contracts_tab = "Business"
 			ui.open_contracts()],
+		["ops_failover",
+			func() -> void:
+				ui.close_contracts()
+				Game.dr_test = {}
+				Game.book_dr_test()
+				ui.toggle_ops()
+				ui.ops_tab = "Facility"
+				ui._refresh_ops()],
+		["ops_failover_close",
+			func() -> void:
+				ui.toggle_ops()],
 		["floor_second_site",
 			func() -> void:
 				# a second floor, which must not be mistaken for the first

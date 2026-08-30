@@ -2991,6 +2991,47 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	# --- proving the redundancy on a day you chose ---
+	var dr_deals := Game.deals.duplicate(true)
+	var dr_rep := Game.reputation
+	Game.dr_test = {}
+	Game.deals = []
+	var dr_uplinks: Array = Game.dr_candidates()
+	check(not dr_uplinks.is_empty() or Game.book_dr_test() != "",
+		"failover test: with nothing to take away it is refused")
+	if dr_uplinks.is_empty():
+		var dr_rack := Game.add_rack(Vector2i(80, 1))
+		var dr_up := Game.new_device("isp-uplink")
+		dr_rack.slots[0] = dr_up
+		dr_uplinks = Game.dr_candidates()
+	check(Game.book_dr_test() == "" and Game.book_dr_test() != "",
+		"failover test: it can be booked, once")
+	Game.cycle += Game.DR_NOTICE
+	Game.dr_tick()
+	check(Game.dr_running() and dr_uplinks[0].status == "offline",
+		"failover test: at the booked cycle the upstream goes away on purpose")
+	Game.cycle += Game.DR_LENGTH
+	Game.dr_tick()
+	check(Game.dr_test.is_empty() and dr_uplinks[0].status == "active" \
+			and Game.reputation > dr_rep,
+		"failover test: nothing dropped, so it passed and everything came back")
+	check(String(Game.control_state("failover")["status"]) == "compliant",
+		"failover test: passing it is the evidence the control asks for")
+	# and a customer that does not survive it is named
+	Game.deals = [{"id": "dr", "customer": "Fragile Kft", "kind": "hosting", "params": {},
+		"fee": 100, "load": 10, "brief": "", "healthy": false, "ever_healthy": true}]
+	Game.book_dr_test()
+	Game.cycle += Game.DR_NOTICE
+	Game.dr_tick()
+	Game.cycle += Game.DR_LENGTH
+	var dr_rep2 := Game.reputation
+	Game.dr_tick()
+	check(Game.reputation < dr_rep2 and Game.log_contains("FAILOVER TEST: failed"),
+		"failover test: a customer that did not survive it is named, and it costs")
+	check(dr_uplinks[0].status == "active",
+		"failover test: the upstream comes back whatever the result")
+	Game.deals = dr_deals
+
 	# --- kit that is not on the floor you are standing on ---
 	var el_dev: Net.NDevice = Game.all_devices()[0]
 	var el_sites := Game.sites.duplicate(true)

@@ -1952,7 +1952,8 @@ const OPS_TABS := [
 	["Traffic", ["TOP TALKERS", "MONITORS"]],
 	["Hardware", ["ASSETS AND SPARES", "DEVICES", "THE PARTS DRAWER", "RECEIVING",
 		"VENDOR SUPPORT", "NOBODY CLAIMS THESE"]],
-	["Facility", ["FIRE, SMOKE AND WATER", "FACILITY SCHEDULE", "WHO IS ON THE FLOOR"]],
+	["Facility", ["FIRE, SMOKE AND WATER", "FAILOVER TEST", "FACILITY SCHEDULE",
+		"WHO IS ON THE FLOOR"]],
 	["Automation", ["PLAYBOOKS", "CERTIFICATES", "RUNBOOKS AND AUTOMATION", "STANDING DUTIES"]],
 	["Records", ["DOCUMENTATION", "AUDIT READINESS", "RENEWALS CALENDAR", "UNREACHABLE",
 		"WHAT YOU WROTE ABOUT THESE"]],
@@ -2537,6 +2538,37 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_label("  LIVE: %s in %s, severity %d%s" % [
 			Game.HAZARD_KINDS[haz_i["kind"]]["label"], haz_i["rack"], int(haz_i["severity"]),
 			"" if bool(haz_i["detected"]) else ", undetected"], 12, Prefs.bad_colour()))
+	ops_box.add_child(_section("FAILOVER TEST"))
+	if Game.dr_running():
+		ops_box.add_child(_wrap("  Running: %s is out of service on purpose until cycle %d. %s"
+			% [", ".join(PackedStringArray(Game.dr_test["taken"])), int(Game.dr_test["ends"]),
+				"Nothing has dropped so far." if Game.dr_test["failed"].is_empty()
+				else "Already down: %s." % ", ".join(PackedStringArray(Game.dr_test["failed"]))],
+			13, UIW.colour("warning"), 780))
+	elif not Game.dr_test.is_empty():
+		ops_box.add_child(_wrap("  Booked for cycle %d. The upstream on this floor goes away for %d cycle(s); everything that is meant to survive it should."
+			% [int(Game.dr_test["booked"]), Game.DR_LENGTH], 13, UIW.colour("text_strong"), 780))
+		var dr_cancel := Button.new()
+		dr_cancel.text = "Cancel it"
+		dr_cancel.pressed.connect(func() -> void:
+			var err := Game.cancel_dr_test()
+			if err != "":
+				_toast(err)
+			_refresh_ops())
+		ops_box.add_child(dr_cancel)
+	else:
+		ops_box.add_child(_wrap("  Prove the redundancy on a day you chose, rather than on the day it is taken from you.",
+			13, UIW.colour("muted"), 780))
+		var dr_book := Button.new()
+		dr_book.text = "Book a failover test"
+		dr_book.tooltip_text = "Announced %d cycles ahead. The upstream goes away for %d cycles and the test is judged on whether customers stayed served." % [Game.DR_NOTICE, Game.DR_LENGTH]
+		_accent(dr_book)
+		dr_book.pressed.connect(func() -> void:
+			var err := Game.book_dr_test()
+			if err != "":
+				_toast(err)
+			_refresh_ops())
+		ops_box.add_child(dr_book)
 	ops_box.add_child(_section("FACILITY SCHEDULE"))
 	if Game.heat_wave():
 		ops_box.add_child(_wrap("  HEAT WAVE  /  Cooling headroom is down a tenth while it lasts.",
