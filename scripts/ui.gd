@@ -4725,9 +4725,10 @@ func _build_business_tab() -> void:
 			state += ", tired"
 		if Staff.on_call(m) and Game.oncall_stint() >= Game.ONCALL_STINT:
 			state += ", on call %d cycles" % Game.oncall_stint()
-		var sl := _label("  %-16s %-16s skill %d  $%d/cycle  morale %d  %s%s" % [m["name"],
-			Staff.label(m), int(m["skill"]), int(m["salary"]), int(m.get("morale", 70)),
-			state, "  (under market)" if under else ""], 12,
+		# the row carries five buttons as well, so the text is kept to the name
+		# and the numbers; the rest moves to the line underneath it
+		var sl := _label("  %-16s  skill %d  $%d/cycle  morale %d" % [m["name"],
+			int(m["skill"]), int(m["salary"]), int(m.get("morale", 70))], 12,
 			Prefs.bad_colour() if int(m.get("morale", 70)) < 30 else Color(0.78, 0.85, 0.8))
 		sl.add_theme_font_override("font", mono)
 		sl.tooltip_text = "%s\nShift: %s\nMarket rate: $%d\nCertifications: %s" % [
@@ -4737,7 +4738,8 @@ func _build_business_tab() -> void:
 			else "none"]
 		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sl)
-		contracts_box.add_child(_wrap("      how they work: %s" % Staff.habit_read(m), 12,
+		contracts_box.add_child(_wrap("      %s, %s%s  ·  how they work: %s" % [Staff.label(m),
+			state, "  (under market)" if under else "", Staff.habit_read(m)], 12,
 			Color(0.6, 0.68, 0.78), 640))
 		var oncall_btn := Button.new()
 		oncall_btn.text = "☎ On call" if Staff.on_call(m) else "☎ Not on call"

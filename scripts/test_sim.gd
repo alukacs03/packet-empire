@@ -195,7 +195,7 @@ static func ui_smoke(world: Node2D) -> int:
 				widest = maxf(widest, (row as Control).get_combined_minimum_size().x)
 		# the card grows with its content up to the window, so the bar is the
 		# smallest window the game is played in rather than the card minimum
-		check(widest <= 1200.0, "ui: the %s tab fits a 1280-wide window (%d px)"
+		check(widest <= 1000.0, "ui: the %s tab fits comfortably in a 1280-wide window (%d px)"
 			% [company_tab, int(widest)])
 	Game.staff = smoke_staff
 	Game.oncall = ""
