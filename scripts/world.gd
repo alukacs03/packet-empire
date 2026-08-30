@@ -468,6 +468,23 @@ func _shoot_all() -> void:
 				Game.current_site = 0
 				rebuild_racks()
 				$Floor.queue_redraw()],
+		["drill_two_rooms",
+			func() -> void:
+				# the incident that is not in the room you are standing in
+				ui.close_everything()
+				var d_seed := -1
+				for d_try in range(1, 30):
+					Drill.start(3, d_try)
+					if Drill.scenario.begins_with("Two rooms"):
+						d_seed = d_try
+						break
+					Drill.finish(false)
+				rebuild_racks()
+				if d_seed > 0:
+					ui._show_drill_banner(),
+			func() -> void:
+				Drill.finish(false)
+				rebuild_racks()],
 		["handover",
 			func() -> void:
 				# what the night shift left on the desk

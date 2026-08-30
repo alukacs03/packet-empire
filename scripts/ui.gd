@@ -3744,7 +3744,7 @@ func _show_drill_banner() -> void:
 			% [Game.site_count(), ", ".join(PackedStringArray(floor_names))], 12,
 			UIW.colour("warm"), 620))
 	if Drill.outcome.has("survive_ip"):
-		drill_box.add_child(_wrap("%s must still answer %s with either building out of service."
+		drill_box.add_child(_wrap("%s must still be reachable from %s with either building out of service."
 			% [Drill.outcome["survive_ip"], Drill.outcome["from_ip"]], 13,
 			Color(0.9, 0.88, 0.8), 620))
 	elif not Drill.outcome.is_empty():
