@@ -6153,6 +6153,25 @@ func market_estimate(offer: Dictionary) -> Array:
 		spread *= 0.75  # people talk to a supplier they trust
 	return [int(bid * (1.0 - spread)), int(bid * (1.0 + spread))]
 
+func _inherit_neglect(site: int, from_whom: String) -> void:
+	## You are not buying a room, you are buying somebody else's habits. The
+	## diary arrives with their last service dates on it, not with yours.
+	var overdue: Array = []
+	var spread := 0
+	for task: String in FACILITY_TASKS:
+		var every := int(FACILITY_TASKS[task]["every"])
+		# between one and one and a half periods overdue: bad, not ruinous.
+		# Derived rather than rolled, so buying a company does not disturb the
+		# seeded business stream every other event is drawn from.
+		spread += 1
+		var behind := every + (site * 7 + spread * 11) % maxi(1, every / 2)
+		facility[facility_key(task, site)] = cycle - behind
+		if facility_due_in(task, site) < 0:
+			overdue.append(String(FACILITY_TASKS[task]["label"]).to_lower())
+	if not overdue.is_empty():
+		log_event("ACQUISITION: %s's building comes with %s's diary: %s all overdue. Their protection was never fitted either."
+			% [from_whom, from_whom, ", ".join(PackedStringArray(overdue))])
+
 func buy_rival(r: Dictionary) -> String:
 	## acquire a competitor: their book of business and their hardware
 	if not Rivals.alive(r):
@@ -6167,6 +6186,7 @@ func buy_rival(r: Dictionary) -> String:
 		var sg: Array = r["site"]["grid"]
 		target_site = add_site(r["site"]["name"], Vector2i(int(sg[0]), int(sg[1])), r["site"]["kind"])
 		free_tiles = _free_tiles(target_site)
+		_inherit_neglect(target_site, String(r["name"]))
 	else:
 		free_tiles = _free_tiles()
 		if free_tiles.size() < Rivals.racks_needed(r):

@@ -3376,6 +3376,22 @@ static func run() -> int:
 	Game.sites = tr_sites2
 	Game.current_site = tr_here2
 
+	# an acquired building comes with the last owner's neglect on it
+	var acq_sites := Game.sites.duplicate(true)
+	var acq_facility := Game.facility.duplicate(true)
+	var acq_site := Game.add_site("Somebody Else Kft floor", Vector2i(5, 5), "acquired", "Pecs")
+	Game._inherit_neglect(acq_site, "Somebody Else Kft")
+	var acq_overdue := 0
+	for acq_task: String in Game.FACILITY_TASKS:
+		if Game.facility_due_in(acq_task, acq_site) < 0:
+			acq_overdue += 1
+	check(acq_overdue >= 3, "acquisition: their diary arrives overdue, not freshly serviced")
+	check(not Game.protection_fitted("detection", acq_site),
+		"acquisition: and their room has no protection you did not fit")
+	check(Game.log_contains("comes with"), "acquisition: and the log says so plainly")
+	Game.facility = acq_facility
+	Game.sites = acq_sites
+
 	# --- hands at a building you are not standing in ---
 	var rhx_sites := Game.sites.duplicate(true)
 	var rhx_jobs := Game.remote_jobs.duplicate(true)
