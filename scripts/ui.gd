@@ -1284,6 +1284,27 @@ func _build_dev_overlay() -> void:
 			if cur_rack:
 				_show_overlay(rack_overlay)))
 	btn_row.add_child(uninstall)
+	var hands := Button.new()
+	hands.text = "Remote hands…"
+	hands.tooltip_text = "Somebody else's hands, doing exactly what you wrote. Labels are what make that safe."
+	hands.pressed.connect(func() -> void:
+		var dev := cur_dev
+		var facility: Dictionary = Game.remote_facility(
+			int(Game.rack_of(dev).site) if Game.rack_of(dev) != null else 0)
+		_menu(hands, [
+			"Reseat the cable on the selected port ($%d)" % int(facility["cost"]),
+			"Power cycle the device ($%d)" % int(facility["cost"]),
+			"Look at the lights and report back ($%d)" % int(facility["cost"]),
+		], func(id: int) -> void:
+			var action: String = ["reseat", "power_cycle", "check"][id]
+			var err: String = Game.request_remote_hands(dev, action,
+				cur_if if cur_if != null and cur_if.dev == dev else null)
+			hud_toast(err if err != "" else "Booked at %s. They will do exactly what is written (%d%% chance that is the right target)."
+				% [facility["label"], int(Game.remote_precision(dev,
+					cur_if if cur_if != null and cur_if.dev == dev else null) * 100.0)],
+				err == "")
+			_refresh_money()))
+	btn_row.add_child(hands)
 
 	cap_box = VBoxContainer.new()
 	cap_box.visible = false

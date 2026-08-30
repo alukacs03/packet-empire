@@ -3528,6 +3528,53 @@ static func run() -> int:
 
 	# --- zombie assets ---
 	Game.orphan_intel = {}
+
+	# --- remote hands ---
+	Game.remote_jobs = []
+	Game.money = 8000
+	var rh_site := Game.add_site("Colo Debrecen", Vector2i(4, 4), "acquired", "Debrecen")
+	var rh_rack := Game.add_rack(Vector2i(0, 0), rh_site)
+	var rh_sw := Game.new_device("sw-8")
+	var rh_srv := Game.new_device("srv-1")
+	rh_rack.slots[0] = rh_sw
+	rh_rack.slots[1] = rh_srv
+	Game.connect_ifaces(rh_srv.ifaces[0], rh_sw.ifaces[0])
+	var blind_precision := Game.remote_precision(rh_sw, rh_sw.ifaces[0])
+	Game.set_note(rh_sw.ifaces[0], "customer A handoff, port 1")
+	Game.set_note(rh_sw, "access switch, top of rack")
+	Game.set_note(rh_rack, "customer A cabinet")
+	var labelled_precision := Game.remote_precision(rh_sw, rh_sw.ifaces[0])
+	check(labelled_precision > blind_precision and labelled_precision <= 1.0,
+		"remote hands: labelling your own site is what makes somebody else's hands safe")
+	check(float(Game.remote_facility(rh_site)["care"]) < float(Game.remote_facility(0)["care"]) \
+			and int(Game.remote_facility(rh_site)["wait"]) > int(Game.remote_facility(0)["wait"]) \
+			and int(Game.remote_facility(rh_site)["cost"]) > 0,
+		"remote hands: a cheap facility is slower, sloppier and still not free")
+	var money_rh := Game.money
+	check(Game.request_remote_hands(rh_sw, "nonsense") != "" \
+			and Game.request_remote_hands(rh_sw, "reseat", rh_sw.ifaces[0]) == "" \
+			and Game.money < money_rh and Game.remote_jobs.size() == 1,
+		"remote hands: you buy a block of time, and it is spent whatever happens")
+	var rh_job: Dictionary = Game.remote_jobs[0]
+	check(int(rh_job["due"]) > Game.cycle,
+		"remote hands: they are not there yet, which is the other cost")
+	rh_sw.ifaces[0].enabled = false
+	rh_job["precision"] = 1.0
+	Game.cycle = int(rh_job["due"])
+	Game.remote_hands_tick()
+	check(rh_sw.ifaces[0].enabled and Game.remote_jobs.is_empty(),
+		"remote hands: with the right label they reseat the port you meant")
+	rh_sw.ifaces[0].enabled = false
+	rh_sw.ifaces[1].enabled = false
+	Game.request_remote_hands(rh_sw, "reseat", rh_sw.ifaces[0])
+	var wrong_job: Dictionary = Game.remote_jobs[0]
+	wrong_job["precision"] = 0.0
+	Game.cycle = int(wrong_job["due"])
+	Game.remote_hands_tick()
+	check(not rh_sw.ifaces[0].enabled and rh_sw.ifaces[1].enabled,
+		"remote hands: an unclear instruction gets the neighbouring port, which is a real wrong outcome")
+	Game.remote_jobs = []
+	Game.current_site = 0
 	Game.money = 8000
 	var zr := Game.add_rack(Vector2i(46, 1))
 	var z_sw := Game.new_device("sw-8")

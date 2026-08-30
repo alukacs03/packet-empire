@@ -241,6 +241,7 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
 var orphan_intel := {}  # orphan key -> how much digging the player has done (0-2)
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
@@ -586,6 +587,113 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const REMOTE_ACTIONS := {
+	"reseat": "reseat the cable in",
+	"power_cycle": "power cycle",
+	"check": "look at the lights on",
+}
+
+func remote_facility(site: int) -> Dictionary:
+	## Your own floor has your own hands. Anywhere else you are buying them,
+	## and cheap facilities are slower and sloppier.
+	if site == 0:
+		return {"label": "your own floor", "cost": 0, "wait": 0, "care": 1.0}
+	var kind := String(sites[site].get("kind", "acquired"))
+	if kind == "floor":
+		return {"label": "a staffed datacenter", "cost": 220, "wait": 1, "care": 1.0}
+	return {"label": "a cheap colo", "cost": 120, "wait": 3, "care": 0.8}
+
+func remote_precision(dev: Net.NDevice, iface: Net.Iface) -> float:
+	## They follow the instruction literally, so the instruction is only as
+	## good as your labels. This is what documentation is worth at distance.
+	var site := 0
+	var rack := rack_of(dev)
+	if rack != null:
+		site = int(rack.site)
+	var care := float(remote_facility(site)["care"])
+	var score := 0.5
+	if iface != null and not iface.note.is_empty():
+		score += 0.25
+	if not dev.note.is_empty():
+		score += 0.15
+	if rack != null and not rack.note.is_empty():
+		score += 0.1
+	return clampf(score * care, 0.0, 1.0)
+
+func request_remote_hands(dev: Net.NDevice, action: String, iface: Net.Iface = null) -> String:
+	if not REMOTE_ACTIONS.has(action):
+		return "they will not do that"
+	var rack := rack_of(dev)
+	if rack == null:
+		return "that device is not racked anywhere"
+	var facility := remote_facility(int(rack.site))
+	if not try_spend(int(facility["cost"])):
+		return "a block of remote hands at %s costs $%d" % [facility["label"], int(facility["cost"])]
+	remote_jobs.append({"device": dev.name, "iface": iface.name if iface != null else "",
+		"action": action, "due": cycle + int(facility["wait"]),
+		"precision": remote_precision(dev, iface), "site": int(rack.site)})
+	log_event("REMOTE HANDS: asked %s to %s %s%s. They arrive in %d cycle(s) and will do exactly what is written."
+		% [facility["label"], REMOTE_ACTIONS[action], dev.name,
+			" %s" % iface.name if iface != null else "", int(facility["wait"])])
+	return ""
+
+func _remote_neighbour(dev: Net.NDevice, iface: Net.Iface) -> Array:
+	## What they touch when the label is missing: the thing next to it.
+	if iface != null:
+		var idx := dev.ifaces.find(iface)
+		if idx >= 0 and dev.ifaces.size() > 1:
+			return [dev, dev.ifaces[(idx + 1) % dev.ifaces.size()]]
+	var rack := rack_of(dev)
+	if rack != null:
+		for d in rack.slots:
+			if d != null and d != dev:
+				return [d, null]
+	return [dev, iface]
+
+func remote_hands_tick() -> void:
+	for job in remote_jobs.duplicate():
+		if cycle < int(job["due"]):
+			continue
+		remote_jobs.erase(job)
+		var dev: Net.NDevice = null
+		for d: Net.NDevice in all_devices():
+			if d.name == String(job["device"]):
+				dev = d
+		if dev == null:
+			log_event("REMOTE HANDS: they could not find %s. That is the job, and it is billed."
+				% job["device"])
+			continue
+		var iface: Net.Iface = null
+		for i: Net.Iface in dev.ifaces:
+			if i.name == String(job["iface"]):
+				iface = i
+		var right := randf() < float(job["precision"])
+		var target_dev := dev
+		var target_iface := iface
+		if not right:
+			var wrong := _remote_neighbour(dev, iface)
+			target_dev = wrong[0]
+			target_iface = wrong[1]
+		match String(job["action"]):
+			"reseat":
+				if target_iface != null:
+					target_iface.enabled = true
+					device_log(target_dev, "%s reseated by remote hands" % target_iface.name)
+			"power_cycle":
+				target_dev.status = "active"
+				apply_device_config(target_dev, target_dev.startup)
+				device_log(target_dev, "power cycled by remote hands")
+			"check":
+				log_event("REMOTE HANDS REPORT: %s %s: link light is %s." % [target_dev.name,
+					target_iface.name if target_iface != null else "chassis",
+					"on" if target_iface != null and target_iface.enabled else "off"])
+		if right:
+			log_event("REMOTE HANDS: done, on the device you meant.")
+		else:
+			log_event("REMOTE HANDS: they did it to %s%s. That is what the label said, or rather did not."
+				% [target_dev.name, " %s" % target_iface.name if target_iface != null else ""])
+		topology_changed.emit()
 
 func orphan_list() -> Array:
 	## Things nobody claims: read off the live estate rather than remembered.
@@ -4484,6 +4592,7 @@ func sla_tick() -> void:
 	facility_tick()
 	renewal_tick()
 	tac_tick()
+	remote_hands_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -5291,7 +5400,7 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -5620,6 +5729,7 @@ func _apply(data: Dictionary) -> void:
 	renewals = data.get("renewals", [])
 	tac_cases = data.get("tac_cases", [])
 	orphan_intel = data.get("orphan_intel", {})
+	remote_jobs = data.get("remote_jobs", [])
 	firmware_bugs = data.get("firmware_bugs", {})
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))
