@@ -3017,6 +3017,56 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# --- a service that actually survives losing a room ---
+	var xs_sites := Game.sites.duplicate(true)
+	var xs_here := Game.current_site
+	var xs_circuits := Game.circuits.duplicate(true)
+	var xs_b := Game.add_site("Pecs annex", Vector2i(5, 5), "acquired", "Pecs")
+	var xs_rack_a := Game.add_rack(Vector2i(97, 1), 0)
+	var xs_rack_b := Game.add_rack(Vector2i(97, 2), xs_b)
+	var xs_sw_a := Game.new_device("sw-8")
+	var xs_sw_b := Game.new_device("sw-8")
+	var xs_srv_a := Game.new_device("srv-1")
+	var xs_srv_b := Game.new_device("srv-1")
+	var xs_client := Game.new_device("srv-1")
+	xs_rack_a.slots[0] = xs_sw_a
+	xs_rack_a.slots[1] = xs_srv_a
+	xs_rack_a.slots[2] = xs_client
+	xs_rack_b.slots[0] = xs_sw_b
+	xs_rack_b.slots[1] = xs_srv_b
+	Game.connect_ifaces(xs_srv_a.ifaces[0], xs_sw_a.ifaces[0])
+	Game.connect_ifaces(xs_client.ifaces[0], xs_sw_a.ifaces[1])
+	Game.connect_ifaces(xs_srv_b.ifaces[0], xs_sw_b.ifaces[0])
+	Game.carrier_outage = {}  # somebody else's digger is a different test
+	Game.buy_circuit(0, xs_b, 1)  # the circuit comes before the cable can exist
+	Game.buy_parts("optic", 4)
+	check(Game.connect_ifaces(xs_sw_a.ifaces[7], xs_sw_b.ifaces[7]),
+		"two rooms: a cable between floors is allowed once a circuit carries it")
+	# one address, served from either room: what "survives a building" means
+	Game.add_ip(xs_srv_a.ifaces[0], "10.97.0.10/24")
+	Game.add_ip(xs_srv_b.ifaces[0], "10.97.0.10/24")
+	Game.add_ip(xs_client.ifaces[0], "10.97.0.20/24")
+	Sim.flush_learned_state()
+	check(Sim.ping(xs_client, "10.97.0.10")["ok"],
+		"two rooms: the service answers with both rooms up")
+	xs_srv_a.status = "offline"
+	Sim.flush_learned_state()
+	check(Sim.ping(xs_client, "10.97.0.10")["ok"],
+		"two rooms: and still answers from the other building when one copy is dark")
+	xs_srv_a.status = "active"
+	Sim.flush_learned_state()
+	# put the world back: a rack left on a site index another test reuses is a
+	# haunting, not a fixture
+	for xs_l in Game.links.duplicate():
+		if xs_l.a.dev in [xs_sw_a, xs_sw_b] or xs_l.b.dev in [xs_sw_a, xs_sw_b]:
+			Game.links.erase(xs_l)
+	Game.racks.erase(xs_rack_a)
+	Game.racks.erase(xs_rack_b)
+	Game.circuits = xs_circuits
+	Game.sites = xs_sites
+	Game.current_site = xs_here
+	Sim.flush_learned_state()
+
 	# --- a service that survives losing a room ---
 	var tr_sites2 := Game.sites.duplicate(true)
 	var tr_here2 := Game.current_site
