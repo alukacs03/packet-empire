@@ -6984,5 +6984,54 @@ static func run() -> int:
 	Game.contracts_done = id_contracts
 	Game.leads = []
 
+	# --- reproducible challenges ---
+	Challenge.best_path = "user://challenge_best_test.json"
+	var ch_code := Challenge.encode(3, 1, 4242)
+	var ch_spec := Challenge.parse(ch_code)
+	check(bool(ch_spec["ok"]) and int(ch_spec["seed"]) == 4242 and int(ch_spec["faults"]) == 3,
+		"challenge: a code round-trips the seed, the fault count and the difficulty")
+	check(not bool(Challenge.parse("hello")["ok"]) \
+			and String(Challenge.parse("hello")["why"]) != "",
+		"challenge: nonsense is refused with a reason rather than a shrug")
+	var ch_future := Challenge.parse("PE9-31-abc")
+	check(not bool(ch_future["ok"]) and bool(ch_future.get("incompatible", false)),
+		"challenge: a code from another content version is marked, not silently played")
+	# the same code builds the same network twice
+	check(Challenge.start(ch_code) == "" and Game.drill_active,
+		"challenge: a code starts the drill it describes")
+	var ch_first: Array = Drill.faults.duplicate()
+	var ch_targets: Array = Drill.targets.duplicate(true)
+	Challenge.finish()
+	check(not Game.drill_active, "challenge: finishing hands the real datacenter back")
+	Challenge.start(ch_code)
+	check(Drill.faults == ch_first and Drill.targets == ch_targets,
+		"challenge: two runs of the same code get the same network and the same faults")
+	# scoring rewards the diagnosis, not the typing
+	Challenge.note_change()
+	Challenge.note_change()
+	Challenge.note_change()
+	var careful_run := Challenge.score()
+	for _ch in 20:
+		Challenge.note_change()
+	var sprayed := Challenge.score()
+	check(int(sprayed["categories"]["changes"]) < int(careful_run["categories"]["changes"]),
+		"challenge: a spray of configuration changes scores worse than a careful one")
+	Challenge.note_hint()
+	check(int(Challenge.score()["categories"]["hints"]) < int(sprayed["categories"]["hints"]),
+		"challenge: asking for a hint is allowed and it is on the card")
+	Drill.cheat_fix()
+	var ch_result := Challenge.finish()
+	check(bool(ch_result["solved"]) and int(ch_result["total"]) > 0 \
+			and Challenge.personal_best(String(ch_result["code"])) == int(ch_result["total"]),
+		"challenge: solving it scores, and the best for that code is kept locally")
+	var ch_card := Challenge.card(ch_result)
+	var card_text := "\n".join(PackedStringArray(ch_card))
+	check(card_text.contains(String(ch_result["code"])) and card_text.contains("score") \
+			and not card_text.contains("user://") and not card_text.contains("/Users"),
+		"challenge: the shareable card carries the result and nothing about this machine")
+	check(Challenge.daily_code().begins_with("PE%d-" % Challenge.VERSION),
+		"challenge: there is a featured code each day, and manual codes always work offline")
+	Challenge.active = {}
+
 	print("---- %d failures" % fails)
 	return fails

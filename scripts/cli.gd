@@ -278,6 +278,8 @@ class EOS extends Session:
 		if toks.is_empty():
 			return ""
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
+		if mode in ["config", "if", "vlan", "router", "ospf"]:
+			Challenge.note_change()  # a challenge counts what you changed, not what you typed
 		# resolve with per-token prefix matching (Cisco-style abbreviation)
 		var full: Array = []
 		for c in _cmds:

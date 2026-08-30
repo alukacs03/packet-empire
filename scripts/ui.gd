@@ -3300,6 +3300,37 @@ func _build_menu() -> void:
 		get_parent().rebuild_racks()
 		_show_drill_banner())
 	v.add_child(drill_btn)
+	var chal_btn := Button.new()
+	chal_btn.text = "Challenge…  (a drill anybody can reproduce from a code)"
+	chal_btn.pressed.connect(func() -> void:
+		_menu(chal_btn, [
+			"Play today's featured code (%s)" % Challenge.daily_code(),
+			"Play a code from the clipboard",
+			"Copy this challenge's code" if not Challenge.active.is_empty() else "(no challenge running)",
+			"Finish and copy the result card" if not Challenge.active.is_empty() else "(nothing to finish)",
+		], func(id: int) -> void:
+			if id == 0 or id == 1:
+				menu_overlay.visible = false
+				var code: String = Challenge.daily_code() if id == 0 else DisplayServer.clipboard_get()
+				var err: String = Challenge.start(code)
+				if err != "":
+					_toast(err)
+					return
+				get_parent().rebuild_racks()
+				_show_drill_banner()
+			elif id == 2 and not Challenge.active.is_empty():
+				DisplayServer.clipboard_set(String(Challenge.active["code"]))
+				hud_toast("Code copied. The same code builds the same network.", true)
+			elif id == 3 and not Challenge.active.is_empty():
+				var result: Dictionary = Challenge.finish()
+				var lines: Array = Challenge.card(result)
+				for line: String in lines:
+					Game.log_event(line)
+				DisplayServer.clipboard_set("\n".join(PackedStringArray(lines)))
+				get_parent().rebuild_racks()
+				hud_toast("Scored %d. The card is on your clipboard." % int(result["total"]),
+					bool(result["solved"]))))
+	v.add_child(chal_btn)
 	var quit := Button.new()
 	quit.text = "Save & quit"
 	quit.pressed.connect(func() -> void:
@@ -5285,6 +5316,7 @@ func _refresh_contracts() -> void:
 			var hint_btn := Button.new()
 			hint_btn.text = "Stuck? Show me the commands"
 			hint_btn.pressed.connect(func() -> void:
+				Challenge.note_hint()
 				hint_lbl.text = contract_hint
 				hint_lbl.visible = true
 				hint_btn.visible = false)
