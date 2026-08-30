@@ -3055,6 +3055,8 @@ static func run() -> int:
 		"two rooms: and still answers from the other building when one copy is dark")
 	xs_srv_a.status = "active"
 	Sim.flush_learned_state()
+	check(Market.check("two_rooms", {"ip": "10.97.0.10"}),
+		"two rooms: a service built across both floors passes the sold promise")
 	# put the world back: a rack left on a site index another test reuses is a
 	# haunting, not a fixture
 	for xs_l in Game.links.duplicate():
