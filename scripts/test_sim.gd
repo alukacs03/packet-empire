@@ -3297,6 +3297,57 @@ static func run() -> int:
 	Game.data_risks = []
 	Game.destruction_certs = []
 
+	# --- facility housekeeping ---
+	var fac_stage := Game.stage
+	Game.stage = 1
+	Game.facility = {"filters": Game.cycle, "aircon": Game.cycle, "generator": Game.cycle,
+		"ups": Game.cycle}
+	Game.facility_auto = {}
+	Game.heat_wave_until = -1
+	var clean_cooling := Game.cooling_capacity()
+	check(Game.filter_dirt() == 0.0 and Game.facility_due_in("filters") > 0,
+		"facility: a serviced floor has a visible schedule rather than a random tax")
+	Game.cycle += int(Game.FACILITY_TASKS["filters"]["every"]) + 120
+	check(Game.filter_dirt() == 1.0 and Game.cooling_capacity() < clean_cooling,
+		"facility: neglected filters cost cooling headroom along a curve you can see coming")
+	var money_before_fac := Game.money
+	Game.money = 5000
+	check(Game.service_facility("filters") == "" and Game.filter_dirt() == 0.0 \
+			and Game.money < 5000,
+		"facility: doing the job costs money and restores the headroom immediately")
+	check(Game.service_facility("nonsense") != "", "facility: there is no such job")
+	# an untested generator is a generator you are hoping about
+	Game.facility["generator"] = Game.cycle - 200
+	check(not Game.generator_ready(), "facility: the load test goes stale, and the panel says so")
+	var fac_feeds: Dictionary = Game.site_feeds(Game.current_site)
+	fac_feeds["A"] = false
+	Game.ups[Game.current_site] = 0
+	check(not Game.feed_live(Game.current_site, "A"),
+		"facility: with a flat battery and a stale test, the dead feed is simply dead")
+	Game.service_facility("generator")
+	check(Game.generator_ready() and Game.feed_live(Game.current_site, "A"),
+		"facility: a tested generator actually carries the load when the feed goes")
+	fac_feeds["A"] = true
+	# a heat wave separates prepared floors from lucky ones
+	var before_wave := Game.cooling_capacity()
+	Game.heat_wave_until = Game.cycle + 3
+	check(Game.heat_wave() and Game.cooling_capacity() < before_wave,
+		"facility: a heat wave takes a tenth of the cooling and rewards whoever kept headroom")
+	Game.heat_wave_until = -1
+	# and the whole schedule is delegable
+	Game.facility_auto["ups"] = true
+	Game.facility["ups"] = Game.cycle - 200
+	var fac_staff := Game.staff.duplicate(true)
+	Game.staff = [{"name": "Nagy Dora", "role": "tech", "skill": 3, "salary": 300, "morale": 70,
+		"shift": "day", "training_left": 0, "certs": []}]
+	Game.facility_tick()
+	check(int(Game.facility["ups"]) == Game.cycle,
+		"facility: a delegated task is kept on schedule by the crew, and billed")
+	Game.staff = fac_staff
+	Game.stage = fac_stage
+	Game.money = money_before_fac
+	Game.facility_auto = {}
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

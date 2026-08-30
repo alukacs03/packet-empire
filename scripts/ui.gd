@@ -1994,6 +1994,44 @@ func _refresh_ops() -> void:
 		UIW.colour("warm") if Game.stage >= 1 else UIW.colour("muted"), 780)
 	meter_label.add_theme_font_override("font", mono)
 	meter.add_child(meter_label)
+	ops_box.add_child(_section("FACILITY SCHEDULE"))
+	if Game.heat_wave():
+		ops_box.add_child(_wrap("  HEAT WAVE  /  Cooling headroom is down a tenth while it lasts.",
+			13, Color(1.0, 0.72, 0.45), 780))
+	for task_id: String in Game.FACILITY_TASKS:
+		var task: Dictionary = Game.FACILITY_TASKS[task_id]
+		var due: int = Game.facility_due_in(task_id)
+		var frow := HBoxContainer.new()
+		frow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(frow)
+		var fl := _label("  %-22s %s" % [task["label"],
+			("due in %d cycle(s)" % due) if due > 0 else ("OVERDUE by %d" % -due)], 12,
+			Color(0.72, 0.8, 0.88) if due > 0 else Color(1.0, 0.72, 0.45))
+		fl.add_theme_font_override("font", mono)
+		fl.tooltip_text = String(task["blurb"])
+		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		frow.add_child(fl)
+		var do_btn := Button.new()
+		do_btn.text = "Do it ($%d)" % int(task["cost"])
+		do_btn.pressed.connect(func() -> void:
+			var err: String = Game.service_facility(task_id)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		frow.add_child(do_btn)
+		var auto_btn := Button.new()
+		auto_btn.toggle_mode = true
+		auto_btn.button_pressed = bool(Game.facility_auto.get(task_id, false))
+		auto_btn.text = "On schedule" if auto_btn.button_pressed else "Delegate"
+		auto_btn.tooltip_text = "Let the crew keep this one on schedule and bill you for it"
+		auto_btn.toggled.connect(func(on: bool) -> void:
+			Game.facility_auto[task_id] = on
+			_refresh_ops())
+		frow.add_child(auto_btn)
+	if not Game.generator_ready():
+		ops_box.add_child(_wrap("  The generator has not been load tested recently. If both feeds go and the battery runs out, you are hoping.",
+			12, Color(1.0, 0.72, 0.45), 780))
 	if Game.stage >= 1:
 		ops_box.add_child(_section("AIRFLOW"))
 		var any_hot := false

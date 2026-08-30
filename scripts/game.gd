@@ -241,6 +241,9 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var facility := {}  # task id -> the cycle it was last done
+var facility_auto := {}  # task id -> the crew keeps it on schedule
+var heat_wave_until := -1  # the weather does not care how busy you are
 var destruction_certs: Array = []  # proof a disk was wiped before it left
 var data_risks: Array = []  # drives that left with their data on them
 var upstream := {}  # a live fault that is somebody else's to fix
@@ -579,12 +582,95 @@ func expand() -> bool:
 	topology_changed.emit()
 	return true
 
+const FACILITY_TASKS := {
+	"filters": {"label": "Dust filter change", "every": 40, "cost": 120,
+		"blurb": "Clogged filters cost you cooling headroom before they cost you anything else."},
+	"aircon": {"label": "Aircon service visit", "every": 60, "cost": 450,
+		"blurb": "A contractor on the floor for an afternoon. Unserviced units fail sooner."},
+	"generator": {"label": "Generator load test", "every": 80, "cost": 260,
+		"blurb": "A deliberate transfer to backup power. It can go wrong, which is the point of doing it."},
+	"ups": {"label": "UPS battery check", "every": 50, "cost": 90,
+		"blurb": "Batteries die quietly and are discovered loudly."},
+}
+
+func facility_due_in(task: String) -> int:
+	if not facility.has(task):
+		facility[task] = cycle  # the schedule starts the first time anyone looks at it
+	return int(facility[task]) + int(FACILITY_TASKS[task]["every"]) - cycle
+
+func facility_overdue(task: String) -> int:
+	return maxi(0, -facility_due_in(task))
+
+func filter_dirt() -> float:
+	## Neglect degrades along a curve the player can watch, not a coin flip.
+	return clampf(float(facility_overdue("filters")) / 120.0, 0.0, 1.0)
+
+func heat_wave() -> bool:
+	return cycle <= heat_wave_until
+
 func cooling_capacity() -> int:
 	var c := BASE_COOLING
 	for d in all_devices():
 		if d.type == "cooling" and d.status == "active":
 			c += int(MODELS[d.model].get("cools", 0))
-	return c
+	c = int(round(float(c) * (1.0 - 0.2 * filter_dirt())))  # dirty filters cost headroom first
+	if heat_wave():
+		c = int(round(float(c) * 0.9))  # the outside air is against you this week
+	return maxi(BASE_COOLING / 4, c)
+
+func service_facility(task: String) -> String:
+	if not FACILITY_TASKS.has(task):
+		return "there is no such job"
+	var cost := int(FACILITY_TASKS[task]["cost"])
+	if not try_spend(cost):
+		return "that costs $%d and you do not have it" % cost
+	facility[task] = cycle
+	if task == "generator":
+		facility["generator_tests"] = int(facility.get("generator_tests", 0)) + 1
+		# a real transfer to backup power, with the risk that goes with it
+		if randf() < 0.12:
+			for d in all_devices():
+				if d.status == "active" and d.type != "cooling":
+					d.status = "offline"
+					log_event("GENERATOR TEST: the transfer dropped %s. That is what a test day is for: better today than during a real cut."
+						% d.name)
+					record_incident("facility", "a device did not survive the generator transfer")
+					topology_changed.emit()
+					break
+		else:
+			log_event("GENERATOR TEST: clean transfer to backup power and back. It will start when you need it.")
+	else:
+		log_event("FACILITY: %s done for $%d." % [FACILITY_TASKS[task]["label"], cost])
+	return ""
+
+func generator_ready() -> bool:
+	## An untested generator is a generator you are hoping about.
+	return facility_overdue("generator") < 30
+
+func facility_tick() -> void:
+	## Seasonal pressure, delegated schedules, and the slow costs of neglect.
+	if not heat_wave() and biz_roll() < 0.01:
+		heat_wave_until = cycle + 5
+		log_event("HEAT WAVE: the next few cycles are hot. Cooling headroom is down a tenth: a prepared floor will not notice.")
+	for task: String in FACILITY_TASKS:
+		if not bool(facility_auto.get(task, false)) or facility_due_in(task) > 0:
+			continue
+		if Game.staff.is_empty() or money < int(FACILITY_TASKS[task]["cost"]):
+			continue
+		service_facility(task)
+	if facility_overdue("aircon") > 40 and randf() < 0.02:
+		for d in all_devices():
+			if d.type == "cooling" and d.status == "active":
+				d.status = "offline"
+				log_event("FACILITY: the unserviced cooling unit %s has failed. Nobody has looked at it in %d cycles."
+					% [d.name, cycle - int(facility.get("aircon", 0))])
+				record_incident("facility", "an unserviced cooling unit failed")
+				topology_changed.emit()
+				break
+	if facility_overdue("ups") > 30 and int(ups.get(current_site, 0)) > 0 and randf() < 0.03:
+		ups[current_site] = 0
+		log_event("FACILITY: the UPS battery on %s was flat when it was needed. Nobody had checked it."
+			% site_name(current_site))
 
 func overheating() -> bool:
 	return stage >= 1 and power_draw() > cooling_capacity()
@@ -1172,8 +1258,11 @@ func site_feeds(site: int) -> Dictionary:
 	return feeds[site]
 
 func feed_live(site: int, which: String) -> bool:
-	## a dead feed is still carried while the battery holds
-	return bool(site_feeds(site).get(which, true)) or int(ups.get(site, 0)) > 0
+	## a dead feed is carried while the battery holds, and after that only by a
+	## generator somebody has actually tested
+	if bool(site_feeds(site).get(which, true)) or int(ups.get(site, 0)) > 0:
+		return true
+	return stage >= 1 and int(facility.get("generator_tests", 0)) > 0 and generator_ready()
 
 func device_powered(d: Net.NDevice) -> bool:
 	var site := site_of_device(d)
@@ -3899,6 +3988,7 @@ func sla_tick() -> void:
 	dispute_tick()
 	report_tick()
 	habit_tick()
+	facility_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
@@ -4694,7 +4784,8 @@ func _serialize() -> Dictionary:
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
-		"destruction_certs": destruction_certs, "data_risks": data_risks, "habits": habits,
+		"destruction_certs": destruction_certs, "data_risks": data_risks,
+		"facility": facility, "facility_auto": facility_auto, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -5017,6 +5108,9 @@ func _apply(data: Dictionary) -> void:
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
+	facility = data.get("facility", {})
+	facility_auto = data.get("facility_auto", {})
+	heat_wave_until = int(data.get("heat_wave_until", -1))
 	destruction_certs = data.get("destruction_certs", [])
 	data_risks = data.get("data_risks", [])
 	upstream = data.get("upstream", {})
