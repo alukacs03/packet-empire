@@ -5080,7 +5080,8 @@ func _build_market_tab() -> void:
 			13, Color(0.8, 0.78, 0.7))
 		l.tooltip_text = ("%s\n\nBuying %s brings %d rack(s) and %d contract(s). %s" % [
 			strat["blurb"], r["name"], Rivals.racks_needed(r), int(r["deals"]),
-			("Their site '%s' comes with the company." % r["site"]["name"]) if Rivals.has_site(r)
+			("Their site '%s' comes with the company, and so does its diary: expect the filters, the aircon and the generator all overdue, and no fire or water protection fitted." % r["site"]["name"])
+			if Rivals.has_site(r)
 			else "Their racks must fit on a floor you already have."])
 		var temper: Dictionary = Rivals.temper_of(r)
 		var standing := int(r.get("standing", 0))
