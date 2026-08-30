@@ -3292,6 +3292,15 @@ static func run() -> int:
 			pv_contract = pv_c
 	check(not pv_contract.is_empty() and pv_contract["reqs"].size() == 2,
 		"campaign: there is a job that asks for the failover to be proved")
+	Game.customer_outage_active = true
+	Game.stats["failovers_passed"] = 1
+	var pv_all := true
+	for pv_r: Dictionary in pv_contract["reqs"]:
+		if not bool((pv_r["t"] as Callable).call()):
+			pv_all = false
+	check(pv_all,
+		"campaign: and once it is signed off, a later outage does not un-prove it")
+	Game.customer_outage_active = false
 	var pv_passed := int(Game.stats.get("failovers_passed", 0))
 	Game.stats["failovers_passed"] = 0
 	check(not bool((pv_contract["reqs"][0]["t"] as Callable).call()),
