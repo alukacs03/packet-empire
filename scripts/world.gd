@@ -162,6 +162,12 @@ func _shoot_all() -> void:
 			Game.stage = Game.STAGES.size() - 1
 			rebuild_racks()
 			queue_redraw()],
+		["floor_summer", func() -> void:
+			# the season the cooling finds out about, with the borrowed fan
+			Game.stage = 0
+			rebuild_racks()
+			Game.cycle = int(float(Game.SEASON_LENGTH) / 4.0) + 1
+			$Floor.queue_redraw()],
 		["floor_visitor", func() -> void:
 			# somebody signed in at the door, with the escort policy in force
 			Game.stage = 0

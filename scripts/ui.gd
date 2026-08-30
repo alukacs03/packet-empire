@@ -470,12 +470,19 @@ func _refresh_money() -> void:
 		var coverage := ""
 		if not Game.staff.is_empty() and not Staff.anyone_on_shift():
 			coverage = "  ·  UNATTENDED"
-		clock_lbl.text = "%s  %s  %d%%%s" % [shift_icon, Game.day_name().to_upper(),
-			int(round(f * 100.0)), coverage]
+		# the season decides cooling headroom, work rate and who is available,
+		# so it belongs next to the clock rather than buried in a log line
+		var season_icon := {"spring": "❀", "summer": "☼", "autumn": "❦",
+			"winter": "❄"}.get(String(Game.season()["id"]), "")
+		var season_mark := "  %s %s" % [season_icon, String(Game.season()["label"]).to_upper()]
+		if Game.heat_wave():
+			season_mark += "  HEAT WAVE"
+		clock_lbl.text = "%s  %s  %d%%%s%s" % [shift_icon, Game.day_name().to_upper(),
+			int(round(f * 100.0)), season_mark, coverage]
 		clock_lbl.add_theme_color_override("font_color",
 			UIW.colour("danger") if coverage != "" else
-			(UIW.colour("warning") if f > 1.1 else UIW.colour("muted")))
-		clock_lbl.tooltip_text = "Current shift and traffic level. The room lighting follows this clock; unattended hours leave incidents waiting for the next crew."
+			(UIW.colour("warning") if f > 1.1 or Game.heat_wave() else UIW.colour("muted")))
+		clock_lbl.tooltip_text = "Current shift, traffic level and season. The room lighting follows this clock; unattended hours leave incidents waiting for the next crew."
 	var power := ""
 	if Game.stage >= 1:
 		power = "  ⚡%d/❄%d" % [Game.power_draw(), Game.cooling_capacity()]
@@ -865,7 +872,7 @@ func _build_toolbar() -> void:
 	status_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(status_spacer)
 	clock_lbl = _label("", 11, Color(0.55, 0.65, 0.78))
-	clock_lbl.custom_minimum_size = Vector2(120, 0)
+	clock_lbl.custom_minimum_size = Vector2(260, 0)
 	clock_lbl.clip_text = true
 	h.add_child(clock_lbl)
 	for spec in [["⏸", 0, "Pause (Space)"], ["▶", 1, "Normal speed (1)"],

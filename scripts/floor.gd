@@ -78,6 +78,7 @@ func _draw() -> void:
 		var pulse := 0.35 + 0.2 * sin(Time.get_ticks_msec() / 280.0)
 		_draw_tile(hover_tile, Color(UIW.colour("accent"), pulse))
 		_outline(hover_tile, UIW.colour("focus"), 2.5)
+	_draw_season_cast(grid)
 	_draw_owned_edge(grid, progress)
 	_draw_housekeeping(grid, progress)
 
@@ -270,6 +271,37 @@ func _draw_floor_slab(grid: Vector2i, progress: float) -> void:
 	var edge := PackedVector2Array(slab)
 	edge.append(slab[0])
 	draw_polyline(edge, concrete.darkened(0.45), 3.0)
+
+func _draw_season_cast(grid: Vector2i) -> void:
+	## A season you can see. Summer hangs warm and close over the floor and
+	## puts a borrowed fan by the door; winter reads cold and dry. Spring and
+	## autumn are deliberately almost nothing, so the two that matter land.
+	var id := String(Game.season()["id"])
+	var cast := {
+		"summer": Color(1.0, 0.72, 0.38, 0.055),
+		"winter": Color(0.62, 0.82, 1.0, 0.055),
+		"autumn": Color(0.95, 0.78, 0.52, 0.022),
+		"spring": Color(0.86, 0.96, 0.86, 0.018),
+	}.get(id, Color(0, 0, 0, 0)) as Color
+	if Game.heat_wave():
+		cast.a += 0.045
+	if cast.a <= 0.0:
+		return
+	draw_colored_polygon(_floor_corners(grid, 2.4), cast)
+	if id != "summer":
+		return
+	# a floor fan somebody carried in, pointed down the aisle
+	var spot := Iso.tile_to_world(Vector2i(0, maxi(0, grid.y - 1))) + Vector2(-74, 26)
+	draw_colored_polygon(PackedVector2Array([spot + Vector2(-11, 4), spot + Vector2(11, 4),
+		spot + Vector2(8, 10), spot + Vector2(-8, 10)]), Color("2f3339"))
+	var blades := PackedVector2Array()
+	for k in 18:
+		var a := TAU * float(k) / 18.0
+		blades.append(spot + Vector2(cos(a) * 15.0, -8.0 + sin(a) * 13.0))
+	draw_colored_polygon(blades, Color("454b52"))
+	draw_polyline(blades, Color("6c757e"), 1.5)
+	draw_line(spot + Vector2(-9, -12), spot + Vector2(9, -4), Color("878f97"), 1.5)
+	draw_line(spot + Vector2(-9, -4), spot + Vector2(9, -12), Color("878f97"), 1.5)
 
 func _draw_room_lighting(grid: Vector2i) -> void:
 	var progress := float(Game.stage) / maxf(float(Game.STAGES.size() - 1), 1.0)
