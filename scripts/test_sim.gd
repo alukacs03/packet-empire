@@ -4235,6 +4235,63 @@ static func run() -> int:
 	Game.audit = {}
 	Game.trust_marker = false
 	Game.incidents = []
+
+	# --- decisions with a bill that arrives later ---
+	Game.decisions = []
+	Game.consequences = []
+	Game.decisions_seen = []
+	Game.money = 20000
+	Game.reputation = 60
+	check(Game.DECISIONS.size() >= 12,
+		"decisions: the starter deck covers economy, staff, customers, vendors and incidents")
+	var missing_facts := false
+	for dec_spec: Dictionary in Game.DECISIONS:
+		if dec_spec["facts"].size() < 2 or dec_spec["options"].size() < 2:
+			missing_facts = true
+	check(not missing_facts,
+		"decisions: every one states the facts on both sides, and neither option is the obvious answer")
+	check(Game.decide("workaround_vs_root", 0) != "",
+		"decisions: you cannot answer a decision nobody has put to you")
+	Game.decisions = [{"id": "workaround_vs_root", "raised": Game.cycle}]
+	var money_dec := Game.money
+	check(Game.decide("workaround_vs_root", 0) == "" and Game.money > money_dec \
+			and Game.consequences.size() == 1,
+		"decisions: the quick answer pays now and puts something in the diary")
+	var incidents_dec := Game.incidents.size()
+	Game.cycle = int(Game.consequences[0]["cycle"])
+	Game.consequence_tick()
+	check(Game.consequences.is_empty() and Game.incidents.size() > incidents_dec \
+			and String(Game.decision_notes[Game.decision_notes.size() - 1]).contains("cause"),
+		"decisions: the consequence lands on the live simulation and is recorded in the timeline")
+	# the other branch is defensible too
+	Game.decisions = [{"id": "workaround_vs_root", "raised": Game.cycle}]
+	var rep_root := Game.reputation
+	Game.decide("workaround_vs_root", 1)
+	check(Game.reputation > rep_root and Game.consequences.is_empty(),
+		"decisions: fixing the cause costs money now and leaves nothing waiting")
+	# a delayed consequence is foreshadowed rather than sprung
+	Game.decisions = [{"id": "carrier_lock", "raised": Game.cycle}]
+	Game.events = []
+	Game.decide("carrier_lock", 0)
+	check(String(Game.events[0]).contains("LATER:"),
+		"decisions: what will come of it is said out loud when the choice is made")
+	var money_carrier := Game.money
+	Game.cycle = int(Game.consequences[0]["cycle"])
+	Game.consequence_tick()
+	check(Game.money > money_carrier,
+		"decisions: and it arrives on the schedule it announced")
+	# the deck deals every card before repeating itself
+	Game.decisions = []
+	Game.decisions_seen = []
+	for _dc in 400:
+		Game.maybe_offer_decision()
+		if Game.decisions.size() >= 2:
+			Game.decisions.pop_front()
+	check(Game.decisions_seen.size() >= 6,
+		"decisions: the deck works through itself instead of asking the same thing twice")
+	Game.decisions = []
+	Game.consequences = []
+	Game.decisions_seen = []
 	Game.money = 5000
 	var rb_rack := Game.add_rack(Vector2i(70, 1))
 	var rb_sw := Game.new_device("sw-8")

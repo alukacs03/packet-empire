@@ -2401,6 +2401,30 @@ func _refresh_ops() -> void:
 				hud_toast("UPS installed.", true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
+	if not Game.decisions.is_empty():
+		ops_box.add_child(_section("DECISIONS"))
+		for dec: Dictionary in Game.decisions:
+			var spec: Dictionary = Game.decision_by_id(String(dec["id"]))
+			if spec.is_empty():
+				continue
+			ops_box.add_child(_wrap("  %s  —  %s" % [spec["title"], spec["text"]], 13,
+				Color(1.0, 0.85, 0.5), 780))
+			for fact: String in spec["facts"]:
+				ops_box.add_child(_label("      · %s" % fact, 12, Color(0.72, 0.8, 0.88)))
+			var decrow := HBoxContainer.new()
+			decrow.add_theme_constant_override("separation", 8)
+			ops_box.add_child(decrow)
+			for opt_i in spec["options"].size():
+				var ob := Button.new()
+				ob.text = String(spec["options"][opt_i]["label"])
+				ob.pressed.connect(func() -> void:
+					Game.decide(String(dec["id"]), opt_i)
+					_refresh_ops()
+					_refresh_money())
+				decrow.add_child(ob)
+	if not Game.consequences.is_empty():
+		ops_box.add_child(_label("  Waiting to land: %d decision(s) you have already made."
+			% Game.consequences.size(), 12, MUTED))
 	ops_box.add_child(_section("AUDIT READINESS"))
 	ops_box.add_child(_wrap("  A teaching abstraction, not any real certification scheme: eight controls the simulation can actually prove.%s"
 		% ("   Trust marker: earned." if Game.trust_marker else ""), 12, MUTED, 780))

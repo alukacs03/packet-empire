@@ -269,6 +269,10 @@ var orphan_intel := {}  # orphan key -> how much digging the player has done (0-
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
+var decisions: Array = []  # decisions waiting on the player, oldest first
+var consequences: Array = []  # what a past decision will do, and when
+var decisions_seen: Array = []
+var decision_notes: Array = []  # what past decisions turned into, in order
 var audit := {}  # a scoped compliance audit: offered, accepted, findings, closed
 var control_evidence := {}  # control id -> the cycle it last passed
 var trust_marker := false  # the customers who ask for this can see it
@@ -2099,6 +2103,274 @@ func renewal_tick() -> void:
 				and String(item["kind"]) in ["domain", "addresses"]:
 			# only the customer-facing lapses are visible from outside
 			reputation = maxi(0, reputation - 1)
+
+## Decisions where both answers are defensible and the bill arrives later.
+const DECISIONS := [
+	{"id": "vendor_early_swap", "title": "An early replacement, cheap",
+		"text": "Your vendor will swap the ageing gear now at a discount, or you can wait two months for the revision that fixes the known fault.",
+		"facts": ["the discount is real money now", "the current revision has a defect they have admitted to"],
+		"options": [
+			{"label": "Take the cheap swap now", "effect": "swap_now"},
+			{"label": "Wait for the fixed revision", "effect": "swap_wait"}]},
+	{"id": "emergency_work", "title": "Work outside the window",
+		"text": "A customer wants a change done tonight, outside any agreed window, because their launch moved.",
+		"facts": ["you have no window open", "refusing is defensible and they will not enjoy it"],
+		"options": [
+			{"label": "Do it tonight", "effect": "emergency_yes"},
+			{"label": "Hold them to the process", "effect": "emergency_no"}]},
+	{"id": "workaround_vs_root", "title": "A workaround or the root cause",
+		"text": "Your engineers disagree: ship the workaround this afternoon, or spend two cycles fixing what actually causes it.",
+		"facts": ["the workaround genuinely works", "the cause will still be there afterwards"],
+		"options": [
+			{"label": "Ship the workaround", "effect": "workaround"},
+			{"label": "Fix the cause properly", "effect": "root_cause"}]},
+	{"id": "carrier_lock", "title": "A long carrier contract",
+		"text": "A carrier offers a long fixed-price contract, and their salesperson is unusually keen about it.",
+		"facts": ["fixed price for a long time", "they know something about where prices are going"],
+		"options": [
+			{"label": "Sign the long contract", "effect": "carrier_sign"},
+			{"label": "Stay on the current terms", "effect": "carrier_wait"}]},
+	{"id": "press_early", "title": "A journalist, before the postmortem",
+		"text": "A trade journalist wants a comment on last week's outage. The review is not finished.",
+		"facts": ["you do not yet know the cause", "silence is also a quote"],
+		"options": [
+			{"label": "Comment now", "effect": "press_now"},
+			{"label": "Wait for the postmortem", "effect": "press_wait"}]},
+	{"id": "poach_engineer", "title": "Somebody else's engineer",
+		"text": "An engineer at a competitor wants to come to you, and hints they would bring work with them.",
+		"facts": ["they are good", "their employer will notice, and so will the industry"],
+		"options": [
+			{"label": "Hire them", "effect": "poach_yes"},
+			{"label": "Turn them down politely", "effect": "poach_no"}]},
+	{"id": "bulk_parts", "title": "A pallet of cheap optics",
+		"text": "A broker has a pallet of optics at a third of list price, no warranty, no questions.",
+		"facts": ["your drawer is never full enough", "third-party optics are where dirty-optic faults come from"],
+		"options": [
+			{"label": "Buy the pallet", "effect": "optics_yes"},
+			{"label": "Pay list price for known parts", "effect": "optics_no"}]},
+	{"id": "overtime_push", "title": "A long week",
+		"text": "You can hit the delivery date by working the crew hard for a week.",
+		"facts": ["the date is real", "so is the exhaustion afterwards"],
+		"options": [
+			{"label": "Push for the date", "effect": "overtime_yes"},
+			{"label": "Move the date", "effect": "overtime_no"}]},
+	{"id": "customer_discount", "title": "A discount for an early renewal",
+		"text": "A large customer will renew early, for less money per cycle.",
+		"facts": ["a longer term is worth something", "so is the revenue you would give up"],
+		"options": [
+			{"label": "Take the early renewal", "effect": "discount_yes"},
+			{"label": "Hold your price", "effect": "discount_no"}]},
+	{"id": "insurance_upsell", "title": "Better cover, more premium",
+		"text": "Your broker offers hardware cover at a higher premium after seeing your estate's age.",
+		"facts": ["your gear is getting old", "premiums are certain and failures are not"],
+		"options": [
+			{"label": "Take the cover", "effect": "insure_yes"},
+			{"label": "Carry the risk yourself", "effect": "insure_no"}]},
+	{"id": "intern_program", "title": "A junior nobody else will take",
+		"text": "A local college asks whether you would take somebody with no experience at all.",
+		"facts": ["they cost money before they are useful", "they learn from whatever they watch you do"],
+		"options": [
+			{"label": "Take them on", "effect": "intern_yes"},
+			{"label": "Not this year", "effect": "intern_no"}]},
+	{"id": "green_power", "title": "A cleaner tariff",
+		"text": "The utility offers a renewable tariff at a premium, and a certificate customers can see.",
+		"facts": ["it costs more per watt", "some customers genuinely care"],
+		"options": [
+			{"label": "Switch tariff", "effect": "green_yes"},
+			{"label": "Stay on the cheap tariff", "effect": "green_no"}]},
+]
+
+func decision_by_id(id: String) -> Dictionary:
+	for d: Dictionary in DECISIONS:
+		if String(d["id"]) == id:
+			return d
+	return {}
+
+func maybe_offer_decision() -> void:
+	if decisions.size() >= 2 or cycle < 12 or biz_roll() > 0.08:
+		return
+	var pool: Array = []
+	for d: Dictionary in DECISIONS:
+		if String(d["id"]) not in decisions_seen:
+			pool.append(d)
+	if pool.is_empty():
+		decisions_seen = []  # the deck comes round again
+		pool = DECISIONS.duplicate()
+	var pick: Dictionary = pool[int(biz_roll() * pool.size()) % pool.size()]
+	decisions_seen.append(String(pick["id"]))
+	decisions.append({"id": String(pick["id"]), "raised": cycle})
+	log_event("DECISION: %s. %s" % [pick["title"], pick["text"]])
+
+func schedule_consequence(after: int, kind: String, note: String, data := {}) -> void:
+	## Foreshadowed on purpose: the player is told something will come of this.
+	consequences.append({"cycle": cycle + after, "kind": kind, "note": note, "data": data})
+	log_event("LATER: %s" % note)
+
+func decide(id: String, option: int) -> String:
+	var spec := decision_by_id(id)
+	if spec.is_empty():
+		return "there is no such decision"
+	var live := {}
+	for d in decisions:
+		if String(d["id"]) == id:
+			live = d
+	if live.is_empty():
+		return "that decision is not open"
+	decisions.erase(live)
+	var effect := String(spec["options"][clampi(option, 0, spec["options"].size() - 1)]["effect"])
+	_apply_decision(effect)
+	return ""
+
+func _apply_decision(effect: String) -> void:
+	match effect:
+		"swap_now":
+			money -= 900
+			money_changed.emit()
+			latent_defects["sw-8"] = int(latent_defects.get("sw-8", 0)) + 1
+			schedule_consequence(10, "note", "the discounted units carry the fault the vendor admitted to")
+		"swap_wait":
+			schedule_consequence(8, "spares", "the fixed revision arrives, and one lands on your shelf")
+		"emergency_yes":
+			for deal in deals:
+				deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.05)
+			schedule_consequence(3, "risk", "unplanned work has a way of surfacing a few cycles later")
+		"emergency_no":
+			for deal in deals:
+				deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.05)
+			reputation = mini(100, reputation + 2)
+		"workaround":
+			money += 400
+			money_changed.emit()
+			schedule_consequence(12, "incident", "the cause you did not fix is still there")
+		"root_cause":
+			money -= 300
+			money_changed.emit()
+			reputation = mini(100, reputation + 2)
+		"carrier_sign":
+			schedule_consequence(14, "money", "the fixed carrier price is now below the market", {"amount": 1200})
+		"carrier_wait":
+			schedule_consequence(14, "money", "carrier prices moved the way their salesperson expected", {"amount": -800})
+		"press_now":
+			reputation = mini(100, reputation + 3)
+			schedule_consequence(6, "press_risk", "you said something before you knew the cause")
+		"press_wait":
+			reputation = maxi(0, reputation - 1)
+			schedule_consequence(6, "reputation", "the postmortem lands, and it reads well", {"amount": 4})
+		"poach_yes":
+			var rng := RandomNumberGenerator.new()
+			rng.seed = cycle
+			var hire := Staff.make_candidate(rng)
+			hire["skill"] = 5
+			hire["name"] = "Szabo Marta"
+			staff.append(hire)
+			for r in rivals:
+				Rivals.remember(r, -2, "you took their engineer")
+				break
+		"poach_no":
+			reputation = mini(100, reputation + 2)
+			for r2 in rivals:
+				Rivals.remember(r2, 1, "you did not take their engineer")
+				break
+		"optics_yes":
+			parts["optic"] = parts_of("optic") + 20
+			money -= 300
+			money_changed.emit()
+			schedule_consequence(9, "grey", "cheap optics are where dirty-optic faults come from")
+		"optics_no":
+			money -= 900
+			parts["optic"] = parts_of("optic") + 20
+			money_changed.emit()
+		"overtime_yes":
+			money += 800
+			money_changed.emit()
+			schedule_consequence(4, "morale", "the week you asked for catches up with everybody", {"amount": -18})
+		"overtime_no":
+			schedule_consequence(4, "morale", "a crew that was not run into the ground", {"amount": 6})
+		"discount_yes":
+			for deal in deals:
+				deal["fee"] = maxi(1, int(float(int(deal["fee"])) * 0.9))
+				deal["term"] = int(deal.get("term", 18)) + 12
+				deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.15)
+				break
+		"discount_no":
+			for deal in deals:
+				deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.1)
+				break
+		"insure_yes":
+			insured = true
+			schedule_consequence(10, "note", "the premium is being paid whether anything fails or not")
+		"insure_no":
+			insured = false
+			schedule_consequence(10, "hardware", "an unlucky failure with nothing behind it")
+		"intern_yes":
+			var rng2 := RandomNumberGenerator.new()
+			rng2.seed = cycle + 7
+			var junior := Staff.make_candidate(rng2)
+			junior["skill"] = 1
+			junior["salary"] = 120
+			junior["name"] = "Kis Andras"
+			staff.append(junior)
+			schedule_consequence(15, "skill", "the junior you took on has been watching you work")
+		"intern_no":
+			pass
+		"green_yes":
+			marketing += 40
+			reputation = mini(100, reputation + 3)
+			schedule_consequence(12, "reputation", "customers who asked about the tariff signed", {"amount": 3})
+		"green_no":
+			pass
+
+func consequence_tick() -> void:
+	for c in consequences.duplicate():
+		if cycle < int(c["cycle"]):
+			continue
+		consequences.erase(c)
+		match String(c["kind"]):
+			"money":
+				money += int(c["data"].get("amount", 0))
+				money_changed.emit()
+			"reputation":
+				reputation = clampi(reputation + int(c["data"].get("amount", 0)), 0, 100)
+			"morale":
+				for m in staff:
+					m["morale"] = clampi(int(m.get("morale", 70)) + int(c["data"].get("amount", 0)),
+						0, 100)
+			"spares":
+				spares["sw-8"] = int(spares.get("sw-8", 0)) + 1
+			"incident":
+				record_incident("decision", "the workaround you shipped has come back")
+				reputation = maxi(0, reputation - 3)
+			"press_risk":
+				reputation = clampi(reputation + (-5 if randf() < 0.5 else 3), 0, 100)
+			"grey":
+				for l: Net.Link in links:
+					if grey_fault(l.a).is_empty() and l.a.enabled:
+						inject_grey_fault(l.a, "dirty_optic")
+						break
+			"hardware":
+				for d: Net.NDevice in all_devices():
+					if d.status == "active" and d.type != "cooling":
+						d.status = "offline"
+						record_incident("hardware", "%s failed, uninsured" % d.name)
+						break
+			"risk":
+				if randf() < 0.4:
+					record_incident("decision", "the unplanned work came back as an incident")
+					reputation = maxi(0, reputation - 2)
+			"skill":
+				for m2 in staff:
+					if int(m2.get("skill", 1)) <= 2:
+						m2["skill"] = int(m2["skill"]) + 1
+						break
+			"note":
+				pass
+		log_event("CONSEQUENCE: %s." % c["note"])
+		record_timeline_note(String(c["note"]))
+
+func record_timeline_note(text: String) -> void:
+	decision_notes.append("cycle %d · %s" % [cycle, text])
+	if decision_notes.size() > 12:
+		decision_notes.pop_front()
 
 ## A teaching abstraction, not any real certification scheme: eight controls
 ## that map onto things the simulation can actually prove.
@@ -6129,6 +6401,8 @@ func sla_tick() -> void:
 	maybe_schedule_tour()
 	tour_tick()
 	audit_tick()
+	maybe_offer_decision()
+	consequence_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
@@ -7000,7 +7274,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences,
+		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
 		"confirm_commits": confirm_commits, "tickets": tickets, "grey_faults": grey_faults, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
@@ -7333,6 +7608,10 @@ func _apply(data: Dictionary) -> void:
 	facility = data.get("facility", {})
 	tour = data.get("tour", {})
 	audit = data.get("audit", {})
+	decisions = data.get("decisions", [])
+	consequences = data.get("consequences", [])
+	decisions_seen = data.get("decisions_seen", [])
+	decision_notes = data.get("decision_notes", [])
 	control_evidence = data.get("control_evidence", {})
 	trust_marker = bool(data.get("trust_marker", false))
 	renewals = data.get("renewals", [])
