@@ -1981,6 +1981,7 @@ const OPS_TABS := [
 		"HOW THIS RUN ENDED", "RUNS BEFORE THIS ONE"]],
 ]
 var ops_tab := "Capacity"
+var ops_scope_lbl: Label  # says which floor the panel is describing
 var ops_orphan_sections: Array = []  # sections with no tab: a bug, not a feature
 var ops_tab_btns := {}
 var ops_metric_values := {}
@@ -1993,6 +1994,7 @@ func _build_ops() -> void:
 	ops_title.text = "Network operations"
 	var status_line := _section("LIVE ESTATE  /  CURRENT SHIFT")
 	status_line.add_theme_color_override("font_color", UIW.colour("accent"))
+	ops_scope_lbl = status_line
 	v.add_child(status_line)
 	var metrics := HBoxContainer.new()
 	metrics.add_theme_constant_override("separation", UIW.space("md"))
@@ -2064,6 +2066,14 @@ func _apply_ops_tab() -> void:
 		ops_tab_btns[name].button_pressed = name == ops_tab
 
 func _refresh_ops() -> void:
+	if ops_scope_lbl:
+		# with two floors, "live estate" reads as everything you own, and this
+		# panel is only ever about the one you are standing on
+		var one_floor := Game.site_count() < 2
+		ops_scope_lbl.text = "LIVE ESTATE  /  CURRENT SHIFT" if one_floor \
+			else "THIS FLOOR  /  %s" % Game.site_name(Game.current_site).to_upper()
+		ops_scope_lbl.add_theme_color_override("font_color", UIW.colour("accent") if one_floor
+			else Color.from_hsv(Game.site_hue(Game.site_name(Game.current_site)), 0.45, 1.0))
 	for c in ops_box.get_children():
 		ops_box.remove_child(c)
 		c.queue_free()

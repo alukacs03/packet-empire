@@ -203,6 +203,14 @@ static func ui_smoke(world: Node2D) -> int:
 	for ops_entry in UILayer.OPS_TABS:
 		ui.ops_tab = String(ops_entry[0])
 		ui._refresh_ops()
+	# with two floors the operations panel says which one it is describing
+	var ops_sites := Game.sites.duplicate(true)
+	Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	ui._refresh_ops()
+	check(ui.ops_scope_lbl != null and ui.ops_scope_lbl.text.begins_with("THIS FLOOR"),
+		"ui: with two floors, operations says which floor it is about")
+	Game.sites = ops_sites
+	ui._refresh_ops()
 	ui.ops_tab = "Company"
 	ui._refresh_ops()
 	var trend_visible := false
