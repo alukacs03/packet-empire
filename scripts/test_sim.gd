@@ -3017,6 +3017,21 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# --- achievements for the things the game learned to do since ---
+	var ach_before := Game.achievements.duplicate()
+	Game.achievements = []
+	Game.stats["failovers_passed"] = 1
+	Game.check_achievements()
+	check("proved_it" in Game.achievements,
+		"achievements: passing a failover test is worth saying")
+	Game.achievements = []
+	Game.stats["failovers_passed"] = 0
+	check(not Game._achievement_met("proved_it"),
+		"achievements: and is not awarded to somebody who never ran one")
+	check(Game._achievement_met("bundled"),
+		"achievements: a bundle built earlier in this run counts")
+	Game.achievements = ach_before
+
 	# --- the report credits what was practised, not only what was built ---
 	var fs_base := Game.finale_snapshot("retired")
 	fs_base["tidiness"] = 0.2      # a middling run, so the cap is not doing the talking

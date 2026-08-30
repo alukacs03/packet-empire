@@ -131,12 +131,52 @@ const ACHIEVEMENTS := [
 	{"id": "employer", "name": "Employer", "how": "Put three people on the payroll."},
 	{"id": "steady", "name": "Steady hands", "how": "Reach cycle 50 with reputation at 80 or better."},
 	{"id": "fabric", "name": "Fabric builder", "how": "Give a router two equal-cost paths to a destination."},
+	{"id": "proved_it", "name": "Proved it", "how": "Pass a failover test with no customer noticing."},
+	{"id": "two_rooms", "name": "It exists somewhere else", "how": "Serve one address from two buildings."},
+	{"id": "dual_stack", "name": "The address you were given", "how": "Answer a service natively over IPv6."},
+	{"id": "bundled", "name": "Two of everything", "how": "Run two links in one bundle between switches."},
+	{"id": "covered", "name": "Somebody is awake", "how": "Have somebody on call while nobody is on shift."},
 ]
 
 func _achievement_met(id: String) -> bool:
 	match id:
 		"first_light":
 			return int(stats.get("contracts", 0)) >= 1
+		"proved_it":
+			return int(stats.get("failovers_passed", 0)) >= 1
+		"two_rooms":
+			if site_count() < 2:
+				return false
+			var served := {}  # address -> the sites that answer at it
+			for d in all_devices():
+				for i: Net.Iface in d.ifaces:
+					for cidr: String in i.ips:
+						var addr := String(cidr).split("/")[0]
+						var at := site_of_device(d)
+						var rooms: Array = served.get(addr, [])
+						if at not in rooms:
+							rooms.append(at)
+						served[addr] = rooms
+			for addr: String in served:
+				if (served[addr] as Array).size() >= 2:
+					return true
+			return false
+		"dual_stack":
+			for d in all_devices():
+				if d.type != "server":
+					continue
+				for i: Net.Iface in d.ifaces:
+					for cidr: String in i.ips:
+						if Net.is_v6(String(cidr)) and link_at(i) != null:
+							return true
+			return false
+		"bundled":
+			for l in links:
+				if lag_members(l).size() >= 2:
+					return true
+			return false
+		"covered":
+			return oncall != "" and not staff.is_empty() and not Staff.anyone_on_shift()
 		"segmented":
 			for d in all_devices():
 				if d.type == "switch" and d.vlans.size() >= 3:
