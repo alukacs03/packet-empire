@@ -4370,6 +4370,43 @@ func _build_log_tab() -> void:
 				_toast(err)
 			_refresh_contracts())
 		urow.add_child(case_btn)
+	var open_tickets: Array = []
+	for t_i: Dictionary in Game.tickets:
+		if String(t_i["state"]) != "closed":
+			open_tickets.append(t_i)
+	if not open_tickets.is_empty():
+		contracts_box.add_child(_section("TICKETS"))
+		contracts_box.add_child(_wrap("  Customers describe what they see, not what is wrong. Several of these may be one fault.",
+			12, MUTED, 700))
+		for t_i2: Dictionary in open_tickets:
+			var trow := HBoxContainer.new()
+			trow.add_theme_constant_override("separation", 8)
+			contracts_box.add_child(trow)
+			var tl := _wrap("  %s  %s: \"%s\"%s" % [t_i2["id"], t_i2["customer"], t_i2["text"],
+				"   (reopened %d time(s))" % int(t_i2["reopened"]) if int(t_i2["reopened"]) > 0 else ""],
+				12, Color(1.0, 0.82, 0.5) if String(t_i2["state"]) == "open"
+				else Color(0.72, 0.84, 0.8), 520)
+			tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			trow.add_child(tl)
+			if String(t_i2["state"]) == "open":
+				var tri := Button.new()
+				tri.text = "Triage…"
+				tri.tooltip_text = "Pick where to look. Looking in the wrong place costs an afternoon."
+				tri.pressed.connect(func() -> void:
+					_menu(tri, Game.TICKET_AREAS, func(id: int) -> void:
+						var err: String = Game.triage_ticket(t_i2, String(Game.TICKET_AREAS[id]))
+						if err != "":
+							_toast(err)
+						_refresh_contracts()
+						_refresh_money()))
+				trow.add_child(tri)
+			var cbtn := Button.new()
+			cbtn.text = "Close it"
+			cbtn.tooltip_text = "Closing something that is still broken brings it back angrier."
+			cbtn.pressed.connect(func() -> void:
+				Game.close_ticket(t_i2)
+				_refresh_contracts())
+			trow.add_child(cbtn)
 	contracts_box.add_child(_section("STATUS PAGE"))
 	if Game.outage_open():
 		contracts_box.add_child(_label("  A customer service is down. Saying so costs you less than being found out.",

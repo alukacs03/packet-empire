@@ -254,6 +254,8 @@ var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
 var lockout_state := {}  # device name -> was it unreachable last cycle
+var tickets: Array = []  # what customers say, which is not what is wrong
+var _ticket_seq := 0
 var confirm_commits := {}  # device name -> {cfg, due}: revert unless somebody confirms
 var physical_access := {}  # device name -> cycle until somebody is standing at it
 var docs := {}  # device name -> what the documentation claims is racked and patched
@@ -1262,6 +1264,138 @@ func remote_hands_tick() -> void:
 				% [target_dev.name, " %s" % target_iface.name if target_iface != null else ""])
 		topology_changed.emit()
 
+const TICKET_AREAS := ["network", "power", "customer side", "upstream"]
+const TICKET_WORDS := {
+	"down_smb": ["the internet is broken", "nothing works this morning", "we are completely off"],
+	"down_ent": ["our monitoring shows the service unreachable since %d minutes past",
+		"we have lost all connectivity to the hosted service"],
+	"slow_smb": ["everything is really slow today", "it keeps spinning and then works"],
+	"slow_ent": ["we are seeing elevated latency and retransmits on the link"],
+	"upstream": ["we cannot reach anything outside", "half the internet is down for us"],
+	"none": ["email has been slow since this morning", "the office printer will not connect",
+		"our site works from my phone but not from the desk"],
+}
+
+func _ticket_text(deal: Dictionary, kind: String) -> String:
+	var enterprise := String(deal.get("ctype", "smb")) == "enterprise"
+	var key := kind
+	if kind in ["down", "slow"]:
+		key = "%s_%s" % [kind, "ent" if enterprise else "smb"]
+	var options: Array = TICKET_WORDS.get(key, TICKET_WORDS["none"])
+	var text: String = options[absi((String(deal.get("customer", "")) + kind).hash()) % options.size()]
+	return text % cycle if "%d" in text else text
+
+func open_ticket(customer: String, text: String, cause: Dictionary) -> Dictionary:
+	for t: Dictionary in tickets:
+		if String(t["customer"]) == customer and String(t["state"]) == "open" \
+				and JSON.stringify(t["cause"]) == JSON.stringify(cause):
+			return t  # they are not going to file it twice
+	_ticket_seq += 1
+	var ticket := {"id": "T%03d" % _ticket_seq, "customer": customer, "text": text,
+		"cause": cause, "opened": cycle, "state": "open", "triaged": "", "reopened": 0}
+	tickets.push_front(ticket)
+	log_event("TICKET %s from %s: \"%s\"" % [ticket["id"], customer, text])
+	return ticket
+
+func ticket_area_for(cause: Dictionary) -> String:
+	match String(cause.get("kind", "")):
+		"deal_down", "congestion":
+			return "network"
+		"upstream":
+			return "upstream"
+		"none":
+			return "customer side"
+	return "network"
+
+func triage_ticket(t: Dictionary, area: String) -> String:
+	## Guessing costs the one thing an incident does not give you: time.
+	if String(t["state"]) != "open":
+		return "that ticket is not open"
+	if area not in TICKET_AREAS:
+		return "that is not somewhere to look"
+	t["triaged"] = area
+	if area == ticket_area_for(t["cause"]):
+		t["state"] = "investigating"
+		log_event("TICKET %s: triaged to %s, which is where it actually is.%s" % [t["id"], area,
+			"  %s" % _ticket_hint(t["cause"])])
+		return ""
+	money -= 40  # somebody's afternoon, spent looking in the wrong place
+	money_changed.emit()
+	log_event("TICKET %s: triaged to %s. That is not where it is, and the clock kept running."
+		% [t["id"], area])
+	return ""
+
+func _ticket_hint(cause: Dictionary) -> String:
+	match String(cause.get("kind", "")):
+		"deal_down":
+			return "Their service is genuinely not reachable from here."
+		"congestion":
+			return "The path is up and over capacity: it is a bandwidth problem, not a fault."
+		"upstream":
+			return "Your own tooling says the fault is past your edge."
+		"none":
+			return "Everything of yours is healthy. This one is theirs."
+	return ""
+
+func ticket_condition_live(t: Dictionary) -> bool:
+	## Is the thing they are complaining about still true?
+	var cause: Dictionary = t["cause"]
+	match String(cause.get("kind", "")):
+		"deal_down":
+			for deal in deals:
+				if String(deal.get("id", "")) == String(cause.get("deal", "")):
+					return not bool(deal.get("healthy", false))
+			return false
+		"congestion":
+			for deal in deals:
+				if String(deal.get("id", "")) == String(cause.get("deal", "")):
+					return bool(deal.get("degraded", false))
+			return false
+		"upstream":
+			return upstream_active()
+	return false
+
+func close_ticket(t: Dictionary) -> String:
+	if String(t["state"]) == "closed":
+		return "that one is closed"
+	t["state"] = "closed"
+	t["closed"] = cycle
+	if ticket_condition_live(t):
+		log_event("TICKET %s closed. Nothing about it has actually changed." % t["id"])
+	else:
+		reputation = mini(100, reputation + 1)
+		log_event("TICKET %s closed: %s can see it working again." % [t["id"], t["customer"]])
+	return ""
+
+func ticket_tick() -> void:
+	## Tickets come from real conditions, several can share one root cause, and
+	## some of them are not ours at all.
+	for deal in deals:
+		if not bool(deal.get("ever_healthy", false)):
+			continue
+		if not bool(deal.get("healthy", false)):
+			open_ticket(String(deal["customer"]), _ticket_text(deal, "down"),
+				{"kind": "deal_down", "deal": String(deal.get("id", ""))})
+		elif bool(deal.get("degraded", false)):
+			open_ticket(String(deal["customer"]), _ticket_text(deal, "slow"),
+				{"kind": "congestion", "deal": String(deal.get("id", ""))})
+	if upstream_active():
+		for deal in deals:
+			open_ticket(String(deal["customer"]), _ticket_text(deal, "upstream"), {"kind": "upstream"})
+	if not deals.is_empty() and biz_roll() < 0.06:
+		var deal: Dictionary = deals[int(biz_roll() * deals.size()) % deals.size()]
+		open_ticket(String(deal["customer"]), _ticket_text(deal, "none"), {"kind": "none"})
+	for t in tickets:
+		if String(t["state"]) == "closed" and ticket_condition_live(t) \
+				and cycle - int(t.get("closed", cycle)) >= 3:
+			t["state"] = "open"
+			t["reopened"] = int(t["reopened"]) + 1
+			reputation = maxi(0, reputation - 3)
+			log_event("TICKET %s reopened by %s, and they are not being polite about it. It was never fixed."
+				% [t["id"], t["customer"]])
+	if tickets.size() > 12:
+		tickets.resize(12)
+
 func management_ips(d: Net.NDevice) -> Array:
 	var out: Array = []
 	for i: Net.Iface in d.ifaces:
@@ -1284,9 +1418,20 @@ func device_reachable(d: Net.NDevice) -> bool:
 	var ips := management_ips(d)
 	if ips.is_empty():
 		return true  # never addressed for remote management: you are at its console
+	# a few vantage points answer "can anything reach it" without pinging the
+	# whole estate: its neighbours first, since that is who talks to it
+	var vantage: Array = []
+	var rack := rack_of(d)
+	if rack != null:
+		for other in rack.slots:
+			if other != null and other != d and other.status == "active":
+				vantage.append(other)
 	for other: Net.NDevice in all_devices():
-		if other == d or other.status != "active":
-			continue
+		if vantage.size() >= 6:
+			break
+		if other != d and other.status == "active" and not (other in vantage):
+			vantage.append(other)
+	for other: Net.NDevice in vantage:
 		for ip: String in ips:
 			if Sim.ping(other, ip)["ok"]:
 				return true
@@ -1332,6 +1477,9 @@ func walk_to_device(d: Net.NDevice) -> String:
 	return ""
 
 func lockout_tick() -> void:
+	# reachability is expensive to compute, and a lockout is not urgent news
+	if cycle % 4 != 0:
+		return
 	for d: Net.NDevice in all_devices():
 		var pending: Dictionary = confirm_commits.get(d.name, {})
 		if not pending.is_empty() and cycle >= int(pending["due"]):
@@ -5350,6 +5498,7 @@ func sla_tick() -> void:
 	tac_tick()
 	remote_hands_tick()
 	lockout_tick()
+	ticket_tick()
 	receiving_tick()
 	stockout_tick()
 	rma_tick()
@@ -6175,7 +6324,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
-		"confirm_commits": confirm_commits, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
+		"confirm_commits": confirm_commits, "tickets": tickets, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
 		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
@@ -6508,6 +6657,7 @@ func _apply(data: Dictionary) -> void:
 	orphan_intel = data.get("orphan_intel", {})
 	docs = data.get("docs", {})
 	confirm_commits = data.get("confirm_commits", {})
+	tickets = data.get("tickets", [])
 	physical_access = data.get("physical_access", {})
 	remote_jobs = data.get("remote_jobs", [])
 	crates = data.get("crates", [])

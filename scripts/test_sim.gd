@@ -3807,7 +3807,7 @@ static func run() -> int:
 		"lockout: a confirmed commit can be armed once before the change")
 	Game.add_static_route(lo_rtr, "10.91.0.0", 24, "10.90.0.9")
 	lo_rtr.ifaces[0].enabled = false
-	Game.cycle += 2
+	Game.cycle += 4 - (Game.cycle % 4) + 4  # the reachability sweep runs every fourth cycle
 	Game.lockout_tick()
 	check(not Game.confirm_commits.has(lo_rtr.name) and lo_rtr.static_routes.is_empty() \
 			and Game.device_reachable(lo_rtr),
@@ -3819,6 +3819,58 @@ static func run() -> int:
 	Game.physical_access = {}
 	Game.lockout_state = {}
 	Game.current_site = 0
+
+	# --- the ticket queue ---
+	Game.tickets = []
+	Game.reputation = 60
+	var tk_deals := Game.deals.duplicate(true)
+	var tk_shop := {"id": "tk1", "customer": "Sarga Bolt", "ctype": "smb", "kind": "hosting",
+		"params": {}, "fee": 60, "brief": "", "load": 60, "healthy": false, "ever_healthy": true}
+	var tk_ent := {"id": "tk2", "customer": "Duna Bank", "ctype": "enterprise", "kind": "hosting",
+		"params": {}, "fee": 400, "brief": "", "load": 300, "healthy": false, "ever_healthy": true}
+	Game.deals = [tk_shop, tk_ent]
+	Game.ticket_tick()
+	check(Game.tickets.size() >= 2,
+		"tickets: an outage arrives as several complaints rather than one alert")
+	var shop_ticket := {}
+	var ent_ticket := {}
+	for t_c: Dictionary in Game.tickets:
+		if String(t_c["customer"]) == "Sarga Bolt":
+			shop_ticket = t_c
+		elif String(t_c["customer"]) == "Duna Bank":
+			ent_ticket = t_c
+	check(String(shop_ticket["text"]) != String(ent_ticket["text"]) \
+			and String(shop_ticket["cause"]["kind"]) == String(ent_ticket["cause"]["kind"]),
+		"tickets: the shop and the bank describe the same root cause completely differently")
+	var money_tri := Game.money
+	check(Game.triage_ticket(shop_ticket, "power") == "" and Game.money < money_tri \
+			and String(shop_ticket["state"]) == "open",
+		"tickets: triaging it to the wrong place burns an afternoon and gets you nowhere")
+	check(Game.triage_ticket(shop_ticket, "network") == "" \
+			and String(shop_ticket["state"]) == "investigating",
+		"tickets: the right area is where the work actually starts")
+	# closing a live fault brings it back, angrier
+	Game.close_ticket(shop_ticket)
+	var rep_before_reopen := Game.reputation
+	Game.cycle += 3
+	Game.ticket_tick()
+	check(String(shop_ticket["state"]) == "open" and int(shop_ticket["reopened"]) == 1 \
+			and Game.reputation < rep_before_reopen,
+		"tickets: closing something that is still broken reopens it and costs you")
+	# fix it for real and the same close is welcome
+	tk_shop["healthy"] = true
+	var rep_before_close := Game.reputation
+	Game.close_ticket(shop_ticket)
+	check(String(shop_ticket["state"]) == "closed" and Game.reputation > rep_before_close,
+		"tickets: closing a ticket verifies the condition is actually gone")
+	# and some of them are not ours at all
+	var not_ours := Game.open_ticket("Sarga Bolt", "the office printer will not connect",
+		{"kind": "none"})
+	check(Game.ticket_area_for(not_ours["cause"]) == "customer side" \
+			and not Game.ticket_condition_live(not_ours),
+		"tickets: at least one kind of ticket is legitimately somebody else's problem")
+	Game.tickets = []
+	Game.deals = tk_deals
 
 	# --- consumables ---
 	var pt_rack := Game.add_rack(Vector2i(48, 1))
