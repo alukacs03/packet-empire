@@ -137,6 +137,7 @@ static func make_text(text: String, role := "body", semantic := "text") -> Label
 static func make_section(text: String) -> Label:
 	var label := make_text(text, "caption", "muted")
 	label.text = text.to_upper()
+	label.set_meta("section", true)  # so a tab filter can find its own headings
 	return label
 
 static func make_empty_state(text: String) -> Label:

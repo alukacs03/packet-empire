@@ -187,6 +187,15 @@ static func ui_smoke(world: Node2D) -> int:
 			ops_hidden += 1
 	check(ops_shown > 0 and ops_hidden > 0,
 		"ops: a tab shows its own sections and hides the others")
+	var homeless: Array = []
+	for ops_entry2 in UILayer.OPS_TABS:
+		ui.ops_tab = String(ops_entry2[0])
+		ui._refresh_ops()
+		for orphan: String in ui.ops_orphan_sections:
+			if orphan not in homeless:
+				homeless.append(orphan)
+	check(homeless.is_empty(),
+		"ops: every section has a tab of its own (%s)" % ", ".join(PackedStringArray(homeless)))
 	ui.ops_tab = "Capacity"
 	ui._refresh_ops()
 	var ops_stage := Game.stage

@@ -1903,13 +1903,22 @@ func _device_alerts(d: Net.NDevice) -> Array:
 ## Which sections belong on which tab. Everything is still built in one pass;
 ## the tab only decides what stays visible, which keeps the section code as a
 ## plain sequence rather than a nest of conditionals.
+## Every section built into the Operations box belongs to exactly one tab.
+## A section with no home is a bug, and the smoke pass says so.
 const OPS_TABS := [
 	["Capacity", ["CAPACITY", "POWER", "AIRFLOW"]],
 	["Traffic", ["TOP TALKERS", "MONITORS"]],
-	["Hardware", ["ASSETS AND SPARES", "DEVICES"]],
-	["Automation", ["PLAYBOOKS", "CERTIFICATES"]],
+	["Hardware", ["ASSETS AND SPARES", "DEVICES", "THE PARTS DRAWER", "RECEIVING",
+		"VENDOR SUPPORT", "NOBODY CLAIMS THESE"]],
+	["Facility", ["FIRE, SMOKE AND WATER", "FACILITY SCHEDULE", "WHO IS ON THE FLOOR"]],
+	["Automation", ["PLAYBOOKS", "CERTIFICATES", "RUNBOOKS AND AUTOMATION", "STANDING DUTIES"]],
+	["Records", ["DOCUMENTATION", "AUDIT READINESS", "RENEWALS CALENDAR", "UNREACHABLE",
+		"WHAT YOU WROTE ABOUT THESE"]],
+	["Company", ["WHAT KIND OF COMPANY THIS IS", "DECISIONS", "A VISIT IS BOOKED",
+		"HOW THIS RUN ENDED", "RUNS BEFORE THIS ONE"]],
 ]
 var ops_tab := "Capacity"
+var ops_orphan_sections: Array = []  # sections with no tab: a bug, not a feature
 var ops_tab_btns := {}
 var ops_metric_values := {}
 var ops_metric_notes := {}
@@ -1977,10 +1986,15 @@ func _apply_ops_tab() -> void:
 	for entry in OPS_TABS:
 		for t in entry[1]:
 			all_titles.append(String(t))
+	# anything before the first known heading is chrome that every tab keeps;
+	# anything under an unknown heading is a section somebody forgot to place
 	var current := ""
+	ops_orphan_sections = []
 	for child in ops_box.get_children():
-		if child is Label and String(child.text) in all_titles:
+		if child is Label and child.has_meta("section"):
 			current = String(child.text)
+			if current not in all_titles:
+				ops_orphan_sections.append(current)
 		if current != "":
 			child.visible = current in wanted
 	for name in ops_tab_btns:
