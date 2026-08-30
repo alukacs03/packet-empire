@@ -154,10 +154,11 @@ static func payroll() -> int:
 static func repair_power() -> Array:
 	var attempts := 0
 	var skill := 0
+	var knows_the_floor := 1 if Game.floor_tidiness() > 0.75 else 0  # labelled, blanked, saved
 	for m in Game.staff:
 		if m["role"] in ["noc", "tech", "engineer"] and on_shift(m):
 			attempts += 1
-			skill = maxi(skill, int(m["skill"]))
+			skill = maxi(skill, int(m["skill"]) + knows_the_floor)
 			if int(m.get("morale", 70)) < 30:
 				attempts -= 1  # going through the motions
 	return [maxi(0, attempts), skill]

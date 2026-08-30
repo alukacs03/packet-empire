@@ -2662,6 +2662,89 @@ func audio_alerts() -> Array:
 		cues.append("alert")
 	return cues
 
+func rack_tidiness(r: Net.Rack) -> float:
+	## How well kept one cabinet is, read off the real thing: blanked gaps,
+	## labelled live ports, and configurations that are actually saved.
+	var points := 0.0
+	var total := 0.0
+	for idx in Net.Rack.SLOTS:
+		if r.slots[idx] == null:
+			total += 1.0
+			points += 1.0 if bool(r.blanked.get(idx, false)) else 0.0
+	for d in r.slots:
+		if d == null:
+			continue
+		total += 1.0
+		points += 0.0 if config_dirty(d) else 1.0
+		for i: Net.Iface in d.ifaces:
+			if link_at(i) == null or i.name.begins_with("Management"):
+				continue
+			total += 1.0
+			points += 1.0 if not i.note.is_empty() else 0.0
+	return 1.0 if total == 0.0 else clampf(points / total, 0.0, 1.0)
+
+func floor_tidiness() -> float:
+	var racks_here := racks_on(current_site)
+	if racks_here.is_empty():
+		return 1.0
+	var sum := 0.0
+	for r: Net.Rack in racks_here:
+		sum += rack_tidiness(r)
+	return sum / float(racks_here.size())
+
+func quiet_now() -> bool:
+	## No incident, nobody waiting, nothing upstream. The hours the job is
+	## actually made of.
+	if guided_outage_active() or upstream_active() or customer_outage_active:
+		return false
+	for deal in deals:
+		if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)):
+			return false
+		if deal.has("dispute") or not peak_event(deal).is_empty():
+			return false
+	return true
+
+func housekeeping_suggestion() -> String:
+	## Offered once, quietly, and only when there is nothing on fire. Ignoring
+	## it forever is a valid way to play.
+	if not quiet_now():
+		return ""
+	for r: Net.Rack in racks_on(current_site):
+		for idx in Net.Rack.SLOTS:
+			if r.slots[idx] == null and not bool(r.blanked.get(idx, false)):
+				return "%s has an open gap at U%d. A blanking panel would stop it breathing its own exhaust." \
+					% [r.name, idx + 1]
+		for d in r.slots:
+			if d == null:
+				continue
+			if config_dirty(d):
+				return "%s is running a configuration nobody has saved." % d.name
+			for i: Net.Iface in d.ifaces:
+				if link_at(i) != null and not i.name.begins_with("Management") and i.note.is_empty():
+					return "%s %s is patched and unlabelled. Future you will not remember what it is." \
+						% [d.name, i.name]
+	return "The floor is in order. Walk it, watch the traffic move, and enjoy it."
+
+func fault_chance() -> float:
+	## A kept floor genuinely breaks less: cables are seated, gaps are blanked,
+	## and the person who fixes it knows where everything is.
+	return 0.25 * fault_scale() * (1.0 - 0.4 * floor_tidiness())
+
+func housekeeping_tick() -> void:
+	if not quiet_now():
+		return
+	var tidy := floor_tidiness()
+	if tidy < 0.75:
+		return
+	for member in staff:
+		member["morale"] = mini(100, int(member.get("morale", 70)) + 1)
+	if not bool(stats.get("tidy_noted", false)):
+		stats["tidy_noted"] = true
+		Sfx.play("good")
+		log_event("QUIET: the floor is dressed, blanked and labelled. Faults are rarer here and repairs are quicker.")
+	elif tidy < 0.95:
+		stats["tidy_noted"] = false
+
 func multihomed() -> bool:
 	## two established upstream sessions is what survives one of them going away
 	var sessions := 0
@@ -3723,6 +3806,7 @@ func sla_tick() -> void:
 	dispute_tick()
 	report_tick()
 	habit_tick()
+	housekeeping_tick()
 	Skills.recognition_tick()
 	upstream_tick()
 	var incidents := _security_sweep()
@@ -3845,7 +3929,7 @@ func sla_tick() -> void:
 		Staff.morale_tick(trouble)
 	if cycle % 4 == 0:
 		refresh_candidates(true)  # the job market moves
-	if stage >= 2 and randf() < 0.25 * fault_scale():
+	if stage >= 2 and randf() < fault_chance():
 		_field_fault()
 		_fault_watch = cycle
 	var link_load := {}

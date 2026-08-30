@@ -3196,6 +3196,48 @@ static func run() -> int:
 	Game.deals = pz_deals
 	Game.sandbox = false
 
+	# --- the quiet cycle ---
+	var qt_deals := Game.deals.duplicate(true)
+	Game.deals = []
+	Game.customer_outage_active = false
+	Game.upstream = {}
+	var qt_rack := Game.add_rack(Vector2i(38, 1))
+	var qt_sw := Game.new_device("sw-8")
+	var qt_srv := Game.new_device("srv-1")
+	qt_rack.slots[0] = qt_sw
+	qt_rack.slots[1] = qt_srv
+	Game.connect_ifaces(qt_srv.ifaces[0], qt_sw.ifaces[0])
+	qt_sw.startup = Game.device_config(qt_sw)
+	qt_srv.startup = Game.device_config(qt_srv)
+	var messy := Game.rack_tidiness(qt_rack)
+	check(messy < 1.0 and Game.quiet_now(),
+		"quiet: with nothing on fire the game notices, and an unkept cabinet is not pretending otherwise")
+	var suggestion := Game.housekeeping_suggestion()
+	check(suggestion != "" and ("blanking panel" in suggestion or "unlabelled" in suggestion \
+			or "nobody has saved" in suggestion),
+		"quiet: there is something worth doing on the floor, offered once and never demanded")
+	for qt_slot in Net.Rack.SLOTS:
+		if qt_rack.slots[qt_slot] == null:
+			Game.toggle_blanking(qt_rack, qt_slot)
+	Game.set_note(qt_srv.ifaces[0], "customer A, do not repatch")
+	Game.set_note(qt_sw.ifaces[0], "customer A uplink")
+	check(Game.rack_tidiness(qt_rack) > messy,
+		"quiet: blanking the gaps and labelling the ports visibly improves the cabinet itself")
+	var messy_chance := 0.0
+	var tidy_chance := Game.fault_chance()
+	qt_rack.blanked = {}
+	messy_chance = Game.fault_chance()
+	check(tidy_chance < messy_chance,
+		"quiet: a kept floor genuinely breaks less often, which is the honest reward")
+	for qt_slot2 in Net.Rack.SLOTS:
+		if qt_rack.slots[qt_slot2] == null:
+			Game.toggle_blanking(qt_rack, qt_slot2)
+	Game.deals = [{"id": "qt", "customer": "Busy Kft", "kind": "hosting", "params": {},
+		"fee": 10, "brief": "", "load": 10, "healthy": false, "ever_healthy": true}]
+	check(not Game.quiet_now() and Game.housekeeping_suggestion() == "",
+		"quiet: while something is down the game says nothing about tidying up")
+	Game.deals = qt_deals
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

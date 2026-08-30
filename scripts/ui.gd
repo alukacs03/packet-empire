@@ -431,6 +431,9 @@ func _refresh_money() -> void:
 			var nr := Game.next_rank()
 			objective_lbl.text = "★ %s" % Game.rank() if nr.is_empty() \
 				else "★ %s  ·  $%d to %s" % [Game.rank(), int(nr[1]), nr[0]]
+		var quiet_line := Game.housekeeping_suggestion()
+		if quiet_line != "":
+			objective_lbl.text = "QUIET  ·  %s" % quiet_line
 	if clock_lbl:
 		var f := Game.day_factor()
 		var shift_icon := "☀" if Game.day_slot() in [2, 3, 4, 5] else "☾"
