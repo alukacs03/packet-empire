@@ -4683,11 +4683,216 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 			base["avoided"] = "The hosts do not pretend remote addresses are on their local wire."
 			base["mastery"] = "Save the working configuration on %s." % router.name
 		_:
+			return _later_contract_debrief(c, base)
+	return base
+
+func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
+	## The same rule as the opening six: every line is read off the player's own
+	## devices, and a job whose evidence is not there returns nothing at all.
+	var cid := String(base["id"])
+	match cid:
+		"join_internet":
+			var speaker: Net.NDevice = null
+			var neighbour := ""
+			for d: Net.NDevice in all_devices():
+				for nb in d.bgp.get("neighbors", []):
+					if Sim.bgp_established(d, nb):
+						speaker = d
+						neighbour = String(nb.get("ip", ""))
+			if speaker == null:
+				return {}
+			base["proof"] = ["%s holds an established eBGP session with %s." % [speaker.name,
+				neighbour],
+				"Its table carries %d announced prefix(es), and a default arrives from upstream."
+					% speaker.bgp.get("networks", []).size()]
+			base["concept"] = "Somebody else's network, on purpose"
+			base["practice"] = _dialect_cmd(speaker, "/routing bgp peer print", "show ip bgp summary")
+			base["avoided"] = "The default route is learned, not invented, so it disappears when the session does."
+			base["mastery"] = "Keep the session up while announcing your own prefix."
+		"hide_the_internals":
+			var outside: Net.Iface = null
+			for d2: Net.NDevice in all_devices():
+				for i: Net.Iface in d2.ifaces:
+					if i.nat == "outside":
+						outside = i
+			if outside == null:
+				return {}
+			base["proof"] = ["%s %s is the outside interface; private sources leave as %s." % [
+				outside.dev.name, outside.name,
+				outside.ips[0] if not outside.ips.is_empty() else "its own address"],
+				"Return traffic is matched back to the machine that sent it, which is why one address serves many."]
+			base["concept"] = "Source NAT, and the state it keeps"
+			base["practice"] = _dialect_cmd(outside.dev, "/ip firewall nat print", "show ip nat translations")
+			base["avoided"] = "Nothing inside had to be renumbered to reach the internet."
+			base["mastery"] = "Reach the internet from two machines behind the same address."
+		"dynamic_routing":
+			var ospf_devs: Array = []
+			for d3: Net.NDevice in all_devices():
+				if not d3.ospf.is_empty():
+					ospf_devs.append(d3.name)
+			if ospf_devs.size() < 2:
+				return {}
+			base["proof"] = ["%s are running OSPF and have formed an adjacency." % ", ".join(
+					PackedStringArray(ospf_devs.slice(0, 3))),
+				"Routes appear and disappear on their own, which is the entire difference from static."]
+			base["concept"] = "Routers telling each other what they know"
+			base["practice"] = "show ip ospf neighbor"
+			base["avoided"] = "Nobody has to remember to add a static route when the topology changes."
+			base["mastery"] = "Break one path and watch the table reconverge without you."
+		"no_spof":
+			var vip := ""
+			var members: Array = []
+			for d4: Net.NDevice in all_devices():
+				for i2: Net.Iface in d4.ifaces:
+					if String(i2.vrrp.get("vip", "")) != "":
+						vip = String(i2.vrrp["vip"])
+						members.append("%s %s (priority %d)" % [d4.name, i2.name,
+							int(i2.vrrp.get("priority", 100))])
+			if members.size() < 2:
+				return {}
+			base["proof"] = ["Virtual address %s is served by %s." % [vip,
+					" and ".join(PackedStringArray(members))],
+				"The hosts point at one gateway address that outlives either router."]
+			base["concept"] = "A gateway that is not a single box"
+			base["practice"] = "show vrrp"
+			base["avoided"] = "Nothing had to be reconfigured on the hosts when the master changed."
+			base["mastery"] = "Take the master away and keep the hosts online."
+		"double_the_pipe":
+			var bundle: Array = []
+			for l: Net.Link in links:
+				if l.a.lag > 0 and l.b.lag > 0:
+					bundle.append("%s %s ⇄ %s %s" % [l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
+			if bundle.size() < 2:
+				return {}
+			base["proof"] = ["One logical link over %d members: %s." % [bundle.size(),
+					"  /  ".join(PackedStringArray(bundle.slice(0, 3)))],
+				"Capacity is the sum of the live members, and losing one is a slowdown rather than an outage."]
+			base["concept"] = "Bundling links instead of blocking them"
+			base["practice"] = "show port-channel summary"
+			base["avoided"] = "Spanning tree did not throw the second cable away."
+			base["mastery"] = "Pull one member and keep the traffic flowing."
+		"two_sites":
+			if circuits.is_empty() or site_count() < 2:
+				return {}
+			var circuit: Dictionary = circuits[0]
+			base["proof"] = ["A %d Mbps circuit from %s joins %s and %s." % [
+					int(circuit.get("mbps", 0)), circuit.get("carrier", "a carrier"),
+					site_name(int(circuit.get("a", 0))), site_name(int(circuit.get("b", 1)))],
+				"The two floors are one network, and the circuit is billed whether you use it or not."]
+			base["concept"] = "Somebody else's fibre, rented by the cycle"
+			base["practice"] = "traceroute across the circuit and watch the latency"
+			base["avoided"] = "Neither site pretends the other is on its own wire."
+			base["mastery"] = "Keep both sites delivering while one carrier is down."
+		"dual_stack":
+			var v6 := _iface_with_ip("2001:db8:70::10")
+			if v6 == null:
+				return {}
+			base["proof"] = ["%s %s holds 2001:db8:70::10 alongside its IPv4 address." % [
+					v6.dev.name, v6.name],
+				"Neighbour Discovery does the work ARP used to, on the same wire, at the same time."]
+			base["concept"] = "Two protocols, one network"
+			base["practice"] = "show ipv6 neighbors"
+			base["avoided"] = "Nothing had to be turned off to add the second family."
+			base["mastery"] = "Reach the far host over IPv6 with the IPv4 path shut."
+		"v6_only_tenant":
+			var translator: Net.NDevice = null
+			for d5: Net.NDevice in all_devices():
+				if not Sim.nat64_of(d5).is_empty():
+					translator = d5
+			if translator == null:
+				return {}
+			var n64 := Sim.nat64_of(translator)
+			base["proof"] = ["%s translates %s into IPv4 from the pool %s." % [translator.name,
+					n64.get("prefix", ""), n64.get("pool", "")],
+				"The tenant never received an IPv4 address, and the legacy service never learned IPv6."]
+			base["concept"] = "Naming and translation are two separate halves"
+			base["practice"] = "show nat64"
+			base["avoided"] = "No dual-stack was forced on either end to make them talk."
+			base["mastery"] = "Keep native IPv6 traffic out of the translator entirely."
+		"overlay_tenant":
+			var vteps: Array = []
+			for d6: Net.NDevice in all_devices():
+				if not d6.vtep.is_empty() and String(d6.vtep.get("src", "")) != "":
+					vteps.append(d6)
+			if vteps.size() < 2:
+				return {}
+			var first: Net.NDevice = vteps[0]
+			var vni := 0
+			for vlan: int in first.vtep.get("map", {}):
+				vni = int(first.vtep["map"][vlan])
+			base["proof"] = ["%s and %s carry VNI %d over a routed underlay." % [vteps[0].name,
+					vteps[1].name, vni],
+				"The tenant's segment crosses a network that has no idea it is carrying layer 2."]
+			base["concept"] = "A segment that does not need a cable between the switches"
+			base["practice"] = "show vxlan"
+			base["avoided"] = "Nobody had to stretch a VLAN across the fabric to do it."
+			base["mastery"] = "Let the control plane advertise instead of flooding."
+		"big_client":
+			var fw: Net.NDevice = null
+			for d7: Net.NDevice in all_devices():
+				if d7.type == "firewall" and not d7.acls.is_empty():
+					fw = d7
+			if fw == null:
+				return {}
+			base["proof"] = ["%s enforces %d rule(s) in front of the customer segment." % [fw.name,
+					fw.acls.size()],
+				"Everything they audited (their VLAN, their address, the rule, the routing, the managed switch) is live at once."]
+			base["concept"] = "An estate, rather than a collection of devices"
+			base["practice"] = "show ip access-lists"
+			base["avoided"] = "No single requirement was met by breaking another one."
+			base["mastery"] = "Keep every one of their requirements true for a full quarter."
+		_:
 			return {}
 	return base
 
+func _dialect_cmd(dev: Net.NDevice, ros: String, eos: String) -> String:
+	return ros if String(MODELS[dev.model].get("os", "")) == "ros" else eos
+
 func contract_mastery_met(cid: String) -> bool:
 	match cid:
+		"join_internet":
+			var announced := false
+			for d: Net.NDevice in all_devices():
+				for nb in d.bgp.get("neighbors", []):
+					if Sim.bgp_established(d, nb) and not d.bgp.get("networks", []).is_empty():
+						announced = true
+			return announced
+		"hide_the_internals":
+			var behind := 0
+			for d2: Net.NDevice in all_devices():
+				if d2.type != "server":
+					continue
+				for i2: Net.Iface in d2.ifaces:
+					for cidr in i2.ips:
+						if String(cidr).begins_with("10.") or String(cidr).begins_with("192.168."):
+							behind += 1
+							break
+			return behind >= 2
+		"no_spof":
+			for d3: Net.NDevice in all_devices():
+				for i3: Net.Iface in d3.ifaces:
+					if String(i3.vrrp.get("vip", "")) != "" and not i3.enabled:
+						return true  # the master is away and the address is still served
+			return false
+		"double_the_pipe":
+			for l: Net.Link in links:
+				if l.a.lag > 0 and (not l.a.enabled or not l.b.enabled):
+					return true  # a member is down and the bundle is still up
+			return false
+		"dual_stack":
+			var v6_owner := Contracts._owner("2001:db8:71::10")
+			return v6_owner != null and Sim.ping(v6_owner, "2001:db8:70::10")["ok"]
+		"v6_only_tenant":
+			for d4: Net.NDevice in all_devices():
+				if not Sim.nat64_of(d4).is_empty() and int(Sim.nat64_of(d4).get("translated", 0)) > 0:
+					return true
+			return false
+		"overlay_tenant":
+			for d5: Net.NDevice in all_devices():
+				if not d5.vtep.is_empty() and bool(d5.vtep.get("evpn", false)) \
+						and not d5.remote_macs.is_empty():
+					return true
+			return false
 		"rackup":
 			for rack: Net.Rack in racks:
 				for slot in Net.Rack.SLOTS:

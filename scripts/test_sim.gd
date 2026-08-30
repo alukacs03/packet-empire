@@ -3497,6 +3497,7 @@ static func run() -> int:
 	Game.renewals = []
 	Game.tac_cases = []
 	Game.firmware_bugs = {}
+
 	Game.money = 8000
 	var buggy := Game.new_device("sw-8")
 	var tac_rack := Game.add_rack(Vector2i(44, 1))
@@ -7665,6 +7666,72 @@ static func run() -> int:
 		"tech-support: attaching the bundle answers everything the case asked for at once")
 	Game.tac_cases = []
 	Game.firmware_bugs = {}
+
+	# --- the later jobs get a debrief too ---
+	Game.contract_debriefs = {}
+	# nothing is claimed about a job whose evidence is not on the floor
+	var db_empty := Game._opening_contract_debrief({"id": "overlay_tenant", "title": "x",
+		"customer": "y", "reward": 1})
+	check(db_empty.is_empty(),
+		"debrief: a job with no live evidence produces no debrief rather than a fiction")
+	# an overlay that really exists produces one built from it
+	var db_rack := Game.add_rack(Vector2i(96, 1))
+	var db_l1 := Game.new_device("sw-24")
+	var db_l2 := Game.new_device("sw-24")
+	db_rack.slots[0] = db_l1
+	db_rack.slots[1] = db_l2
+	for db_sw: Net.NDevice in [db_l1, db_l2]:
+		Game.add_vlan(db_sw, 80, "tenant")
+		db_sw.vtep = {"src": "10.210.0.%d" % (1 + int(db_sw == db_l2)), "peers": [],
+			"map": {80: 8000}, "evpn": false}
+	var db_overlay := Game._opening_contract_debrief({"id": "overlay_tenant",
+		"title": "The tenant that outgrew the VLAN", "customer": "Turul Mobil", "reward": 5200})
+	check(not db_overlay.is_empty() and String(db_overlay["proof"][0]).contains("8000") \
+			and String(db_overlay["proof"][0]).contains(db_l1.name),
+		"debrief: it names the player's own devices and the VNI they actually mapped")
+	check(String(db_overlay["concept"]) != "" and String(db_overlay["practice"]) != "" \
+			and String(db_overlay["avoided"]) != "" and String(db_overlay["mastery"]) != "",
+		"debrief: one concept, one command, one avoided failure, one optional challenge")
+	# and the mastery check is live, not a claim
+	check(not Game.contract_mastery_met("overlay_tenant"),
+		"debrief: mastery is not granted for having got this far")
+	db_l1.vtep["evpn"] = true
+	db_l1.remote_macs = {80: {"02:50:45:00:99:01": "10.210.0.2"}}
+	check(Game.contract_mastery_met("overlay_tenant"),
+		"debrief: it is granted when the network actually does the harder thing")
+	# a dialect-aware command for the gear in front of them
+	var db_ros := Game.new_device("rtr-lite")
+	db_rack.slots[2] = db_ros
+	check(Game._dialect_cmd(db_ros, "/routing bgp peer print", "show ip bgp summary") \
+			== "/routing bgp peer print" \
+			and Game._dialect_cmd(db_l1, "/routing bgp peer print", "show ip bgp summary") \
+				== "show ip bgp summary",
+		"debrief: the command it suggests matches the gear the player bought")
+	# a second later job, built the same way from live state
+	var db_r1 := Game.new_device("rtr-lite")
+	var db_r2 := Game.new_device("rtr-lite")
+	var db_rack2 := Game.add_rack(Vector2i(97, 1))
+	db_rack2.slots[0] = db_r1
+	db_rack2.slots[1] = db_r2
+	db_r1.ifaces[0].vrrp = {"vip": "10.211.0.1", "group": 1, "priority": 200}
+	db_r2.ifaces[0].vrrp = {"vip": "10.211.0.1", "group": 1, "priority": 100}
+	var db_vrrp := Game._opening_contract_debrief({"id": "no_spof", "title": "No single point",
+		"customer": "Someone", "reward": 3000})
+	check(not db_vrrp.is_empty() and String(db_vrrp["proof"][0]).contains("10.211.0.1") \
+			and String(db_vrrp["proof"][0]).contains(db_r1.name),
+		"debrief: the later jobs read their proof off the live network, one by one")
+	check(not Game.contract_mastery_met("no_spof"),
+		"debrief: and their mastery checks are live too")
+	db_r1.ifaces[0].enabled = false
+	check(Game.contract_mastery_met("no_spof"),
+		"debrief: taking the master away is what earns that one")
+	db_r1.ifaces[0].enabled = true
+	db_r1.ifaces[0].vrrp = {}  # this section's fixture does not belong to anybody else's
+	db_r2.ifaces[0].vrrp = {}
+	db_l1.vtep = {}
+	db_l2.vtep = {}
+	db_l1.remote_macs = {}
+	Game.contract_debriefs = {}
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)
