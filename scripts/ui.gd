@@ -2011,6 +2011,91 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+	ops_box.add_child(_section("VENDOR SUPPORT"))
+	var tier_row := HBoxContainer.new()
+	tier_row.add_theme_constant_override("separation", 8)
+	ops_box.add_child(tier_row)
+	tier_row.add_child(_label("  Cover: %s" % Game.SUPPORT_TIERS[Game.support_tier()]["label"],
+		12, Color(0.72, 0.8, 0.88)))
+	for tier_i in [1, 2]:
+		var buy_tier := Button.new()
+		buy_tier.text = "Buy %s ($%d)" % [Game.SUPPORT_TIERS[tier_i]["label"],
+			int(Game.SUPPORT_TIERS[tier_i]["cost"])]
+		buy_tier.tooltip_text = "Response in %d cycle(s), escalation in %d." % [
+			int(Game.SUPPORT_TIERS[tier_i]["wait"]), int(Game.SUPPORT_TIERS[tier_i]["escalate"])]
+		buy_tier.pressed.connect(func() -> void:
+			var err: String = Game.buy_support(tier_i)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		tier_row.add_child(buy_tier)
+	for name_bug: String in Game.firmware_bugs:
+		ops_box.add_child(_wrap("  %s is flapping a port with nothing in its configuration to explain it. No amount of your work will fix that one." % name_bug,
+			12, Color(1.0, 0.72, 0.45), 780))
+		var open_case := Button.new()
+		open_case.text = "Open a case against %s" % name_bug
+		open_case.pressed.connect(func() -> void:
+			for d_case: Net.NDevice in Game.all_devices():
+				if d_case.name == name_bug:
+					var err: String = Game.open_tac_case(d_case, 2)
+					if err != "":
+						_toast(err)
+			_refresh_ops())
+		ops_box.add_child(open_case)
+	for c: Dictionary in Game.tac_cases:
+		if String(c["stage"]) == "closed":
+			continue
+		var crow := HBoxContainer.new()
+		crow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(crow)
+		var cl := _label("  %s  %s  severity %d  stage %s  (sent: %s)" % [c["id"], c["device"],
+			int(c["severity"]), c["stage"],
+			", ".join(PackedStringArray(c["evidence"])) if not c["evidence"].is_empty() else "nothing"],
+			12, Color(0.78, 0.84, 0.9))
+		cl.add_theme_font_override("font", mono)
+		cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		crow.add_child(cl)
+		if String(c["stage"]) in ["evidence", "level_one"]:
+			for kind: String in Game.TAC_EVIDENCE:
+				if kind in c["evidence"]:
+					continue
+				var ev := Button.new()
+				ev.text = "Send %s" % kind
+				ev.pressed.connect(func() -> void:
+					var err: String = Game.attach_evidence(c, kind)
+					if err != "":
+						_toast(err)
+					_refresh_ops())
+				crow.add_child(ev)
+				break
+			var hand := Button.new()
+			hand.text = "Hand it to the team" if not bool(c.get("delegated", false)) else "Take it back"
+			hand.tooltip_text = "They will work it, slowly, and they will not push back"
+			hand.pressed.connect(func() -> void:
+				c["delegated"] = not bool(c.get("delegated", false))
+				_refresh_ops())
+			crow.add_child(hand)
+		elif String(c["stage"]) == "queued":
+			var esc := Button.new()
+			esc.text = "Escalate ($200)"
+			esc.pressed.connect(func() -> void:
+				var err: String = Game.escalate_case(c)
+				if err != "":
+					_toast(err)
+				_refresh_ops()
+				_refresh_money())
+			crow.add_child(esc)
+		elif String(c["stage"]) == "fix_ready":
+			var load_btn := Button.new()
+			load_btn.text = "Load the fixed image"
+			load_btn.tooltip_text = "A reload. Inside a change window it is routine; outside one it is a decision."
+			load_btn.pressed.connect(func() -> void:
+				var err: String = Game.apply_firmware(c)
+				if err != "":
+					_toast(err)
+				_refresh_ops())
+			crow.add_child(load_btn)
 	if not Game.renewals.is_empty():
 		ops_box.add_child(_section("RENEWALS CALENDAR"))
 		for item: Dictionary in Game.renewals:

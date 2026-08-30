@@ -241,6 +241,8 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var tac_cases: Array = []  # vendor support cases and how far each one has got
+var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
 var tour := {}  # a scheduled visit: who is coming, and when
 var facility := {}  # task id -> the cycle it was last done
@@ -583,6 +585,161 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const SUPPORT_TIERS := [
+	{"label": "no contract", "cost": 0, "wait": 8, "escalate": 4},
+	{"label": "business hours", "cost": 900, "wait": 4, "escalate": 2},
+	{"label": "24x7 premium", "cost": 2400, "wait": 1, "escalate": 1},
+]
+
+func support_tier() -> int:
+	var best := 0
+	for item: Dictionary in renewals:
+		if String(item["kind"]) == "support" and not bool(item["lapsed"]):
+			best = maxi(best, int(item.get("tier", 1)))
+	return best
+
+func buy_support(tier: int) -> String:
+	tier = clampi(tier, 1, SUPPORT_TIERS.size() - 1)
+	if support_tier() >= tier:
+		return "you already have that cover"
+	if not try_spend(int(SUPPORT_TIERS[tier]["cost"])):
+		return "that contract costs $%d" % int(SUPPORT_TIERS[tier]["cost"])
+	var item := add_renewal("support", "vendor support: %s" % SUPPORT_TIERS[tier]["label"],
+		int(SUPPORT_TIERS[tier]["cost"]) / 4, 40)
+	item["tier"] = tier
+	log_event("SUPPORT: %s cover bought. Cases get a response in %d cycle(s)."
+		% [SUPPORT_TIERS[tier]["label"], int(SUPPORT_TIERS[tier]["wait"])])
+	return ""
+
+func _maybe_firmware_bug() -> void:
+	## A fault class no amount of player configuration fixes. Rare, and it does
+	## not look like anything else: the port comes back and then goes again.
+	if not firmware_bugs.is_empty() or cycle < 50 or randf() > 0.004 * fault_scale():
+		return
+	var devs := all_devices().filter(func(d: Net.NDevice) -> bool:
+		return d.type in ["switch", "router", "firewall"])
+	if devs.is_empty():
+		return
+	var victim: Net.NDevice = devs[randi() % devs.size()]
+	firmware_bugs[victim.name] = {"since": cycle, "model": victim.model}
+	log_event("FIRMWARE: %s keeps dropping a port and bringing it straight back. Nothing in its configuration explains it. This is one for the vendor."
+		% victim.name)
+	record_incident("firmware", "%s is flapping a port for no configurable reason" % victim.name)
+
+func firmware_tick() -> void:
+	for name: String in firmware_bugs.keys():
+		var dev: Net.NDevice = null
+		for d: Net.NDevice in all_devices():
+			if d.name == name:
+				dev = d
+		if dev == null:
+			firmware_bugs.erase(name)
+			continue
+		if randf() > 0.25:
+			continue
+		for i: Net.Iface in dev.ifaces:
+			if i.enabled and link_at(i) != null and not i.name.begins_with("Management"):
+				i.enabled = false
+				device_log(dev, "%s changed state to down (no reason logged)" % i.name)
+				topology_changed.emit()
+				break
+
+func open_tac_case(dev: Net.NDevice, severity: int) -> String:
+	for c: Dictionary in tac_cases:
+		if String(c["device"]) == dev.name and String(c["stage"]) != "closed":
+			return "there is already an open case on %s" % dev.name
+	var tier := support_tier()
+	tac_cases.append({"id": "TAC-%d" % (tac_cases.size() + 1), "device": dev.name,
+		"severity": clampi(severity, 1, 4), "stage": "evidence", "evidence": [],
+		"opened": cycle, "tier": tier, "waiting_until": -1, "asked_again": false,
+		"delegated": false})
+	log_event("CASE %s opened against %s (severity %d, %s). They want a log bundle, a show command and a repro."
+		% [tac_cases[tac_cases.size() - 1]["id"], dev.name, severity,
+			SUPPORT_TIERS[tier]["label"]])
+	return ""
+
+const TAC_EVIDENCE := ["logs", "show", "repro"]
+
+func attach_evidence(c: Dictionary, kind: String) -> String:
+	if String(c["stage"]) not in ["evidence", "level_one"]:
+		return "they are not waiting on you"
+	if kind not in TAC_EVIDENCE:
+		return "they did not ask for that"
+	var have: Array = c["evidence"]
+	if kind in have:
+		return "you have already sent that"
+	have.append(kind)
+	c["evidence"] = have
+	if have.size() < TAC_EVIDENCE.size():
+		return ""
+	if not bool(c["asked_again"]):
+		# level one asks for something you already sent. Everybody knows.
+		c["asked_again"] = true
+		c["stage"] = "level_one"
+		c["evidence"] = TAC_EVIDENCE.slice(0, 2)
+		log_event("CASE %s: level one has asked for the log bundle again. It is in the case already."
+			% c["id"])
+		return ""
+	c["stage"] = "queued"
+	c["waiting_until"] = cycle + int(SUPPORT_TIERS[int(c["tier"])]["wait"])
+	log_event("CASE %s: complete and queued. Response expected in %d cycle(s) on your cover."
+		% [c["id"], int(SUPPORT_TIERS[int(c["tier"])]["wait"])])
+	return ""
+
+func escalate_case(c: Dictionary) -> String:
+	if String(c["stage"]) != "queued":
+		return "there is nothing to escalate yet"
+	if bool(c.get("escalated", false)):
+		return "it is already with the escalation team"
+	if not try_spend(200):
+		return "insisting costs $200 of somebody's afternoon"
+	c["escalated"] = true
+	c["waiting_until"] = cycle + int(SUPPORT_TIERS[int(c["tier"])]["escalate"])
+	log_event("CASE %s escalated. Somebody who has seen this before is now reading it." % c["id"])
+	return ""
+
+func tac_tick() -> void:
+	_maybe_firmware_bug()
+	firmware_tick()
+	for c in tac_cases:
+		if String(c["stage"]) == "queued" and cycle >= int(c["waiting_until"]):
+			c["stage"] = "fix_ready"
+			log_event("CASE %s: confirmed as a known firmware defect. A fixed image is available; it needs a reload."
+				% c["id"])
+		elif bool(c.get("delegated", false)) and String(c["stage"]) in ["evidence", "level_one"]:
+			# staff work the case, slowly, and they will not push back
+			if cycle % 3 != 0:
+				continue
+			for kind: String in TAC_EVIDENCE:
+				if kind not in c["evidence"]:
+					attach_evidence(c, kind)
+					break
+
+func apply_firmware(c: Dictionary) -> String:
+	## The fix is a reload, which is a change like any other: inside a window
+	## it is routine, outside one it is a decision.
+	if String(c["stage"]) != "fix_ready":
+		return "there is no image to load yet"
+	var dev: Net.NDevice = null
+	for d: Net.NDevice in all_devices():
+		if d.name == String(c["device"]):
+			dev = d
+	if dev == null:
+		return "that device is not here any more"
+	c["stage"] = "closed"
+	firmware_bugs.erase(dev.name)
+	apply_device_config(dev, dev.startup)
+	if not in_maintenance() and randf() < 0.3:
+		dev.status = "offline"
+		log_event("FIRMWARE UPGRADE: %s did not come back cleanly, and you did it outside a window. It is offline."
+			% dev.name)
+		record_incident("firmware", "%s went down during an unplanned firmware upgrade" % dev.name)
+		return ""
+	log_event("FIRMWARE UPGRADE: %s reloaded on the fixed image. The flapping is gone, and case %s is closed."
+		% [dev.name, c["id"]])
+	topology_changed.emit()
+	return ""
 
 const RENEWAL_GRACE := 4  # a lapse is always recoverable, at a price
 const LICENSED_MODELS := ["sw-24", "rtr-edge", "fw-1"]
@@ -4202,6 +4359,7 @@ func sla_tick() -> void:
 	habit_tick()
 	facility_tick()
 	renewal_tick()
+	tac_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -5009,7 +5167,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "heat_wave_until": heat_wave_until, "habits": habits,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases,
+		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
@@ -5335,6 +5494,8 @@ func _apply(data: Dictionary) -> void:
 	facility = data.get("facility", {})
 	tour = data.get("tour", {})
 	renewals = data.get("renewals", [])
+	tac_cases = data.get("tac_cases", [])
+	firmware_bugs = data.get("firmware_bugs", {})
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))
 	destruction_certs = data.get("destruction_certs", [])

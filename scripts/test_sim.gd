@@ -3457,6 +3457,75 @@ static func run() -> int:
 		"renewals: second-hand hardware comes without a transferable licence, and is capped until you buy one")
 	Game.renewals = ren_before
 
+	# --- vendor TAC cases ---
+	var tac_renewals := Game.renewals.duplicate(true)
+	Game.renewals = []
+	Game.tac_cases = []
+	Game.firmware_bugs = {}
+	Game.money = 8000
+	var buggy := Game.new_device("sw-8")
+	var tac_rack := Game.add_rack(Vector2i(44, 1))
+	var tac_srv := Game.new_device("srv-1")
+	tac_rack.slots[0] = buggy
+	tac_rack.slots[1] = tac_srv
+	Game.connect_ifaces(tac_srv.ifaces[0], buggy.ifaces[0])
+	Game.firmware_bugs[buggy.name] = {"since": Game.cycle, "model": buggy.model}
+	var flapped := false
+	for _t in 200:
+		Game.firmware_tick()
+		if not buggy.ifaces[0].enabled:
+			flapped = true
+			buggy.ifaces[0].enabled = true  # the player fixes it; it does not stay fixed
+	check(flapped and Game.firmware_bugs.has(buggy.name),
+		"tac: a firmware defect keeps dropping the port and no configuration of yours touches it")
+	check(Game.support_tier() == 0 and Game.open_tac_case(buggy, 2) == "" \
+			and Game.open_tac_case(buggy, 2) != "",
+		"tac: one open case per device, and no cover means the slowest queue")
+	var tac_case: Dictionary = Game.tac_cases[0]
+	for kind_ev: String in Game.TAC_EVIDENCE:
+		Game.attach_evidence(tac_case, kind_ev)
+	check(String(tac_case["stage"]) == "level_one" and bool(tac_case["asked_again"]) \
+			and tac_case["evidence"].size() < Game.TAC_EVIDENCE.size(),
+		"tac: level one asks again for something that is already in the case")
+	for kind_ev2: String in Game.TAC_EVIDENCE:
+		Game.attach_evidence(tac_case, kind_ev2)
+	check(String(tac_case["stage"]) == "queued" \
+			and int(tac_case["waiting_until"]) - Game.cycle == int(Game.SUPPORT_TIERS[0]["wait"]),
+		"tac: a complete case queues, and the wait is the cover you bought")
+	var money_esc := Game.money
+	check(Game.escalate_case(tac_case) == "" and Game.money < money_esc \
+			and int(tac_case["waiting_until"]) - Game.cycle == int(Game.SUPPORT_TIERS[0]["escalate"]),
+		"tac: insisting costs you something and genuinely moves it along")
+	Game.cycle = int(tac_case["waiting_until"])
+	Game.tac_tick()
+	check(String(tac_case["stage"]) == "fix_ready",
+		"tac: some faults are only ever resolved by somebody else's engineering team")
+	Game.maintenance_until = Game.cycle + 3  # do it in a window, like an adult
+	check(Game.apply_firmware(tac_case) == "" and String(tac_case["stage"]) == "closed" \
+			and not Game.firmware_bugs.has(buggy.name) and buggy.status == "active",
+		"tac: the fix is a reload, and inside a change window it is routine")
+	Game.maintenance_until = -1
+	# buying cover is visibly worth it when you are the one waiting
+	check(Game.buy_support(2) == "" and Game.support_tier() == 2 \
+			and int(Game.SUPPORT_TIERS[2]["wait"]) < int(Game.SUPPORT_TIERS[0]["wait"]),
+		"tac: a premium contract is a shorter wait during an outage, which is when it matters")
+	# and the whole boring thing can be handed over
+	Game.firmware_bugs[buggy.name] = {"since": Game.cycle, "model": buggy.model}
+	Game.open_tac_case(buggy, 3)
+	var handed: Dictionary = Game.tac_cases[Game.tac_cases.size() - 1]
+	handed["delegated"] = true
+	for _w in 40:
+		Game.cycle += 1
+		Game.tac_tick()
+		if String(handed["stage"]) != "evidence" and String(handed["stage"]) != "level_one":
+			break
+	check(String(handed["stage"]) in ["queued", "fix_ready"] \
+			and not bool(handed.get("escalated", false)),
+		"tac: delegated cases do get worked, slowly, and nobody on your staff pushes back")
+	Game.firmware_bugs = {}
+	Game.tac_cases = []
+	Game.renewals = tac_renewals
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")
