@@ -10,6 +10,9 @@ static var _undo: Array = []  # Callables that revert each fault
 static var faults: Array = []  # descriptions, revealed on abandon
 static var _cast := {}  # role -> device/iface built by _build
 static var targets: Array = []  # [[ip_a, ip_b], ...] pairs that must ping
+## Some incidents are not a ping between two static addresses. When this is
+## set, solved() judges the outcome the customer actually cares about.
+static var outcome := {}  # {client, name, ip} for the services drill
 
 static var scenario := ""
 
@@ -18,16 +21,19 @@ static func start(n_breaks := 3, rng_seed := -1) -> void:
 	Game.drill_active = true
 	Game.racks = []
 	Game.links = []
+	outcome = {}
 	var rng := RandomNumberGenerator.new()
 	if rng_seed >= 0:
 		rng.seed = rng_seed
 	else:
 		rng.randomize()
-	match rng.randi() % 3:
+	match rng.randi() % 4:
 		0:
 			_build()
 		1:
 			_build_tenants()
+		2:
+			_build_services()
 		_:
 			_build_core()
 	_break(n_breaks, rng_seed)
@@ -65,6 +71,39 @@ static func _build_tenants() -> void:
 	targets = [["10.71.0.10", "10.71.0.20"]]
 	_cast = {"sw1": sw1, "sw2": sw2, "a": a, "b": b,
 		"trunk": sw1.ifaces[3], "access_a": sw1.ifaces[0], "access_vlan": 10}
+
+static func _build_services() -> void:
+	## nothing is unplugged and every route is right: the client still gets no
+	## address and the name goes nowhere
+	scenario = "Services: the client must get a lease and reach app.pkt by name."
+	var r1 := Game.add_rack(Vector2i(0, 0))
+	var sw := Game.new_device("sw-8")
+	var rtr := Game.new_device("rtr-lite")
+	var svc := Game.new_device("srv-1")
+	var app := Game.new_device("srv-1")
+	var client := Game.new_device("srv-1")
+	r1.slots[0] = sw
+	r1.slots[1] = rtr
+	r1.slots[2] = svc
+	r1.slots[3] = app
+	r1.slots[4] = client
+	Game.connect_ifaces(rtr.ifaces[0], sw.ifaces[0])
+	Game.connect_ifaces(svc.ifaces[0], sw.ifaces[1])
+	Game.connect_ifaces(app.ifaces[0], sw.ifaces[2])
+	Game.connect_ifaces(client.ifaces[0], sw.ifaces[3])
+	Game.add_ip(rtr.ifaces[0], "10.73.0.1/24")
+	Game.add_ip(svc.ifaces[0], "10.73.0.5/24")
+	Game.add_ip(app.ifaces[0], "10.73.0.20/24")
+	Game.add_static_route(svc, "0.0.0.0", 0, "10.73.0.1")
+	Game.add_static_route(app, "0.0.0.0", 0, "10.73.0.1")
+	svc.services["dhcp"] = {"iface": svc.ifaces[0].name, "start": "10.73.0.50",
+		"end": "10.73.0.99", "plen": 24, "gw": "10.73.0.1", "dns": "10.73.0.5",
+		"leases": {}}
+	svc.services["dns"] = {"records": {"app.pkt": "10.73.0.20"}}
+	targets = []
+	outcome = {"client": client, "name": "app.pkt", "ip": "10.73.0.20"}
+	_cast = {"sw1": sw, "rtr": rtr, "svc": svc, "a": app, "client": client,
+		"access_a": sw.ifaces[3], "access_vlan": 1}
 
 static func _build_core() -> void:
 	## three subnets behind two routers joined by a transit link
@@ -172,6 +211,28 @@ static func _break(n: int, rng_seed: int) -> void:
 						var old: Array = gw_srv.static_routes.duplicate(true)
 						gw_srv.static_routes = []
 						_undo.append(func() -> void: gw_srv.static_routes = old)])
+	if _cast.has("svc"):
+		var svc_dev: Net.NDevice = _cast["svc"]
+		pool.append(["the DHCP scope was bound to an interface that does not exist",
+			func() -> void:
+				var was: String = String(svc_dev.services["dhcp"]["iface"])
+				svc_dev.services["dhcp"]["iface"] = "eth9"
+				_undo.append(func() -> void: svc_dev.services["dhcp"]["iface"] = was)])
+		pool.append(["the DHCP pool was moved into a subnet the segment cannot use",
+			func() -> void:
+				var was_start: String = String(svc_dev.services["dhcp"]["start"])
+				var was_end: String = String(svc_dev.services["dhcp"]["end"])
+				svc_dev.services["dhcp"]["start"] = "192.168.44.50"
+				svc_dev.services["dhcp"]["end"] = "192.168.44.99"
+				_undo.append(func() -> void:
+					svc_dev.services["dhcp"]["start"] = was_start
+					svc_dev.services["dhcp"]["end"] = was_end)])
+		pool.append(["the app record was removed from the zone",
+			func() -> void:
+				var was_records: Dictionary = svc_dev.services["dns"]["records"].duplicate()
+				svc_dev.services["dns"]["records"] = {}
+				_undo.append(func() -> void:
+					svc_dev.services["dns"]["records"] = was_records)])
 	if _cast.has("trunk"):
 		var trunk_if: Net.Iface = _cast["trunk"]
 		pool.append(["the inter-switch trunk was pruned to the wrong VLAN list",
@@ -198,6 +259,18 @@ static func _break(n: int, rng_seed: int) -> void:
 		f[1].call()
 
 static func solved() -> bool:
+	if not outcome.is_empty():
+		var client: Net.NDevice = outcome["client"]
+		# the lease is the fix working, not a side effect of it: ask for one
+		client.ifaces[0].ips = []
+		client.static_routes = []
+		client.dns_cache = {}
+		if Sim.dhcp_request(client, client.ifaces[0]).is_empty():
+			return false
+		var found := Sim.resolve(client, String(outcome["name"]), false)
+		if found != String(outcome["ip"]):
+			return false
+		return bool(Sim.ping(client, found)["ok"])
 	for pair in targets:
 		var a := Sim._ip_owner(pair[0])
 		if a == null or not Sim.ping(a, pair[1])["ok"]:
@@ -229,5 +302,6 @@ static func finish(success: bool) -> Array:
 	_undo = []
 	faults = []
 	targets = []
+	outcome = {}
 	_cast = {}
 	return revealed

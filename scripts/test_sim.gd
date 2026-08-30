@@ -1732,7 +1732,8 @@ static func run() -> int:
 	var pre_money := Game.money
 	Drill.start(3, 42)
 	check(Game.drill_active and Drill.faults.size() >= 2, "drill: starts with hidden faults")
-	check(Drill.scenario != "" and not Drill.targets.is_empty(), "drill: scenario named with targets")
+	check(Drill.scenario != "" and (not Drill.targets.is_empty() or not Drill.outcome.is_empty()),
+		"drill: scenario named with something to prove")
 	check(not Drill.solved(), "drill: the generated network is actually broken")
 	var pre_cycle := Game.cycle
 	Game.sla_tick()
@@ -1750,6 +1751,22 @@ static func run() -> int:
 		var ok_sc: bool = Drill.solved()
 		Drill.finish(false)
 		check(ok_sc, "drill: scenario (seed %d) is solvable after reverting faults" % sc_seed)
+	# the services incident: nothing unplugged, and still no address and no name
+	var svc_seed := -1
+	for s_try in range(1, 24):
+		Drill.start(3, s_try)
+		if Drill.scenario.begins_with("Services"):
+			svc_seed = s_try
+			break
+		Drill.finish(false)
+	check(svc_seed > 0, "drill: the services scenario comes up in the rotation")
+	if svc_seed > 0:
+		check(Drill.targets.is_empty() and not Drill.outcome.is_empty(),
+			"drill: the services incident is judged on the lease and the name, not a static ping")
+		check(not Drill.solved(), "drill: the services incident really is broken")
+		Drill.cheat_fix()
+		check(Drill.solved(), "drill: fixing the services faults gets a lease and resolves the name")
+		Drill.finish(false)
 	Drill.start(2, 7)
 	var during := Game.all_devices().size()
 	Drill.finish(false)  # the quit path: abandon restores before saving

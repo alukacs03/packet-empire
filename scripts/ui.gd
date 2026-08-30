@@ -3555,7 +3555,15 @@ func _show_drill_banner() -> void:
 		c.queue_free()
 	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
 	drill_box.add_child(_label(Drill.scenario, 13, Color(0.9, 0.85, 0.8)))
-	drill_box.add_child(_label("Something is broken. Restore connectivity between:", 13, Color(0.85, 0.8, 0.78)))
+	if not Drill.outcome.is_empty():
+		# a services incident has no pair of static addresses to light up: the
+		# thing to restore is what the customer asked for
+		var client: Net.NDevice = Drill.outcome["client"]
+		drill_box.add_child(_label("%s must get an address by DHCP, resolve %s and reach it."
+			% [client.name, Drill.outcome["name"]], 13, Color(0.9, 0.88, 0.8)))
+	drill_box.add_child(_label("Something is broken. Restore connectivity between:", 13, Color(0.85, 0.8, 0.78))
+		if not Drill.targets.is_empty() else _label("Press Check when you believe it is fixed.",
+			13, Color(0.85, 0.8, 0.78)))
 	for pair in Drill.targets:
 		var a := Sim._ip_owner(pair[0])
 		var ok: bool = a != null and Sim.ping(a, pair[1])["ok"] \
