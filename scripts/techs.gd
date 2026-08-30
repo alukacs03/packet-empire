@@ -17,6 +17,7 @@ const HEIGHT := 84.0
 var people: Array = []  # Person nodes
 var _rng := RandomNumberGenerator.new()
 var _shown_slot := -1
+var _shown_visitors := -1
 
 class Person extends Node2D:
 	var target := Vector2.ZERO
@@ -26,6 +27,7 @@ class Person extends Node2D:
 	var idx := 0
 	var crew: Techs
 	var facing := 1.0
+	var visitor := false  # somebody signed in at the door, not on the payroll
 
 	func _process(dt: float) -> void:
 		if dwell > 0.0:
@@ -35,7 +37,7 @@ class Person extends Node2D:
 			if position.distance_to(target) <= step:
 				position = target
 				dwell = crew._rng.randf_range(DWELL.x, DWELL.y)
-				target = crew._work_spot(idx)
+				target = crew._visitor_spot(idx) if visitor else crew._work_spot(idx)
 			else:
 				var travel := (target - position).normalized()
 				if absf(travel.x) > 0.05:
@@ -112,7 +114,13 @@ class Person extends Node2D:
 			# One operator wears a compact single-ear radio headset.
 			draw_arc(head, HEIGHT * 0.115, PI * 1.1, PI * 1.9, 8, Color("17232b"), 1.8)
 			draw_circle(head + Vector2(-9 * facing, 1), 2.2, Color("223844"))
-		if working:
+		if visitor:
+			# a stick-on badge, worn where a lanyard would be, so the figure
+			# reads as somebody being let in rather than somebody who works here
+			draw_rect(Rect2(Vector2(-9, -HEIGHT * 0.66 + bob), Vector2(9, 7)), Color("f2efe4"))
+			draw_line(Vector2(-8, -HEIGHT * 0.63 + bob), Vector2(-1, -HEIGHT * 0.63 + bob),
+				Color("94502f"), 1.4)
+		if working and not visitor:
 			# a laptop lid catching the light, so you can see where the work is
 			var glow := 0.55 if not animated else 0.45 + 0.20 * sin(clock * 3.0 + phase)
 			var near := Vector2(10 * facing, -HEIGHT * 0.58)
@@ -130,8 +138,9 @@ func _ready() -> void:
 	_resize_crew()
 
 func _process(_dt: float) -> void:
-	if Game.day_slot() != _shown_slot:
+	if Game.day_slot() != _shown_slot or Game.visitors.size() != _shown_visitors:
 		_shown_slot = Game.day_slot()
+		_shown_visitors = Game.visitors.size()
 		_resize_crew()
 
 func _crew_size() -> int:
@@ -146,11 +155,20 @@ func _crew_size() -> int:
 			active += 1
 	return active
 
+func _visitor_spot(idx: int) -> Vector2:
+	## An escorted visitor goes where their escort goes; an unescorted one goes
+	## wherever they like, which is the whole point of the policy.
+	for other: Person in people:
+		if not other.visitor and Game.access_policy == "escorted":
+			return other.position + Vector2(34.0 - float(idx % 3) * 22.0, 8.0)
+	return _random_spot()
+
 func _resize_crew() -> void:
-	while people.size() > _crew_size():
+	var want := _crew_size() + Game.visitors.size()
+	while people.size() > want:
 		var gone: Person = people.pop_back()
 		gone.queue_free()
-	while people.size() < _crew_size():
+	while people.size() < want:
 		var p := Person.new()
 		p.crew = self
 		p.idx = people.size()
@@ -164,6 +182,13 @@ func _resize_crew() -> void:
 			else Color("d98b45")
 		add_child(p)
 		people.append(p)
+	# the people signed in at the door are the tail of the crowd, so a visitor
+	# arriving never turns somebody on the payroll into a stranger
+	for i in people.size():
+		var person: Person = people[i]
+		person.visitor = i >= _crew_size()
+		person.kit = Color("8f9aa4") if person.visitor else (
+			Color("39a6bc") if i % 2 == 0 else Color("d98b45"))
 
 func _quiet_spot(idx: int) -> Vector2:
 	## With nothing broken, people are still somewhere for a reason: waiting on

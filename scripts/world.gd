@@ -162,7 +162,19 @@ func _shoot_all() -> void:
 			Game.stage = Game.STAGES.size() - 1
 			rebuild_racks()
 			queue_redraw()],
+		["floor_visitor", func() -> void:
+			# somebody signed in at the door, with the escort policy in force
+			Game.stage = 0
+			rebuild_racks()
+			Game.staff = []  # the two contractors, so the escort is visible
+			Game.access_policy = "escorted"
+			Game.visitors = []
+			Game.admit_visitor("Vas Elektro", "aircon service")
+			$Techs._resize_crew()
+			$Floor.queue_redraw()],
 		["welcome", func() -> void:
+			Game.visitors = []
+			$Techs._resize_crew()
 			Game.stage = 0
 			rebuild_racks()
 			Game.customer_outage_active = false
