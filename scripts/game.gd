@@ -3481,13 +3481,22 @@ const FACILITY_TASKS := {
 		"blurb": "Batteries die quietly and are discovered loudly."},
 }
 
-func facility_due_in(task: String) -> int:
-	if not facility.has(task):
-		facility[task] = cycle  # the schedule starts the first time anyone looks at it
-	return int(facility[task]) + int(FACILITY_TASKS[task]["every"]) - cycle
+func facility_key(task: String, site := -1) -> String:
+	## One diary per floor. An existing save keeps its plain keys, which belong
+	## to the floor it was keeping them on, and every other site gets its own.
+	var idx := current_site if site < 0 else site
+	if idx == 0 and facility.has(task):
+		return task
+	return task if idx == 0 else "%d|%s" % [idx, task]
 
-func facility_overdue(task: String) -> int:
-	return maxi(0, -facility_due_in(task))
+func facility_due_in(task: String, site := -1) -> int:
+	var key := facility_key(task, site)
+	if not facility.has(key):
+		facility[key] = cycle  # the schedule starts the first time anyone looks at it
+	return int(facility[key]) + int(FACILITY_TASKS[task]["every"]) - cycle
+
+func facility_overdue(task: String, site := -1) -> int:
+	return maxi(0, -facility_due_in(task, site))
 
 func filter_dirt() -> float:
 	## Neglect degrades along a curve the player can watch, not a coin flip.
@@ -3516,7 +3525,7 @@ func service_facility(task: String) -> String:
 	var cost := int(FACILITY_TASKS[task]["cost"])
 	if not spend_on("facility", cost):
 		return "that costs $%d and you do not have it" % cost
-	facility[task] = cycle
+	facility[facility_key(task)] = cycle
 	if task == "generator":
 		facility["generator_tests"] = int(facility.get("generator_tests", 0)) + 1
 		# a real transfer to backup power, with the risk that goes with it

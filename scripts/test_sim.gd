@@ -2999,6 +2999,24 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	# --- one facility diary per floor ---
+	var fac_sites := Game.sites.duplicate(true)
+	var fac_here := Game.current_site
+	var fac_state := Game.facility.duplicate(true)
+	Game.facility = {"filters": Game.cycle - 100}  # an old save, on the first floor
+	check(Game.facility_due_in("filters") < 0, "facility: an existing diary belongs to floor one")
+	Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	Game.current_site = 1
+	check(Game.facility_due_in("filters") > 0,
+		"facility: a new floor does not inherit another building's neglect")
+	Game.service_facility("filters")
+	Game.current_site = 0
+	check(Game.facility_due_in("filters") < 0,
+		"facility: and servicing one floor does not service the other")
+	Game.sites = fac_sites
+	Game.current_site = fac_here
+	Game.facility = fac_state
+
 	# --- proving the redundancy on a day you chose ---
 	var dr_deals := Game.deals.duplicate(true)
 	var dr_haz := Game.hazards.duplicate(true)
