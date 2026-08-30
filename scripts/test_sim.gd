@@ -230,6 +230,9 @@ static func ui_smoke(world: Node2D) -> int:
 			map_seen[int(map_r.site)] = true
 			map_last = int(map_r.site)
 	check(map_grouped, "map: cabinets from one building sit together, not interleaved")
+	check(absf(Game.site_hue(0) - Game.site_hue(1)) > 0.15 \
+			and absf(Game.site_hue(1) - Game.site_hue(2)) > 0.15,
+		"map: and two buildings never land on the same colour")
 	Game.racks.erase(map_far)
 	Game.sites = map_sites
 

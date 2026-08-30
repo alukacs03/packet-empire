@@ -552,15 +552,17 @@ class TopoMap extends Control:
 			draw_rect(box, UIW.colour("surface"))
 			# the same colour the floor of that building is cast in
 			var site_col: Color = UIW.colour("accent") if Game.site_count() <= 1 \
-				else Color.from_hsv(Game.site_hue(Game.site_name(r.site)), 0.5, 1.0)
+				else Color.from_hsv(Game.site_hue(int(r.site)), 0.5, 1.0)
 			draw_rect(Rect2(box.position, Vector2(5, box.size.y)), site_col)
 			draw_rect(Rect2(box.position, Vector2(box.size.x, 42)), Color("203854"))
 			draw_rect(box, UIW.colour("border_strong"), false, 1.0)
 			draw_line(origin + Vector2(18, 42), origin + Vector2(CARD_W - 18, 42),
 				Color(UIW.colour("accent"), 0.42), 1.0)
 			var site_tag: String = "" if Game.site_count() <= 1 else "  ·  " + Game.site_name(r.site)
+			# clipped before the node count: the site tag made the title long
+			# enough to run straight through it
 			draw_string(_mono, origin + Vector2(18, 27), "RACK  /  " + r.name + site_tag,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
+				HORIZONTAL_ALIGNMENT_LEFT, CARD_W - 104, 13,
 				UIW.colour("text_strong") if Game.site_count() <= 1 else site_col)
 			draw_string(_mono, origin + Vector2(CARD_W - 78, 27), "%02d NODES" % filled.size(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UIW.colour("muted"))

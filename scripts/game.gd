@@ -4583,10 +4583,12 @@ func site_of_device(d: Net.NDevice) -> int:
 	var r := rack_of(d)
 	return r.site if r != null else 0
 
-func site_hue(name: String) -> float:
-	## One colour per site, derived from its name so it never moves, and shared
-	## by the floor and the switcher so they cannot disagree.
-	return float(absi(hash(name)) % 360) / 360.0
+func site_hue(site: int) -> float:
+	## One colour per site, spread around the wheel by index rather than hashed
+	## from the name: two hashed names can land on the same green, and then the
+	## colour tells the player nothing. Shared by the floor, the switcher, the
+	## operations header and the map, so they cannot disagree.
+	return fmod(float(maxi(0, site)) * 0.618 + 0.11, 1.0)
 
 func elsewhere(d: Net.NDevice) -> String:
 	## Where this device physically is, when that is not where you are. Acting

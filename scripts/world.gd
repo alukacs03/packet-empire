@@ -500,6 +500,7 @@ func _shoot_all() -> void:
 				ui.open_contracts()],
 		["business_staff",
 			func() -> void:
+				ui.close_everything()
 				# the rota: shifts, who carries the phone, and who is tired
 				var rng := RandomNumberGenerator.new()
 				rng.seed = 11
@@ -517,7 +518,14 @@ func _shoot_all() -> void:
 			ui.contracts_tab = "Jobs"
 			ui.open_contracts()],
 		["map", func() -> void:
-			ui.close_contracts()
+			# two buildings by now, so the map has to group them
+			ui.close_everything()
+			if Game.site_count() < 2:
+				Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+			if Game.racks_on(1).is_empty():
+				var far := Game.add_rack(Vector2i(1, 1), 1)
+				var far_sw2 := Game.new_device("sw-8")
+				far.slots[0] = far_sw2
 			ui.toggle_map()],
 		["pedia", func() -> void:
 			ui.toggle_map()

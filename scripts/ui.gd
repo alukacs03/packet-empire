@@ -525,7 +525,7 @@ func _refresh_money() -> void:
 		# the same colour the floor itself is cast in, so the button and the
 		# room agree about which building you are in
 		site_btn.add_theme_color_override("font_color",
-			Color.from_hsv(Game.site_hue(Game.site_name(Game.current_site)), 0.45, 1.0))
+			Color.from_hsv(Game.site_hue(Game.current_site), 0.45, 1.0))
 	if Game.current_site != 0:
 		expand_btn.visible = false  # acquired floors come as they are
 	elif Game.stage < Game.STAGES.size() - 1:
@@ -564,6 +564,18 @@ func _process(_dt: float) -> void:
 			cli_in.grab_focus()
 		if cli_in.has_focus() and not cli_in.is_editing():
 			cli_in.edit()
+
+func close_everything() -> void:
+	## Put the interface back to the bare floor. The screenshot harness needs a
+	## known state, and a panel left open by the last shot silently blocks the
+	## next one from opening anything.
+	for panel in [rack_overlay, dev_overlay, if_overlay, contracts_overlay, welcome_overlay,
+			map_overlay, menu_overlay, pedia_overlay, help_overlay, ops_overlay,
+			search_overlay, demo_overlay]:
+		if panel != null:
+			panel.visible = false
+	cur_dev = null
+	cur_rack = null
 
 func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
@@ -2102,7 +2114,7 @@ func _refresh_ops() -> void:
 		ops_scope_lbl.text = "LIVE ESTATE  /  CURRENT SHIFT" if one_floor \
 			else "THIS FLOOR  /  %s" % Game.site_name(Game.current_site).to_upper()
 		ops_scope_lbl.add_theme_color_override("font_color", UIW.colour("accent") if one_floor
-			else Color.from_hsv(Game.site_hue(Game.site_name(Game.current_site)), 0.45, 1.0))
+			else Color.from_hsv(Game.site_hue(Game.current_site), 0.45, 1.0))
 	for c in ops_box.get_children():
 		ops_box.remove_child(c)
 		c.queue_free()
