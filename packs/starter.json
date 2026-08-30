@@ -104,7 +104,7 @@
       "customer": "Alpha Systems",
       "reward": 900,
       "brief": "They want the service reachable by name, and they want it to still be there when one box is switched off. Run DNS for app.pkt, and make sure the answer survives losing the machine that usually serves it.",
-      "hint": "A record on a server they can reach, then a second copy of the service so switching one off changes nothing.",
+      "hint": "A record on a server they can reach, then a second machine answering at the same address so switching one off changes nothing.",
       "setup": [
         {
           "kind": "message",
@@ -119,7 +119,7 @@
         },
         {
           "kind": "survives_device_loss",
-          "device": "srv1",
+          "owner_of": "10.90.0.11",
           "from": "10.90.0.10",
           "to": "10.90.0.11"
         }

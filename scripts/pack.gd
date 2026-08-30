@@ -122,8 +122,9 @@ static func _validate_predicate(pred: Variant, where: String) -> Array:
 			if not _is_address(String(pred.get("from", ""))):
 				errors.append("%s.from: '%s' is not an address" % [where, pred.get("from", "")])
 		"survives_device_loss":
-			if String(pred.get("device", "")).strip_edges() == "":
-				errors.append("%s.device: name the device to switch off" % where)
+			if String(pred.get("device", "")).strip_edges() == "" \
+					and not _is_address(String(pred.get("owner_of", ""))):
+				errors.append("%s: name a 'device' to switch off, or the address in 'owner_of' whose owner should be switched off" % where)
 			for field2: String in ["from", "to"]:
 				if not _is_address(String(pred.get(field2, ""))):
 					errors.append("%s.%s: '%s' is not an address" % [where, field2,
@@ -290,10 +291,15 @@ static func _eval(pred: Dictionary) -> Dictionary:
 			return {"ok": got, "why": "" if got
 				else "%s resolves to %s and nothing answers there" % [pred["name"], answer]}
 		"survives_device_loss":
-			var victim := _device(String(pred["device"]))
+			# naming a device in a pack is brittle: an author can instead name
+			# the address whose owner should be switched off
+			var victim := _device(String(pred.get("device", "")))
+			if victim == null and pred.has("owner_of"):
+				victim = Contracts._owner(String(pred["owner_of"]))
 			var src3 := Contracts._owner(String(pred.get("from", "")))
 			if victim == null:
-				return {"ok": false, "why": "there is no device called %s" % pred["device"]}
+				return {"ok": false, "why": "nothing to switch off for %s"
+					% [pred.get("device", pred.get("owner_of", "?"))]}
 			if src3 == null:
 				return {"ok": false, "why": "nothing owns %s yet" % pred.get("from", "")}
 			var was_status := victim.status
@@ -304,7 +310,7 @@ static func _eval(pred: Dictionary) -> Dictionary:
 			Sim.flush_learned_state()
 			return {"ok": alive, "why": "" if alive
 				else "%s stops reaching %s when %s is switched off"
-					% [pred.get("from", ""), pred.get("to", ""), pred["device"]]}
+					% [pred.get("from", ""), pred.get("to", ""), victim.name]}
 	return {"ok": false, "why": "unknown requirement"}
 
 static func _device(name: String) -> Net.NDevice:
@@ -352,7 +358,8 @@ static func describe(pred: Dictionary) -> String:
 				" and reaches it" if bool(pred.get("reach", true)) else ""]
 		"survives_device_loss":
 			return "%s still reaches %s with %s switched off" % [pred.get("from", ""),
-				pred.get("to", ""), pred.get("device", "")]
+				pred.get("to", ""), pred.get("device", "whatever answers at %s"
+					% pred.get("owner_of", ""))]
 	return "an unknown requirement"
 
 ## ---------- actions ----------

@@ -51,7 +51,7 @@ Every requirement is one of these, and they compose with `all`, `any`, `not`:
 | `config_saved` | `device` | that device is not running an unsaved configuration |
 | `money_at_least` | `amount` | the bank balance is at least that |
 | `survives_link_loss` | `a`, `b`, `from`, `to` | `from` still reaches `to` with the `a`–`b` link down |
-| `survives_device_loss` | `device`, `from`, `to` | `from` still reaches `to` with `device` switched off, which is how you ask for a second copy |
+| `survives_device_loss` | `device` or `owner_of`, `from`, `to` | `from` still reaches `to` with that device switched off. Prefer `owner_of` (an address): naming a device by name breaks in somebody else's world |
 | `resolves` | `from`, `name`, optional `to`, `v6`, `reach` | `from` looks the name up and (unless `reach` is false) reaches the answer; `to` pins the address, `v6` asks for AAAA |
 
 Each one produces a readable line for the checklist and a specific reason

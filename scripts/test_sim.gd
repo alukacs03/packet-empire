@@ -8114,6 +8114,28 @@ static func run() -> int:
 		if not bool((req["t"] as Callable).call()):
 			all_pass = false
 	check(all_pass, "packs: an authored job verifies against the live network, like the campaign")
+	# and the hardest authored job can actually be finished, the way a player would
+	var pk_dns := Game.new_device("srv-1")
+	var pk_copy := Game.new_device("srv-1")
+	pk_rack.slots[3] = pk_dns
+	pk_rack.slots[4] = pk_copy
+	Game.connect_ifaces(pk_dns.ifaces[0], pk_sw.ifaces[3])
+	Game.connect_ifaces(pk_copy.ifaces[0], pk_sw.ifaces[4])
+	Game.add_ip(pk_dns.ifaces[0], "10.90.0.5/24")
+	Game.add_ip(pk_copy.ifaces[0], "10.90.0.11/24")   # the second copy of the service
+	pk_dns.services["dns"] = {"records": {"app.pkt": "10.90.0.11"}}
+	pk_a.resolver = "10.90.0.5"
+	Sim.flush_learned_state()
+	var pk_hard := {}
+	for c_h: Dictionary in Pack.contracts():
+		if String(c_h["id"]).ends_with("name_and_spare"):
+			pk_hard = c_h
+	var pk_hard_ok := not pk_hard.is_empty()
+	for req_h: Dictionary in pk_hard.get("reqs", []):
+		if not bool((req_h["t"] as Callable).call()):
+			pk_hard_ok = false
+	check(pk_hard_ok,
+		"packs: the authored name-and-second-copy job can be finished the way a player would")
 	# actions are a small, safe set
 	var pk_money := Game.money
 	Pack.run_actions([{"kind": "reward", "amount": 100},
