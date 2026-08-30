@@ -1888,6 +1888,27 @@ static func run() -> int:
 		check(Drill.solved(),
 			"drill: fixing it leaves the service answering with either room dark")
 		Drill.finish(false)
+	# a drill that rewrites the site list has to put it back exactly
+	if rooms_seed > 0:
+		var world_sites := Game.sites.duplicate(true)
+		var world_here := Game.current_site
+		var world_circuits := Game.circuits.duplicate(true)
+		Game.sites = [Game.sites[0]]
+		var keep_site := Game.add_site("Player annex", Vector2i(6, 6), "leased", "Pecs")
+		Game.current_site = keep_site
+		Game.carrier_outage = {}
+		Game.buy_circuit(0, keep_site, 1)
+		var keep_sites := Game.sites.duplicate(true)
+		var keep_circuits := Game.circuits.size()
+		Drill.start(3, rooms_seed)
+		Drill.finish(false)
+		check(Game.sites.size() == keep_sites.size() and Game.current_site == keep_site \
+				and Game.circuits.size() == keep_circuits \
+				and String(Game.site_name(keep_site)) == "Player annex",
+			"drill: the player's own floors, circuits and current floor all come back")
+		Game.sites = world_sites
+		Game.current_site = world_here
+		Game.circuits = world_circuits
 	Drill.start(2, 7)
 	var during := Game.all_devices().size()
 	Drill.finish(false)  # the quit path: abandon restores before saving
