@@ -7334,5 +7334,32 @@ static func run() -> int:
 		"loc: pseudo-localisation is longer and accented, which is how clipping is found")
 	Loc.language = loc_before
 
+	# --- exporting the topology ---
+	var ex_rack := Game.add_rack(Vector2i(90, 1))
+	var ex_sw := Game.new_device("sw-8")
+	var ex_srv := Game.new_device("srv-1")
+	ex_rack.slots[0] = ex_sw
+	ex_rack.slots[1] = ex_srv
+	Game.connect_ifaces(ex_srv.ifaces[0], ex_sw.ifaces[0])
+	Game.add_ip(ex_srv.ifaces[0], "10.190.0.10/24")
+	var mermaid := Game.topology_mermaid()
+	check(mermaid.begins_with("graph LR") and mermaid.contains(ex_sw.name) \
+			and mermaid.contains("subgraph %s" % ex_rack.name),
+		"export: the diagram is Mermaid text with the cabinets as subgraphs")
+	check(mermaid.contains(ex_srv.ifaces[0].name),
+		"export: every run names the ports at both ends")
+	var listing := Game.topology_text()
+	check(listing.contains("10.190.0.10/24") and listing.contains(ex_srv.name) \
+			and listing.contains("→"),
+		"export: the plain listing carries addresses and what is cabled to what")
+	ex_sw.ifaces[0].enabled = false
+	check(Game.topology_mermaid().contains("-.-") and Game.topology_text().contains("(down)"),
+		"export: a port that is down looks different in both formats")
+	ex_sw.ifaces[0].enabled = true
+	var written := Game.export_topology("user://topology_test.md")
+	check(written.contains("```mermaid") and written.contains(Game.company_name) \
+			and FileAccess.file_exists("user://topology_test.md"),
+		"export: it is written to a file and handed back for the clipboard")
+
 	print("---- %d failures" % fails)
 	return fails

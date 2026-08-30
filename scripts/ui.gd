@@ -3359,6 +3359,18 @@ func _build_menu() -> void:
 		get_parent().rebuild_racks()
 		_show_drill_banner())
 	v.add_child(drill_btn)
+	var diagram := Button.new()
+	diagram.text = "Export the topology (diagram + listing)"
+	diagram.tooltip_text = "Mermaid for a picture, plain text for a report. Copied to the clipboard as well."
+	diagram.pressed.connect(func() -> void:
+		var body: String = Game.export_topology()
+		if body == "":
+			_toast("could not write the export")
+			return
+		DisplayServer.clipboard_set(body)
+		menu_overlay.visible = false
+		hud_toast("Topology exported and copied to the clipboard.", true))
+	v.add_child(diagram)
 	var chal_btn := Button.new()
 	chal_btn.text = "Challenge…  (a drill anybody can reproduce from a code)"
 	chal_btn.pressed.connect(func() -> void:

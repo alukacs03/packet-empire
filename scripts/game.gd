@@ -4298,6 +4298,76 @@ func forget_run(at: int) -> void:
 func forget_all_runs() -> void:
 	_write_history([])
 
+func topology_mermaid(site := -1) -> String:
+	## The estate as a Mermaid diagram: text anybody can paste into a document,
+	## a wiki or a chat window and get a picture out of.
+	var target := current_site if site < 0 else site
+	var lines: Array = ["graph LR"]
+	var ids := {}
+	for r: Net.Rack in racks_on(target):
+		var members: Array = []
+		for d in r.slots:
+			if d == null:
+				continue
+			var id := "n%d" % ids.size()
+			ids[d] = id
+			var addr := ""
+			for i: Net.Iface in d.ifaces:
+				if not i.ips.is_empty():
+					addr = String(i.ips[0])
+					break
+			members.append("    %s[\"%s<br/>%s%s\"]" % [id, d.name, MODELS[d.model]["label"],
+				"<br/>" + addr if addr != "" else ""])
+		if members.is_empty():
+			continue
+		lines.append("  subgraph %s" % r.name)
+		lines.append_array(members)
+		lines.append("  end")
+	for l: Net.Link in links:
+		if not ids.has(l.a.dev) or not ids.has(l.b.dev):
+			continue
+		var style := "---"
+		if not (l.a.enabled and l.b.enabled):
+			style = "-.-"  # administratively down
+		lines.append("  %s %s|%s ↔ %s| %s" % [ids[l.a.dev], style, l.a.name, l.b.name,
+			ids[l.b.dev]])
+	return "\n".join(PackedStringArray(lines))
+
+func topology_text(site := -1) -> String:
+	## The same thing as plain text, for a report or somebody's notes.
+	var target := current_site if site < 0 else site
+	var lines: Array = ["%s — %s, cycle %d" % [company_name, site_name(target), cycle]]
+	for r: Net.Rack in racks_on(target):
+		lines.append("%s:" % r.name)
+		for idx in Net.Rack.SLOTS:
+			var d = r.slots[idx]
+			if d == null:
+				continue
+			var addrs: Array = []
+			for i: Net.Iface in d.ifaces:
+				for cidr in i.ips:
+					addrs.append(String(cidr))
+			lines.append("  U%d  %-10s %-22s %s" % [idx + 1, d.name, MODELS[d.model]["label"],
+				", ".join(PackedStringArray(addrs))])
+			for i2: Net.Iface in d.ifaces:
+				var peer := effective_peer(i2)
+				if peer != null:
+					lines.append("        %-10s → %s %s%s" % [i2.name, peer.dev.name, peer.name,
+						"" if i2.enabled and peer.enabled else "   (down)"])
+	return "\n".join(PackedStringArray(lines))
+
+func export_topology(path := "user://topology.md") -> String:
+	## Written where the player can find it, and handed back so the interface
+	## can put it on the clipboard as well.
+	var body := "# %s\n\n```mermaid\n%s\n```\n\n```\n%s\n```\n" % [company_name,
+		topology_mermaid(), topology_text()]
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return ""
+	f.store_string(body)
+	log_event("EXPORTED: the topology is written out as a diagram and a plain listing.")
+	return body
+
 func end_run(ending: String) -> String:
 	## Freeze it. The save is untouched: this is a report, not a deletion.
 	if not FINALE_ENDINGS.has(ending):
