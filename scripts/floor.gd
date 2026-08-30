@@ -18,11 +18,27 @@ func reject_tile(tile: Vector2i, reason: String) -> void:
 	reject_overlay.show_rejection(tile, reason)
 	Sfx.play("bad")
 
-func _process(_dt: float) -> void:
+var _sound_clock := 0.0
+
+func _process(dt: float) -> void:
 	var t := Iso.world_to_tile(get_global_mouse_position())
 	if t != hover_tile:
 		hover_tile = t
 	queue_redraw()  # hover pulse animates continuously
+	_sound_clock -= dt
+	if _sound_clock > 0.0:
+		return
+	_sound_clock = 2.5
+	var audio: Dictionary = Game.audio_state()
+	Sfx.ambient_tick(float(audio["load"]), float(audio["heat"]))
+	# a cue repeats while its condition holds, from the cabinet responsible
+	var cues: Array = audio["cues"]
+	for cue: String in cues:
+		var where: Variant = audio.get("where")
+		if cue == "thermal" and where != null:
+			Sfx.play_at(cue, self, Iso.tile_to_world(where.tile))
+		else:
+			Sfx.play(cue)
 
 func _in_grid(t: Vector2i) -> bool:
 	var g: Vector2i = Game.grid_size()

@@ -2904,6 +2904,39 @@ static func run() -> int:
 	Game.status_posts = up_posts
 	Game.last_upstream_cycle = -999
 
+	# --- hear it before you see it ---
+	var quiet_mix := Sfx.ambient_mix(0.1, 0.0)
+	var busy_mix := Sfx.ambient_mix(1.0, 0.0)
+	var hot_mix := Sfx.ambient_mix(1.0, 1.0)
+	check(float(busy_mix[0]) > float(quiet_mix[0]) and float(busy_mix[1]) > float(quiet_mix[1]) \
+			and float(hot_mix[1]) > float(busy_mix[1]),
+		"sound: a busy floor is audibly busier than an idle one, and a hot one more again")
+	var audio := Game.audio_state()
+	check(audio.has("load") and audio.has("heat") and audio["cues"] is Array,
+		"sound: the room's voice is derived from live capacity and heat, not a loop")
+	var snd_outage := Game.customer_outage_active
+	Game.customer_outage_active = true
+	check("alert" in Game.audio_alerts(),
+		"sound: a customer outage is audible before any panel is opened")
+	Game.customer_outage_active = snd_outage
+	var snd_ups := Game.ups.duplicate(true)
+	var snd_feeds: Dictionary = Game.site_feeds(Game.current_site)
+	Game.ups[Game.current_site] = 3
+	snd_feeds["A"] = false
+	check("ups" in Game.audio_alerts(),
+		"sound: running on battery has its own cue, and only while the battery is carrying it")
+	Game.ups[Game.current_site] = 0
+	check(not ("ups" in Game.audio_alerts()),
+		"sound: a flat battery stops beeping, because the condition changed")
+	snd_feeds["A"] = true
+	Game.ups = snd_ups
+	Sfx.last_cue = ""
+	var was_muted: bool = Sfx.muted
+	Sfx.muted = true
+	Sfx.play("alert")
+	check(Sfx.last_cue == "", "sound: muting the game really does silence every cue")
+	Sfx.muted = was_muted
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

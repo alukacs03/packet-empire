@@ -2523,6 +2523,33 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 	inc["blame"] = choice
 	return ""
 
+func audio_state() -> Dictionary:
+	## What the room should sound like right now, derived from live state only.
+	## Nothing here is decorative: every number and every cue is confirmable
+	## with the visual tools.
+	var cap := capacity(current_site)
+	var watts := float(int(cap["watts"]))
+	var cooling := maxf(1.0, float(cooling_capacity()))
+	var load := clampf(watts / cooling, 0.0, 1.5) * day_factor()
+	var hot := hottest_rack(current_site)
+	var heat := 0.0
+	if hot != null:
+		heat = clampf(float(rack_heat(hot)) / maxf(1.0, float(rack_cooling(hot))) - 0.6, 0.0, 1.5)
+	return {"load": clampf(load, 0.0, 1.5), "heat": heat, "cues": audio_alerts(),
+		"where": hot}
+
+func audio_alerts() -> Array:
+	## Each cue names a condition the player can go and confirm.
+	var cues: Array = []
+	var feeds := site_feeds(current_site)
+	if (not bool(feeds["A"]) or not bool(feeds["B"])) and int(ups.get(current_site, 0)) > 0:
+		cues.append("ups")  # running on battery: the beep every operator knows
+	if overheating() or (hottest_rack(current_site) != null and rack_hot(hottest_rack(current_site))):
+		cues.append("thermal")
+	if customer_outage_active:
+		cues.append("alert")
+	return cues
+
 func multihomed() -> bool:
 	## two established upstream sessions is what survives one of them going away
 	var sessions := 0
@@ -3482,6 +3509,7 @@ func _field_fault() -> void:
 			var had_startup := not rebooted.startup.is_empty()
 			apply_device_config(rebooted, rebooted.startup)
 			device_log(rebooted, "system restarted after a power event")
+			Sfx.play("reboot")
 			stats["faults"] += 1
 			log_event("FIELD: %s rebooted after a power blip: %s" % [rebooted.name,
 				"startup-config restored it." if had_startup
