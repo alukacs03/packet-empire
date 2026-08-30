@@ -1255,6 +1255,19 @@ func _build_dev_overlay() -> void:
 			dev_faceplate.confirm_config_write()
 			Sfx.play("good"))
 	btn_row.add_child(save_cfg_btn)
+	var confirm_btn := Button.new()
+	confirm_btn.text = "Arm confirmed commit"
+	confirm_btn.tooltip_text = "The change reverts in three cycles unless you come back and confirm it. This is what saves you when you cut your own path."
+	confirm_btn.pressed.connect(func() -> void:
+		var err: String = Game.arm_confirm(cur_dev) if not Game.confirm_commits.has(cur_dev.name) \
+			else Game.confirm_commit(cur_dev)
+		if err != "":
+			_toast(err)
+		else:
+			hud_toast("Confirmed commit %s on %s." % [
+				"armed" if Game.confirm_commits.has(cur_dev.name) else "confirmed", cur_dev.name],
+				true))
+	btn_row.add_child(confirm_btn)
 	var uninstall := Button.new()
 	uninstall.text = "Decommission…"
 	uninstall.tooltip_text = "Pulling it is the fast half. What you skip is what an auditor asks about later."
@@ -2032,6 +2045,49 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+	var stranded: Array = []
+	for d_lock: Net.NDevice in Game.all_devices():
+		if Game.locked_out(d_lock):
+			stranded.append(d_lock)
+	if not stranded.is_empty() or not Game.confirm_commits.is_empty():
+		ops_box.add_child(_section("UNREACHABLE"))
+	for d_lock2: Net.NDevice in stranded:
+		var lrow := HBoxContainer.new()
+		lrow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(lrow)
+		var ll := _label("  %s is running and cannot be reached" % d_lock2.name, 12,
+			Prefs.bad_colour())
+		ll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lrow.add_child(ll)
+		var walk_btn := Button.new()
+		var rack_lock := Game.rack_of(d_lock2)
+		var far := rack_lock != null and int(rack_lock.site) != 0
+		walk_btn.text = "Site visit ($350)" if far else "Walk to the rack"
+		walk_btn.pressed.connect(func() -> void:
+			var err: String = Game.walk_to_device(d_lock2)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		lrow.add_child(walk_btn)
+	for name_c: String in Game.confirm_commits:
+		var crow2 := HBoxContainer.new()
+		crow2.add_theme_constant_override("separation", 8)
+		ops_box.add_child(crow2)
+		var cl2 := _label("  %s: change reverts at cycle %d unless confirmed" % [name_c,
+			int(Game.confirm_commits[name_c]["due"])], 12, Color(1.0, 0.82, 0.5))
+		cl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		crow2.add_child(cl2)
+		var conf := Button.new()
+		conf.text = "Confirm"
+		conf.pressed.connect(func() -> void:
+			for d_conf: Net.NDevice in Game.all_devices():
+				if d_conf.name == name_c:
+					var err: String = Game.confirm_commit(d_conf)
+					if err != "":
+						_toast(err)
+			_refresh_ops())
+		crow2.add_child(conf)
 	ops_box.add_child(_section("DOCUMENTATION"))
 	ops_box.add_child(_wrap("  %d fact(s) on this floor no longer match what is written down. Documentation that is wrong is slower than none, because people believe it."
 		% Game.site_drift(), 12,
@@ -4939,6 +4995,10 @@ func _refresh_open() -> void:
 		_refresh_slots()
 
 func _toggle_cli() -> void:
+	if not cli_box.visible and cur_dev != null and Game.locked_out(cur_dev):
+		# it is running your new configuration and nothing can reach it
+		_toast("%s is unreachable. Console server, a walk to the rack, or a site visit." % cur_dev.name)
+		return
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
 		cli_out.custom_minimum_size.y = 220

@@ -253,6 +253,9 @@ var rmas: Array = []  # dead units in transit, and what is coming back
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
+var lockout_state := {}  # device name -> was it unreachable last cycle
+var confirm_commits := {}  # device name -> {cfg, due}: revert unless somebody confirms
+var physical_access := {}  # device name -> cycle until somebody is standing at it
 var docs := {}  # device name -> what the documentation claims is racked and patched
 var orphan_intel := {}  # orphan key -> how much digging the player has done (0-2)
 var tac_cases: Array = []  # vendor support cases and how far each one has got
@@ -1258,6 +1261,96 @@ func remote_hands_tick() -> void:
 			log_event("REMOTE HANDS: they did it to %s%s. That is what the label said, or rather did not."
 				% [target_dev.name, " %s" % target_iface.name if target_iface != null else ""])
 		topology_changed.emit()
+
+func management_ips(d: Net.NDevice) -> Array:
+	var out: Array = []
+	for i: Net.Iface in d.ifaces:
+		if d.type == "switch" and not i.name.begins_with("Management"):
+			continue
+		for cidr in i.ips:
+			out.append(String(cidr).split("/")[0])
+	return out
+
+func console_reachable(d: Net.NDevice) -> bool:
+	## Out of band: a serial cable from a console server does not care about
+	## addressing at all, which is the entire reason it is worth having.
+	for i: Net.Iface in d.ifaces:
+		var l := link_at(i)
+		if l != null and l.other(i).dev.type == "console" and l.other(i).dev.status == "active":
+			return true
+	return false
+
+func device_reachable(d: Net.NDevice) -> bool:
+	var ips := management_ips(d)
+	if ips.is_empty():
+		return true  # never addressed for remote management: you are at its console
+	for other: Net.NDevice in all_devices():
+		if other == d or other.status != "active":
+			continue
+		for ip: String in ips:
+			if Sim.ping(other, ip)["ok"]:
+				return true
+	return false
+
+func locked_out(d: Net.NDevice) -> bool:
+	if cycle < int(physical_access.get(d.name, -1)):
+		return false
+	return not device_reachable(d) and not console_reachable(d)
+
+func arm_confirm(d: Net.NDevice, cycles := 3) -> String:
+	## The counter-mechanic real gear gives you: the change reverts unless you
+	## come back and say it worked.
+	if confirm_commits.has(d.name):
+		return "there is already a confirmation pending on %s" % d.name
+	confirm_commits[d.name] = {"cfg": device_config(d), "due": cycle + maxi(1, cycles)}
+	log_event("CONFIRMED COMMIT armed on %s: it reverts in %d cycles unless you confirm."
+		% [d.name, maxi(1, cycles)])
+	return ""
+
+func confirm_commit(d: Net.NDevice) -> String:
+	if not confirm_commits.has(d.name):
+		return "nothing is pending on %s" % d.name
+	if locked_out(d):
+		return "you cannot confirm a change on a device you cannot reach"
+	confirm_commits.erase(d.name)
+	d.startup = device_config(d)
+	log_event("CONFIRMED: the change on %s stands." % d.name)
+	return ""
+
+func walk_to_device(d: Net.NDevice) -> String:
+	## Somebody has to stand in front of it. How far that is depends on where
+	## you put it.
+	var rack := rack_of(d)
+	var site := int(rack.site) if rack != null else 0
+	var cost := 0 if site == 0 else 350
+	var label := "a walk across the floor" if site == 0 else "a site visit to %s" % site_name(site)
+	if cost > 0 and not try_spend(cost):
+		return "%s costs $%d" % [label, cost]
+	physical_access[d.name] = cycle + 2
+	log_event("PHYSICAL ACCESS: %s. You are at %s's console for the next couple of cycles.%s"
+		% [label.capitalize(), d.name, "" if cost == 0 else "  That cost $%d." % cost])
+	return ""
+
+func lockout_tick() -> void:
+	for d: Net.NDevice in all_devices():
+		var pending: Dictionary = confirm_commits.get(d.name, {})
+		if not pending.is_empty() and cycle >= int(pending["due"]):
+			confirm_commits.erase(d.name)
+			apply_device_config(d, pending["cfg"])
+			log_event("REVERTED: nobody confirmed the change on %s, so it rolled back to what was running before. That is what the timer is for."
+				% d.name)
+			topology_changed.emit()
+			continue
+		var first_sight := not lockout_state.has(d.name)
+		var was: bool = bool(lockout_state.get(d.name, false))
+		var now := locked_out(d)
+		lockout_state[d.name] = now
+		# only a device that could be reached and now cannot has locked you out
+		if now and not was and not first_sight:
+			log_event("LOCKED OUT: %s is running its new configuration and nothing can reach it. %s"
+				% [d.name, "There is a console cable on it." if console_reachable(d)
+					else "Console server, a walk to the rack, or a site visit."])
+			record_incident("lockout", "%s was cut off by its own configuration" % d.name)
 
 func _device_facts(d: Net.NDevice) -> Dictionary:
 	## The handful of things people actually document about a device.
@@ -5256,6 +5349,7 @@ func sla_tick() -> void:
 	renewal_tick()
 	tac_tick()
 	remote_hands_tick()
+	lockout_tick()
 	receiving_tick()
 	stockout_tick()
 	rma_tick()
@@ -6080,7 +6174,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
+		"confirm_commits": confirm_commits, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
 		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
@@ -6412,6 +6507,8 @@ func _apply(data: Dictionary) -> void:
 	tac_cases = data.get("tac_cases", [])
 	orphan_intel = data.get("orphan_intel", {})
 	docs = data.get("docs", {})
+	confirm_commits = data.get("confirm_commits", {})
+	physical_access = data.get("physical_access", {})
 	remote_jobs = data.get("remote_jobs", [])
 	crates = data.get("crates", [])
 	stockouts = data.get("stockouts", {})

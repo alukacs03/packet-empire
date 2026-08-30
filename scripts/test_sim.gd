@@ -2693,6 +2693,7 @@ static func run() -> int:
 	Game.maintenance_used = 2
 	check(not Game.declare_maintenance().is_empty(), "maintenance: customers cap how many you take")
 	Game.deals = []
+	Game.incidents = []  # this section counts its own incidents, nobody else's
 	Game.record_incident("test", "a link nobody was watching went down")
 	check(Game.incidents.size() == 1, "post-mortem: an incident is recorded for review")
 	Game.record_incident("test", "a link nobody was watching went down")
@@ -3752,6 +3753,72 @@ static func run() -> int:
 		"drift: closing a change window writes up what the change actually did")
 	Game.reconcile_rack(dd_rack)
 	Game.docs = {}
+
+	# --- locking yourself out ---
+	Game.confirm_commits = {}
+	Game.physical_access = {}
+	Game.lockout_state = {}
+	Game.money = 5000
+	var lo_rack := Game.add_rack(Vector2i(58, 1))
+	var lo_sw := Game.new_device("sw-8")
+	var lo_rtr := Game.new_device("rtr-lite")
+	var lo_srv := Game.new_device("srv-1")
+	lo_rack.slots[0] = lo_sw
+	lo_rack.slots[1] = lo_rtr
+	lo_rack.slots[2] = lo_srv
+	Game.connect_ifaces(lo_srv.ifaces[0], lo_sw.ifaces[0])
+	Game.connect_ifaces(lo_rtr.ifaces[0], lo_sw.ifaces[1])
+	Game.add_ip(lo_srv.ifaces[0], "10.90.0.10/24")
+	Game.add_ip(lo_rtr.ifaces[0], "10.90.0.1/24")
+	check(Game.management_ips(lo_rtr).has("10.90.0.1") and Game.device_reachable(lo_rtr) \
+			and not Game.locked_out(lo_rtr),
+		"lockout: a device you can reach over the network is one you can manage")
+	lo_rtr.startup = Game.device_config(lo_rtr)
+	# the dangerous part of a change is that it travels over the path you use
+	lo_rtr.ifaces[0].enabled = false
+	check(not Game.device_reachable(lo_rtr) and Game.locked_out(lo_rtr),
+		"lockout: shutting the port your management path rides cuts you off from a device that is still running")
+	# out of band is exactly what it is for
+	var lo_con := Game.new_device("con-1")
+	var lo_rack2 := Game.add_rack(Vector2i(59, 1))
+	lo_rack2.slots[0] = lo_con
+	Game.connect_ifaces(lo_con.ifaces[0], lo_rtr.ifaces[1])
+	check(Game.console_reachable(lo_rtr) and not Game.locked_out(lo_rtr),
+		"lockout: a serial cable from a console server does not care about addressing")
+	Game.disconnect_iface(lo_con.ifaces[0])
+	check(Game.locked_out(lo_rtr), "lockout: without it, you are locked out again")
+	# a walk costs time at home and real money at a remote site
+	var lo_money := Game.money
+	check(Game.walk_to_device(lo_rtr) == "" and Game.money == lo_money \
+			and not Game.locked_out(lo_rtr),
+		"lockout: on your own floor the recovery is a walk to the rack")
+	Game.physical_access = {}
+	var lo_site := Game.add_site("Colo Gyor", Vector2i(3, 3), "acquired", "Gyor")
+	var lo_far_rack := Game.add_rack(Vector2i(0, 0), lo_site)
+	var lo_far := Game.new_device("rtr-lite")
+	lo_far_rack.slots[0] = lo_far
+	check(Game.walk_to_device(lo_far) == "" and Game.money < lo_money,
+		"lockout: at a remote site the same recovery is a site visit, and it is billed")
+	# the confirmed commit timer is the thing that saves you
+	lo_rtr.ifaces[0].enabled = true
+	Game.lockout_state = {}
+	lo_rtr.startup = Game.device_config(lo_rtr)
+	check(Game.arm_confirm(lo_rtr, 2) == "" and Game.arm_confirm(lo_rtr, 2) != "",
+		"lockout: a confirmed commit can be armed once before the change")
+	Game.add_static_route(lo_rtr, "10.91.0.0", 24, "10.90.0.9")
+	lo_rtr.ifaces[0].enabled = false
+	Game.cycle += 2
+	Game.lockout_tick()
+	check(not Game.confirm_commits.has(lo_rtr.name) and lo_rtr.static_routes.is_empty() \
+			and Game.device_reachable(lo_rtr),
+		"lockout: the timer reverts the whole change and hands the device back")
+	Game.arm_confirm(lo_rtr, 3)
+	check(Game.confirm_commit(lo_rtr) == "" and Game.confirm_commits.is_empty(),
+		"lockout: confirming while you can still reach it makes the change stand")
+	Game.confirm_commits = {}
+	Game.physical_access = {}
+	Game.lockout_state = {}
+	Game.current_site = 0
 
 	# --- consumables ---
 	var pt_rack := Game.add_rack(Vector2i(48, 1))
