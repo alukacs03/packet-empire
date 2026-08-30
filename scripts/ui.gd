@@ -4520,6 +4520,19 @@ func _build_business_tab() -> void:
 	if not Game.staff.is_empty() and not Staff.anyone_on_shift():
 		contracts_box.add_child(_wrap("  Nobody is on shift right now (it is %s). Whatever breaks in the next few cycles waits until somebody clocks on."
 			% Game.day_name(), 13, Color(1.0, 0.8, 0.5), 560))
+		if Game.callout_ready():
+			# the thing you actually do at three in the morning
+			var callout := Button.new()
+			callout.text = "Call somebody out ($%d)" % Game.CALLOUT_FEE
+			callout.tooltip_text = "Phone the best-rested member of the crew and get them in for a cycle. It costs the fee and it costs their morale."
+			_accent(callout)
+			callout.pressed.connect(func() -> void:
+				var err := Game.call_someone_out()
+				if err != "":
+					_toast(err)
+				else:
+					_refresh_contracts())
+			contracts_box.add_child(callout)
 	for m: Dictionary in Game.staff.duplicate():
 		var srow := HBoxContainer.new()
 		srow.add_theme_constant_override("separation", 6)

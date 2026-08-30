@@ -259,6 +259,8 @@ var stockouts := {}  # model -> the cycle supply comes back
 var rmas: Array = []  # dead units in transit, and what is coming back
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
+var callout_who := ""    # who was phoned out of hours, if anyone
+var callout_until := -1  # the last cycle they are counted as being on the floor
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
 var lockout_state := {}  # device name -> was it unreachable last cycle
 var grey_faults := {}  # "device|iface" -> {kind, since}: up, and lying
@@ -885,6 +887,42 @@ func do_housekeeping(name: String, good: bool) -> String:
 	packaging += 2
 	observe_habit("tidy", false)
 	return "%s tidied up by stacking it in the aisle" % name
+
+const CALLOUT_FEE := 220  # what it costs to wake somebody and get them in
+
+func callout_ready() -> bool:
+	## Only worth waking somebody for something that is actually happening.
+	if staff.is_empty() or Staff.anyone_on_shift():
+		return false
+	if customer_outage_active or not hazards.is_empty():
+		return true
+	for d in all_devices():
+		if d.status != "active":
+			return true
+	return false
+
+func call_someone_out() -> String:
+	## The thing every operator does at three in the morning: phone somebody.
+	## It costs money and it costs them, which is what makes thin nights a bet.
+	if staff.is_empty():
+		return "there is nobody to call"
+	if Staff.anyone_on_shift():
+		return "somebody is already on shift"
+	if not callout_ready():
+		return "nothing is happening that is worth waking somebody for"
+	var picked: Dictionary = {}
+	for m in staff:
+		if picked.is_empty() or int(m.get("morale", 70)) > int(picked.get("morale", 70)):
+			picked = m
+	if not spend_on("call-out", CALLOUT_FEE):
+		return "a call-out costs $%d and the account will not carry it" % CALLOUT_FEE
+	picked["morale"] = maxi(0, int(picked.get("morale", 70)) - 12)
+	callout_who = String(picked["name"])
+	callout_until = cycle + 1
+	log_event("CALL-OUT: %s was phoned at %s and is coming in. It cost $%d and it cost them."
+		% [callout_who, day_name(), CALLOUT_FEE])
+	Sfx.play("alert")
+	return ""
 
 func duty_quality(id: String) -> float:
 	## Skill, tiredness, how much they are carrying, and how well the place is
@@ -8768,6 +8806,7 @@ func _serialize() -> Dictionary:
 		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
+		"callout_who": callout_who, "callout_until": callout_until,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
 		"customer_arcs": customer_arcs,
@@ -9108,6 +9147,8 @@ func _apply(data: Dictionary) -> void:
 	nemesis_reason = String(data.get("nemesis_reason", ""))
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
+	callout_who = String(data.get("callout_who", ""))
+	callout_until = int(data.get("callout_until", -1))
 	incidents = data.get("incidents", [])
 	blame_fear = int(data.get("blame_fear", 0))
 	facility = data.get("facility", {})

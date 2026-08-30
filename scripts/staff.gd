@@ -53,6 +53,10 @@ static func on_shift(member: Dictionary) -> bool:
 	## training takes them off the floor entirely
 	if int(member.get("training_left", 0)) > 0:
 		return false
+	# somebody who was phoned at three in the morning is on the floor whatever
+	# the rota says, until the cycle they were called out for is over
+	if String(member.get("name", "")) == Game.callout_who and Game.cycle <= Game.callout_until:
+		return true
 	return Game.day_slot() in SHIFTS[shift_of(member)]["slots"]
 
 static func anyone_on_shift() -> bool:

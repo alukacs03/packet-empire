@@ -2852,6 +2852,38 @@ static func run() -> int:
 	Game.set_note(hab_dev.ifaces[0], "customer handoff")
 	check(float(Game.habits["documents"]) > 0.5 and float(Game.habits["tidy"]) > 0.5,
 		"habits: labelling a port is read as a habit, from the act rather than the intent")
+	# --- the three in the morning call-out ---
+	var co_staff := Game.staff.duplicate(true)
+	var co_haz := Game.hazards.duplicate(true)
+	var co_cycle := Game.cycle
+	Game.staff = []
+	Game.callout_who = ""
+	Game.callout_until = -1
+	Game.hire(Staff.make_candidate(RandomNumberGenerator.new(), Game.habits))
+	Staff.set_shift(Game.staff[0], "day")
+	Game.hazards = []
+	check(Game.call_someone_out() != "", "call-out: nothing happening, nobody gets woken")
+	Game.hazards = [{"kind": "smoke", "rack": "R1", "site": 0, "tile": [0, 0], "severity": 1,
+		"started": Game.cycle, "detected": true, "zone": ["R1"]}]
+	while Staff.anyone_on_shift():  # wind the clock to the small hours
+		Game.cycle += 1
+	check(Game.callout_ready(), "call-out: with the floor unattended and smoke live, it is offered")
+	var co_money := Game.money
+	var co_morale := int(Game.staff[0]["morale"])
+	check(Game.call_someone_out() == "", "call-out: phoning somebody works")
+	check(Game.money == co_money - Game.CALLOUT_FEE and int(Game.staff[0]["morale"]) < co_morale,
+		"call-out: it costs the fee and it costs them")
+	check(Staff.anyone_on_shift() and Staff.on_shift(Game.staff[0]),
+		"call-out: they are on the floor whatever the rota says")
+	check(Game.call_someone_out() != "", "call-out: you cannot call out somebody already in")
+	Game.cycle = Game.callout_until + 1
+	check(not Staff.anyone_on_shift(), "call-out: and they go home again afterwards")
+	Game.staff = co_staff
+	Game.hazards = co_haz
+	Game.cycle = co_cycle
+	Game.callout_who = ""
+	Game.callout_until = -1
+
 	# somebody can be put on keeping the floor clear
 	Game.packaging = 3
 	Game.habits["tidy"] = 0.5
