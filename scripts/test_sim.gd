@@ -2996,8 +2996,15 @@ static func run() -> int:
 	Game.crates = []
 	Game.customer_outage_active = false
 	Game.guided_outage = {}
+	var ho_events := Game.events.duplicate()
+	Game.events = []
 	check(Game.handover_lines() == ["Nothing happened. Everything that was up is still up."],
 		"handover: a quiet shift says so, rather than inventing something")
+	Game.log_event("SECURITY: somebody reached the management address from a customer machine.")
+	var ho_watch := Game.handover_lines()
+	check(String(ho_watch[0]).begins_with("On our watch:") and String(ho_watch[0]).contains("SECURITY"),
+		"handover: what happened on the watch is repeated before what is still open")
+	Game.events = ho_events
 	Game.hazards = [{"kind": "water", "rack": "R9", "site": 0, "tile": [0, 0], "severity": 2,
 		"started": Game.cycle, "detected": false, "zone": ["R9"]}]
 	Game.customer_outage_active = true

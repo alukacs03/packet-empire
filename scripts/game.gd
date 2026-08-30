@@ -1650,6 +1650,23 @@ func handover_lines() -> Array:
 	## What a person would actually write at the end of a long night, read off
 	## the floor rather than from a script, most urgent first.
 	var lines: Array = []
+	# what actually happened on the watch, before what is still open: four
+	# cycles is one shift, and only what somebody would bother repeating
+	var since := cycle - 4
+	var happened: Array = []
+	for ev in events:
+		var parts := String(ev).split(": ", true, 1)
+		if parts.size() < 2 or not String(parts[0]).begins_with("cycle "):
+			continue
+		if int(String(parts[0]).substr(6)) < since:
+			break  # the log is newest first
+		if event_severity(String(parts[1])) == "info":
+			continue
+		happened.append(String(parts[1]))
+		if happened.size() >= 3:
+			break
+	for h in happened:
+		lines.append("On our watch: %s" % h)
 	if customer_down_now():
 		lines.append("A customer is off the air. That is the first thing.")
 	for h: Dictionary in hazards:
