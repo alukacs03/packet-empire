@@ -146,11 +146,12 @@ static func _campaign() -> Array:
 	return [
 		{
 			"id": "rackup",
-			"hint": "Press R, click a floor tile to place the rack, then click the rack to open it. Buy from the slot menu: one switch, two servers. Then click a server's port and choose Run cable, and click the switch port you want it in.",
-			"title": "Rack and stack",
-			"customer": "Your first colo",
+			# the first contract is catalog-driven: the rest follow as they are converted
+			"hint": Loc.t("contract.rackup.hint"),
+			"title": Loc.t("contract.rackup.title"),
+			"customer": Loc.t("contract.rackup.customer"),
 			"reward": 400,
-			"brief": "Welcome to your corner of the colo floor! Buy a rack (toolbar or R, click a floor tile), open it and install one switch and two servers, then cable both servers to the switch (click a server port, then 'Run cable…').",
+			"brief": Loc.t("contract.rackup.brief"),
 			"reqs": [
 				{"d": "A rack is placed", "t": func() -> bool: return Game.racks.size() >= 1},
 				{"d": "One switch and two servers installed", "t": func() -> bool: return _count("switch") >= 1 and _count("server") >= 2},

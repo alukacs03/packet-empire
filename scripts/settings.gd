@@ -12,6 +12,7 @@ var colourblind := false
 var sound := true
 var reduced_motion := false
 var show_everything := false
+var language := "en"  # ui language; saves stay language-neutral
 
 func _ready() -> void:
 	load_prefs()
@@ -29,19 +30,21 @@ func load_prefs() -> void:
 	sound = bool(data.get("sound", true))
 	reduced_motion = bool(data.get("reduced_motion", false))
 	show_everything = bool(data.get("show_everything", false))
+	language = String(data.get("language", "en"))
 
 func save_prefs() -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
 			"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion,
-			"show_everything": show_everything}))
+			"show_everything": show_everything, "language": language}))
 
 func apply() -> void:
 	if DisplayServer.get_name() != "headless":
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen
 			else DisplayServer.WINDOW_MODE_WINDOWED)
 	Sfx.muted = not sound
+	Loc.language = language
 	save_prefs()
 	changed.emit()
 

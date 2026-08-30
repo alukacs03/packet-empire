@@ -5342,7 +5342,7 @@ func post_status(text: String) -> String:
 		guided_outage["status_cycle"] = cycle
 		guided_outage["reputation_saved"] = 2
 		_guided_outage_note("cycle %d · customer update posted; reputation loss reduced by 2 each outage cycle" % cycle)
-		log_event("CUSTOMER COMMS: Kiskacsa sees the honest update. Outage reputation loss is now -2/cycle instead of -4.")
+		log_event(Loc.t("event.outage.status", {"customer": "Kiskacsa"}))
 		guided_outage_changed.emit()
 	return ""
 
@@ -5425,7 +5425,7 @@ func _maybe_start_guided_outage() -> void:
 	customer_arcs["kiskacsa"] = arc
 	chosen.enabled = false
 	_guided_outage_note("cycle %d · service monitor raised an availability alert" % cycle)
-	log_event("FIRST OUTAGE: Kiskacsa is unreachable. A known-safe access port tripped; acknowledge the alert and diagnose from evidence.")
+	log_event(Loc.t("event.outage.raised", {"customer": "Kiskacsa"}))
 	record_incident("guided-outage", "Kiskacsa lost service when an access port tripped")
 	topology_changed.emit()
 	guided_outage_changed.emit()
@@ -5528,7 +5528,7 @@ func choose_guided_resilience(choice: String) -> String:
 	arc["recovered_cycle"] = int(guided_outage.get("recovered_cycle", cycle))
 	arc["healthy_after_incident"] = 0
 	customer_arcs["kiskacsa"] = arc
-	log_event("FIRST OUTAGE COMPLETE: calm diagnosis kept Kiskacsa and left the network more resilient.")
+	log_event(Loc.t("event.outage.recovered", {"customer": "Kiskacsa"}))
 	topology_changed.emit()
 	guided_outage_changed.emit()
 	return ""

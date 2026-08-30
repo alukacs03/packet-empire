@@ -1746,8 +1746,8 @@ func _build_pedia() -> void:
 	pedia_body.add_theme_color_override("default_color", UIW.colour("text"))
 	pedia_body.add_theme_constant_override("line_separation", 6)
 	article_panel.add_child(pedia_body)
-	for topic_i in Pedia.TOPICS.size():
-		var entry = Pedia.TOPICS[topic_i]
+	for topic_i in Pedia.topics().size():
+		var entry = Pedia.topics()[topic_i]
 		var b := Button.new()
 		b.text = "%02d   %s" % [topic_i + 1, entry[0]]
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -1775,9 +1775,9 @@ func _build_pedia() -> void:
 	_show_pedia_entry(0)
 
 func _show_pedia_entry(topic_i: int) -> void:
-	if topic_i < 0 or topic_i >= Pedia.TOPICS.size():
+	if topic_i < 0 or topic_i >= Pedia.topics().size():
 		return
-	var entry = Pedia.TOPICS[topic_i]
+	var entry = Pedia.topics()[topic_i]
 	for button_i in pedia_topic_buttons.size():
 		(pedia_topic_buttons[button_i] as Button).button_pressed = button_i == topic_i
 	pedia_body.clear()
@@ -3274,6 +3274,7 @@ func _build_menu() -> void:
 			"Sound: %s" % ("on" if Prefs.sound else "off"),
 			"Reduced motion: %s" % ("on" if Prefs.reduced_motion else "off"),
 			"Full toolbox from start: %s" % ("on" if Prefs.show_everything else "off"),
+			"Language: %s" % Loc.language_label(Prefs.language),
 		], func(id: int) -> void:
 			match id:
 				0:
@@ -3291,6 +3292,13 @@ func _build_menu() -> void:
 					Prefs.reduced_motion = not Prefs.reduced_motion
 				5:
 					Prefs.show_everything = not Prefs.show_everything
+				6:
+					# immediate, and the whole interface is rebuilt around it
+					var langs: Array = Loc.languages()
+					var at := langs.find(Prefs.language)
+					Prefs.language = String(langs[(at + 1) % langs.size()])
+					Loc.language = Prefs.language
+					_rebuild_localised()
 			Prefs.apply()
 			hud_toast("Setting applied.", true)))
 	v.add_child(prefs_btn)
@@ -3853,12 +3861,12 @@ func _build_welcome() -> void:
 	welcome_overlay = _overlay()
 	var v := _card(welcome_overlay, 680)
 	var t := _header(v, func() -> void: welcome_overlay.visible = false)
-	t.text = "Your first night on the floor"
+	t.text = Loc.t("welcome.title")
 	welcome_overlay.set_meta("title_label", t)
-	var shift := _section("SHIFT 01  /  LEGACY COLO  /  02:13")
+	var shift := _section(Loc.t("welcome.shift"))
 	shift.add_theme_color_override("font_color", UIW.colour("warm"))
 	v.add_child(shift)
-	var body := _wrap("One borrowed cage. Questionable wiring. Enough cash for one rack. Turn this forgotten corner into a network people can depend on.", 17,
+	var body := _wrap(Loc.t("welcome.lede"), 17,
 		UIW.colour("text_strong"), 620)
 	welcome_overlay.set_meta("body_label", body)
 	v.add_child(body)
@@ -3866,12 +3874,12 @@ func _build_welcome() -> void:
 	var modules := HBoxContainer.new()
 	modules.add_theme_constant_override("separation", UIW.space("md"))
 	v.add_child(modules)
-	modules.add_child(_welcome_module("01", "READ THE ROOM",
-		"Drag to pan. Scroll to zoom. Every cable and blinking port is part of the simulation.", "info"))
-	modules.add_child(_welcome_module("02", "BUILD FOR REAL",
-		"Place a rack, install hardware, then wire ports. Cheap PacketTik gear speaks RouterOS.", "warm"))
-	modules.add_child(_welcome_module("03", "KEEP IT ALIVE",
-		"Contracts fund the floor. Diagnose failures at the console and earn the next expansion.", "success"))
+	modules.add_child(_welcome_module("01", Loc.t("welcome.module1.title"),
+		Loc.t("welcome.module1.body"), "info"))
+	modules.add_child(_welcome_module("02", Loc.t("welcome.module2.title"),
+		Loc.t("welcome.module2.body"), "warm"))
+	modules.add_child(_welcome_module("03", Loc.t("welcome.module3.title"),
+		Loc.t("welcome.module3.body"), "success"))
 
 	var tip := UIW.style_panel(PanelContainer.new(), "console", "md")
 	v.add_child(tip)
@@ -3881,13 +3889,12 @@ func _build_welcome() -> void:
 	var prompt := _label(">", 20, UIW.colour("accent"))
 	prompt.add_theme_font_override("font", mono)
 	tip_row.add_child(prompt)
-	var tip_copy := _wrap("The live brief stays on the right. It gives you the next objective without solving the network for you.",
-		13, UIW.colour("muted"), 560)
+	var tip_copy := _wrap(Loc.t("welcome.tip"), 13, UIW.colour("muted"), 560)
 	tip_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tip_row.add_child(tip_copy)
 
 	var go := Button.new()
-	go.text = "CLOCK IN  ·  OPEN FIRST CONTRACT"
+	go.text = Loc.t("welcome.start")
 	_accent(go)
 	go.pressed.connect(func() -> void:
 		welcome_overlay.visible = false
@@ -3911,6 +3918,16 @@ func _welcome_module(number: String, title: String, copy: String, semantic: Stri
 	copy_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(copy_label)
 	return card
+
+func _rebuild_localised() -> void:
+	## Changing language rebuilds the panels that carry copy, so nothing has to
+	## be restarted and nothing is left in the old language.
+	welcome_overlay.queue_free()
+	_build_welcome()
+	_refresh_tutorial()
+	_refresh_contracts()
+	if ops_overlay.visible:
+		_refresh_ops()
 
 func show_welcome() -> void:
 	if Demo.active():

@@ -297,7 +297,7 @@ static func ui_smoke(world: Node2D) -> int:
 				or hint_output.begins_with("no bridge")
 			check(not rejected, "demo hints: PacketTik accepts '%s'" % hint_command)
 	var vlan_topic: Array = []
-	for pedia_entry in Pedia.TOPICS:
+	for pedia_entry in Pedia.topics():
 		if String(pedia_entry[0]) == "VLANs":
 			vlan_topic = pedia_entry
 			break
@@ -398,6 +398,17 @@ static func ui_smoke(world: Node2D) -> int:
 	world.ui = null
 	print("PASS  ui: all overlays opened and refreshed without script errors")
 	check(true, "ui: smoke complete")
+	# the same screens again in pseudo-localisation: longer strings, same layout
+	var smoke_lang := Loc.language
+	Loc.language = "pseudo"
+	ui._rebuild_localised()
+	ui.show_welcome()
+	ui.welcome_overlay.visible = false
+	ui.open_contracts()
+	ui.close_contracts()
+	Loc.language = smoke_lang
+	ui._rebuild_localised()
+	check(true, "ui: the localised screens rebuild in pseudo-localisation without errors")
 	print("---- %d smoke failures" % fails)
 	return fails
 
@@ -7284,6 +7295,44 @@ static func run() -> int:
 		"notes: and the same for a device that is in trouble right now")
 	nt_sw.status = "active"
 	Game.deals = nt_deals
+
+	# --- localisation foundation ---
+	var loc_before := Loc.language
+	Loc.language = "en"
+	check(Loc.t("welcome.title") != "welcome.title" and Loc.t("nothing.here") == "nothing.here",
+		"loc: a known id resolves and an unknown one comes back loudly rather than crashing")
+	check(Loc.t("event.outage.raised", {"customer": "Kiskacsa"}).contains("Kiskacsa"),
+		"loc: live values are interpolated by name, not by position")
+	check(Loc.placeholder_problems().is_empty(),
+		"loc: every translation carries the same placeholders as the English")
+	var loc_used: Array = ["welcome.title", "welcome.lede", "welcome.start",
+		"contract.rackup.title", "contract.rackup.brief", "contract.rackup.hint",
+		"event.outage.raised", "event.outage.status", "event.outage.recovered",
+		"pedia.vlans.title", "pedia.vlans.body"]
+	check(Loc.missing_ids(loc_used).is_empty(),
+		"loc: every id the game asks for exists in the catalogue")
+	check(Loc.plural("ui.cycles", 1).contains("1 cycle") \
+			and Loc.plural("ui.cycles", 4).contains("4 cycles"),
+		"loc: plural forms are chosen by count rather than glued on")
+	Loc.language = "hu"
+	check(Loc.t("welcome.title") != Loc.CATALOG["welcome.title"]["en"] \
+			and _contract("rackup")["title"] == Loc.CATALOG["contract.rackup.title"]["hu"],
+		"loc: switching language changes the copy, including the contract text")
+	check(Loc.t("event.outage.raised", {"customer": "Kiskacsa"}).contains("Kiskacsa"),
+		"loc: names and addresses are never translated")
+	var hu_pedia := Pedia.topics()
+	var hu_vlan := ""
+	for hu_entry in hu_pedia:
+		if String(hu_entry[0]) == Loc.CATALOG["pedia.vlans.title"]["hu"]:
+			hu_vlan = String(hu_entry[1])
+	check(hu_vlan != "" and hu_vlan.contains("switchport access vlan 10"),
+		"loc: an encyclopedia topic translates while its commands stay exactly as typed")
+	Loc.language = "pseudo"
+	var pseudo_title := Loc.t("welcome.title")
+	check(pseudo_title.length() > Loc.CATALOG["welcome.title"]["en"].length() \
+			and pseudo_title.begins_with("["),
+		"loc: pseudo-localisation is longer and accented, which is how clipping is found")
+	Loc.language = loc_before
 
 	print("---- %d failures" % fails)
 	return fails
