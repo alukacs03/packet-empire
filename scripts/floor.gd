@@ -55,9 +55,7 @@ func _draw() -> void:
 	# Build cells are service-floor paint projected over the authored concrete.
 	# They never become a second raised board as the facility expands.
 	if Game.site_count() > 1:  # which floor am I standing on
-		var anchor := Iso.tile_to_world(Vector2i(0, grid.y)) + Vector2(-60, 40)
-		draw_string(ThemeDB.fallback_font, anchor, Game.site_name(Game.current_site),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, UIW.colour("accent"))
+		_draw_site_plate(grid)
 	for y in grid.y:
 		for x in grid.x:
 			var t := Vector2i(x, y)
@@ -271,6 +269,25 @@ func _draw_floor_slab(grid: Vector2i, progress: float) -> void:
 	var edge := PackedVector2Array(slab)
 	edge.append(slab[0])
 	draw_polyline(edge, concrete.darkened(0.45), 3.0)
+
+func _draw_site_plate(grid: Vector2i) -> void:
+	## With more than one floor, the worst mistake available is doing the right
+	## thing in the wrong building. Each site gets a cast of its own, keyed off
+	## its name so it is the same every time, and a plate you cannot miss.
+	var name := Game.site_name(Game.current_site)
+	var key := absi(hash(name))
+	var hue := float(key % 360) / 360.0
+	var cast := Color.from_hsv(hue, 0.55, 0.9, 0.05)
+	draw_colored_polygon(_floor_corners(grid, 2.2), cast)
+	var font := UIW.mono_font()
+	var text_w := font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	var plate := Rect2(Iso.tile_to_world(Vector2i(0, grid.y - 1)) + Vector2(-190, 40),
+		Vector2(text_w + 28.0, 30))
+	draw_rect(plate, Color(0.02, 0.03, 0.04, 0.72))
+	draw_rect(Rect2(plate.position, Vector2(5, plate.size.y)), Color.from_hsv(hue, 0.6, 1.0))
+	draw_rect(plate, Color.from_hsv(hue, 0.4, 1.0, 0.55), false, 1.0)
+	draw_string(font, plate.position + Vector2(14, 20), name,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIW.colour("text_strong"))
 
 func _draw_season_cast(grid: Vector2i) -> void:
 	## A season you can see. Summer hangs warm and close over the floor and

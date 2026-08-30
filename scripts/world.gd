@@ -382,6 +382,21 @@ func _shoot_all() -> void:
 			Game.last_cycle_delta = 20
 			ui.contracts_tab = "Business"
 			ui.open_contracts()],
+		["floor_second_site",
+			func() -> void:
+				# a second floor, which must not be mistaken for the first
+				ui.close_contracts()
+				Game.stage = 0
+				if Game.site_count() < 2:
+					Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+				Game.current_site = 1
+				rebuild_racks()
+				$Floor.queue_redraw()],
+		["floor_first_site_again",
+			func() -> void:
+				Game.current_site = 0
+				rebuild_racks()
+				$Floor.queue_redraw()],
 		["handover",
 			func() -> void:
 				# what the night shift left on the desk
