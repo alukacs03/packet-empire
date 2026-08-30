@@ -1743,7 +1743,11 @@ func handover_lines() -> Array:
 	var lines: Array = []
 	# what actually happened on the watch, before what is still open: four
 	# cycles is one shift, and only what somebody would bother repeating
+	# only what has happened since the last note was written: a handover that
+	# repeats itself stops being read, and then it costs you
 	var since := cycle - 4
+	if not handover.is_empty():
+		since = maxi(since, int(handover.get("cycle", since)) + 1)
 	var happened: Array = []
 	for ev in events:
 		var parts := String(ev).split(": ", true, 1)

@@ -3369,6 +3369,19 @@ static func run() -> int:
 	Game.hazards = [{"kind": "water", "rack": "R9", "site": 0, "tile": [0, 0], "severity": 2,
 		"started": Game.cycle, "detected": false, "zone": ["R9"]}]
 	Game.customer_outage_active = true
+	# a handover only repeats what has happened since the last one
+	Game.handover = {"cycle": Game.cycle, "from": "day", "lines": [], "read": true,
+		"substantive": 0}
+	Game.events = []
+	Game.log_event("SECURITY: something happened before the last note was written.")
+	Game.cycle += 1
+	var ho_fresh := Game.handover_lines()
+	var ho_repeat := false
+	for ho_l in ho_fresh:
+		if String(ho_l).contains("before the last note"):
+			ho_repeat = true
+	check(not ho_repeat, "handover: it does not repeat what the last note already said")
+	Game.handover = {}
 	Game.events = []  # a clean watch, so the order of the open items is the test
 	var ho_lines := Game.handover_lines()
 	check(ho_lines.size() >= 2 and String(ho_lines[0]).contains("off the air") \
