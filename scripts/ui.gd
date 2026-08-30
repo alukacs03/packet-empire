@@ -1951,7 +1951,8 @@ const OPS_TABS := [
 	["Automation", ["PLAYBOOKS", "CERTIFICATES", "RUNBOOKS AND AUTOMATION", "STANDING DUTIES"]],
 	["Records", ["DOCUMENTATION", "AUDIT READINESS", "RENEWALS CALENDAR", "UNREACHABLE",
 		"WHAT YOU WROTE ABOUT THESE"]],
-	["Company", ["WHAT KIND OF COMPANY THIS IS", "DECISIONS", "A VISIT IS BOOKED",
+	["Company", ["HOW THE PLACE IS TRENDING", "WHAT KIND OF COMPANY THIS IS", "DECISIONS",
+		"A VISIT IS BOOKED",
 		"HOW THIS RUN ENDED", "RUNS BEFORE THIS ONE"]],
 ]
 var ops_tab := "Capacity"
@@ -2407,6 +2408,10 @@ func _refresh_ops() -> void:
 			Game.forget_all_runs()
 			_refresh_ops())
 		ops_box.add_child(forget)
+	ops_box.add_child(_section("HOW THE PLACE IS TRENDING"))
+	for trend_line in Game.trend_read():
+		ops_box.add_child(_wrap("  %s" % String(trend_line), 13,
+			UIW.colour("text_strong"), 780))
 	ops_box.add_child(_section("WHAT KIND OF COMPANY THIS IS"))
 	if Game.identity == "":
 		if Game.identity_offered():

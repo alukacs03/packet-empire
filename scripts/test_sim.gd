@@ -2983,6 +2983,21 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	# --- the slow measures, with a direction ---
+	var tr_hist := Game.history.duplicate(true)
+	Game.history = [{"cycle": Game.cycle - 30, "tidy": 0.2, "drift": 0.1}]
+	var tr_lines := Game.trend_read()
+	check(tr_lines.size() >= 4 and String(tr_lines[0]).begins_with("Reliability:"),
+		"trend: the panel reads reliability, the floor, the documentation and the habits")
+	check(Game._trend_word(0.9, 0.4, true) == "getting better" \
+			and Game._trend_word(0.4, 0.9, true) == "getting worse" \
+			and Game._trend_word(0.5, 0.5, true) == "holding",
+		"trend: a measure that should be high reads better when it rises")
+	check(Game._trend_word(0.9, 0.4, false) == "getting worse" \
+			and Game._trend_word(0.1, 0.6, false) == "getting better",
+		"trend: drift is judged the other way round, because rising is the bad direction")
+	Game.history = tr_hist
+
 	# --- what one shift leaves for the next ---
 	var ho_racks := Game.racks
 	var ho_links := Game.links

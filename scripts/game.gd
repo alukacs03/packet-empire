@@ -1722,6 +1722,43 @@ func handover_tick() -> void:
 	log_event("HANDOVER: the %s shift left %d note(s) for the %s shift."
 		% [going, handover["lines"].size(), "day" if going == "night" else "night"])
 
+const TREND_WINDOW := 20  # far enough back that a slow measure has moved
+
+func _trend_word(now: float, before: float, higher_is_better: bool, slack := 0.04) -> String:
+	if absf(now - before) < slack:
+		return "holding"
+	var better := (now > before) == higher_is_better
+	return "getting better" if better else "getting worse"
+
+func trend_read() -> Array:
+	## The slow measures, with a direction, while there is still time to do
+	## something about them. Everything here is read off state the game keeps.
+	var then := {}
+	for h in history:
+		if int(h.get("cycle", 0)) <= cycle - TREND_WINDOW:
+			then = h
+	var out: Array = []
+	out.append("Reliability: %d cycle(s) clear, best %d." % [cycles_since_customer_outage(),
+		best_outage_streak])
+	var tidy := floor_tidiness()
+	out.append("The floor: %d%% kept, %s." % [int(tidy * 100.0),
+		_trend_word(tidy, float(then.get("tidy", tidy)), true)])
+	var drift := drift_factor()
+	out.append("Documentation: %d%% of it no longer matches the floor, %s." % [int(drift * 100.0),
+		_trend_word(drift, float(then.get("drift", drift)), false)])
+	var best_habit := ""
+	var worst_habit := ""
+	for habit: String in HABITS:
+		if best_habit == "" or float(habits[habit]) > float(habits[best_habit]):
+			best_habit = habit
+		if worst_habit == "" or float(habits[habit]) < float(habits[worst_habit]):
+			worst_habit = habit
+	if best_habit != "" and worst_habit != "":
+		out.append("What the team copies from you: %s most (%d%%), %s least (%d%%)." % [
+			best_habit, int(float(habits[best_habit]) * 100.0),
+			worst_habit, int(float(habits[worst_habit]) * 100.0)])
+	return out
+
 func read_handover() -> void:
 	if not handover.is_empty():
 		handover["read"] = true
@@ -8364,6 +8401,8 @@ func sla_tick() -> void:
 	history.append({"cycle": cycle, "money": money, "net": last_cycle_delta,
 		"reputation": reputation, "deals": billed_deals, "up": up_deals,
 		"devices": all_devices().size(),
+		# the slow measures, so the room can be shown getting quieter or worse
+		"tidy": floor_tidiness(), "drift": drift_factor(),
 		"slots_used": int(cap_now["slots_used"]), "watts": int(cap_now["watts"])})
 	if history.size() > 120:
 		history.pop_front()
