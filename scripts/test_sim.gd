@@ -3017,6 +3017,22 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# --- a service that survives losing a room ---
+	var tr_sites2 := Game.sites.duplicate(true)
+	var tr_here2 := Game.current_site
+	var tr_rack_a := Game.add_rack(Vector2i(96, 1), 0)
+	var tr_sw_a := Game.new_device("sw-8")
+	var tr_srv_a := Game.new_device("srv-1")
+	tr_rack_a.slots[0] = tr_sw_a
+	tr_rack_a.slots[1] = tr_srv_a
+	Game.connect_ifaces(tr_srv_a.ifaces[0], tr_sw_a.ifaces[0])
+	Game.add_ip(tr_srv_a.ifaces[0], "10.96.0.10/24")
+	Sim.flush_learned_state()
+	check(not Market.check("two_rooms", {"ip": "10.96.0.10"}),
+		"two rooms: one room is not two, however well it is built")
+	Game.sites = tr_sites2
+	Game.current_site = tr_here2
+
 	# --- moving hardware between the floors you own ---
 	var mv_sites := Game.sites.duplicate(true)
 	var mv_here := Game.current_site

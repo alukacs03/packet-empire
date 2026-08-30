@@ -40,6 +40,9 @@ const KINDS := {
 	"managed_switch": {"load": 150, "base": 110, "spread": 90,
 		"brief": "We want a managed network segment: our own VLAN %s on one of your switches: and we insist the switch itself is properly managed (an addressed Management port). We audit.",
 		"costs": "A switchport + VLAN + OOB management on that switch. Cheap if your house is in order."},
+	"two_rooms": {"load": 800, "base": 320, "spread": 220,
+		"brief": "Our board asked what happens if your building burns down. Serve us from two rooms: %s must still answer with either one of them out of service.",
+		"costs": "Two sites, kit in both, and a path between them. The most expensive thing you can sell, and the only one that survives a digger."},
 	"v6_host": {"load": 350, "base": 150, "spread": 120,
 		"brief": "Our clients are IPv6 only. Host our service at %s and make sure it answers there, natively: we are not interested in promises about later.",
 		"costs": "A server with an IPv6 address on a segment your gateway routes. No new hardware if your addressing is in order."},
@@ -60,6 +63,7 @@ const KIND_LABELS := {
 	"secure_host": "Firewalled host",
 	"redundant_gw": "Redundant gateway",
 	"v6_host": "IPv6 hosting",
+	"two_rooms": "Served from two rooms",
 	"bonded_uplink": "Bundled uplink",
 }
 
@@ -126,6 +130,8 @@ static func gen_offer() -> Dictionary:
 	var kinds: Array = KINDS.keys()
 	if not _has_uplink():
 		kinds.erase("public_hosting")  # nobody asks before you have transit
+	if Game.site_count() < 2:
+		kinds.erase("two_rooms")  # nobody asks for a second room you do not have
 	if Game.stage < 1:
 		kinds.erase("redundant_gw")  # colo customers aren't that fancy
 		kinds.erase("bonded_uplink")  # and they are not paying for two of anything
@@ -134,7 +140,7 @@ static func gen_offer() -> Dictionary:
 	var params := {}
 	var subject := ""
 	match kind:
-		"hosting", "secure_host", "public_hosting", "bonded_uplink":
+		"hosting", "secure_host", "public_hosting", "bonded_uplink", "two_rooms":
 			params["ip"] = "10.%d.%d.10" % [randi() % 180 + 20, randi() % 250]
 			subject = params["ip"]
 		"v6_host":
@@ -519,6 +525,30 @@ static func check(kind: String, params: Dictionary) -> bool:
 			# native, not "we will do it next quarter": something on the floor
 			# has to answer at that address over IPv6
 			return _hosted_and_reachable(String(params.get("ip", "")))
+		"two_rooms":
+			# the promise is survival, so prove it the only honest way: take a
+			# room out of service, see if the service is still there, put it back
+			if Game.site_count() < 2:
+				return false
+			var addr := String(params.get("ip", ""))
+			if not _hosted_and_reachable(addr):
+				return false
+			for room in Game.site_count():
+				var kit := Game.devices_on(room)
+				if kit.is_empty():
+					continue
+				var was_status: Array = []
+				for d: Net.NDevice in kit:
+					was_status.append(d.status)
+					d.status = "offline"
+				Sim.flush_learned_state()
+				var survived := _hosted_and_reachable(addr)
+				for k in kit.size():
+					kit[k].status = String(was_status[k])
+				Sim.flush_learned_state()
+				if not survived:
+					return false
+			return true
 		"bonded_uplink":
 			var host := Contracts._owner(String(params.get("ip", "")))
 			if host == null or host.type != "server":
@@ -639,6 +669,18 @@ static func _steps_for(kind: String, params: Dictionary) -> Array:
 					"work": "Address a server at %s" % ip, "ok": addressed},
 				{"promise": "Feed it twice",
 					"work": "Put two links in one channel-group on both ends", "ok": bundled},
+			]
+		"two_rooms":
+			var rooms := Game.site_count()
+			var stocked := 0
+			for room in rooms:
+				if not Game.devices_on(room).is_empty():
+					stocked += 1
+			return [
+				{"promise": "Host them at all",
+					"work": "Address a server at %s" % ip, "ok": addressed},
+				{"promise": "Have somewhere for the second copy to live",
+					"work": "Operate two floors with kit on both", "ok": stocked >= 2},
 			]
 		"public_hosting":
 			return [
