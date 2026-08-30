@@ -2106,8 +2106,13 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_section("A VISIT IS BOOKED"))
 		var kind: String = String(Game.tour["kind"])
 		var tk: Dictionary = Game.TOUR_KINDS[kind]
-		ops_box.add_child(_wrap("  %s arrives in %d cycle(s). They care about %s. On what they would see right now, you score %d%%."
-			% [tk["label"], int(Game.tour["cycle"]) - Game.cycle, tk["cares"],
+		# the clock can be held (a drill, a scenario, a save opened past the
+		# date), so never print a countdown that has gone the other way
+		var due_in: int = int(Game.tour["cycle"]) - Game.cycle
+		var when := "arrives in %d cycle(s)" % due_in if due_in > 0 else (
+			"is walking the floor now" if due_in == 0 else "was due %d cycle(s) ago" % -due_in)
+		ops_box.add_child(_wrap("  %s %s. They care about %s. On what they would see right now, you score %d%%."
+			% [tk["label"], when, tk["cares"],
 				int(Game.tour_score(kind) * 100.0)], 13, Color(1.0, 0.82, 0.5), 780))
 		var cram_btn := Button.new()
 		cram_btn.text = "Bring in a crew at short notice ($600)"
