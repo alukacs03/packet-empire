@@ -27,6 +27,9 @@ const MODELS := {
 	"con-1": {"speed": 100, "tier": 1, "type": "console", "ports": 9,
 		"label": "OutOfBand C8", "price": 550,
 		"blurb": "Eight serial ports and its own way in. The box you reach a device from when the device is the problem."},
+	"panel-12": {"speed": 10000, "tier": 0, "type": "panel", "ports": 24, "price": 120,
+		"label": "PassThru P12 patch panel",
+		"blurb": "Twelve front ports wired straight through to twelve at the back. It switches nothing; it only makes cabling traceable."},
 	"crac-1": {"speed": 0, "tier": 1, "type": "cooling", "ports": 0, "label": "CoolRow CRAC", "price": 600, "cools": 1500},
 }
 ## How many rack units each model occupies. Everything not listed is 1U.
@@ -59,7 +62,7 @@ const STAGES := [
 ]
 const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1",
 	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1", "ap": "ap-1",
-	"console": "con-1"}
+	"console": "con-1", "panel": "panel-12"}
 const TYPE_SPECS := {
 	"switch": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "sw"},
 	"server": {"if_prefix": "eth", "if_start": 0, "name_prefix": "srv"},
@@ -70,6 +73,7 @@ const TYPE_SPECS := {
 	"loadbalancer": {"if_prefix": "Ethernet", "if_start": 1, "name_prefix": "lb"},
 	"ap": {"if_prefix": "radio", "if_start": 1, "name_prefix": "ap"},
 	"console": {"if_prefix": "console", "if_start": 1, "name_prefix": "con"},
+	"panel": {"if_prefix": "front", "if_start": 1, "name_prefix": "pp"},
 }
 const DIFFICULTIES := [
 	{"name": "Apprentice", "cash": 4000, "aggression": 0.75, "faults": 0.5, "cycle": 60.0,
@@ -296,7 +300,7 @@ var circuits: Array = []  # leased WAN links between sites: {a, b, mbps, fee}
 var offers: Array = []  # open marketplace offers
 var deals: Array = []  # accepted: {id, customer, kind, params, fee, brief, healthy}
 var _counter := {"switch": 0, "server": 0, "router": 0, "firewall": 0, "uplink": 0,
-	"cooling": 0, "loadbalancer": 0, "ap": 0, "console": 0, "rack": 0, "mac": 0}
+	"cooling": 0, "loadbalancer": 0, "ap": 0, "console": 0, "panel": 0, "rack": 0, "mac": 0}
 
 func _ensure_sites() -> void:
 	if sites.is_empty():
@@ -6346,6 +6350,15 @@ func new_device(model: String, second_hand := false) -> Net.NDevice:
 		d.ifaces[0].mode = "trunk"
 		d.vlans = {1: "default"}
 		d.ssids = {}
+	if type == "panel":
+		# half the ports are the front, half the back, and each front port is
+		# wired straight through to the one behind it
+		d.ifaces.clear()
+		var pairs: int = int(m["ports"]) / 2
+		for n in pairs:
+			d.ifaces.append(Net.Iface.new(d, "front%d" % (n + 1), _new_mac()))
+		for n2 in pairs:
+			d.ifaces.append(Net.Iface.new(d, "rear%d" % (n2 + 1), _new_mac()))
 	if type == "switch":
 		var mgmt := Net.Iface.new(d, "Management1", _new_mac())
 		mgmt.mode = "routed"
@@ -6444,11 +6457,59 @@ func link_at(i: Net.Iface) -> Net.Link:
 			return l
 	return null
 
-func peer_label(i: Net.Iface) -> String:
+func panel_partner(i: Net.Iface) -> Net.Iface:
+	## The port on the other side of a passive panel: front3 is rear3, always.
+	if i.dev.type != "panel":
+		return null
+	var mate := i.name.replace("front", "rear") if i.name.begins_with("front") \
+		else i.name.replace("rear", "front")
+	for other: Net.Iface in i.dev.ifaces:
+		if other.name == mate:
+			return other
+	return null
+
+func effective_peer(i: Net.Iface) -> Net.Iface:
+	## What is really on the far end of this cable once the passive panels in
+	## the middle are followed through. Bounded, so a patch loop cannot hang us.
 	var l := link_at(i)
 	if l == null:
-		return ""
-	var p := l.other(i)
+		return null
+	var far := l.other(i)
+	for _hop in 8:
+		if far.dev.type != "panel":
+			return far
+		var through := panel_partner(far)
+		if through == null:
+			return null
+		var next_link := link_at(through)
+		if next_link == null:
+			return null  # patched into a panel port with nothing behind it
+		far = next_link.other(through)
+	return null  # patched round in a circle: that is not a link
+
+func cable_path(i: Net.Iface) -> Array:
+	## Every segment, front to back, for somebody tracing it by hand.
+	var out: Array = []
+	var here := i
+	for _hop in 8:
+		var l := link_at(here)
+		if l == null:
+			break
+		var far := l.other(here)
+		out.append("%s %s → %s %s" % [here.dev.name, here.name, far.dev.name, far.name])
+		if far.dev.type != "panel":
+			break
+		var through := panel_partner(far)
+		if through == null:
+			break
+		here = through
+	return out
+
+func peer_label(i: Net.Iface) -> String:
+	var p := effective_peer(i)
+	if p == null:
+		var l := link_at(i)
+		return "%s %s" % [l.other(i).dev.name, l.other(i).name] if l != null else ""
 	return "%s %s" % [p.dev.name, p.name]
 
 func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:

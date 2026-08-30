@@ -4105,6 +4105,64 @@ static func run() -> int:
 	Game.monitors = []
 	Game.runbooks = []
 	Game.runbook_runs = []
+
+	# --- structured cabling: patch panels ---
+	Game.parts = {"patch": 60, "optic": 20, "power": 20, "blank": 20}
+	Game.parts_auto = true
+	Game.money = 20000
+	var pp_rack := Game.add_rack(Vector2i(74, 1))
+	var pp_sw := Game.new_device("sw-8")
+	var pp_srv := Game.new_device("srv-1")
+	var pp_panel := Game.new_device("panel-12")
+	pp_rack.slots[0] = pp_sw
+	pp_rack.slots[1] = pp_srv
+	pp_rack.slots[2] = pp_panel
+	check(pp_panel.type == "panel" and pp_panel.ifaces.size() == 24 \
+			and pp_panel.ifaces[0].name == "front1" and pp_panel.ifaces[12].name == "rear1",
+		"panels: a patch panel is twelve front ports wired straight through to twelve at the back")
+	# direct first, as the baseline
+	Game.connect_ifaces(pp_srv.ifaces[0], pp_sw.ifaces[0])
+	Game.add_ip(pp_srv.ifaces[0], "10.181.0.10/24")
+	var pp_srv2 := Game.new_device("srv-1")
+	pp_rack.slots[3] = pp_srv2
+	Game.connect_ifaces(pp_srv2.ifaces[0], pp_sw.ifaces[1])
+	Game.add_ip(pp_srv2.ifaces[0], "10.181.0.11/24")
+	Sim.flush_learned_state()
+	check(Sim.ping(pp_srv, "10.181.0.11")["ok"], "panels: the direct connection is the baseline")
+	# now route the same connection through the panel
+	Game.disconnect_iface(pp_srv2.ifaces[0])
+	Game.connect_ifaces(pp_srv2.ifaces[0], pp_panel.ifaces[1])       # front2
+	Game.connect_ifaces(pp_panel.ifaces[13], pp_sw.ifaces[1])        # rear2
+	Sim.flush_learned_state()
+	check(Game.effective_peer(pp_srv2.ifaces[0]) == pp_sw.ifaces[1] \
+			and Game.effective_peer(pp_sw.ifaces[1]) == pp_srv2.ifaces[0],
+		"panels: both ends see the device at the far side, not the panel in between")
+	check(Sim.ping(pp_srv, "10.181.0.11")["ok"],
+		"panels: a panel-routed link behaves exactly like the direct one")
+	check(Game.peer_label(pp_sw.ifaces[1]).contains(pp_srv2.name),
+		"panels: LLDP and the port list name the real neighbour")
+	var pp_trace := Game.cable_path(pp_srv2.ifaces[0])
+	check(pp_trace.size() == 2 and String(pp_trace[0]).contains("front2") \
+			and String(pp_trace[1]).contains("rear2"),
+		"panels: an operator can trace it segment by segment")
+	# a patch into a panel port with nothing behind it is not a link
+	Game.disconnect_iface(pp_panel.ifaces[13])
+	Sim.flush_learned_state()
+	check(Game.effective_peer(pp_srv2.ifaces[0]) == null \
+			and not Sim.ping(pp_srv, "10.181.0.11")["ok"],
+		"panels: a half-patched panel port goes nowhere, which is exactly what it does in reality")
+	# and a panel patched into itself is a loop, not a link
+	Game.connect_ifaces(pp_panel.ifaces[13], pp_panel.ifaces[2])
+	Game.connect_ifaces(pp_panel.ifaces[14], pp_panel.ifaces[3])
+	Game.connect_ifaces(pp_panel.ifaces[15], pp_panel.ifaces[4])
+	Game.connect_ifaces(pp_panel.ifaces[16], pp_panel.ifaces[5])
+	Game.connect_ifaces(pp_panel.ifaces[17], pp_panel.ifaces[0])
+	Sim.flush_learned_state()
+	check(Game.effective_peer(pp_srv2.ifaces[0]) == null,
+		"panels: patching a panel round in a circle is refused rather than followed forever")
+	var pp_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(pp_payload["devices"].has(pp_panel.name),
+		"panels: the passive infrastructure is saved with everything else")
 	Game.money = 5000
 	var rb_rack := Game.add_rack(Vector2i(70, 1))
 	var rb_sw := Game.new_device("sw-8")

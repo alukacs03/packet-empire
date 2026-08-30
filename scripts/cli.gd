@@ -1536,10 +1536,10 @@ class EOS extends Session:
 		var out := "%-11s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]
 		var any := false
 		for i: Net.Iface in dev.ifaces:
-			var l := Game.link_at(i)
-			if l:
+			var peer := Game.effective_peer(i)
+			if peer != null:
 				any = true
-				var peer := l.other(i)
+				# LLDP hears the device at the far end, not the panel in between
 				out += "%-11s %-14s %s\n" % [EOS._short(i.name), peer.dev.name, EOS._short(peer.name)]
 		return out if any else "  (no neighbors detected)\n"
 

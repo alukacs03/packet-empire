@@ -1022,7 +1022,10 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	var l := Game.link_at(iface)
 	if l == null:
 		return
-	var peer: Net.Iface = l.other(iface)
+	# a patch panel is copper, not a device: the frame comes out the far side
+	var peer: Net.Iface = Game.effective_peer(iface)
+	if peer == null:
+		return
 	if not peer.enabled or peer.dev.status != "active":
 		return
 	iface.tx_frames += 1
