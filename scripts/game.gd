@@ -4167,6 +4167,88 @@ func finale_callouts(snap: Dictionary) -> Dictionary:
 		losses.append("%d%% uptime across the run" % int(snap.get("uptime", 0)))
 	return {"strength": best, "losses": losses}
 
+const HISTORY_PATH := "user://run_history.json"
+static var history_path := HISTORY_PATH  # tests point this somewhere harmless
+
+func run_history() -> Array:
+	## Old or corrupt records are dropped rather than trusted.
+	if not FileAccess.file_exists(history_path):
+		return []
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(history_path))
+	if not (parsed is Array):
+		return []
+	var out: Array = []
+	for entry in parsed:
+		if entry is Dictionary and entry.has("total") and entry.has("ending"):
+			out.append(entry)
+	return out
+
+func _write_history(rows: Array) -> void:
+	var f := FileAccess.open(history_path, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(rows))
+
+func record_run(snap: Dictionary) -> Dictionary:
+	## One compact row per finished run. Nothing here is a save, so deleting
+	## history never costs anybody a game.
+	var scored := finale_score(snap)
+	var row := {"company": snap.get("company", ""), "identity": snap.get("identity", ""),
+		"difficulty": snap.get("difficulty", ""), "ending": snap.get("ending", ""),
+		"cycle": int(snap.get("cycle", 0)), "rank": rank(), "total": int(scored["total"]),
+		"categories": scored["categories"], "at": int(Time.get_unix_time_from_system()),
+		"money_at_end": int(snap.get("money", 0)), "reputation_at_end": int(snap.get("reputation", 0))}
+	var rows := run_history()
+	# wall-clock seconds are not unique enough to order two quick runs
+	var seq := 0
+	for prior: Dictionary in rows:
+		seq = maxi(seq, int(prior.get("seq", 0)))
+	row["seq"] = seq + 1
+	rows.push_front(row)
+	if rows.size() > 25:
+		rows.resize(25)
+	_write_history(rows)
+	return row
+
+func best_run(difficulty_name := "") -> Dictionary:
+	var best := {}
+	for row: Dictionary in run_history():
+		if difficulty_name != "" and String(row.get("difficulty", "")) != difficulty_name:
+			continue
+		if best.is_empty() or int(row["total"]) > int(best["total"]):
+			best = row
+	return best
+
+func compare_to_best(row: Dictionary) -> Array:
+	## What this run did better and worse than the best one before it.
+	var out: Array = []
+	var previous := {}
+	for other: Dictionary in run_history():
+		# strictly earlier runs only: a run does not compete with itself
+		if int(other.get("seq", 0)) >= int(row.get("seq", 0)):
+			continue
+		if previous.is_empty() or int(other["total"]) > int(previous["total"]):
+			previous = other
+	if previous.is_empty():
+		return ["This is the first run on record; the next one has something to beat."]
+	out.append("against %s (%d): %s%d overall" % [previous.get("company", "the last one"),
+		int(previous["total"]), "+" if int(row["total"]) >= int(previous["total"]) else "",
+		int(row["total"]) - int(previous["total"])])
+	for k: String in row["categories"]:
+		var delta := int(row["categories"][k]) - int(previous.get("categories", {}).get(k, 0))
+		if delta != 0:
+			out.append("  %-12s %s%d" % [k, "+" if delta > 0 else "", delta])
+	return out
+
+func forget_run(at: int) -> void:
+	var rows := run_history()
+	for row: Dictionary in rows.duplicate():
+		if int(row.get("at", 0)) == at:
+			rows.erase(row)
+	_write_history(rows)
+
+func forget_all_runs() -> void:
+	_write_history([])
+
 func end_run(ending: String) -> String:
 	## Freeze it. The save is untouched: this is a report, not a deletion.
 	if not FINALE_ENDINGS.has(ending):
@@ -4176,6 +4258,7 @@ func end_run(ending: String) -> String:
 	finale = finale_snapshot(ending)
 	var scored := finale_score(finale)
 	finale["score"] = scored
+	finale["record"] = record_run(finale)
 	log_event("THE END: %s  %s scored %d." % [FINALE_ENDINGS[ending], company_name,
 		int(scored["total"])])
 	Legacy.harvest(FINALE_ENDINGS[ending])
@@ -4574,6 +4657,7 @@ func _ready() -> void:
 		save_path = "user://save_test.json"  # never touch the real save from tests
 		slot_prefix = "user://slot_test"
 		Legacy.path = "user://legacy_test.json"
+		history_path = "user://run_history_test.json"
 	Legacy.load_file()
 	topology_changed.connect(Sim.flush_learned_state)
 	cycle_timer = Timer.new()

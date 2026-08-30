@@ -7209,5 +7209,38 @@ static func run() -> int:
 	Game.finale = {}
 	Game.money = 12000
 
+	# --- run history ---
+	Game.history_path = "user://run_history_test.json"
+	Game.forget_all_runs()
+	check(Game.run_history().is_empty(), "history: it starts empty and that is not an error")
+	var hist_snap := Game.finale_snapshot("sold")
+	var hist_row := Game.record_run(hist_snap)
+	check(Game.run_history().size() == 1 and int(Game.run_history()[0]["total"]) == int(hist_row["total"]),
+		"history: a finished run leaves one compact row behind")
+	check(String(Game.compare_to_best(hist_row)[0]).contains("first run"),
+		"history: the first run has nothing to compare against, and says so")
+	var hist_snap2 := hist_snap.duplicate(true)
+	hist_snap2["company"] = "Second Go"
+	hist_snap2["reputation"] = int(hist_snap.get("reputation", 50)) + 20
+	hist_snap2["references"] = 3
+	var hist_row2 := Game.record_run(hist_snap2)
+	var hist_cmp := Game.compare_to_best(hist_row2)
+	check(hist_cmp.size() > 1 and String(hist_cmp[0]).contains("against"),
+		"history: the second run is compared with the best one before it, category by category")
+	check(int(Game.best_run()["total"]) >= int(hist_row["total"]),
+		"history: the best run is the best of them, not the last of them")
+	var f_bad := FileAccess.open(Game.history_path, FileAccess.WRITE)
+	if f_bad:
+		f_bad.store_string("{\"nope\": 1}")
+		f_bad = null
+	check(Game.run_history().is_empty(),
+		"history: a corrupt file reads as no history rather than taking the game down")
+	Game.record_run(hist_snap)
+	var forget_at := int(Game.run_history()[0]["at"])
+	Game.forget_run(forget_at)
+	check(Game.run_history().is_empty(),
+		"history: a single record can be removed, and saves are not involved")
+	Game.forget_all_runs()
+
 	print("---- %d failures" % fails)
 	return fails

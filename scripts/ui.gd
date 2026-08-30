@@ -2295,6 +2295,8 @@ func _refresh_ops() -> void:
 			var fl := _label("  %s" % fin_line, 12, Color(0.85, 0.9, 0.95))
 			fl.add_theme_font_override("font", mono)
 			ops_box.add_child(fl)
+		for cmp_line: String in Game.compare_to_best(Game.finale.get("record", {})):
+			ops_box.add_child(_label("  %s" % cmp_line, 12, Color(0.72, 0.84, 0.8)))
 		var fin_copy := Button.new()
 		fin_copy.text = "Copy the report"
 		fin_copy.pressed.connect(func() -> void:
@@ -2311,6 +2313,22 @@ func _refresh_ops() -> void:
 				_toast(err)
 			_refresh_ops())
 		ops_box.add_child(retire)
+	var past_runs: Array = Game.run_history()
+	if not past_runs.is_empty():
+		ops_box.add_child(_section("RUNS BEFORE THIS ONE"))
+		for row: Dictionary in past_runs.slice(0, 6):
+			var rl := _label("  %-18s %-14s %-11s cycle %-5d score %d" % [row.get("company", ""),
+				row.get("identity", ""), row.get("ending", ""), int(row.get("cycle", 0)),
+				int(row.get("total", 0))], 12, Color(0.78, 0.84, 0.9))
+			rl.add_theme_font_override("font", mono)
+			ops_box.add_child(rl)
+		var forget := Button.new()
+		forget.text = "Clear the history"
+		forget.tooltip_text = "History is not a save: clearing it costs you nothing but the table."
+		forget.pressed.connect(func() -> void:
+			Game.forget_all_runs()
+			_refresh_ops())
+		ops_box.add_child(forget)
 	ops_box.add_child(_section("WHAT KIND OF COMPANY THIS IS"))
 	if Game.identity == "":
 		if Game.identity_offered():
