@@ -233,6 +233,8 @@ var blueprints: Array = []  # rack layouts: {name, slots: [model|null]}
 var maintenance_until := -1  # cycle up to which planned work is excused
 var maintenance_used := 0  # windows taken this quarter: customers notice
 var incidents: Array = []  # things worth reviewing afterwards
+var blame_fear := 0  # how unsafe the team feels about owning up (0-5)
+var pending_reports: Array = []  # slips nobody has mentioned yet
 var status_posts: Array = []  # public incident communication
 var spares := {}  # model -> how many replacement units are on the shelf
 var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
@@ -2408,11 +2410,12 @@ func swap_from_spares(dev: Net.NDevice) -> String:
 	topology_changed.emit()
 	return ""
 
-func record_incident(kind: String, summary: String) -> void:
+func record_incident(kind: String, summary: String, by := "") -> void:
 	for inc in incidents:
 		if inc["kind"] == kind and inc["summary"] == summary and not bool(inc.get("reviewed", false)):
 			return  # one open review per ongoing problem
-	incidents.push_front({"kind": kind, "summary": summary, "cycle": cycle, "reviewed": false})
+	incidents.push_front({"kind": kind, "summary": summary, "cycle": cycle, "reviewed": false,
+		"by": by})
 	if incidents.size() > 6:
 		incidents.pop_back()
 
@@ -2433,6 +2436,86 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. Customers appreciate the candour."
 		% [inc["summary"], inc["cause"]])
 	return ""
+
+func report_incident(kind: String, summary: String, by: String, text: String, delay: int) -> void:
+	## A fault is live the moment it happens; whether anyone says so is a
+	## separate question, and the answer is set by how the last blame landed.
+	if delay <= 0:
+		record_incident(kind, summary, by)
+		log_event(text)
+		return
+	pending_reports.append({"cycle": cycle + delay, "kind": kind, "summary": summary,
+		"by": by, "text": text})
+
+func report_tick() -> void:
+	for pending: Dictionary in pending_reports.duplicate():
+		if cycle < int(pending["cycle"]):
+			continue
+		pending_reports.erase(pending)
+		record_incident(String(pending["kind"]), String(pending["summary"]), String(pending["by"]))
+		log_event("%s (nobody mentioned it at the time)" % pending["text"])
+
+func staff_named(name: String) -> Dictionary:
+	for member: Dictionary in staff:
+		if String(member.get("name", "")) == name:
+			return member
+	return {}
+
+const BLAME_CHOICES := [
+	["truth", "Tell them what actually happened"],
+	["mine", "Take it yourself"],
+	["name", "Name the person who did it"],
+]
+
+func blame_incident(inc: Dictionary, choice: String) -> String:
+	## One line of dialogue, one real price. Nothing here is free.
+	if String(inc.get("by", "")) == "":
+		return "nobody caused that one; it was the hardware"
+	if inc.has("blame"):
+		return "you have already answered for that one"
+	var who := staff_named(String(inc["by"]))
+	var mine := String(inc["by"]) == "you"
+	match choice:
+		"truth":
+			reputation = mini(100, reputation + 2)
+			if not who.is_empty():
+				who["morale"] = maxi(0, int(who.get("morale", 70)) - 4)
+			log_event("BLAME: you told the customer what actually happened. Candour is cheaper than a story that unravels.")
+		"mine":
+			reputation = maxi(0, reputation - 4)
+			blame_fear = maxi(0, blame_fear - 1)
+			if not who.is_empty():
+				who["morale"] = mini(100, int(who.get("morale", 70)) + 12)
+				who["shielded"] = true
+				who.erase("cautious")
+				log_event("BLAME: you took it for %s. They will not forget that, and neither will the rest of the team."
+					% who["name"])
+			else:
+				log_event("BLAME: you said it was yours, because it was. The team heard that too.")
+		"name":
+			if mine:
+				blame_fear = mini(5, blame_fear + 2)
+				reputation = mini(100, reputation + 1)
+				log_event("BLAME: your mistake landed on the team. They noticed exactly what that means for theirs.")
+			elif who.is_empty():
+				return "they are not on the payroll any more"
+			else:
+				blame_fear = mini(5, blame_fear + 1)
+				who["morale"] = maxi(0, int(who.get("morale", 70)) - 25)
+				who["cautious"] = true
+				who.erase("shielded")
+				log_event("BLAME: you gave the customer %s's name. Your reputation is intact and %s will be very careful what they mention from now on."
+					% [who["name"], who["name"]])
+		_:
+			return "that is not one of the things you can say"
+	inc["blame"] = choice
+	return ""
+
+func blame_said(inc: Dictionary) -> String:
+	for say: Array in BLAME_CHOICES:
+		if String(say[0]) == String(inc.get("blame", "")):
+			return String(say[1])
+	return "nothing"
 
 func device_age(d: Net.NDevice) -> int:
 	return maxi(0, cycle - d.installed_cycle)
@@ -2770,7 +2853,8 @@ func dispute_tick() -> void:
 			reputation = maxi(0, reputation - 4)
 			log_event("PREDICTED FAILURE: %s is down the way you expected. You never wrote it down, so it is yours."
 				% deal["customer"])
-		record_incident("dispute", "%s went down after overruling your advice" % deal["customer"])
+		record_incident("dispute", "%s went down after overruling your advice" % deal["customer"],
+			"" if bool(deal.get("on_record", false)) else "you")
 		topology_changed.emit()
 
 func _break_deal_path(deal: Dictionary) -> bool:
@@ -3337,6 +3421,7 @@ func sla_tick() -> void:
 		"power": 0, "transit": 0}
 	_maybe_start_guided_outage()
 	dispute_tick()
+	report_tick()
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -4090,7 +4175,7 @@ func _serialize() -> Dictionary:
 		"feature_discovery_trace": feature_discovery_trace,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
-		"incidents": incidents,
+		"incidents": incidents, "blame_fear": blame_fear, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
 		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
@@ -4408,6 +4493,8 @@ func _apply(data: Dictionary) -> void:
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])
+	blame_fear = int(data.get("blame_fear", 0))
+	pending_reports = data.get("pending_reports", [])
 	status_posts = data.get("status_posts", [])
 	spares = data.get("spares", {})
 	guided_outage = data.get("guided_outage", {})

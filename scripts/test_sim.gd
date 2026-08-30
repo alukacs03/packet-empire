@@ -2696,6 +2696,73 @@ static func run() -> int:
 	check(Game.reputation > rep_before_review, "post-mortem: candour earns back some trust")
 	check(not Game.review_incident(Game.incidents[0], 1).is_empty(), "post-mortem: only once")
 
+	# --- who takes the blame ---
+	var blame_staff := Game.staff.duplicate(true)
+	var blame_incidents := Game.incidents.duplicate(true)
+	var blame_pending := Game.pending_reports.duplicate(true)
+	Game.incidents = []
+	Game.pending_reports = []
+	Game.blame_fear = 0
+	Game.reputation = 60
+	Game.staff = [{"name": "Kovacs Anna", "role": "noc", "skill": 3, "salary": 300, "morale": 70,
+		"shift": "day", "training_left": 0, "certs": []}]
+	var culprit: Dictionary = Game.staff[0]
+	Game.report_incident("human", "Kovacs Anna took sw1 eth3 down while working on it",
+		"Kovacs Anna", "HANDS: Kovacs Anna took sw1 eth3 down.", 0)
+	check(Game.incidents.size() == 1 and String(Game.incidents[0]["by"]) == "Kovacs Anna",
+		"blame: a person-caused outage is attributed to the person who caused it")
+	var human_inc: Dictionary = Game.incidents[0]
+	check(Game.blame_incident(human_inc, "shrug") != "" and not human_inc.has("blame"),
+		"blame: only the three things you can actually say are accepted")
+	var rep_before_blame := Game.reputation
+	check(Game.blame_incident(human_inc, "mine") == "" and Game.reputation < rep_before_blame \
+			and int(culprit["morale"]) > 70 and bool(culprit["shielded"]),
+		"blame: taking it yourself costs reputation now and buys real loyalty")
+	check(Game.blame_incident(human_inc, "truth") != "",
+		"blame: the scene happens once per incident")
+	# naming somebody protects the company and changes how that person works
+	Game.incidents = []
+	Game.report_incident("human", "Kovacs Anna took sw1 eth4 down while working on it",
+		"Kovacs Anna", "HANDS: Kovacs Anna took sw1 eth4 down.", 0)
+	var rep_before_name := Game.reputation
+	check(Game.blame_incident(Game.incidents[0], "name") == "" \
+			and Game.reputation >= rep_before_name and int(culprit["morale"]) < 60 \
+			and bool(culprit["cautious"]) and not culprit.has("shielded") \
+			and Game.blame_fear == 1,
+		"blame: naming the person protects reputation, costs morale, and teaches the team a lesson")
+	# a team that fears blame reports the next one late, while the fault is live
+	Game.incidents = []
+	Game.events = []
+	var late_delay: int = Game.blame_fear + 2  # what a cautious person on a fearful team waits
+	Game.report_incident("human", "Kovacs Anna took sw1 eth5 down while working on it",
+		"Kovacs Anna", "HANDS: Kovacs Anna took sw1 eth5 down.", late_delay)
+	Game.report_tick()
+	check(Game.incidents.is_empty() and Game.pending_reports.size() == 1,
+		"blame: a frightened team does not mention the fault it just caused")
+	Game.cycle += late_delay
+	Game.report_tick()
+	check(Game.incidents.size() == 1 and Game.pending_reports.is_empty() \
+			and "nobody mentioned it" in String(Game.events[0]),
+		"blame: it surfaces later, once the damage has had time to run")
+	# the player's own mistake sets what the team believes is safe
+	Game.incidents = []
+	Game.report_incident("dispute", "Stubborn Kft went down after overruling your advice",
+		"you", "PREDICTED FAILURE: Stubborn Kft is down.", 0)
+	check(Game.blame_incident(Game.incidents[0], "name") == "" and Game.blame_fear == 3,
+		"blame: pushing your own mistake onto the team makes them more afraid, not less")
+	Game.incidents = []
+	Game.report_incident("dispute", "Madaras Jatek went down after overruling your advice",
+		"you", "PREDICTED FAILURE: Madaras Jatek is down.", 0)
+	check(Game.blame_incident(Game.incidents[0], "mine") == "" and Game.blame_fear == 2,
+		"blame: admitting your own mistake makes owning up safer for everyone else")
+	var blame_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(int(blame_payload["blame_fear"]) == 2,
+		"blame: what the team has learned survives the campaign save")
+	Game.staff = blame_staff
+	Game.incidents = blame_incidents
+	Game.pending_reports = blame_pending
+	Game.blame_fear = 0
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

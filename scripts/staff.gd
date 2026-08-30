@@ -129,6 +129,10 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 			drift -= 4  # they have noticed what the market pays
 		if shift_of(m) == "night":
 			drift -= 1
+		if bool(m.get("shielded", false)):
+			drift += 2  # somebody took it for them, and they remember
+		if bool(m.get("cautious", false)):
+			drift -= 2  # they are still waiting for the next one to land on them
 		m["morale"] = clampi(int(m.get("morale", 70)) + drift, 0, 100)
 		if int(m["morale"]) <= 12 and randf() < 0.35:
 			Game.staff.erase(m)
@@ -195,6 +199,7 @@ static func work_cycle() -> void:
 			Game.log_event("STAFF: %s restored %s %s." % [who["name"], ifc.dev.name, ifc.name])
 			Game.topology_changed.emit()
 			break
+	_maybe_slip(rng)
 	# 2. an engineer keeps configurations saved, which is what saves you at 3am
 	var eng := best_of("engineer")
 	if not eng.is_empty():
@@ -204,3 +209,34 @@ static func work_cycle() -> void:
 				Game.save_config_version(d)
 				Game.log_event("STAFF: %s saved the configuration on %s." % [eng["name"], d.name])
 				break
+
+static func _maybe_slip(rng: RandomNumberGenerator) -> void:
+	## People break things. A team that fears blame breaks them just as often
+	## and says so later, which is the expensive part.
+	var pool: Array = Game.staff.filter(func(m: Dictionary) -> bool: return on_shift(m))
+	if pool.is_empty():
+		return
+	var who: Dictionary = pool[rng.randi() % pool.size()]
+	var risk := 0.02 + 0.008 * float(5 - int(who.get("skill", 3)))
+	if int(who.get("morale", 70)) < 40:
+		risk += 0.03
+	if rng.randf() > risk:
+		return
+	var live: Array = []
+	for l in Game.links:
+		for i in [l.a, l.b]:
+			if i.enabled and not i.name.begins_with("Management"):
+				live.append(i)
+	if live.is_empty():
+		return
+	var victim: Net.Iface = live[rng.randi() % live.size()]
+	victim.enabled = false
+	Game.device_log(victim.dev, "%s changed state to down (configuration change)" % victim.name)
+	Game.stats["faults"] = int(Game.stats.get("faults", 0)) + 1
+	var delay: int = Game.blame_fear + (2 if bool(who.get("cautious", false)) else 0)
+	Game.report_incident("human",
+		"%s took %s %s down while working on it" % [who["name"], victim.dev.name, victim.name],
+		String(who["name"]),
+		"HANDS: %s took %s %s down during a change." % [who["name"], victim.dev.name, victim.name],
+		delay)
+	Game.topology_changed.emit()

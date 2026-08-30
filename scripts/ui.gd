@@ -3768,6 +3768,22 @@ func _build_log_tab() -> void:
 					Game.review_incident(inc, id)
 					_refresh_contracts()))
 			irow.add_child(rbtn)
+			if String(inc.get("by", "")) != "" and not inc.has("blame"):
+				var brow := HBoxContainer.new()
+				brow.add_theme_constant_override("separation", 8)
+				contracts_box.add_child(brow)
+				brow.add_child(_wrap("      The customer is on the phone. %s caused this."
+					% ("You" if String(inc["by"]) == "you" else String(inc["by"])),
+					13, Color(1.0, 0.72, 0.45), 420))
+				for say: Array in Game.BLAME_CHOICES:
+					var sbtn := Button.new()
+					sbtn.text = String(say[1])
+					sbtn.pressed.connect(func() -> void:
+						Game.blame_incident(inc, String(say[0]))
+						_refresh_contracts())
+					brow.add_child(sbtn)
+			elif inc.has("blame"):
+				contracts_box.add_child(_label("      said: %s" % Game.blame_said(inc), 12, MUTED))
 			if replay_for == int(inc["cycle"]):
 				var frames := Game.replay_around(int(inc["cycle"]))
 				if frames.is_empty():
