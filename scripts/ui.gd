@@ -3734,7 +3734,11 @@ func _show_drill_banner() -> void:
 		c.queue_free()
 	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
 	drill_box.add_child(_label(Drill.scenario, 13, Color(0.9, 0.85, 0.8)))
-	if not Drill.outcome.is_empty():
+	if Drill.outcome.has("survive_ip"):
+		drill_box.add_child(_wrap("%s must still answer %s with either building out of service."
+			% [Drill.outcome["survive_ip"], Drill.outcome["from_ip"]], 13,
+			Color(0.9, 0.88, 0.8), 620))
+	elif not Drill.outcome.is_empty():
 		# a services incident has no pair of static addresses to light up: the
 		# thing to restore is what the customer asked for
 		var client: Net.NDevice = Drill.outcome["client"]

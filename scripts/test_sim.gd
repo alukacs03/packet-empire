@@ -1871,6 +1871,23 @@ static func run() -> int:
 		Drill.cheat_fix()
 		check(Drill.solved(), "drill: fixing the services faults gets a lease and resolves the name")
 		Drill.finish(false)
+	# the incident that spans two buildings
+	var rooms_seed := -1
+	for r_try in range(1, 30):
+		Drill.start(3, r_try)
+		if Drill.scenario.begins_with("Two rooms"):
+			rooms_seed = r_try
+			break
+		Drill.finish(false)
+	check(rooms_seed > 0, "drill: the two-room incident comes up in the rotation")
+	if rooms_seed > 0:
+		check(Drill.outcome.has("survive_ip"),
+			"drill: it is judged on the service surviving a building, not on a static ping")
+		check(not Drill.solved(), "drill: and it really is broken")
+		Drill.cheat_fix()
+		check(Drill.solved(),
+			"drill: fixing it leaves the service answering with either room dark")
+		Drill.finish(false)
 	Drill.start(2, 7)
 	var during := Game.all_devices().size()
 	Drill.finish(false)  # the quit path: abandon restores before saving

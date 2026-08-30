@@ -27,13 +27,15 @@ static func start(n_breaks := 3, rng_seed := -1) -> void:
 		rng.seed = rng_seed
 	else:
 		rng.randomize()
-	match rng.randi() % 4:
+	match rng.randi() % 5:
 		0:
 			_build()
 		1:
 			_build_tenants()
 		2:
 			_build_services()
+		3:
+			_build_two_rooms()
 		_:
 			_build_core()
 	_break(n_breaks, rng_seed)
@@ -104,6 +106,39 @@ static func _build_services() -> void:
 	outcome = {"client": client, "name": "app.pkt", "ip": "10.73.0.20"}
 	_cast = {"sw1": sw, "rtr": rtr, "svc": svc, "a": app, "client": client,
 		"access_a": sw.ifaces[3], "access_vlan": 1}
+
+static func _build_two_rooms() -> void:
+	## two floors, one address, and a customer who only cares whether it is
+	## still answering when a building goes dark
+	scenario = "Two rooms: 10.75.0.10 must answer with either building dark."
+	Game.sites = [{"name": "Alpha room", "grid": [4, 4], "kind": "own", "city": "Budapest"}]
+	var other := Game.add_site("Beta room", Vector2i(4, 4), "leased", "Debrecen")
+	Game.carrier_outage = {}
+	Game.buy_circuit(0, other, 1)
+	var ra := Game.add_rack(Vector2i(1, 1), 0)
+	var rb := Game.add_rack(Vector2i(1, 1), other)
+	var sw_a := Game.new_device("sw-8")
+	var sw_b := Game.new_device("sw-8")
+	var copy_a := Game.new_device("srv-1")
+	var copy_b := Game.new_device("srv-1")
+	var client := Game.new_device("srv-1")
+	ra.slots[0] = sw_a
+	ra.slots[1] = copy_a
+	ra.slots[2] = client
+	rb.slots[0] = sw_b
+	rb.slots[1] = copy_b
+	Game.buy_parts("optic", 6)
+	Game.connect_ifaces(copy_a.ifaces[0], sw_a.ifaces[0])
+	Game.connect_ifaces(client.ifaces[0], sw_a.ifaces[1])
+	Game.connect_ifaces(copy_b.ifaces[0], sw_b.ifaces[0])
+	Game.connect_ifaces(sw_a.ifaces[7], sw_b.ifaces[7])  # over the circuit
+	Game.add_ip(copy_a.ifaces[0], "10.75.0.10/24")
+	Game.add_ip(copy_b.ifaces[0], "10.75.0.10/24")  # the same service, twice
+	Game.add_ip(client.ifaces[0], "10.75.0.20/24")
+	targets = []
+	outcome = {"survive_ip": "10.75.0.10", "from_ip": "10.75.0.20"}
+	_cast = {"sw1": sw_a, "sw2": sw_b, "a": copy_a, "b": copy_b, "client": client,
+		"access_a": sw_a.ifaces[0], "access_vlan": 1, "wan": sw_a.ifaces[7]}
 
 static func _build_core() -> void:
 	## three subnets behind two routers joined by a transit link
@@ -233,6 +268,18 @@ static func _break(n: int, rng_seed: int) -> void:
 				svc_dev.services["dns"]["records"] = {}
 				_undo.append(func() -> void:
 					svc_dev.services["dns"]["records"] = was_records)])
+	if _cast.has("wan") and _cast.has("b"):
+		var wan_if: Net.Iface = _cast["wan"]
+		var far_copy: Net.NDevice = _cast["b"]
+		pool.append(["the link between the two buildings was left disabled",
+			func() -> void:
+				wan_if.enabled = false
+				_undo.append(func() -> void: wan_if.enabled = true)])
+		pool.append(["the second copy of the service was readdressed and nobody noticed",
+			func() -> void:
+				var old_far: Array = far_copy.ifaces[0].ips.duplicate()
+				far_copy.ifaces[0].ips = ["10.75.9.10/24"]
+				_undo.append(func() -> void: far_copy.ifaces[0].ips = old_far)])
 	if _cast.has("trunk"):
 		var trunk_if: Net.Iface = _cast["trunk"]
 		pool.append(["the inter-switch trunk was pruned to the wrong VLAN list",
@@ -259,6 +306,27 @@ static func _break(n: int, rng_seed: int) -> void:
 		f[1].call()
 
 static func solved() -> bool:
+	if outcome.has("survive_ip"):
+		# judged the way the customer judges it: with either room dark
+		var asker := Sim._ip_owner(String(outcome["from_ip"]))
+		if asker == null or not Sim.ping(asker, String(outcome["survive_ip"]))["ok"]:
+			return false
+		for room in Game.site_count():
+			var kit := Game.devices_on(room)
+			if kit.is_empty() or asker in kit:
+				continue  # a room the customer is standing in cannot judge itself
+			var was: Array = []
+			for d: Net.NDevice in kit:
+				was.append(d.status)
+				d.status = "offline"
+			Sim.flush_learned_state()
+			var still: bool = Sim.ping(asker, String(outcome["survive_ip"]))["ok"]
+			for k in kit.size():
+				kit[k].status = String(was[k])
+			Sim.flush_learned_state()
+			if not still:
+				return false
+		return true
 	if not outcome.is_empty():
 		var client: Net.NDevice = outcome["client"]
 		# the lease is the fix working, not a side effect of it: ask for one
