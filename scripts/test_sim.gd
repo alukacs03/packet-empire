@@ -2801,6 +2801,12 @@ static func run() -> int:
 	Game.set_note(hab_dev.ifaces[0], "customer handoff")
 	check(float(Game.habits["documents"]) > 0.5 and float(Game.habits["tidy"]) > 0.5,
 		"habits: labelling a port is read as a habit, from the act rather than the intent")
+	# the floor shows what the habits are
+	Game.habits["tidy"] = 1.0
+	check(Game.housekeeping_mess() == 0, "housekeeping: a tidy team leaves nothing on the floor")
+	Game.habits["tidy"] = 0.0
+	check(Game.housekeeping_mess() > 0, "housekeeping: bad habits leave the room to show for it")
+	Game.habits["tidy"] = 0.5
 	var before_window := float(Game.habits["windows"])
 	Game.maintenance_until = -1
 	Game.maintenance_used = 0

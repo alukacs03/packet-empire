@@ -79,6 +79,7 @@ func _draw() -> void:
 		_draw_tile(hover_tile, Color(UIW.colour("accent"), pulse))
 		_outline(hover_tile, UIW.colour("focus"), 2.5)
 	_draw_owned_edge(grid, progress)
+	_draw_housekeeping(grid, progress)
 
 func _draw_owned_edge(grid: Vector2i, progress: float) -> void:
 	## Where the owned floor stops is a painted safety line, not an overlay:
@@ -106,6 +107,45 @@ func _draw_owned_edge(grid: Vector2i, progress: float) -> void:
 			var lean := Vector2(dir.y, -dir.x) * 7.0 + dir * 5.0
 			draw_line(base - lean, base + lean, Color(paint, 0.34), 2.0)
 			k += step
+
+func _draw_housekeeping(grid: Vector2i, progress: float) -> void:
+	## The state of the floor is the team's habits made visible. Positions are
+	## derived from the tile index, so the mess sits still between frames and
+	## keeps to the aisle side of a cell rather than under a cabinet.
+	var mess := Game.housekeeping_mess()
+	if mess <= 0:
+		return
+	var shade := Color("8a6a3c").lerp(Color("7d8794"), progress)
+	for i in mess:
+		var t := Vector2i((i * 7 + 3) % maxi(grid.x, 1), (i * 11 + 5) % maxi(grid.y, 1))
+		if Game.rack_at(t) != null:
+			continue
+		var jitter := Vector2(float((i * 13) % 7 - 3) * 5.0, float((i * 5) % 5 - 2) * 3.0)
+		var c := Iso.tile_to_world(t) + Vector2(0, Iso.TILE_H * 0.5) + jitter
+		# a flat contact shadow, so the thing sits on the slab in the same
+		# projection as everything else rather than reading as a floor drain
+		var shadow := PackedVector2Array()
+		for k in 16:
+			var sa := TAU * float(k) / 16.0
+			shadow.append(c + Vector2(cos(sa) * 13.0, 3.0 + sin(sa) * 5.0))
+		draw_colored_polygon(shadow, Color(0.0, 0.0, 0.0, 0.20))
+		match i % 3:
+			0:  # a coil of patch cable nobody dressed
+				for ring in 3:
+					var rr := 7.0 + ring * 3.5
+					var loop := PackedVector2Array()
+					for k in 14:
+						var a := TAU * float(k) / 14.0
+						loop.append(c + Vector2(cos(a) * rr, sin(a) * rr * 0.5))
+					draw_polyline(loop, Color(shade.lightened(0.22), 0.85), 2.0)
+			1:  # a flattened carton left where it was opened
+				draw_colored_polygon(PackedVector2Array([
+					c + Vector2(-16, 0), c + Vector2(0, -8),
+					c + Vector2(16, 0), c + Vector2(0, 8),
+				]), Color(shade, 0.85))
+			_:  # a cup, and the ring it will leave
+				draw_circle(c + Vector2(0, 2), 6.0, Color(shade.darkened(0.25), 0.35))
+				draw_circle(c, 5.0, Color(shade.lightened(0.45), 0.95))
 
 func _tile_points(t: Vector2i) -> PackedVector2Array:
 	var c := Iso.tile_to_world(t)

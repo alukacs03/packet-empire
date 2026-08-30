@@ -6485,6 +6485,16 @@ func decom_tick() -> void:
 			% risk["device"])
 		return
 
+func housekeeping_mess() -> int:
+	## How much the room shows the team's habits: coils nobody dressed, a
+	## carton nobody broke down, a cup on the slab. A tidy team leaves none.
+	## ponytail: one number drives the whole floor; per-item state would only
+	## be worth it if the player could pick things up.
+	var tidy: float = float(habits.get("tidy", 0.5))
+	var cells := grid_size()
+	var room := clampf(float(cells.x * cells.y) * 0.10, 2.0, 9.0)
+	return int(round(clampf(1.0 - tidy, 0.0, 1.0) * room))
+
 func rack_tidiness(r: Net.Rack) -> float:
 	## How well kept one cabinet is, read off the real thing: blanked gaps,
 	## labelled live ports, and configurations that are actually saved.
