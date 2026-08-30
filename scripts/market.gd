@@ -188,10 +188,14 @@ static func negotiate(offer: Dictionary, quote: int) -> String:
 
 const LEAD_QUALIFY_COST := 220  # a visit, a survey, an afternoon of somebody's time
 
-static func gen_lead() -> Dictionary:
+static func gen_lead(only_kinds: Array = []) -> Dictionary:
 	## A lead is a rumour with a company name on it. It has no budget yet
 	## because nobody has asked them what they want.
 	var offer := gen_offer()
+	for _try in 8:
+		if only_kinds.is_empty() or String(offer["kind"]) in only_kinds:
+			break
+		offer = gen_offer()
 	return {
 		"id": "lead_" + String(offer["id"]),
 		"customer": offer["customer"],
@@ -301,6 +305,30 @@ static func tour_lead(premium: bool) -> Dictionary:
 		"public": false,
 		"ttl": 12,
 		"from_tour": true,
+	}
+
+static func identity_lead(identity: String) -> Dictionary:
+	## The one piece of work that only makes sense for the company you became.
+	var spec := {
+		"budget": ["hosting", "Sok Kis Ugyfel Bt", "a hundred small sites nobody else will quote", 150],
+		"reliability": ["redundant_gw", "Duna Bank Zrt", "they audit their suppliers and pay for it", 520],
+		"green": ["hosting", "Zold Halo Kft", "they buy the tariff, not the rack", 300],
+		"boutique": ["managed_switch", "Panonia Kutato", "a fabric nobody else wanted to design", 460],
+	}.get(identity, ["hosting", "Valaki Kft", "somebody heard of you", 200])
+	return {
+		"id": "lead_identity_%s" % identity,
+		"customer": String(spec[1]),
+		"kind": String(spec[0]),
+		"ctype": "enterprise",
+		"stage": "lead",
+		"heard": String(spec[2]),
+		"size": int(spec[3]),
+		"sla": 1,
+		"params": {"ip": "10.66.10.10", "vid": 66},
+		"load": int(spec[3]),
+		"public": false,
+		"ttl": 16,
+		"identity": identity,
 	}
 
 static func audit_lead(from_customer: String) -> Dictionary:

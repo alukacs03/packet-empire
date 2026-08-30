@@ -270,6 +270,7 @@ var orphan_intel := {}  # orphan key -> how much digging the player has done (0-
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
+var identity := ""  # the kind of company this is, chosen once the basics are learned
 var access_policy := "open"  # open | badges | escorted: convenience against control
 var access_log: Array = []  # who approached what, and whether anybody could tell
 var cameras := false
@@ -462,7 +463,8 @@ func apply_difficulty(idx: int) -> void:
 	money_changed.emit()
 
 func fault_scale() -> float:
-	return float(DIFFICULTIES[difficulty]["faults"])
+	# a budget operation runs older, cheaper hardware, and it shows
+	return float(DIFFICULTIES[difficulty]["faults"]) * (1.3 if identity_is("budget") else 1.0)
 
 func grid_size(site := -1) -> Vector2i:
 	_ensure_sites()
@@ -1074,7 +1076,7 @@ func stockout_tick() -> void:
 
 func order_estimate(model: String, tier: String) -> int:
 	var spec: Dictionary = VENDOR_TIERS.get(tier, VENDOR_TIERS["distributor"])
-	return int(float(MODELS[model]["price"]) * float(spec["price"]))
+	return int(float(MODELS[model]["price"]) * float(spec["price"]) * identity_hardware_multiplier())
 
 func send_rma(dev: Net.NDevice) -> String:
 	## Ship the dead one back. With cover you get the replacement first.
@@ -2111,6 +2113,72 @@ func renewal_tick() -> void:
 				and String(item["kind"]) in ["domain", "addresses"]:
 			# only the customer-facing lapses are visible from outside
 			reputation = maxi(0, reputation - 1)
+
+## Four kinds of company. Each one changes what work arrives, what it costs to
+## run, and how the competition behaves. None of them is simply easier.
+const IDENTITIES := {
+	"budget": {"label": "Budget hoster",
+		"blurb": "Second-hand gear at a third off, thin margins, and more of everything going wrong.",
+		"trade": "hardware is cheap; faults are 30% more frequent and used gear is riskier",
+		"signature": "A hundred small customers nobody else wants"},
+	"reliability": {"label": "Reliability specialist",
+		"blurb": "Strict service levels that pay a premium, and punish an outage twice as hard.",
+		"trade": "service fees +20%; every outage costs double the reputation",
+		"signature": "The bank that audits its suppliers"},
+	"green": {"label": "Green operator",
+		"blurb": "Efficient power and a renewable contract, on hardware that costs more to buy.",
+		"trade": "electricity is a quarter cheaper; every purchase is 15% dearer",
+		"signature": "A tenant who buys the tariff, not the rack"},
+	"boutique": {"label": "Network boutique",
+		"blurb": "Few customers, hard problems, and work nobody else will quote.",
+		"trade": "complex work pays 30% more; ordinary hosting leads go elsewhere",
+		"signature": "A fabric nobody else wanted to design"},
+}
+
+func identity_is(id: String) -> bool:
+	return identity == id
+
+func identity_offered() -> bool:
+	return identity == "" and contracts_done.size() >= 6
+
+func choose_identity(id: String) -> String:
+	if not IDENTITIES.has(id):
+		return "there is no such company"
+	if identity != "":
+		return "you are already a %s: a rebrand is what changes that" % IDENTITIES[identity]["label"]
+	identity = id
+	log_event("IDENTITY: you are a %s now. %s" % [IDENTITIES[id]["label"], IDENTITIES[id]["trade"]])
+	leads.append(Market.identity_lead(id))
+	return ""
+
+func rebrand(id: String) -> String:
+	## Expensive on purpose: it is a decision, and it is not a free respec.
+	if not IDENTITIES.has(id):
+		return "there is no such company"
+	if id == identity:
+		return "that is what you already are"
+	if not try_spend(5000):
+		return "a rebrand costs $5000 and a hit to your standing"
+	reputation = maxi(0, reputation - 5)
+	identity = id
+	log_event("REBRAND: the sign says %s now, and the market will take a while to believe it."
+		% IDENTITIES[id]["label"])
+	leads.append(Market.identity_lead(id))
+	return ""
+
+func identity_hardware_multiplier() -> float:
+	if identity_is("green"):
+		return 1.15
+	if identity_is("budget"):
+		return 0.75
+	return 1.0
+
+func identity_fee_multiplier(kind: String) -> float:
+	if identity_is("reliability"):
+		return 1.2
+	if identity_is("boutique") and kind in ["secure_host", "redundant_gw", "managed_switch"]:
+		return 1.3
+	return 1.0
 
 ## The human half of physical security. Strict access slows the work down;
 ## loose access is what makes the incidents possible in the first place.
@@ -4008,6 +4076,9 @@ func rank_score() -> int:
 		+ stage * 4000 + (reputation - 50) * 40
 	return maxi(0, base + bonus)
 
+func identity_label() -> String:
+	return IDENTITIES[identity]["label"] if identity != "" else "General operator"
+
 func rank() -> String:
 	var name: String = RANKS[0][0]
 	for r in RANKS:
@@ -4787,6 +4858,7 @@ func dismiss_offer(offer: Dictionary) -> void:
 
 func _offer_to_deal(offer: Dictionary, fee: int) -> void:
 	offers.erase(offer)
+	fee = int(round(float(fee) * identity_fee_multiplier(String(offer.get("kind", "")))))
 	stats["deals"] += 1
 	deals.append({"id": offer["id"], "customer": offer["customer"], "kind": offer["kind"],
 		"params": offer["params"], "fee": fee, "brief": offer["brief"],
@@ -5881,6 +5953,9 @@ func lead_tick() -> void:
 	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35:
 		# one in four of them is somebody who will still be here in fifty
 		# cycles, with a story of their own
+		if identity_is("boutique") and biz_roll() < 0.5:
+			leads.append(Market.gen_lead(["secure_host", "redundant_gw", "managed_switch"]))
+			return
 		var named := _unmet_story_customer()
 		if named != "" and biz_roll() < 0.25:
 			leads.append(Market.story_customer_lead(named))
@@ -6195,7 +6270,8 @@ func energy_multiplier() -> float:
 func energy_rate() -> float:
 	## the flat contract is priced above the average of the spot curve, which
 	## is what you pay for not having to think about it
-	return ENERGY_BASE * (1.18 if fixed_tariff else energy_multiplier())
+	var green := 0.75 if identity_is("green") else 1.0
+	return ENERGY_BASE * (1.18 if fixed_tariff else energy_multiplier()) * green
 
 func efficiency_factor() -> float:
 	return maxf(0.55, 1.0 - EFFICIENCY_STEP * float(efficiency))
@@ -7053,6 +7129,8 @@ func sla_tick() -> void:
 		if not deal["healthy"]:
 			# customers forgive an outage they were told about far more readily
 			var rep_hit := 2 if status_posted_recently() else 4
+			if identity_is("reliability"):
+				rep_hit *= 2  # you sold them strictness, and this is what that costs
 			if bool(deal.get("on_record", false)):
 				rep_hit = maxi(1, rep_hit / 2)  # you warned them, in writing
 			reputation = maxi(0, reputation - rep_hit)
@@ -7701,7 +7779,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
-		"protection": protection, "access_policy": access_policy, "cameras": cameras,
+		"protection": protection, "access_policy": access_policy, "identity": identity, "cameras": cameras,
 		"access_log": access_log, "visitors": visitors,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
@@ -8039,6 +8117,7 @@ func _apply(data: Dictionary) -> void:
 	decisions = data.get("decisions", [])
 	hazards = data.get("hazards", [])
 	access_policy = String(data.get("access_policy", "open"))
+	identity = String(data.get("identity", ""))
 	cameras = bool(data.get("cameras", false))
 	access_log = data.get("access_log", [])
 	visitors = data.get("visitors", [])

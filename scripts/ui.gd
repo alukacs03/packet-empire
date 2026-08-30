@@ -2289,6 +2289,49 @@ func _refresh_ops() -> void:
 				item["auto"] = on
 				_refresh_ops())
 			rrow.add_child(auto_r)
+	ops_box.add_child(_section("WHAT KIND OF COMPANY THIS IS"))
+	if Game.identity == "":
+		if Game.identity_offered():
+			ops_box.add_child(_wrap("  You know the job now. Decide what sort of operation this is: each one changes the work that arrives, what it costs to run, and how the competition treats you.",
+				13, Color(1.0, 0.85, 0.5), 780))
+			for ident_id: String in Game.IDENTITIES:
+				var ident: Dictionary = Game.IDENTITIES[ident_id]
+				var irow2 := HBoxContainer.new()
+				irow2.add_theme_constant_override("separation", 8)
+				ops_box.add_child(irow2)
+				var il2 := _wrap("  %s: %s  (%s)" % [ident["label"], ident["blurb"], ident["trade"]],
+					12, Color(0.72, 0.8, 0.88), 560)
+				il2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				irow2.add_child(il2)
+				var ib := Button.new()
+				ib.text = "Be this"
+				ib.pressed.connect(func() -> void:
+					Game.choose_identity(ident_id)
+					_refresh_ops()
+					_refresh_money())
+				irow2.add_child(ib)
+		else:
+			ops_box.add_child(_label("  Finish the opening jobs first: the choice only means something once you know the loop.",
+				12, MUTED))
+	else:
+		var mine: Dictionary = Game.IDENTITIES[Game.identity]
+		ops_box.add_child(_wrap("  %s. %s  (%s)" % [mine["label"], mine["blurb"], mine["trade"]],
+			12, Color(0.72, 0.84, 0.8), 780))
+		var reb := Button.new()
+		reb.text = "Rebrand ($5000 and some standing)…"
+		reb.pressed.connect(func() -> void:
+			var ids: Array = Game.IDENTITIES.keys()
+			var opts_i: Array = []
+			for id_o: String in ids:
+				opts_i.append("%s: %s" % [Game.IDENTITIES[id_o]["label"],
+					Game.IDENTITIES[id_o]["trade"]])
+			_menu(reb, opts_i, func(id: int) -> void:
+				var err: String = Game.rebrand(String(ids[id]))
+				if err != "":
+					_toast(err)
+				_refresh_ops()
+				_refresh_money()))
+		ops_box.add_child(reb)
 	ops_box.add_child(_section("WHO IS ON THE FLOOR"))
 	var acc_row := HBoxContainer.new()
 	acc_row.add_theme_constant_override("separation", 8)
@@ -4076,7 +4119,7 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_label("rank: %s%s" % [Game.rank(),
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
-	contracts_box.add_child(_label("cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_label("%s   ·   cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.identity_label(), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	contracts_box.add_child(_section("CAREER PROFILE"))
 	for line: String in Skills.profile():
 		contracts_box.add_child(_wrap("  %s" % line, 12, Color(0.72, 0.8, 0.88), 640))

@@ -6940,5 +6940,49 @@ static func run() -> int:
 	Game.visitors = []
 	Game.access_log = []
 
+	# --- what kind of company this is ---
+	var id_contracts := Game.contracts_done.duplicate(true)
+	Game.identity = ""
+	Game.contracts_done = []
+	check(not Game.identity_offered(),
+		"identity: the choice waits until the opening jobs have taught the loop")
+	Game.contracts_done = ["a", "b", "c", "d", "e", "f"]
+	check(Game.identity_offered() and Game.IDENTITIES.size() >= 4,
+		"identity: four kinds of company, offered once the basics are done")
+	Game.leads = []
+	check(Game.choose_identity("budget") == "" and Game.identity == "budget" \
+			and Game.leads.size() == 1 and Game.choose_identity("green") != "",
+		"identity: choosing one is a commitment, and it brings its own signature job")
+	# every benefit carries its trade
+	var budget_faults := Game.fault_scale()
+	var budget_price := Game.order_estimate("srv-1", "trade")
+	Game.identity = "green"
+	var green_energy := Game.energy_rate()
+	var green_price := Game.order_estimate("srv-1", "trade")
+	Game.identity = "budget"
+	check(budget_price < green_price and budget_faults > 0.0 \
+			and Game.fault_scale() > float(Game.DIFFICULTIES[Game.difficulty]["faults"]),
+		"identity: the budget hoster buys cheap hardware and pays for it in faults")
+	Game.identity = ""
+	check(green_energy < Game.energy_rate() and green_price > Game.order_estimate("srv-1", "trade"),
+		"identity: the green operator pays less for power and more for the boxes")
+	Game.identity = "reliability"
+	check(Game.identity_fee_multiplier("hosting") > 1.0,
+		"identity: the reliability specialist is paid more for the same service")
+	Game.identity = "boutique"
+	check(Game.identity_fee_multiplier("secure_host") > 1.0 \
+			and Game.identity_fee_multiplier("hosting") == 1.0,
+		"identity: the boutique is paid for the hard work and not for the ordinary work")
+	# and it can be changed once, expensively
+	Game.money = 20000
+	var rep_before_rebrand := Game.reputation
+	check(Game.rebrand("boutique") != "" and Game.rebrand("green") == "" \
+			and Game.identity == "green" and Game.money < 20000 \
+			and Game.reputation < rep_before_rebrand,
+		"identity: a rebrand is possible, costly, and never free")
+	Game.identity = ""
+	Game.contracts_done = id_contracts
+	Game.leads = []
+
 	print("---- %d failures" % fails)
 	return fails
