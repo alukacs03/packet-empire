@@ -8120,6 +8120,56 @@ static func run() -> int:
 	Game.crates = qs_crates
 	Game.hazards = qs_hazards
 	qs_crew.queue_free()
+
+	# --- a promotion says something about the run ---
+	var rk_state := Game.snapshot()
+	Game.skill_log = {}
+	Game.skill_fumbles = {}
+	Game.mastered_contracts = []
+	Game.references = []
+	Game.best_outage_streak = 0
+	check(Game.rank_citation().contains("mostly on the money"),
+		"rank: a run with nothing to point at is told so, rather than flattered")
+	Game.skill_log = {"service_delivery": {"count": 5, "first_cycle": 1, "said": true}}
+	Game.mastered_contracts = ["rackup", "first_ping"]
+	Game.references = ["Kiskacsa Kft"]
+	Game.best_outage_streak = 40
+	var citation_a := Game.rank_citation()
+	check(citation_a.contains("service turn-up") and citation_a.contains("harder way") \
+			and citation_a.contains("40 cycle"),
+		"rank: it reads off what this run actually did")
+	Game.skill_log = {"incident_comms": {"count": 4, "first_cycle": 1, "said": true}}
+	Game.mastered_contracts = []
+	Game.references = []
+	Game.best_outage_streak = 0
+	Game.skill_fumbles = {"incident_comms": 2}
+	var citation_b := Game.rank_citation()
+	check(citation_b != citation_a and citation_b.contains("gone quiet"),
+		"rank: two runs reaching the same rank are told different things, fumbles included")
+	# and the promotion is announced once, when it happens
+	Game.events = []
+	Game.digest = {}
+	Game.rank_seen = ""
+	Game.rank_tick()
+	check(not Game.log_contains("PROMOTED"),
+		"rank: loading a game does not congratulate you for where you already were")
+	Game.rank_seen = "Cable monkey"
+	Game.stats["earned"] = 500000
+	Game.rank_tick()
+	check(Game.log_contains("PROMOTED") and Game.rank_seen == Game.rank(),
+		"rank: crossing into a new one is a moment, in the voice of the trade")
+	var promoted_count := 0
+	for rk_ev: String in Game.events:
+		if "PROMOTED" in rk_ev:
+			promoted_count += 1
+	Game.rank_tick()
+	var promoted_after := 0
+	for rk_ev2: String in Game.events:
+		if "PROMOTED" in rk_ev2:
+			promoted_after += 1
+	check(promoted_after == promoted_count,
+		"rank: and said once rather than every cycle afterwards")
+	Game.restore(rk_state)
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

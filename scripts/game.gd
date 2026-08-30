@@ -4553,6 +4553,44 @@ func rank() -> String:
 			name = r[0]
 	return name
 
+func rank_citation() -> String:
+	## What this particular run did to earn it. Read off what the game already
+	## keeps, so two players reaching the same rank are told different things.
+	var bits: Array = []
+	var reliable: Array = []
+	for entry: Dictionary in Skills.CATALOG:
+		var seen: Dictionary = skill_log.get(String(entry["id"]), {})
+		if int(seen.get("count", 0)) >= Skills.RELIABLE:
+			reliable.append(String(entry["name"]))
+	if not reliable.is_empty():
+		bits.append("you do %s without thinking about it now" % reliable[reliable.size() - 1])
+	if mastered_contracts.size() >= 2:
+		bits.append("%d job(s) finished the harder way" % mastered_contracts.size())
+	if references.size() > 0:
+		bits.append("%d customer(s) who will say so out loud" % references.size())
+	if best_outage_streak >= 20:
+		bits.append("a %d cycle stretch with nobody down" % best_outage_streak)
+	if not skill_fumbles.is_empty():
+		var fumble_ids: Array = skill_fumbles.keys()
+		bits.append("and %s, which the trade also notices"
+			% Skills.FUMBLES.get(String(fumble_ids[0]), "the odd bad night"))
+	if bits.is_empty():
+		return "mostly on the money, which is one way to do it"
+	return ", ".join(PackedStringArray(bits))
+
+func rank_tick() -> void:
+	## A promotion is a moment, not a number crossing a line.
+	var now := rank()
+	if rank_seen == "":
+		rank_seen = now
+		return
+	if now == rank_seen:
+		return
+	rank_seen = now
+	log_event("PROMOTED: they would call you a %s now. Not for the money: %s."
+		% [now.to_lower(), rank_citation()])
+	Sfx.play("good")
+
 func next_rank() -> Array:
 	## -> [name, points_needed] or [] when at the top
 	for r in RANKS:
@@ -5640,7 +5678,7 @@ var events_logged := 0  # monotonic: events is capped, so its size cannot count
 const DIGEST_PREFIX := "SHIFT NOTES"
 ## Lines that are routine on their own but must never be folded away: anything
 ## that asks for a decision, names a customer, or is the game teaching.
-const DIGEST_EXEMPT := ["ARRIVAL", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
+const DIGEST_EXEMPT := ["ARRIVAL", "PROMOTED", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
 	"TICKET", "VISIT", "VISIT BOOKED", "AUDIT", "AUDIT OFFERED", "AUDIT RESULT", "DEBRIEF READY",
 	"RELATIONSHIP", "THE END", "CHALLENGE", "PACK", "HEADS UP", "CARRIED IT", "DROPPED IT",
 	"CONSEQUENCE", "LATER", "IDENTITY", "NEMESIS", "REFERRAL", "MASTERED"]
@@ -7044,6 +7082,7 @@ const EFFICIENCY_PRICE := 2600
 
 var buyout_offer := {}  # a rival's standing offer to buy you out
 var sold_out := false  # you took it; the game is over and the score is final
+var rank_seen := ""  # the last rank the player was told about
 var pl_totals := {}  # what each system has cost or earned across the run
 var finale := {}  # the frozen ending: how it ended, and the numbers it ended on
 var accountant := false
@@ -7675,6 +7714,7 @@ func sla_tick() -> void:
 	lockout_tick()
 	ticket_tick()
 	call_tick()
+	rank_tick()
 	remediation_tick()
 	_maybe_grey_fault()
 	receiving_tick()
@@ -8620,7 +8660,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
-		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "pl_totals": pl_totals, "cameras": cameras,
+		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "pl_totals": pl_totals, "rank_seen": rank_seen, "cameras": cameras,
 		"access_log": access_log, "visitors": visitors,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
@@ -8961,6 +9001,7 @@ func _apply(data: Dictionary) -> void:
 	identity = String(data.get("identity", ""))
 	finale = data.get("finale", {})
 	pl_totals = data.get("pl_totals", {})
+	rank_seen = String(data.get("rank_seen", ""))
 	cameras = bool(data.get("cameras", false))
 	access_log = data.get("access_log", [])
 	visitors = data.get("visitors", [])
