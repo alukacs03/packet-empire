@@ -379,6 +379,20 @@ func _shoot_all() -> void:
 			Game.last_cycle_delta = 20
 			ui.contracts_tab = "Business"
 			ui.open_contracts()],
+		["handover",
+			func() -> void:
+				# what the night shift left on the desk
+				Game.hazards = [{"kind": "water", "rack": "R2", "site": 0, "tile": [1, 0],
+					"severity": 2, "started": Game.cycle, "detected": false, "zone": ["R2"]}]
+				Game.crates = [{"model": "srv-1", "shipped": "srv-1", "ordered": Game.cycle,
+					"due": Game.cycle, "arrived": Game.cycle, "checked": false,
+					"damaged": false, "unpack_left": 1}]
+				Game._handover_slot = -1
+				Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 2
+				Game.handover_tick()
+				Game.active_contract_debrief = {}
+				ui.contracts_tab = "Log"
+				ui.open_contracts()],
 		["night_call",
 			func() -> void:
 				# the phone, out of hours, with the floor empty
