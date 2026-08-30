@@ -2346,6 +2346,40 @@ static func run() -> int:
 	Scenarios.start(Scenarios.all()[1])
 	check(not Scenarios.solved(), "scenario: the campus starts unbuilt")
 	Scenarios.finish(false)
+
+	# --- the transition scenario: v6 natively, and v4 through a translator ---
+	var tr_sc: Dictionary = Scenarios.all()[3]
+	Scenarios.start(tr_sc)
+	check(not Scenarios.solved(), "scenario: the v6 customer starts with nothing working")
+	var tr_web: Net.NDevice = Sim._ip_owner("10.6.0.20")
+	var tr_rtr: Net.NDevice = Sim._ip_owner("fd00:6::1")
+	check(tr_web != null and tr_rtr != null and Sim._ip_owner("fd00:6::5") != null,
+		"scenario: the transition floor is built as described")
+	if tr_web != null and tr_rtr != null and Sim._ip_owner("fd00:6::5") != null:
+		# the work the customer is asking for, done the documented way
+		var tr_wcli := CLI.new_session(tr_web)
+		check(tr_wcli.exec("ip addr add fd00:6::20/64 dev %s" % tr_web.ifaces[0].name) == "",
+			"scenario v6: the server takes its IPv6 address")
+		check(tr_wcli.exec("ip route add ::/0 via fd00:6::1") == "",
+			"scenario v6: and a default route to the gateway")
+		var tr_dns: Net.NDevice = Sim._ip_owner("fd00:6::5")
+		var tr_dcli := CLI.new_session(tr_dns)
+		check(tr_dcli.exec("dns add web.pkt fd00:6::20") == "",
+			"scenario v6: the zone gets an AAAA record for the service")
+		check(tr_dcli.exec("dns64 64:ff9b::").contains("synthesizing"),
+			"scenario v6: and synthesizes answers for the v4-only partner")
+		var tr_rcli := CLI.new_session(tr_rtr)
+		tr_rcli.exec("en")
+		tr_rcli.exec("conf t")
+		check(tr_rcli.exec("nat64 prefix 64:ff9b:: pool 10.6.0.1") == "",
+			"scenario v6: the router translates what the resolver promised")
+		Sim.flush_learned_state()
+		for goal_i in Scenarios.active["goals"].size():
+			var goal: Dictionary = Scenarios.active["goals"][goal_i]
+			check(bool(goal["t"].call()), "scenario v6 goal: %s" % goal["d"])
+		check(Scenarios.solved(),
+			"scenario: native v6, an AAAA record and a translator satisfy the mandate")
+	Scenarios.finish(false)
 	check(Game.all_devices().size() == devs_before_sc, "scenario: leaving restores the world too")
 
 	# --- contract terms and renewals ---

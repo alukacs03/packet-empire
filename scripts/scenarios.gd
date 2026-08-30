@@ -43,6 +43,20 @@ static func all() -> Array:
 				{"d": "Every device configuration is saved", "t": func() -> bool: return _all_saved()},
 			],
 		},
+		{
+			"id": "v6_mandate",
+			"name": "The address you were given",
+			"blurb": "A customer has been handed an IPv6-only network and one legacy partner nobody will renumber. Their client must reach your web service natively, find it by name, and still get to the partner over IPv4.",
+			"build": func() -> void: _build_v6(),
+			"goals": [
+				{"d": "The v6-only client reaches the web server over IPv6",
+					"t": func() -> bool: return _ping("fd00:6::10", "fd00:6::20")},
+				{"d": "web.pkt answers with an IPv6 address the client can reach",
+					"t": func() -> bool: return _resolves6("fd00:6::10", "web.pkt")},
+				{"d": "legacy.pkt is reachable from the v6-only client",
+					"t": func() -> bool: return _resolves6("fd00:6::10", "legacy.pkt")},
+			],
+		},
 	]
 
 # ---------------- lifecycle ----------------
@@ -83,6 +97,17 @@ static func finish(success: bool) -> void:
 static func _ping(from_ip: String, to_ip: String) -> bool:
 	var src := Sim._ip_owner(from_ip)
 	return src != null and Sim.ping(src, to_ip)["ok"]
+
+static func _resolves6(from_ip: String, name: String) -> bool:
+	## The customer's test is not "does DNS answer": it is whether the name
+	## gets them to the service, whichever half of the transition answers.
+	var src := Sim._ip_owner(from_ip)
+	if src == null:
+		return false
+	var answer := Sim.resolve(src, name, false, true)
+	if answer == "" or not Net.is_v6(answer):
+		return false
+	return bool(Sim.ping(src, answer)["ok"])
 
 static func _ap_ssid_count() -> int:
 	var best := 0
@@ -174,6 +199,42 @@ static func _build_campus() -> void:
 	Game.add_ip(staff_pc.ifaces[0], "10.61.10.20/24")
 	Game.add_ip(guest_pc.ifaces[0], "10.61.30.20/24")
 	sw.ifaces[0].mode = "trunk"
+
+static func _build_v6() -> void:
+	Game.add_site("Transition floor", Vector2i(6, 6), "scenario", "Szeged")
+	var rack := Game.add_rack(Vector2i(1, 1), 0)
+	var sw := Game.new_device("sw-8")
+	var rtr := Game.new_device("rtr-edge")
+	var client := Game.new_device("srv-1")   # IPv6 only, and staying that way
+	var web := Game.new_device("srv-1")      # your service, still IPv4 only
+	var legacy := Game.new_device("srv-1")   # the partner nobody will renumber
+	var dns := Game.new_device("srv-1")      # the resolver, which only knows v4
+	rack.slots[0] = sw
+	rack.slots[1] = client
+	rack.slots[2] = web
+	rack.slots[3] = legacy
+	rack.slots[4] = dns
+	rack.slots[6] = rtr  # two units, so it sits clear of the rest
+	Game.connect_ifaces(client.ifaces[0], sw.ifaces[0])
+	Game.connect_ifaces(web.ifaces[0], sw.ifaces[1])
+	Game.connect_ifaces(legacy.ifaces[0], sw.ifaces[2])
+	Game.connect_ifaces(dns.ifaces[0], sw.ifaces[3])
+	Game.connect_ifaces(rtr.ifaces[0], sw.ifaces[4])
+	Game.add_ip(client.ifaces[0], "fd00:6::10/64")
+	Game.add_ip(rtr.ifaces[0], "fd00:6::1/64")
+	Game.add_ip(rtr.ifaces[0], "10.6.0.1/24")
+	Game.add_ip(web.ifaces[0], "10.6.0.20/24")
+	Game.add_ip(legacy.ifaces[0], "10.6.0.30/24")
+	Game.add_static_route(client, "::", 0, "fd00:6::1")
+	Game.add_static_route(web, "0.0.0.0", 0, "10.6.0.1")
+	Game.add_static_route(legacy, "0.0.0.0", 0, "10.6.0.1")
+	Game.add_ip(dns.ifaces[0], "10.6.0.5/24")
+	Game.add_ip(dns.ifaces[0], "fd00:6::5/64")
+	Game.add_static_route(dns, "0.0.0.0", 0, "10.6.0.1")
+	Game.add_static_route(dns, "::", 0, "fd00:6::1")
+	# a resolver that only knows the IPv4 world, which is the whole problem
+	dns.services["dns"] = {"records": {"web.pkt": "10.6.0.20", "legacy.pkt": "10.6.0.30"}}
+	client.resolver = "fd00:6::5"
 
 static func _build_audit() -> void:
 	Game.add_site("Audited floor", Vector2i(6, 6), "scenario", "Budapest")
