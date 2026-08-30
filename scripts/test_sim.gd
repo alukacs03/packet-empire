@@ -2876,6 +2876,13 @@ static func run() -> int:
 	check(Staff.anyone_on_shift() and Staff.on_shift(Game.staff[0]),
 		"call-out: they are on the floor whatever the rota says")
 	check(Game.call_someone_out() != "", "call-out: you cannot call out somebody already in")
+	check(Staff.tired(Game.staff[0]), "call-out: the bill lands the next day, as fatigue")
+	Game.duties["parts"] = String(Game.staff[0]["name"])
+	var co_tired_q := Game.duty_quality("parts")
+	Game.staff[0]["tired_until"] = -1
+	check(Game.duty_quality("parts") > co_tired_q,
+		"call-out: a tired person is worse at the duty they hold")
+	Game.duties.erase("parts")
 	Game.cycle = Game.callout_until + 1
 	check(not Staff.anyone_on_shift(), "call-out: and they go home again afterwards")
 	Game.staff = co_staff

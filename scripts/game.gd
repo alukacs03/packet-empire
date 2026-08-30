@@ -917,6 +917,7 @@ func call_someone_out() -> String:
 	if not spend_on("call-out", CALLOUT_FEE):
 		return "a call-out costs $%d and the account will not carry it" % CALLOUT_FEE
 	picked["morale"] = maxi(0, int(picked.get("morale", 70)) - 12)
+	picked["tired_until"] = cycle + 2  # the real cost arrives tomorrow
 	callout_who = String(picked["name"])
 	callout_until = cycle + 1
 	log_event("CALL-OUT: %s was phoned at %s and is coming in. It cost $%d and it cost them."
@@ -934,6 +935,8 @@ func duty_quality(id: String) -> float:
 	q += 0.15 * (float(int(who.get("morale", 70))) / 100.0)
 	q -= 0.15 * float(maxi(0, duty_load(String(who["name"])) - DUTY_CAPACITY))
 	q += 0.1 * floor_tidiness()
+	if Staff.tired(who):
+		q -= 0.2  # delegated work is the first thing to suffer
 	return clampf(q, 0.05, 0.95)
 
 func duties_tick() -> void:

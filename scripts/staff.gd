@@ -230,6 +230,10 @@ static func work_cycle() -> void:
 				Game.log_event("STAFF: %s saved the configuration on %s." % [eng["name"], d.name])
 				break
 
+static func tired(member: Dictionary) -> bool:
+	## The bill for a call-out lands the next day, not the night itself.
+	return Game.cycle <= int(member.get("tired_until", -1))
+
 static func _maybe_slip(rng: RandomNumberGenerator) -> void:
 	## People break things. A team that fears blame breaks them just as often
 	## and says so later, which is the expensive part.
@@ -243,6 +247,8 @@ static func _maybe_slip(rng: RandomNumberGenerator) -> void:
 		* (1.0 + Game.drift_factor())  # they pull what the label says
 	if int(who.get("morale", 70)) < 40:
 		risk += 0.03
+	if tired(who):
+		risk += 0.04  # the one who was up at three is the one who pulls it
 	if rng.randf() > risk:
 		return
 	var live: Array = []

@@ -4541,6 +4541,8 @@ func _build_business_tab() -> void:
 		var busy: int = int(m.get("training_left", 0))
 		var state := "on a course, %d cycle(s) left" % busy if busy > 0 else \
 			("on shift" if Staff.on_shift(m) else "off shift")
+		if Staff.tired(m):
+			state += ", tired"
 		var sl := _label("  %-16s %-16s skill %d  $%d/cycle  morale %d  %s%s" % [m["name"],
 			Staff.label(m), int(m["skill"]), int(m["salary"]), int(m.get("morale", 70)),
 			state, "  (under market)" if under else ""], 12,
