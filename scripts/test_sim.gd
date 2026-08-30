@@ -3017,6 +3017,14 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# the newest systems are classified, so they neither shout nor vanish
+	check(Game.event_severity("THE PHONE: a customer is off the air") == "critical",
+		"log: the phone ringing out of hours is not routine")
+	check(Game.event_severity("HANDOVER: the night shift left 3 note(s)") == "warning" \
+			and Game.event_severity("FAILOVER TEST: passed") == "warning" \
+			and Game.event_severity("CALL-OUT: somebody is coming in") == "warning",
+		"log: the rota, the notes and the test are worth seeing but are not incidents")
+
 	# --- achievements for the things the game learned to do since ---
 	var ach_before := Game.achievements.duplicate()
 	Game.achievements = []
@@ -3361,6 +3369,7 @@ static func run() -> int:
 	Game.hazards = [{"kind": "water", "rack": "R9", "site": 0, "tile": [0, 0], "severity": 2,
 		"started": Game.cycle, "detected": false, "zone": ["R9"]}]
 	Game.customer_outage_active = true
+	Game.events = []  # a clean watch, so the order of the open items is the test
 	var ho_lines := Game.handover_lines()
 	check(ho_lines.size() >= 2 and String(ho_lines[0]).contains("off the air") \
 			and String(ho_lines[1]).contains("R9") and String(ho_lines[1]).contains("nothing is watching"),

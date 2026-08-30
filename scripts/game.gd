@@ -1753,6 +1753,8 @@ func handover_lines() -> Array:
 			break  # the log is newest first
 		if event_severity(String(parts[1])) == "info":
 			continue
+		if String(parts[1]).begins_with("HANDOVER"):
+			continue  # a note that quotes the last note is not a note
 		happened.append(String(parts[1]))
 		if happened.size() >= 3:
 			break
@@ -6279,11 +6281,12 @@ func clock_tick() -> void:
 ## the start of the message, which is why every log line leads with a tag.
 const SEVERE := ["SLA BREACH", "SLA PENALTY", "SECURITY", "WRITTEN OFF", "LOST", "PORT SECURITY",
 	"FAULT", "ATTACK", "POWER", "FIRE", "DATA INCIDENT", "LOCKED OUT", "HAZARD",
-	"PREDICTED FAILURE", "OVERRUN", "CANCELLED"]
+	"PREDICTED FAILURE", "OVERRUN", "CANCELLED", "THE PHONE"]
 const WARNING := ["LATE", "CONGESTION", "RENEWAL", "POACH", "STAFF", "HEAT",
 	"STORM CONTROL", "DHCP snooping", "ARP inspection", "RIVAL", "MONITOR ALERT", "MONITOR OK", "FIELD",
 	"ACHIEVEMENT", "UPSTREAM", "ALARM", "LAPSED", "DUE", "BLAME", "DISPUTE", "ACCESS",
-	"FIRMWARE", "SUPPLY", "IMPROVISED", "BLOCKED", "GENERATOR TEST", "SUPPRESSION"]
+	"FIRMWARE", "SUPPLY", "IMPROVISED", "BLOCKED", "GENERATOR TEST", "SUPPRESSION",
+	"CALL-OUT", "HANDOVER", "FAILOVER TEST", "TRANSFER", "CARRIER", "ROTA"]
 
 static func event_severity(text: String) -> String:
 	var body := text
