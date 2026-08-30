@@ -375,11 +375,19 @@ class Graph extends Control:
 
 class TopoMap extends Control:
 	var on_dev: Callable  # (Net.NDevice)
+	var on_link: Callable  # (Net.NDevice, Net.NDevice) -> String: cable these two up
 	var _mono: SystemFont
 	var _nodes := {}  # Net.NDevice -> Rect2
+	# dragging a run between two devices: cross-rack and cross-site cabling has
+	# no single cabinet elevation to do it on, so it happens here
+	var drag_from: Net.NDevice = null
+	var drag_to := Vector2.ZERO
+	var drag_note := ""
+	var _reject_until := 0.0
 
-	func setup(cb: Callable) -> TopoMap:
+	func setup(cb: Callable, link_cb := Callable()) -> TopoMap:
 		on_dev = cb
+		on_link = link_cb
 		_mono = UIW.mono_font()
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -390,11 +398,62 @@ class TopoMap extends Control:
 			queue_redraw()
 
 	func _gui_input(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			for dev in _nodes:
-				if _nodes[dev].has_point(e.position):
-					on_dev.call(dev)
-					return
+		if e is InputEventMouseMotion and drag_from != null:
+			drag_to = e.position
+			drag_note = _preview(_dev_at(e.position))
+			return
+		if not (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT):
+			return
+		if e.pressed:
+			var hit := _dev_at(e.position)
+			if hit == null:
+				return
+			if e.shift_pressed or e.ctrl_pressed:
+				# a modifier starts a run rather than opening the device
+				drag_from = hit
+				drag_to = e.position
+				drag_note = ""
+				return
+			on_dev.call(hit)
+			return
+		if drag_from == null:
+			return
+		var target := _dev_at(e.position)
+		var from := drag_from
+		drag_from = null
+		drag_note = ""
+		if target == null or target == from or on_link.is_null():
+			return
+		var err: String = on_link.call(from, target)
+		if err != "":
+			drag_note = err
+			_reject_until = Time.get_ticks_msec() / 1000.0 + 2.0
+
+	func _dev_at(at: Vector2) -> Net.NDevice:
+		for dev in _nodes:
+			if _nodes[dev].has_point(at):
+				return dev
+		return null
+
+	func _preview(target: Net.NDevice) -> String:
+		## What this run would be, before anybody commits to it: same site is
+		## a cable, another site needs a circuit that exists.
+		if drag_from == null or target == null or target == drag_from:
+			return ""
+		var a_site := Game.rack_of(drag_from)
+		var b_site := Game.rack_of(target)
+		if a_site == null or b_site == null:
+			return "not racked"
+		if int(a_site.site) != int(b_site.site):
+			var circuit := Game.circuit_between(int(a_site.site), int(b_site.site))
+			if circuit.is_empty():
+				return "%s → %s needs a leased circuit first" % [Game.site_name(int(a_site.site)),
+					Game.site_name(int(b_site.site))]
+			return "over the %s circuit (%d Mbps)" % [circuit.get("carrier", "leased"),
+				int(circuit.get("mbps", 0))]
+		if a_site == b_site:
+			return "same cabinet: a patch lead"
+		return "cabinet to cabinet: a long run"
 
 	func _dev_info(dev: Net.NDevice) -> String:
 		var bits: Array = []
@@ -557,6 +616,22 @@ class TopoMap extends Control:
 		draw_string(_mono, Vector2(30, ly),
 			"— HOST LINK     — TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
+		draw_string(_mono, Vector2(30, ly - 16),
+			"SHIFT-DRAG BETWEEN TWO DEVICES TO RUN A CABLE",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(UIW.colour("accent"), 0.8))
+		# a run being dragged, with what it would actually be written beside it
+		if drag_from != null and _nodes.has(drag_from):
+			var from_p: Vector2 = (_nodes[drag_from] as Rect2).get_center()
+			draw_line(from_p, drag_to, Color(UIW.colour("accent"), 0.75), 2.0)
+			draw_circle(drag_to, 4.0, UIW.colour("accent"))
+			if drag_note != "":
+				draw_string(_mono, drag_to + Vector2(10, -8), drag_note,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+					Color(1.0, 0.72, 0.45) if "needs" in drag_note or "not racked" in drag_note
+					else UIW.colour("accent"))
+		elif drag_note != "" and Time.get_ticks_msec() / 1000.0 < _reject_until:
+			draw_string(_mono, Vector2(30, ly - 32), drag_note,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1.0, 0.55, 0.45))
 
 	func _flow(pa: Vector2, pb: Vector2, col: Color, load: int, cap: int) -> void:
 		## dots travelling the link, more of them the busier it is. A link

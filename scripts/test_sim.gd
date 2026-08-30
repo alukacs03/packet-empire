@@ -7148,5 +7148,30 @@ static func run() -> int:
 	check(Game.try_complete_contract(ov),
 		"overlay lab: underlay, one VNI across two leaves, an unmapped neighbour and EVPN learning")
 
+	# --- cabling from the topology map ---
+	Game.parts = {"patch": 20, "optic": 20, "power": 10, "blank": 10}
+	Game.cabling_documented = false
+	var md_rack := Game.add_rack(Vector2i(86, 1))
+	var md_a := Game.new_device("sw-8")
+	var md_b := Game.new_device("srv-1")
+	md_rack.slots[0] = md_a
+	md_rack.slots[1] = md_b
+	check(Game.link_devices(md_a, md_a) != "",
+		"map cabling: a device cannot be cabled to itself")
+	check(Game.link_devices(md_a, md_b) == "" \
+			and Game.link_at(md_b.ifaces[0]) != null,
+		"map cabling: dragging between two devices runs a lead between free ports")
+	check(Game.link_devices(md_a, md_b) == "" or Game.free_port(md_b) == null,
+		"map cabling: it uses the next free port, and says so when there is not one")
+	var md_far_site := Game.add_site("Colo Pecs", Vector2i(3, 3), "acquired", "Pecs")
+	var md_far_rack := Game.add_rack(Vector2i(0, 0), md_far_site)
+	var md_far := Game.new_device("sw-8")
+	md_far_rack.slots[0] = md_far
+	Game.circuits = []
+	var md_err := Game.link_devices(md_a, md_far)
+	check(md_err.contains("no circuit"),
+		"map cabling: a run to another site says which prerequisite is missing")
+	Game.current_site = 0
+
 	print("---- %d failures" % fails)
 	return fails

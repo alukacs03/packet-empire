@@ -3465,7 +3465,9 @@ func _build_map() -> void:
 	map_overlay.add_child(UIW.TopoMap.new().setup(func(dev: Net.NDevice) -> void:
 		map_overlay.visible = false
 		cur_rack = Game.rack_of(dev)
-		open_dev(dev)))
+		open_dev(dev),
+		func(a: Net.NDevice, b: Net.NDevice) -> String:
+			return Game.link_devices(a, b)))
 
 func toggle_map() -> void:
 	if not _feature_available("map"):

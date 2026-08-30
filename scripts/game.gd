@@ -7534,6 +7534,42 @@ func peer_label(i: Net.Iface) -> String:
 		return "%s %s" % [l.other(i).dev.name, l.other(i).name] if l != null else ""
 	return "%s %s" % [p.dev.name, p.name]
 
+func free_port(dev: Net.NDevice) -> Net.Iface:
+	## The first port on this device that could take a run, ignoring the
+	## service ports nobody patches customers into.
+	for i: Net.Iface in dev.ifaces:
+		if i.name.begins_with("Management") or i.name.begins_with("Vlan") or i.name == "lo" \
+				or i.parent != "" or i.name.begins_with("wg") or i.name.begins_with("Tunnel"):
+			continue
+		if link_at(i) == null:
+			return i
+	return null
+
+func link_devices(a: Net.NDevice, b: Net.NDevice) -> String:
+	## Cable two devices from the map, where neither is necessarily in a
+	## cabinet you can see. Says why, when it cannot.
+	if a == b:
+		return "that is the same device"
+	var rack_a := rack_of(a)
+	var rack_b := rack_of(b)
+	if rack_a == null or rack_b == null:
+		return "both ends have to be racked somewhere"
+	if int(rack_a.site) != int(rack_b.site) and circuit_between(int(rack_a.site), int(rack_b.site)).is_empty():
+		return "%s and %s are on different floors and there is no circuit between them" \
+			% [site_name(int(rack_a.site)), site_name(int(rack_b.site))]
+	var port_a := free_port(a)
+	var port_b := free_port(b)
+	if port_a == null:
+		return "%s has no free port" % a.name
+	if port_b == null:
+		return "%s has no free port" % b.name
+	var ok := connect_documented(port_a, port_b) if cabling_documented \
+		else connect_ifaces(port_a, port_b)
+	if not ok:
+		return "there is nothing in the drawer to make that run with"
+	log_event("CABLED: %s %s to %s %s." % [a.name, port_a.name, b.name, port_b.name])
+	return ""
+
 func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	if not can_link(a, b):
 		return false  # different sites need a leased circuit first
