@@ -3771,6 +3771,71 @@ func _build_business_tab() -> void:
 		if err != "":
 			_toast(err))
 	maint_row.add_child(maint_btn)
+	var frozen: String = Game.freeze_reason()
+	if Game.change_active():
+		var cw: Dictionary = Game.change_window
+		contracts_box.add_child(_wrap("  WINDOW RUNNING  /  \"%s\" on %s. Rollback point at cycle %d, window closes at %d. The work is %s."
+			% [cw["summary"], ", ".join(PackedStringArray(cw["targets"])),
+				int(cw["rollback_at"]), int(cw["ends"]),
+				"finished" if Game.change_work_done() else "not finished"],
+			13, Color(1.0, 0.85, 0.5), 780))
+		var crow := HBoxContainer.new()
+		crow.add_theme_constant_override("separation", 8)
+		contracts_box.add_child(crow)
+		var finish_btn := Button.new()
+		finish_btn.text = "Close it out"
+		finish_btn.pressed.connect(func() -> void:
+			var err: String = Game.complete_change()
+			if err != "":
+				_toast(err)
+			_refresh_contracts())
+		crow.add_child(finish_btn)
+		var abort_btn := Button.new()
+		abort_btn.text = "Abort and revert"
+		abort_btn.tooltip_text = "Back to what was running when the window opened. A wasted night, and nothing worse."
+		abort_btn.pressed.connect(func() -> void:
+			Game.abort_change()
+			_refresh_contracts())
+		crow.add_child(abort_btn)
+		if not bool(cw["pushed"]):
+			var push_btn := Button.new()
+			push_btn.text = "Push on past the rollback point"
+			push_btn.tooltip_text = "From here it has to work: there is no going back inside the window."
+			_accent(push_btn)
+			push_btn.pressed.connect(func() -> void:
+				Game.push_on_change()
+				_refresh_contracts())
+			crow.add_child(push_btn)
+	else:
+		var plan_btn := Button.new()
+		plan_btn.text = "Submit a change plan…"
+		plan_btn.tooltip_text = "What you are touching, how long you need, and whether there is a backout plan"
+		if frozen != "":
+			contracts_box.add_child(_label("  Change freeze: %s. Overriding it is remembered." % frozen,
+				12, Color(1.0, 0.72, 0.45)))
+		plan_btn.pressed.connect(func() -> void:
+			var targets: Array = []
+			for d_c: Net.NDevice in Game.all_devices():
+				if Game.config_dirty(d_c):
+					targets.append(d_c.name)
+			if targets.is_empty():
+				for d_c2: Net.NDevice in Game.all_devices():
+					if d_c2.type in ["switch", "router", "firewall"]:
+						targets.append(d_c2.name)
+						break
+			_menu(plan_btn, [
+				"Four cycles, with a backout plan",
+				"Four cycles, no backout plan (faster to write, worse to explain)",
+				"Eight cycles, with a backout plan",
+				"Override the freeze and go now" if frozen != "" else "Two cycles, with a backout plan",
+			], func(id: int) -> void:
+				var minutes: int = [4, 4, 8, 2][id]
+				var err: String = Game.submit_change("planned work on %s" % targets[0],
+					targets, minutes, id != 1, id == 3 and frozen != "")
+				if err != "":
+					_toast(err)
+				_refresh_contracts()))
+		contracts_box.add_child(plan_btn)
 	contracts_box.add_child(_section("DEFENCE"))
 	var scrub_row := HBoxContainer.new()
 	contracts_box.add_child(scrub_row)

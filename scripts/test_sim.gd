@@ -1749,6 +1749,8 @@ static func run() -> int:
 	Game.debt = 0
 	Game.money = 6000
 	Game.reputation = 50
+	Game.facility = {}  # a floor whose housekeeping is up to date; neglect has its own section
+	Game.heat_wave_until = -1
 	var er := Game.add_rack(Vector2i(0, 0))
 	var esw := Game.new_device("sw-8")
 	var eh1 := Game.new_device("srv-1")
@@ -1769,6 +1771,10 @@ static func run() -> int:
 		Game.feeds = {}
 		Game.carrier_outage = {}
 		Game.hijacks = []
+		Game.tour = {}  # visits, audits and floods are exercised in their own sections
+		Game.attacks = []
+		Game.heat_wave_until = -1
+		Game.firmware_bugs = {}  # vendor defects have their own section too
 		Game.sla_tick()
 		for d_ren in Game.deals:  # a working operator renews their contracts
 			if d_ren.has("renewal"):
@@ -3744,6 +3750,80 @@ static func run() -> int:
 	Game.staff = dt_staff
 	Game.parts_auto = true
 	Game.facility_auto = {}
+
+	# --- the change window as a set piece ---
+	Game.change_window = {}
+	Game.tour = {}
+	Game.upstream = {}
+	Game.maintenance_used = 0
+	Game.maintenance_until = -1
+	var cw_rack := Game.add_rack(Vector2i(52, 1))
+	var cw_sw := Game.new_device("sw-8")
+	cw_rack.slots[0] = cw_sw
+	cw_sw.startup = Game.device_config(cw_sw)
+	check(Game.submit_change("core work", [], 4, true) != "" \
+			and Game.submit_change("core work", [cw_sw.name], 4, true) == "" \
+			and Game.change_active() and Game.in_maintenance(),
+		"change: a plan names what is being touched, and opens a window when it is accepted")
+	var cw: Dictionary = Game.change_window
+	check(int(cw["rollback_at"]) > Game.cycle and int(cw["rollback_at"]) < int(cw["ends"]),
+		"change: the safe rollback point sits partway through, not at the end")
+	Game.add_vlan(cw_sw, 99, "new-tenant")
+	check(not Game.change_work_done() and Game.complete_change() != "",
+		"change: unsaved work is unfinished work")
+	# aborting reverts to what was running when the window opened
+	Game.abort_change()
+	check(not Game.change_active() and not cw_sw.vlans.has(99),
+		"change: aborting at the rollback point puts everything back exactly as it was")
+	# pushing on and overrunning is felt in reputation and in the crew
+	var cw_staff := Game.staff.duplicate(true)
+	Game.staff = [{"name": "Kovacs Bence", "role": "engineer", "skill": 3, "salary": 400,
+		"morale": 80, "shift": "day", "training_left": 0, "certs": []}]
+	Game.reputation = 60
+	Game.maintenance_used = 0
+	Game.submit_change("risky core work", [cw_sw.name], 2, false)
+	Game.add_vlan(cw_sw, 98, "half-done")
+	Game.push_on_change()
+	var rep_before_overrun := Game.reputation
+	Game.cycle = int(Game.change_window["ends"])
+	Game.change_tick()
+	check(not Game.change_active() and Game.reputation < rep_before_overrun \
+			and int(Game.staff[0]["morale"]) < 80 and cw_sw.vlans.has(98),
+		"change: an overrun after pushing on costs reputation and a wrecked crew, and nothing is reverted")
+	cw_sw.vlans.erase(98)
+	cw_sw.startup = Game.device_config(cw_sw)
+	# a freeze blocks the risky ones, and overriding it is remembered
+	Game.maintenance_used = 0
+	Game.tour = {"kind": "auditor", "cycle": Game.cycle + 1, "crammed": 0.0}
+	check(Game.freeze_reason() != "" and Game.submit_change("during a freeze", [cw_sw.name], 4, true) != "",
+		"change: freeze periods block risky work around the things that cannot move")
+	check(Game.submit_change("during a freeze", [cw_sw.name], 4, true, true) == "" \
+			and bool(Game.change_window["overridden"]) \
+			and int(Game.stats.get("freeze_overrides", 0)) >= 1,
+		"change: the override exists, and it is remembered")
+	Game.abort_change()
+	Game.tour = {}
+	# and a job that only counts inside a window
+	var cw_deal := {"id": "cw", "customer": "Nyar Kft", "kind": "hosting", "params": {},
+		"fee": 100, "brief": "", "load": 100, "healthy": true, "ever_healthy": true,
+		"cycles": 12, "up_cycles": 12, "loyalty": 0.7}
+	var cw_deals := Game.deals.duplicate(true)
+	Game.deals = [cw_deal]
+	cw_deal["window_job"] = {"fee": 300, "by": Game.cycle + 10}
+	Game.maintenance_until = -1
+	check(Game.claim_window_job(cw_deal) != "",
+		"change: the window job pays for work done inside a window, not for saying it was")
+	Game.maintenance_used = 0
+	Game.submit_change("the window job", [cw_sw.name], 4, true)
+	var money_cw := Game.money
+	check(Game.claim_window_job(cw_deal) == "" and Game.money > money_cw \
+			and not cw_deal.has("window_job"),
+		"change: doing it properly inside the window pays three times the cycle fee")
+	Game.abort_change()
+	Game.deals = cw_deals
+	Game.staff = cw_staff
+	Game.maintenance_until = -1
+	Game.maintenance_used = 0
 	Game.money = 8000
 	var zr := Game.add_rack(Vector2i(46, 1))
 	var z_sw := Game.new_device("sw-8")
@@ -3779,11 +3859,12 @@ static func run() -> int:
 	check(Game.orphan_load_bearing(lonely_orphan) == "" \
 			and Game.orphan_load_bearing(useful_orphan) != "",
 		"zombies: one of them is quietly load bearing, and it is a fact about the network")
+	Game.reputation = 60  # earlier sections leave it wherever they left it
 	var rep_before_zombie := Game.reputation
-	var incidents_before_zombie := Game.incidents.size()
 	Game.investigate_orphan(useful_orphan)  # half a look, which tells you nothing
-	check(Game.retire_orphan(useful_orphan) == "" and Game.reputation < rep_before_zombie \
-			and Game.incidents.size() > incidents_before_zombie,
+	var zres := Game.retire_orphan(useful_orphan)
+	check(zres == "" and Game.reputation < rep_before_zombie \
+			and String(Game.incidents[0]["kind"]) == "zombie",
 		"zombies: switching one off half-investigated discovers what it was carrying the hard way")
 	# the same situation, looked at properly first
 	var z_useful2 := Game.new_device("rtr-lite")

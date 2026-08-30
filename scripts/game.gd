@@ -241,6 +241,7 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var change_window := {}  # the plan, the clock, and the point of no safe return
 var duties := {}  # duty id -> the name of whoever holds it
 var last_digest: Array = []  # what the crew handled, skipped, or needs you for
 var parts := {"patch": 40, "optic": 8, "power": 20, "blank": 12}  # the parts drawer
@@ -594,6 +595,177 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const CHANGE_FREEZE_REASONS := ["a visit is booked", "a customer has a busy night coming",
+	"there is an upstream outage running"]
+
+func freeze_reason() -> String:
+	## Risky work is blocked around the things that cannot be moved.
+	if not tour.is_empty() and int(tour["cycle"]) - cycle <= 2:
+		return CHANGE_FREEZE_REASONS[0]
+	for deal in deals:
+		var event := peak_event(deal)
+		if not event.is_empty() and int(event["cycle"]) - cycle <= 2:
+			return CHANGE_FREEZE_REASONS[1]
+	if upstream_active():
+		return CHANGE_FREEZE_REASONS[2]
+	return ""
+
+func change_active() -> bool:
+	return not change_window.is_empty()
+
+func submit_change(summary: String, targets: Array, duration: int, backout: bool,
+		override := false) -> String:
+	## The plan is the thing you are judged on afterwards, not the intention.
+	if change_active():
+		return "there is a window running already"
+	if targets.is_empty():
+		return "name what you are touching"
+	var frozen := freeze_reason()
+	if frozen != "" and not override:
+		return "change freeze: %s" % frozen
+	duration = clampi(duration, 2, 12)
+	change_window = {"summary": summary, "targets": targets, "duration": duration,
+		"backout": backout, "started": cycle, "rollback_at": cycle + int(duration / 2),
+		"ends": cycle + duration, "pushed": false, "done": false,
+		"overridden": frozen != "", "snapshots": {}}
+	for name: String in targets:
+		for d: Net.NDevice in all_devices():
+			if d.name == name:
+				save_config_version(d)
+				change_window["snapshots"][name] = device_config(d)
+	maintenance_until = cycle + duration
+	maintenance_used += 1
+	log_event("CHANGE WINDOW: \"%s\" open for %d cycles on %s. Safe rollback point at cycle %d.%s%s"
+		% [summary, duration, ", ".join(PackedStringArray(targets)),
+			int(change_window["rollback_at"]),
+			"  No backout plan was submitted." if not backout else "",
+			"  Freeze overridden: %s." % frozen if frozen != "" else ""])
+	if frozen != "":
+		stats["freeze_overrides"] = int(stats.get("freeze_overrides", 0)) + 1
+	return ""
+
+func change_work_done() -> bool:
+	## The work counts as finished when every device you named is running the
+	## configuration it is meant to keep.
+	if not change_active():
+		return false
+	for name: String in change_window["targets"]:
+		for d: Net.NDevice in all_devices():
+			if d.name == name and config_dirty(d):
+				return false
+	return true
+
+func complete_change() -> String:
+	if not change_active():
+		return "no window is running"
+	if not change_work_done():
+		return "something you named is still running an unsaved configuration"
+	var overridden: bool = bool(change_window["overridden"])
+	change_window["done"] = true
+	reputation = mini(100, reputation + (3 if bool(change_window["backout"]) else 1))
+	log_event("CHANGE COMPLETE: \"%s\" finished inside the window.%s"
+		% [change_window["summary"],
+			"  Overriding the freeze went unpunished this time." if overridden else ""])
+	change_window = {}
+	maintenance_until = cycle
+	return ""
+
+func abort_change() -> String:
+	## Back out to what was running when the window opened. A wasted night, and
+	## nothing worse.
+	if not change_active():
+		return "no window is running"
+	for name: String in change_window["snapshots"]:
+		for d: Net.NDevice in all_devices():
+			if d.name == name:
+				apply_device_config(d, change_window["snapshots"][name])
+				d.startup = device_config(d)
+	log_event("ROLLED BACK: \"%s\" reverted at the rollback point. Everything is as it was, and the night is gone."
+		% change_window["summary"])
+	change_window = {}
+	maintenance_until = cycle
+	topology_changed.emit()
+	return ""
+
+func push_on_change() -> String:
+	if not change_active():
+		return "no window is running"
+	change_window["pushed"] = true
+	log_event("PUSHING ON: past the safe rollback point on \"%s\". From here it has to work."
+		% change_window["summary"])
+	return ""
+
+func change_tick() -> void:
+	if not change_active():
+		return
+	if cycle == int(change_window["rollback_at"]) and not change_work_done() \
+			and not bool(change_window["pushed"]):
+		log_event("ROLLBACK POINT: \"%s\" is not finished. Abort and revert, or push on past the point of safe return."
+			% change_window["summary"])
+	if cycle < int(change_window["ends"]):
+		return
+	if change_work_done():
+		complete_change()
+		return
+	# an overrun: the excuse expires, the customers are exposed, and the people
+	# who sat up all night are worse at their jobs tomorrow
+	var pushed: bool = bool(change_window["pushed"])
+	var overridden: bool = bool(change_window["overridden"])
+	reputation = maxi(0, reputation - (6 if overridden else 3) - (2 if not bool(change_window["backout"]) else 0))
+	for m in staff:
+		m["morale"] = maxi(0, int(m.get("morale", 70)) - 8)
+	record_incident("change", "a change window overran on %s" % change_window["summary"])
+	log_event("OVERRUN: \"%s\" is still open and the window has closed. %sCustomers are exposed, the crew are wrecked, and this is on the record."
+		% [change_window["summary"],
+			"You pushed past the rollback point. " if pushed else ""])
+	if not pushed:
+		abort_change()
+	else:
+		change_window = {}
+	maintenance_until = cycle
+
+func maybe_window_job() -> void:
+	## A job that can only be delivered inside a window, and is genuinely tight.
+	for deal in deals:
+		if deal.has("window_job") or not bool(deal.get("healthy", false)):
+			continue
+		if int(deal.get("cycles", 0)) < 10 or biz_roll() > 0.03:
+			continue
+		deal["window_job"] = {"fee": int(deal["fee"]) * 3, "by": cycle + 10}
+		log_event("WINDOW JOB: %s will pay $%d for a change they can only take inside an agreed window, finished within 10 cycles."
+			% [deal["customer"], int(deal["window_job"]["fee"])])
+		return
+
+func window_job_tick() -> void:
+	for deal in deals:
+		var job: Dictionary = deal.get("window_job", {})
+		if job.is_empty():
+			continue
+		if change_active() and bool(change_window.get("done", false)):
+			continue
+		if cycle > int(job["by"]):
+			deal.erase("window_job")
+			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.1)
+			log_event("WINDOW JOB MISSED: %s wanted it done inside a window and it never happened."
+				% deal["customer"])
+
+func claim_window_job(deal: Dictionary) -> String:
+	## Paid only if the work really did happen inside an agreed window.
+	var job: Dictionary = deal.get("window_job", {})
+	if job.is_empty():
+		return "they have not asked for anything"
+	if not in_maintenance():
+		return "that work only counts inside an agreed change window"
+	if change_active() and not change_work_done():
+		return "the window is open and the work is not finished"
+	deal.erase("window_job")
+	money += int(job["fee"])
+	money_changed.emit()
+	deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.1)
+	log_event("WINDOW JOB DONE: %s paid $%d for work done properly, inside the window."
+		% [deal["customer"], int(job["fee"])])
+	return ""
 
 const DUTIES := {
 	"parts": {"label": "Keep the parts drawer stocked",
@@ -1152,7 +1324,9 @@ func buy_support(tier: int) -> String:
 func _maybe_firmware_bug() -> void:
 	## A fault class no amount of player configuration fixes. Rare, and it does
 	## not look like anything else: the port comes back and then goes again.
-	if not firmware_bugs.is_empty() or cycle < 50 or randf() > 0.004 * fault_scale():
+	# a defect like this belongs to an estate big enough to have one
+	if stage < 2 or not firmware_bugs.is_empty() or cycle < 50 \
+			or randf() > 0.004 * fault_scale():
 		return
 	var devs := all_devices().filter(func(d: Net.NDevice) -> bool:
 		return d.type in ["switch", "router", "firewall"])
@@ -4295,6 +4469,9 @@ func hold_firm(deal: Dictionary) -> String:
 	var kind := dispute_kind(String(dispute.get("kind", "")))
 	deal.erase("dispute")
 	var right := bool(dispute.get("customer_right", false))
+	# whether they walk is judged on the relationship as it stood before the
+	# argument, not on the dent the argument just made in it
+	var leave_chance := 0.3 - float(deal.get("loyalty", 0.6)) * 0.3
 	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - (0.25 if right else 0.1))
 	if right:
 		reputation = maxi(0, reputation - 3)
@@ -4304,7 +4481,7 @@ func hold_firm(deal: Dictionary) -> String:
 		reputation = mini(100, reputation + (2 if bool(dispute.get("warned", false)) else 0))
 		log_event("HELD FIRM: %s backed down. The outage you predicted never happens, which nobody thanks you for."
 			% deal["customer"])
-	if biz_roll() < 0.3 - float(deal.get("loyalty", 0.6)) * 0.3:
+	if biz_roll() < leave_chance:
 		deals.erase(deal)
 		reputation = maxi(0, reputation - 2)
 		log_event("LOST: %s took their business somewhere less argumentative." % deal["customer"])
@@ -4912,6 +5089,9 @@ func sla_tick() -> void:
 	receiving_tick()
 	parts_tick()
 	duties_tick()
+	change_tick()
+	maybe_window_job()
+	window_job_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -5729,7 +5909,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "parts": parts,
-		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties,
+		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -6063,6 +6243,7 @@ func _apply(data: Dictionary) -> void:
 	parts = data.get("parts", {"patch": 40, "optic": 8, "power": 20, "blank": 12})
 	parts_auto = bool(data.get("parts_auto", true))
 	duties = data.get("duties", {})
+	change_window = data.get("change_window", {})
 	cable_debt = int(data.get("cable_debt", 0))
 	packaging = int(data.get("packaging", 0))
 	firmware_bugs = data.get("firmware_bugs", {})
