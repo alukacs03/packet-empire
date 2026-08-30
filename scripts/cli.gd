@@ -167,6 +167,7 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["no", "logging", "host"], "h": _no_logging},
 			{"m": ["config"], "p": ["ntp", "server"], "h": _cfg_ntp},
 			{"m": EP, "p": ["show", "logging"], "h": _show_logging},
+			{"m": EP, "p": ["show", "tech-support"], "h": _show_tech_support},
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
@@ -1705,6 +1706,29 @@ class EOS extends Session:
 			return "usage: ntp server <ip>\n"
 		dev.ntp_server = r[0]
 		return ""
+
+	func _show_tech_support(_r: Array) -> String:
+		## What a vendor asks for, collected once, read-only, and safe to run
+		## while everything is on fire.
+		var out := "===== tech-support: %s (%s) at cycle %d =====\n" % [dev.name,
+			Game.MODELS[dev.model]["label"], Game.cycle]
+		out += "\n--- interfaces ---\n" + _show_interfaces([])
+		out += "\n--- counters ---\n" + _show_counters([])
+		if dev.type == "switch":
+			out += "\n--- vlans ---\n" + _show_vlan([])
+			out += "\n--- mac address-table ---\n" + _show_mac([])
+			out += "\n--- spanning-tree ---\n" + _show_stp([])
+		out += "\n--- arp ---\n" + _show_arp([])
+		if dev.ip_forwarding:
+			out += "\n--- ip route ---\n" + _show_ip_route([])
+		out += "\n--- lldp neighbors ---\n" + _show_lldp([])
+		out += "\n--- configuration ---\n%s\n" % ("running configuration matches startup"
+			if not Game.config_dirty(dev) else "RUNNING CONFIGURATION IS NOT SAVED")
+		out += "\n--- log (most recent last) ---\n"
+		for line: String in dev.logs.slice(maxi(0, dev.logs.size() - 12)):
+			out += line + "\n"
+		out += "===== end tech-support =====\n"
+		return out
 
 	func _show_logging(_r: Array) -> String:
 		var out := ""

@@ -1951,6 +1951,17 @@ func open_tac_case(dev: Net.NDevice, severity: int) -> String:
 
 const TAC_EVIDENCE := ["logs", "show", "repro"]
 
+func attach_bundle(c: Dictionary) -> String:
+	## One command produced everything they asked for, so it counts as all of
+	## it: that is the point of collecting it in one go.
+	if String(c["stage"]) not in ["evidence", "level_one"]:
+		return "they are not waiting on you"
+	for kind: String in TAC_EVIDENCE:
+		if kind not in c["evidence"]:
+			attach_evidence(c, kind)
+	log_event("CASE %s: a full tech-support bundle attached in one go." % c["id"])
+	return ""
+
 func attach_evidence(c: Dictionary, kind: String) -> String:
 	if String(c["stage"]) not in ["evidence", "level_one"]:
 		return "they are not waiting on you"

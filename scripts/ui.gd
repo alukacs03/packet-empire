@@ -2250,6 +2250,15 @@ func _refresh_ops() -> void:
 					_refresh_ops())
 				crow.add_child(ev)
 				break
+			var bundle_btn := Button.new()
+			bundle_btn.text = "Attach a tech-support bundle"
+			bundle_btn.tooltip_text = "'show tech-support' collects everything they asked for in one go"
+			bundle_btn.pressed.connect(func() -> void:
+				var err: String = Game.attach_bundle(c)
+				if err != "":
+					_toast(err)
+				_refresh_ops())
+			crow.add_child(bundle_btn)
 			var hand := Button.new()
 			hand.text = "Hand it to the team" if not bool(c.get("delegated", false)) else "Take it back"
 			hand.tooltip_text = "They will work it, slowly, and they will not push back"

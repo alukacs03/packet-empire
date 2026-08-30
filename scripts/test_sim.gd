@@ -7625,6 +7625,46 @@ static func run() -> int:
 			and Game.company_name == "Legacy Networks",
 		"save compat: a field removed from the payload reads as its default, not as a crash")
 	Game.restore(live_before)
+
+	# --- one command that collects what a vendor asks for ---
+	var ts_rack := Game.add_rack(Vector2i(94, 1))
+	var ts_sw := Game.new_device("sw-8")
+	var ts_srv := Game.new_device("srv-1")
+	ts_rack.slots[0] = ts_sw
+	ts_rack.slots[1] = ts_srv
+	Game.connect_ifaces(ts_srv.ifaces[0], ts_sw.ifaces[0])
+	Game.add_ip(ts_srv.ifaces[0], "10.195.0.10/24")
+	Game.device_log(ts_sw, "something worth reading later")
+	var ts_cli := CLI.new_session(ts_sw)
+	var bundle := ts_cli.exec("show tech-support")
+	check(bundle.contains("interfaces") and bundle.contains("counters") \
+			and bundle.contains("mac address-table") and bundle.contains("spanning-tree") \
+			and bundle.contains("lldp") and bundle.contains("something worth reading later"),
+		"tech-support: one command collects the interfaces, counters, tables, neighbours and log")
+	check(bundle.contains("RUNNING CONFIGURATION IS NOT SAVED"),
+		"tech-support: it says plainly whether what is running was ever saved")
+	ts_sw.startup = Game.device_config(ts_sw)
+	check(ts_cli.exec("show tech-support").contains("matches startup"),
+		"tech-support: and says so when it has been")
+	var ts_before := Game.snapshot()
+	ts_cli.exec("show tech-support")
+	check(Game.snapshot() == ts_before,
+		"tech-support: it is read-only, which is why it is safe during an incident")
+	var ts_ros := Game.new_device("sw-lite")
+	ts_rack.slots[2] = ts_ros
+	check(CLI.new_session(ts_ros).exec("/system tech-support").contains("/ip route print"),
+		"tech-support: PacketTik gear collects the same thing in its own shape")
+	# and the vendor case takes it as the evidence it asked for
+	Game.tac_cases = []
+	Game.renewals = []
+	Game.firmware_bugs[ts_sw.name] = {"since": Game.cycle, "model": ts_sw.model}
+	Game.open_tac_case(ts_sw, 2)
+	var ts_case: Dictionary = Game.tac_cases[0]
+	check(Game.attach_bundle(ts_case) == "" \
+			and ts_case["evidence"].size() >= Game.TAC_EVIDENCE.size() - 1,
+		"tech-support: attaching the bundle answers everything the case asked for at once")
+	Game.tac_cases = []
+	Game.firmware_bugs = {}
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

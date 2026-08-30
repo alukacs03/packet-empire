@@ -272,6 +272,19 @@ func exec(line: String) -> String:
 				for mac in dev.mac_table[vid]:
 					out += " %-4d %-18s %s\n" % [vid, mac, dev.mac_table[vid][mac].name]
 			return out if vids else " (empty: send some traffic first)\n"
+		"system tech-support":
+			# the same bundle, in the shape PacketTik prints it
+			var out := "===== tech-support: %s at cycle %d =====\n" % [dev.name, Game.cycle]
+			out += "\n/interface print\n" + exec("/interface print")
+			out += "\n/ip address print\n" + exec("/ip address print")
+			out += "\n/ip route print\n" + exec("/ip route print")
+			out += "\n/ip arp print\n" + exec("/ip arp print")
+			out += "\nconfiguration: %s\n" % ("saved" if not Game.config_dirty(dev)
+				else "NOT SAVED")
+			out += "\nlog\n"
+			for log_line: String in dev.logs.slice(maxi(0, dev.logs.size() - 12)):
+				out += log_line + "\n"
+			return out + "===== end tech-support =====\n"
 		"ipv6 nat64 set":
 			if not dev.ip_forwarding:
 				return "nat64 runs on a router or firewall\n"
@@ -422,7 +435,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"ipv6 address add", "ipv6 address print",
 	"ip route add", "ip route remove", "ip route print",
 	"ip firewall nat add", "ip firewall nat print",
-	"ipv6 nat64 set", "ipv6 nat64 print", "ipv6 nat64 remove",
+	"ipv6 nat64 set", "ipv6 nat64 print", "ipv6 nat64 remove", "system tech-support",
 	"routing bgp set", "routing bgp peer add", "routing bgp network add", "routing bgp print",
 	"routing ospf network add", "routing ospf network remove", "routing ospf print"]
 
