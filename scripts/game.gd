@@ -3551,8 +3551,92 @@ func _run_monitors() -> void:
 			m["failing"] = not ok
 			if ok:
 				log_event("MONITOR OK: %s" % monitor_label(m))
+				_remediation_verify(m, true)
 			else:
 				log_event("MONITOR ALERT: %s is failing." % monitor_label(m))
+				_remediation_fire(m)  # act at once, then keep working it in the tick
+
+const REMEDIATION_COOLDOWN := 6  # cycles before the same alert may act again
+const REMEDIATION_RETRIES := 2  # attempts before it stops and asks for a person
+
+func bind_remediation(m: Dictionary, rb: Dictionary) -> String:
+	## One monitor, one runbook. Automation that fans out is not automation you
+	## can explain afterwards.
+	if rb.is_empty():
+		m.erase("remediation")
+		return ""
+	m["remediation"] = {"runbook": String(rb["name"]), "last_fired": -999, "failures": 0,
+		"timeline": []}
+	log_event("AUTOMATION: '%s' is now bound to the alert '%s'." % [rb["name"], monitor_label(m)])
+	return ""
+
+func _remediation_note(m: Dictionary, text: String) -> void:
+	var rem: Dictionary = m.get("remediation", {})
+	if rem.is_empty():
+		return
+	var line: Array = rem.get("timeline", [])
+	line.append("cycle %d · %s" % [cycle, text])
+	if line.size() > 12:
+		line.pop_front()
+	rem["timeline"] = line
+
+func _remediation_fire(m: Dictionary) -> void:
+	var rem: Dictionary = m.get("remediation", {})
+	if rem.is_empty():
+		return
+	_remediation_note(m, "trigger: %s went down" % monitor_label(m))
+	if in_maintenance():
+		_remediation_note(m, "suppressed: a change window is open")
+		return
+	if cycle - int(rem["last_fired"]) < REMEDIATION_COOLDOWN:
+		# a flapping check must not become an action storm
+		_remediation_note(m, "held: inside the cooldown from the last attempt")
+		return
+	if int(rem["failures"]) >= REMEDIATION_RETRIES:
+		_remediation_note(m, "escalated: it has tried twice and stopped")
+		log_event("AUTOMATION: '%s' has stopped trying and wants a person." % rem["runbook"])
+		return
+	var rb := {}
+	for entry: Dictionary in runbooks:
+		if String(entry["name"]) == String(rem["runbook"]):
+			rb = entry
+	if rb.is_empty():
+		_remediation_note(m, "skipped: the runbook it names no longer exists")
+		return
+	rem["last_fired"] = cycle
+	_remediation_note(m, "evidence: %s" % monitor_label(m))
+	var run := run_runbook(rb, false, true)
+	if String(run.get("refused", "")) != "":
+		_remediation_note(m, "refused: %s" % run["refused"])
+		return
+	rem["pending"] = true
+	_remediation_note(m, "action: %s on %s" % [RUNBOOK_ACTIONS[rb["action"]]["label"],
+		", ".join(PackedStringArray(run["applied"]))])
+
+func _remediation_verify(m: Dictionary, recovered: bool) -> void:
+	var rem: Dictionary = m.get("remediation", {})
+	if rem.is_empty() or not bool(rem.get("pending", false)):
+		return
+	rem["pending"] = false
+	if recovered:
+		rem["failures"] = 0
+		_remediation_note(m, "verified: the service came back")
+		log_event("AUTOMATION: '%s' fixed it, hands off." % rem["runbook"])
+	else:
+		rem["failures"] = int(rem["failures"]) + 1
+		_remediation_note(m, "unverified: still failing after the action")
+
+func remediation_tick() -> void:
+	## Automation works the alert while it is active, not only at the moment it
+	## fired, and an action that did not restore the service counts against it.
+	for m in monitors:
+		var rem: Dictionary = m.get("remediation", {})
+		if rem.is_empty():
+			continue
+		if bool(rem.get("pending", false)) and cycle - int(rem["last_fired"]) >= 2:
+			_remediation_verify(m, not bool(m.get("failing", false)))
+		if bool(m.get("failing", false)) and not bool(rem.get("pending", false)):
+			_remediation_fire(m)
 
 func monitor_label(m: Dictionary) -> String:
 	if m["kind"] == "ping":
@@ -5269,6 +5353,8 @@ func can_accept_offer(offer: Dictionary) -> String:
 # ---------- playbooks: write it once, run it everywhere ----------
 
 var playbooks: Array = []  # [{name, lines: [String]}]
+var runbooks: Array = []  # bounded, reversible automation: what it may do, and to how much
+var runbook_runs: Array = []  # every attempt, with before/after state for the rollback
 
 func save_playbook(name: String, lines: Array) -> String:
 	name = name.strip_edges()
@@ -5302,6 +5388,130 @@ func playbook_targets(filter: String) -> Array:
 		if filter == "all" or d.type == filter or (filter != "" and filter in d.name):
 			out.append(d)
 	return out
+
+const RUNBOOK_ACTIONS := {
+	"bounce": {"label": "bounce the interface", "reversible": true,
+		"blurb": "Shut and unshut a port. Reversible, and useless against most real faults."},
+	"reload_config": {"label": "reload the saved configuration", "reversible": true,
+		"blurb": "Put the device back on its startup config."},
+	"save_config": {"label": "save the running configuration", "reversible": false,
+		"blurb": "Write memory. Safe, and not undoable."},
+	"dispatch": {"label": "send somebody to look at it", "reversible": false,
+		"blurb": "Hands on the device, which costs time and sometimes money."},
+}
+const RUNBOOK_MAX_DEVICES := 3  # a blast radius somebody has to raise on purpose
+
+func make_runbook(name: String, action: String, match_name := "", max_devices := RUNBOOK_MAX_DEVICES,
+		confirm := true) -> Dictionary:
+	if not RUNBOOK_ACTIONS.has(action):
+		return {}
+	var rb := {"name": name, "action": action, "match": match_name,
+		"max_devices": maxi(1, max_devices), "confirm": confirm, "runs": 0}
+	runbooks.append(rb)
+	return rb
+
+func runbook_targets(rb: Dictionary) -> Array:
+	## Selectors pick devices by name fragment, and nothing else: an automation
+	## that can address the whole estate by accident is not a safe one.
+	var out: Array = []
+	for d: Net.NDevice in all_devices():
+		if String(rb.get("match", "")) == "" or String(rb["match"]) in d.name:
+			out.append(d)
+	return out
+
+func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Dictionary:
+	## Every run is planned first, refused if it is too broad, and logged in
+	## full whether it changed anything or not.
+	var result := {"planned": [], "applied": [], "skipped": [], "refused": "", "log": [],
+		"dry_run": dry_run, "id": runbook_runs.size()}
+	var targets := runbook_targets(rb)
+	for d: Net.NDevice in targets:
+		result["planned"].append(d.name)
+	if targets.size() > int(rb["max_devices"]):
+		result["refused"] = "%d device(s) match and this runbook may touch %d" \
+			% [targets.size(), int(rb["max_devices"])]
+		result["log"].append("REFUSED: " + String(result["refused"]))
+		log_event("RUNBOOK '%s' refused: %s" % [rb["name"], result["refused"]])
+		runbook_runs.append(result)
+		return result
+	if targets.is_empty():
+		result["refused"] = "nothing matches that selector"
+		runbook_runs.append(result)
+		return result
+	if not dry_run and bool(rb.get("confirm", true)) and not confirmed and int(rb.get("runs", 0)) == 0:
+		result["refused"] = "first run of a runbook needs confirming"
+		result["log"].append("REFUSED: " + String(result["refused"]))
+		runbook_runs.append(result)
+		return result
+	var before := {}
+	for d: Net.NDevice in targets:
+		# automation that cuts the path it is working over is the classic own goal
+		if String(rb["action"]) in ["bounce", "reload_config"] and not console_reachable(d) \
+				and not management_ips(d).is_empty() and not confirmed:
+			result["skipped"].append(d.name)
+			result["log"].append("%s: skipped, this would ride the path it manages" % d.name)
+			continue
+		before[d.name] = device_config(d)
+		if dry_run:
+			result["log"].append("%s: would %s" % [d.name, RUNBOOK_ACTIONS[rb["action"]]["label"]])
+			continue
+		match String(rb["action"]):
+			"bounce":
+				# shut and unshut: the port that is down is the one worth bouncing
+				var pick: Net.Iface = null
+				for i: Net.Iface in d.ifaces:
+					if link_at(i) == null or i.name.begins_with("Management"):
+						continue
+					if not i.enabled:
+						pick = i
+						break
+					if pick == null:
+						pick = i
+				if pick != null:
+					pick.enabled = false
+					pick.enabled = true
+					result["log"].append("%s: bounced %s" % [d.name, pick.name])
+			"reload_config":
+				apply_device_config(d, d.startup)
+				result["log"].append("%s: reloaded the saved configuration" % d.name)
+			"save_config":
+				d.startup = device_config(d)
+				save_config_version(d)
+				result["log"].append("%s: running configuration saved" % d.name)
+			"dispatch":
+				walk_to_device(d)
+				result["log"].append("%s: somebody is standing at it" % d.name)
+		result["applied"].append(d.name)
+	if not dry_run:
+		rb["runs"] = int(rb.get("runs", 0)) + 1
+		result["before"] = before
+		var after := {}
+		for name: String in before:
+			for d2: Net.NDevice in all_devices():
+				if d2.name == name:
+					after[name] = device_config(d2)
+		result["after"] = after
+		log_event("RUNBOOK '%s': %d applied, %d skipped." % [rb["name"],
+			result["applied"].size(), result["skipped"].size()])
+	runbook_runs.append(result)
+	if runbook_runs.size() > 20:
+		runbook_runs.pop_front()
+	return result
+
+func rollback_runbook(run: Dictionary) -> String:
+	## Only where the underlying action can actually be taken back.
+	if bool(run.get("dry_run", true)) or not run.has("before"):
+		return "there is nothing to roll back"
+	if run.get("applied", []).is_empty():
+		return "that run changed nothing"
+	for name: String in run["before"]:
+		for d: Net.NDevice in all_devices():
+			if d.name == name:
+				apply_device_config(d, run["before"][name])
+	log_event("RUNBOOK ROLLBACK: %d device(s) put back the way they were."
+		% run["before"].size())
+	topology_changed.emit()
+	return ""
 
 func run_playbook(pb: Dictionary, targets: Array) -> Dictionary:
 	## Runs every line on every target through a real CLI session, so a
@@ -5659,6 +5869,7 @@ func sla_tick() -> void:
 	remote_hands_tick()
 	lockout_tick()
 	ticket_tick()
+	remediation_tick()
 	_maybe_grey_fault()
 	receiving_tick()
 	stockout_tick()
@@ -6461,7 +6672,7 @@ func _serialize() -> Dictionary:
 		"customer_outage_active": customer_outage_active,
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
-		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks,
+		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks, "runbooks": runbooks,
 		"buyout_offer": buyout_offer, "sold_out": sold_out, "references": references,
 		"leads": leads, "timeline": timeline,
 		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
@@ -6776,6 +6987,7 @@ func _apply(data: Dictionary) -> void:
 	transit_samples = data.get("transit_samples", [])
 	ixp = data.get("ixp", {})
 	playbooks = data.get("playbooks", [])
+	runbooks = data.get("runbooks", [])
 	ipv4_blocks = int(data.get("ipv4_blocks", 1))
 	buyout_offer = data.get("buyout_offer", {})
 	sold_out = bool(data.get("sold_out", false))

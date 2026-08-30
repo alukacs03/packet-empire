@@ -2645,6 +2645,72 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			get_parent().rebuild_racks())
 		frow.add_child(rma_btn)
+	ops_box.add_child(_section("RUNBOOKS AND AUTOMATION"))
+	var rb_new := Button.new()
+	rb_new.text = "New runbook…"
+	rb_new.tooltip_text = "A bounded action, a selector, and a blast radius. Nothing else."
+	rb_new.pressed.connect(func() -> void:
+		var actions: Array = Game.RUNBOOK_ACTIONS.keys()
+		var act_opts: Array = []
+		for act_id: String in actions:
+			act_opts.append("%s: %s" % [Game.RUNBOOK_ACTIONS[act_id]["label"],
+				Game.RUNBOOK_ACTIONS[act_id]["blurb"]])
+		_menu(rb_new, act_opts, func(id: int) -> void:
+			var target := cur_dev.name if cur_dev != null else ""
+			Game.make_runbook("%s %s" % [Game.RUNBOOK_ACTIONS[actions[id]]["label"],
+				target if target != "" else "(everything)"], String(actions[id]), target)
+			_refresh_ops()))
+	ops_box.add_child(rb_new)
+	for rb_i: Dictionary in Game.runbooks:
+		var rbrow := HBoxContainer.new()
+		rbrow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(rbrow)
+		var rbl := _label("  %-38s targets %d, may touch %d" % [rb_i["name"],
+			Game.runbook_targets(rb_i).size(), int(rb_i["max_devices"])], 12,
+			Color(0.78, 0.84, 0.9))
+		rbl.add_theme_font_override("font", mono)
+		rbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rbrow.add_child(rbl)
+		var rb_dry := Button.new()
+		rb_dry.text = "Dry run"
+		rb_dry.pressed.connect(func() -> void:
+			var out: Dictionary = Game.run_runbook(rb_i, true)
+			for line: String in out["log"]:
+				Game.log_event("DRY RUN: %s" % line)
+			hud_toast("Dry run: %d planned, %d would be skipped." % [out["planned"].size(),
+				out["skipped"].size()], String(out["refused"]) == "")
+			_refresh_ops())
+		rbrow.add_child(rb_dry)
+		var rb_go := Button.new()
+		rb_go.text = "Run it"
+		rb_go.pressed.connect(func() -> void:
+			var out: Dictionary = Game.run_runbook(rb_i, false, true)
+			hud_toast(String(out["refused"]) if String(out["refused"]) != ""
+				else "Applied to %d device(s)." % out["applied"].size(),
+				String(out["refused"]) == "")
+			_refresh_ops())
+		rbrow.add_child(rb_go)
+		var rb_bind := Button.new()
+		rb_bind.text = "Bind to an alert…"
+		rb_bind.pressed.connect(func() -> void:
+			var mon_opts: Array = []
+			for m_b: Dictionary in Game.monitors:
+				mon_opts.append(Game.monitor_label(m_b))
+			if mon_opts.is_empty():
+				_toast("no checks to bind it to")
+				return
+			_menu(rb_bind, mon_opts, func(id: int) -> void:
+				Game.bind_remediation(Game.monitors[id], rb_i)
+				_refresh_ops()))
+		rbrow.add_child(rb_bind)
+	for m_t: Dictionary in Game.monitors:
+		var rem_t: Dictionary = m_t.get("remediation", {})
+		if rem_t.is_empty():
+			continue
+		ops_box.add_child(_label("  %s → '%s'" % [Game.monitor_label(m_t), rem_t["runbook"]],
+			12, Color(0.72, 0.84, 0.8)))
+		for line_t: String in rem_t.get("timeline", []):
+			ops_box.add_child(_label("      %s" % line_t, 11, Color(0.68, 0.74, 0.82)))
 	ops_box.add_child(_section("PLAYBOOKS"))
 	if Game.playbooks.is_empty():
 		ops_box.add_child(_wrap("  Nothing saved yet. A playbook is a list of console commands you can run on many devices at once: the same thing you would type, typed for you.",

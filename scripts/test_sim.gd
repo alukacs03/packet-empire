@@ -4020,6 +4020,143 @@ static func run() -> int:
 		"cable debt: clearing an item during a quiet cycle shows up immediately")
 	Game.cable_debt = 0
 
+	# --- runbooks: what automation is allowed to do ---
+	Game.runbooks = []
+	Game.runbook_runs = []
+
+	# --- auto-remediation: automation that earns trust ---
+	Game.runbooks = []
+	Game.runbook_runs = []
+	Game.monitors = []
+	Game.maintenance_until = -1
+	var ar_rack := Game.add_rack(Vector2i(72, 1))
+	var ar_sw := Game.new_device("sw-8")
+	var ar_a := Game.new_device("srv-1")
+	var ar_b := Game.new_device("srv-1")
+	ar_rack.slots[0] = ar_sw
+	ar_rack.slots[1] = ar_a
+	ar_rack.slots[2] = ar_b
+	Game.connect_ifaces(ar_a.ifaces[0], ar_sw.ifaces[0])
+	Game.connect_ifaces(ar_b.ifaces[0], ar_sw.ifaces[1])
+	Game.add_ip(ar_a.ifaces[0], "10.175.0.10/24")
+	Game.add_ip(ar_b.ifaces[0], "10.175.0.11/24")
+	Sim.flush_learned_state()
+	Game.add_monitor("ping", ar_a.name, "10.175.0.11")
+	var ar_mon: Dictionary = Game.monitors[Game.monitors.size() - 1]
+	var ar_rb := Game.make_runbook("bounce the access port", "bounce", ar_sw.name, 1)
+	check(Game.bind_remediation(ar_mon, ar_rb) == "" and ar_mon.has("remediation"),
+		"remediation: an alert can be bound to exactly one runbook")
+	# the recurring fault: a port that comes back when it is bounced
+	ar_sw.ifaces[1].enabled = false
+	Game._run_monitors()
+	var ar_rem: Dictionary = ar_mon["remediation"]
+	check(bool(ar_mon["failing"]) and ar_sw.ifaces[1].enabled \
+			and String(ar_rem["timeline"][0]).contains("trigger"),
+		"remediation: the alert fires the runbook, and the timeline reads trigger, evidence, action")
+	Game._run_monitors()
+	check(not bool(ar_mon["failing"]) and int(ar_rem["failures"]) == 0 \
+			and String(ar_rem["timeline"][ar_rem["timeline"].size() - 1]).contains("verified"),
+		"remediation: recovery is verified, not assumed")
+	# flapping must not become an action storm
+	var runs_before := Game.runbook_runs.size()
+	for _ar in 3:
+		ar_sw.ifaces[1].enabled = false
+		Game._run_monitors()
+		Game._run_monitors()
+	check(Game.runbook_runs.size() - runs_before <= 1,
+		"remediation: a flapping check is held by the cooldown instead of hammering the device")
+	# a changed symptom the old fix cannot address stops after its retries
+	Game.cycle += Game.REMEDIATION_COOLDOWN * 4
+	ar_sw.ifaces[1].enabled = true
+	Sim.flush_learned_state()
+	Game._run_monitors()
+	ar_rem["failures"] = 0
+	ar_rem["last_fired"] = -999
+	ar_b.ifaces[0].ips = []  # the service moved: bouncing a port will not bring it back
+	Sim.flush_learned_state()
+	Game._run_monitors()
+	for _ar2 in 4:
+		Game.cycle += Game.REMEDIATION_COOLDOWN
+		Game._run_monitors()
+		Game.remediation_tick()
+	check(int(ar_rem["failures"]) >= Game.REMEDIATION_RETRIES,
+		"remediation: an action that does not restore the service counts against its retries")
+	var escalated := false
+	for ar_line: String in ar_rem["timeline"]:
+		if ar_line.contains("escalated"):
+			escalated = true
+	check(escalated,
+		"remediation: after enough failures it stops and asks for a person")
+	# and it says nothing at all during a change window
+	Game.add_ip(ar_b.ifaces[0], "10.175.0.11/24")
+	Sim.flush_learned_state()
+	Game._run_monitors()
+	ar_rem["failures"] = 0
+	ar_rem["last_fired"] = -999
+	Game.maintenance_until = Game.cycle + 3
+	ar_sw.ifaces[1].enabled = false
+	var runs_window := Game.runbook_runs.size()
+	Game._run_monitors()
+	check(Game.runbook_runs.size() == runs_window \
+			and String(ar_rem["timeline"][ar_rem["timeline"].size() - 1]).contains("suppressed"),
+		"remediation: planned work suppresses automation instead of fighting it")
+	Game.maintenance_until = -1
+	ar_sw.ifaces[1].enabled = true
+	Game.monitors = []
+	Game.runbooks = []
+	Game.runbook_runs = []
+	Game.money = 5000
+	var rb_rack := Game.add_rack(Vector2i(70, 1))
+	var rb_sw := Game.new_device("sw-8")
+	var rb_srv := Game.new_device("srv-1")
+	rb_rack.slots[0] = rb_sw
+	rb_rack.slots[1] = rb_srv
+	Game.connect_ifaces(rb_srv.ifaces[0], rb_sw.ifaces[0])
+	rb_sw.startup = Game.device_config(rb_sw)
+	var rb := Game.make_runbook("clear the access port", "bounce", rb_sw.name, 1)
+	check(not rb.is_empty() and Game.make_runbook("nonsense", "delete everything").is_empty(),
+		"runbooks: the action library is bounded, and anything outside it does not exist")
+	var dry := Game.run_runbook(rb, true)
+	check(dry["planned"].size() == 1 and dry["applied"].is_empty() \
+			and String(dry["log"][0]).contains("would"),
+		"runbooks: a dry run says exactly what it would do and does none of it")
+	check(String(Game.run_runbook(rb, false)["refused"]).contains("confirming"),
+		"runbooks: the first real run of a runbook has to be confirmed")
+	var applied := Game.run_runbook(rb, false, true)
+	check(applied["applied"] == [rb_sw.name] and applied.has("before") and applied.has("after") \
+			and not applied["log"].is_empty(),
+		"runbooks: a confirmed run captures before and after and logs every step")
+	var rb_wide := Game.make_runbook("save everything", "save_config", "", 2)
+	var too_wide := Game.run_runbook(rb_wide, false, true)
+	check(String(too_wide["refused"]).contains("may touch") and too_wide["applied"].is_empty(),
+		"runbooks: a selector that matches more than the blast radius is refused outright")
+	var rb_reload := Game.make_runbook("reload the switch", "reload_config", rb_sw.name, 1)
+	Game.add_vlan(rb_sw, 123, "temporary")
+	var reload_run := Game.run_runbook(rb_reload, false, true)
+	check(not rb_sw.vlans.has(123) and Game.rollback_runbook(reload_run) == "" \
+			and rb_sw.vlans.has(123),
+		"runbooks: where the action is reversible, the run can be put back")
+	check(Game.rollback_runbook(dry) != "",
+		"runbooks: a dry run has nothing to roll back")
+	Game.add_ip(rb_srv.ifaces[0], "10.170.0.10/24")
+	var rb_mgmt := Game.new_device("rtr-edge")
+	rb_rack.slots[2] = rb_mgmt
+	Game.connect_ifaces(rb_mgmt.ifaces[0], rb_sw.ifaces[1])
+	Game.add_ip(rb_mgmt.ifaces[0], "10.170.0.1/24")
+	rb_mgmt.startup = Game.device_config(rb_mgmt)
+	var rb_risky := Game.make_runbook("bounce the router", "bounce", rb_mgmt.name, 1)
+	var risky_run := Game.run_runbook(rb_risky, false, true)
+	check(risky_run["applied"].has(rb_mgmt.name) or risky_run["skipped"].has(rb_mgmt.name),
+		"runbooks: touching a device over its own management path is a decision, and it is recorded")
+	check(Game.runbook_runs.size() >= 5,
+		"runbooks: every attempt is kept, including the ones that were refused")
+	Game.runbooks = []
+	Game.runbook_runs = []
+
+	# --- runbooks: what automation is allowed to do ---
+	Game.runbooks = []
+	Game.runbook_runs = []
+
 	# --- standing duties ---
 	var dt_staff := Game.staff.duplicate(true)
 	Game.duties = {}
