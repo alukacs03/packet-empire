@@ -569,10 +569,13 @@ static func check(kind: String, params: Dictionary) -> bool:
 static func delivery_checks(deal: Dictionary) -> Array:
 	## Turn the words in a sold promise into observable work. The guided first
 	## customer is hosting; later deal kinds still receive an honest live check.
-	if String(deal.get("kind", "")) != "hosting":
-		return [{"promise": String(deal.get("brief", "Deliver the sold service")),
+	var kind := String(deal.get("kind", ""))
+	if kind != "hosting":
+		var steps := _steps_for(kind, deal.get("params", {}))
+		steps.append({"promise": String(deal.get("brief", "Deliver the sold service")),
 			"work": "Prove the complete service against the live network",
-			"ok": check(String(deal.get("kind", "")), deal.get("params", {}))}]
+			"ok": check(kind, deal.get("params", {}))})
+		return steps
 	var ip := String(deal.get("params", {}).get("ip", ""))
 	var owner := Contracts._owner(ip)
 	var addressed := owner != null and owner.type == "server"
@@ -614,6 +617,76 @@ static func delivery_checks(deal: Dictionary) -> Array:
 			"work": "Keep at least %d Mbps free across the proven path" % load,
 			"ok": reachable and path_capacity >= load},
 	]
+
+static func _steps_for(kind: String, params: Dictionary) -> Array:
+	## The build sheet for a sold promise: what has to exist before the whole
+	## thing can pass, each read off the live network rather than remembered.
+	var ip := String(params.get("ip", ""))
+	var owner := Contracts._owner(ip)
+	var addressed := owner != null and owner.type == "server"
+	match kind:
+		"v6_host":
+			return [{"promise": "Give them an address that is theirs",
+				"work": "Address a server at %s" % ip, "ok": addressed}]
+		"bonded_uplink":
+			var bundled := false
+			for l in Game.links:
+				if Game.lag_members(l).size() >= 2:
+					bundled = true
+					break
+			return [
+				{"promise": "Put their cabinet on the network",
+					"work": "Address a server at %s" % ip, "ok": addressed},
+				{"promise": "Feed it twice",
+					"work": "Put two links in one channel-group on both ends", "ok": bundled},
+			]
+		"public_hosting":
+			return [
+				{"promise": "Host their site",
+					"work": "Address a server at %s" % ip, "ok": addressed},
+				{"promise": "Be on the internet at all",
+					"work": "Have an upstream on the floor", "ok": _has_uplink()},
+			]
+		"secure_host":
+			var firewalled := false
+			for d in Game.all_devices():
+				if d.type == "firewall":
+					firewalled = true
+					break
+			return [
+				{"promise": "Host their server",
+					"work": "Address a server at %s" % ip, "ok": addressed},
+				{"promise": "Put something in front of it",
+					"work": "Install a firewall", "ok": firewalled},
+			]
+		"own_vlan", "managed_switch":
+			var vid := int(params.get("vid", 0))
+			var declared := false
+			for d in Game.all_devices():
+				if d.type == "switch" and d.vlans.has(vid):
+					declared = true
+					break
+			return [{"promise": "Give them VLAN %d" % vid,
+				"work": "Declare VLAN %d on a switch" % vid, "ok": declared}]
+		"dhcp_pool":
+			var serving := false
+			for d in Game.all_devices():
+				if not d.services.get("dhcp", {}).is_empty():
+					serving = true
+					break
+			return [{"promise": "Hand out addresses",
+				"work": "Run dhcpd for %s.0/24 on a server" % String(params.get("subnet", "?")),
+				"ok": serving}]
+		"redundant_gw":
+			var speaking := 0
+			for d in Game.all_devices():
+				for i: Net.Iface in d.ifaces:
+					if i.vrrp.get("vip", "") == String(params.get("vip", "")):
+						speaking += 1
+			return [{"promise": "Two routers, one address",
+				"work": "Configure the VRRP virtual address on a second router",
+				"ok": speaking >= 2}]
+	return []
 
 static func _has_uplink() -> bool:
 	for d in Game.all_devices():

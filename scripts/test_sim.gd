@@ -2895,6 +2895,17 @@ static func run() -> int:
 	check(mk_sw.ifaces[2].enabled and mk_sw.ifaces[3].enabled,
 		"market: proving it puts the links back the way it found them")
 
+	# every kind says what is left to do, not just whether it is done
+	var mk_steps := Market.delivery_checks({"kind": "bonded_uplink",
+		"params": {"ip": "10.70.9.10"}, "brief": "two links, one bundle"})
+	check(mk_steps.size() >= 3 and bool(mk_steps[0]["ok"]) and bool(mk_steps[1]["ok"]),
+		"market: a delivered bundle reads as a finished build sheet")
+	var mk_todo := Market.delivery_checks({"kind": "redundant_gw",
+		"params": {"vip": "10.70.250.1"}, "brief": "a gateway that survives"})
+	check(mk_todo.size() >= 2 and not bool(mk_todo[0]["ok"]) \
+			and String(mk_todo[0]["work"]).contains("VRRP"),
+		"market: an unbuilt promise names the next piece of work rather than failing silently")
+
 	# --- the three in the morning call-out ---
 	var co_staff := Game.staff.duplicate(true)
 	var co_haz := Game.hazards.duplicate(true)
