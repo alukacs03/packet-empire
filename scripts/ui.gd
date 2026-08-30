@@ -4907,6 +4907,15 @@ func _build_market_tab() -> void:
 		row.add_child(buy)
 
 func _build_log_tab() -> void:
+	if not Game.handover.is_empty():
+		# what the shift going home left on the desk
+		contracts_box.add_child(_section("HANDOVER  /  FROM THE %s SHIFT"
+			% String(Game.handover["from"]).to_upper()))
+		contracts_box.add_child(_label("  written at cycle %d" % int(Game.handover["cycle"]),
+			12, UIW.colour("muted")))
+		for line in Game.handover["lines"]:
+			contracts_box.add_child(_wrap("  · %s" % String(line), 13,
+				UIW.colour("text_strong"), 640))
 	if Game.upstream_active():
 		contracts_box.add_child(_section("SOMEBODY ELSE'S OUTAGE"))
 		contracts_box.add_child(_wrap("  %s is down and you cannot fix it. What is left is everything else: the case, the chasing, and telling your customers before they ask." % Game.upstream["party"],

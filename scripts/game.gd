@@ -1643,6 +1643,59 @@ func answer_night_call(get_them_in: bool) -> String:
 	night_call = {}
 	return ""
 
+var handover := {}      # what the shift going home left for the one coming in
+var _handover_slot := -1
+
+func handover_lines() -> Array:
+	## What a person would actually write at the end of a long night, read off
+	## the floor rather than from a script, most urgent first.
+	var lines: Array = []
+	if customer_down_now():
+		lines.append("A customer is off the air. That is the first thing.")
+	for h: Dictionary in hazards:
+		lines.append("%s in %s, severity %d%s." % [HAZARD_KINDS[h["kind"]]["label"], h["rack"],
+			int(h["severity"]), "" if bool(h.get("detected", false)) else ", nothing is watching for it"])
+	var dead: Array = []
+	for d in all_devices():
+		if d.status != "active":
+			dead.append(d.name)
+	if not dead.is_empty():
+		lines.append("Down and not back: %s." % ", ".join(PackedStringArray(dead)))
+	var down_links := 0
+	for l in links:
+		if not l.a.enabled or not l.b.enabled:
+			down_links += 1
+	if down_links > 0:
+		lines.append("%d port(s) left disabled. Somebody should find out why." % down_links)
+	if not tickets.is_empty():
+		lines.append("%d ticket(s) still open." % tickets.size())
+	var waiting := crates_waiting().size()
+	if waiting > 0:
+		lines.append("%d crate(s) on the dock, unchecked against the order." % waiting)
+	var unsaved: Array = []
+	for d2 in all_devices():
+		if config_dirty(d2):
+			unsaved.append(d2.name)
+	if not unsaved.is_empty():
+		lines.append("Running on unsaved configuration: %s." % ", ".join(PackedStringArray(unsaved)))
+	if lines.is_empty():
+		lines.append("Nothing happened. Everything that was up is still up.")
+	return lines
+
+func handover_tick() -> void:
+	## A shift ends the way real ones do: with somebody writing down what the
+	## next person needs to know before they take their coat off.
+	var slot := day_slot()
+	if slot not in [2, 6] or slot == _handover_slot:
+		if slot not in [2, 6]:
+			_handover_slot = -1
+		return
+	_handover_slot = slot
+	var going := "night" if slot == 2 else "day"
+	handover = {"cycle": cycle, "from": going, "lines": handover_lines()}
+	log_event("HANDOVER: the %s shift left %d note(s) for the %s shift."
+		% [going, handover["lines"].size(), "day" if going == "night" else "night"])
+
 func call_tick() -> void:
 	## A promise is only worth what it costs to miss it.
 	for deal in deals:
@@ -7941,6 +7994,7 @@ func sla_tick() -> void:
 	lockout_tick()
 	ticket_tick()
 	call_tick()
+	handover_tick()
 	night_call_tick()
 	rank_tick()
 	season_tick()
@@ -8886,7 +8940,7 @@ func _serialize() -> Dictionary:
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"callout_who": callout_who, "callout_until": callout_until, "oncall": oncall,
-		"night_call": night_call,
+		"night_call": night_call, "handover": handover,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
 		"customer_arcs": customer_arcs,
@@ -9229,6 +9283,7 @@ func _apply(data: Dictionary) -> void:
 	maintenance_used = int(data.get("maintenance_used", 0))
 	oncall = String(data.get("oncall", ""))
 	night_call = data.get("night_call", {})
+	handover = data.get("handover", {})
 	callout_who = String(data.get("callout_who", ""))
 	callout_until = int(data.get("callout_until", -1))
 	incidents = data.get("incidents", [])

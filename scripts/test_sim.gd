@@ -2983,6 +2983,43 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	# --- what one shift leaves for the next ---
+	var ho_racks := Game.racks
+	var ho_links := Game.links
+	var ho_haz := Game.hazards
+	var ho_tickets := Game.tickets
+	var ho_crates := Game.crates
+	Game.racks = []
+	Game.links = []
+	Game.hazards = []
+	Game.tickets = []
+	Game.crates = []
+	Game.customer_outage_active = false
+	Game.guided_outage = {}
+	check(Game.handover_lines() == ["Nothing happened. Everything that was up is still up."],
+		"handover: a quiet shift says so, rather than inventing something")
+	Game.hazards = [{"kind": "water", "rack": "R9", "site": 0, "tile": [0, 0], "severity": 2,
+		"started": Game.cycle, "detected": false, "zone": ["R9"]}]
+	Game.customer_outage_active = true
+	var ho_lines := Game.handover_lines()
+	check(ho_lines.size() >= 2 and String(ho_lines[0]).contains("off the air") \
+			and String(ho_lines[1]).contains("R9") and String(ho_lines[1]).contains("nothing is watching"),
+		"handover: the customer comes first, then what is burning, and it says what nobody is watching")
+	Game.customer_outage_active = false
+	Game._handover_slot = -1
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 6  # the night shift clocking on
+	Game.handover_tick()
+	check(not Game.handover.is_empty() and String(Game.handover["from"]) == "day",
+		"handover: it is written at the shift change, by the shift going home")
+	Game.handover = {}
+	Game.handover_tick()
+	check(Game.handover.is_empty(), "handover: and written once, not every cycle of that slot")
+	Game.racks = ho_racks
+	Game.links = ho_links
+	Game.hazards = ho_haz
+	Game.tickets = ho_tickets
+	Game.crates = ho_crates
+
 	# the sign on the wall never contradicts the brief in the corner
 	var sign_guided := Game.guided_outage.duplicate(true)
 	Game.customer_outage_active = false
