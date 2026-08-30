@@ -154,7 +154,8 @@ static func payroll() -> int:
 static func repair_power() -> Array:
 	var attempts := 0
 	var skill := 0
-	var knows_the_floor := 1 if Game.floor_tidiness() > 0.75 else 0  # labelled, blanked, saved
+	# labelled, blanked, saved, and described by documentation that is still true
+	var knows_the_floor := 1 if Game.floor_tidiness() > 0.75 and Game.drift_factor() < 0.3 else 0
 	for m in Game.staff:
 		if m["role"] in ["noc", "tech", "engineer"] and on_shift(m):
 			attempts += 1
@@ -231,7 +232,8 @@ static func _maybe_slip(rng: RandomNumberGenerator) -> void:
 	var who: Dictionary = pool[rng.randi() % pool.size()]
 	# somebody who never waits for a window is the one who breaks it live
 	var risk := (0.02 + 0.008 * float(5 - int(who.get("skill", 3)))) \
-		* (1.6 - float(habits_of(who).get("windows", 0.5)))
+		* (1.6 - float(habits_of(who).get("windows", 0.5))) \
+		* (1.0 + Game.drift_factor())  # they pull what the label says
 	if int(who.get("morale", 70)) < 40:
 		risk += 0.03
 	if rng.randf() > risk:

@@ -3718,6 +3718,41 @@ static func run() -> int:
 	Game.spares = {}
 	Game.renewals = []
 
+	# --- documentation drift ---
+	Game.docs = {}
+	Game.money = 5000
+	var dd_rack := Game.add_rack(Vector2i(56, 1))
+	var dd_sw := Game.new_device("sw-8")
+	var dd_srv := Game.new_device("srv-1")
+	dd_rack.slots[0] = dd_sw
+	dd_rack.slots[1] = dd_srv
+	Game.connect_ifaces(dd_srv.ifaces[0], dd_sw.ifaces[0])
+	Game.add_ip(dd_srv.ifaces[0], "10.88.0.10/24")
+	check(Game.rack_drift(dd_rack) > 0,
+		"drift: hardware nobody has written up is itself undocumented reality")
+	check(Game.reconcile_rack(dd_rack) == "" and Game.rack_drift(dd_rack) == 0,
+		"drift: walking the cabinet and writing it down is cheap and boring, which is the point")
+	# fast work creates drift without anybody deciding to be sloppy
+	Game.disconnect_iface(dd_srv.ifaces[0])
+	Game.connect_ifaces(dd_srv.ifaces[0], dd_sw.ifaces[2])
+	check(Game.rack_drift(dd_rack) >= 2,
+		"drift: an emergency repatch leaves the documentation describing a floor that no longer exists")
+	var dd_precision_bad := Game.remote_precision(dd_sw, dd_sw.ifaces[2])
+	Game.reconcile_rack(dd_rack)
+	check(Game.remote_precision(dd_sw, dd_sw.ifaces[2]) > dd_precision_bad,
+		"drift: somebody working from your documentation is measurably better when it is true")
+	# and a change window writes it up on the way out
+	Game.docs = {}
+	Game.maintenance_used = 0
+	Game.maintenance_until = -1
+	dd_sw.startup = Game.device_config(dd_sw)
+	Game.submit_change("documented work", [dd_sw.name], 4, true)
+	Game.complete_change()
+	check(Game.docs.has(dd_sw.name),
+		"drift: closing a change window writes up what the change actually did")
+	Game.reconcile_rack(dd_rack)
+	Game.docs = {}
+
 	# --- consumables ---
 	var pt_rack := Game.add_rack(Vector2i(48, 1))
 	var pt_sw := Game.new_device("sw-8")

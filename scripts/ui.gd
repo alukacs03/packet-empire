@@ -2032,6 +2032,31 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+	ops_box.add_child(_section("DOCUMENTATION"))
+	ops_box.add_child(_wrap("  %d fact(s) on this floor no longer match what is written down. Documentation that is wrong is slower than none, because people believe it."
+		% Game.site_drift(), 12,
+		Color(1.0, 0.82, 0.5) if Game.drift_factor() > 0.3 else Color(0.72, 0.8, 0.88), 780))
+	for r_doc: Net.Rack in Game.racks_on(Game.current_site):
+		var drift_here: int = Game.rack_drift(r_doc)
+		if drift_here == 0:
+			continue
+		var dr_row := HBoxContainer.new()
+		dr_row.add_theme_constant_override("separation", 8)
+		ops_box.add_child(dr_row)
+		var drl := _label("  %-10s %d fact(s) adrift" % [r_doc.name, drift_here], 12,
+			Color(0.78, 0.84, 0.9))
+		drl.add_theme_font_override("font", mono)
+		drl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dr_row.add_child(drl)
+		var walk := Button.new()
+		walk.text = "Walk it and write it up ($30)"
+		walk.pressed.connect(func() -> void:
+			var err: String = Game.reconcile_rack(r_doc)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		dr_row.add_child(walk)
 	var orphans: Array = Game.orphan_list()
 	if not orphans.is_empty():
 		ops_box.add_child(_section("NOBODY CLAIMS THESE"))

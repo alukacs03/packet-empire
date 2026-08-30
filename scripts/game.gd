@@ -253,6 +253,7 @@ var rmas: Array = []  # dead units in transit, and what is coming back
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
+var docs := {}  # device name -> what the documentation claims is racked and patched
 var orphan_intel := {}  # orphan key -> how much digging the player has done (0-2)
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
@@ -670,6 +671,7 @@ func complete_change() -> String:
 	log_event("CHANGE COMPLETE: \"%s\" finished inside the window.%s"
 		% [change_window["summary"],
 			"  Overriding the freeze went unpunished this time." if overridden else ""])
+	reconcile_after_change(change_window["targets"])
 	change_window = {}
 	maintenance_until = cycle
 	return ""
@@ -1179,7 +1181,9 @@ func remote_precision(dev: Net.NDevice, iface: Net.Iface) -> float:
 		score += 0.15
 	if rack != null and not rack.note.is_empty():
 		score += 0.1
-	return clampf(score * care, 0.0, 1.0)
+	# what matters is whether the documentation for this cabinet is still true
+	var local_drift := clampf(float(rack_drift(rack)) / 6.0, 0.0, 1.0) if rack != null else 0.0
+	return clampf(score * care * (1.0 - 0.3 * local_drift), 0.0, 1.0)
 
 func request_remote_hands(dev: Net.NDevice, action: String, iface: Net.Iface = null) -> String:
 	if not REMOTE_ACTIONS.has(action):
@@ -1254,6 +1258,85 @@ func remote_hands_tick() -> void:
 			log_event("REMOTE HANDS: they did it to %s%s. That is what the label said, or rather did not."
 				% [target_dev.name, " %s" % target_iface.name if target_iface != null else ""])
 		topology_changed.emit()
+
+func _device_facts(d: Net.NDevice) -> Dictionary:
+	## The handful of things people actually document about a device.
+	var ports := {}
+	for i: Net.Iface in d.ifaces:
+		if i.name.begins_with("Management") or i.name == "lo":
+			continue
+		var l := link_at(i)
+		ports[i.name] = {"to": "%s %s" % [l.other(i).dev.name, l.other(i).name] if l != null else "",
+			"ips": i.ips.duplicate()}
+	return {"model": d.model, "rack": rack_of(d).name if rack_of(d) != null else "", "ports": ports}
+
+func document_device(d: Net.NDevice) -> void:
+	docs[d.name] = _device_facts(d)
+
+func device_drift(d: Net.NDevice) -> int:
+	## How many documented facts are no longer true, plus anything undocumented.
+	var claimed: Dictionary = docs.get(d.name, {})
+	if claimed.is_empty():
+		return 1 + _device_facts(d)["ports"].size()  # nothing about it is written down
+	var facts := _device_facts(d)
+	var drift := 0
+	if String(claimed.get("rack", "")) != String(facts["rack"]):
+		drift += 1
+	var claimed_ports: Dictionary = claimed.get("ports", {})
+	for port_name: String in facts["ports"]:
+		var now: Dictionary = facts["ports"][port_name]
+		var was: Dictionary = claimed_ports.get(port_name, {})
+		if was.is_empty():
+			drift += 1
+		elif String(was.get("to", "")) != String(now["to"]) \
+				or JSON.stringify(was.get("ips", [])) != JSON.stringify(now["ips"]):
+			drift += 1
+	return drift
+
+func rack_drift(r: Net.Rack) -> int:
+	var drift := 0
+	for d in r.slots:
+		if d != null:
+			drift += device_drift(d)
+	return drift
+
+func site_drift(site := -1) -> int:
+	var drift := 0
+	for r: Net.Rack in racks_on(site if site >= 0 else current_site):
+		drift += rack_drift(r)
+	return drift
+
+func drift_factor() -> float:
+	## 0 when the documentation matches the floor, approaching 1 when it is
+	## fiction. Everything that depends on knowing the estate reads this.
+	var devs := 0
+	for r: Net.Rack in racks_on(current_site):
+		for d in r.slots:
+			if d != null:
+				devs += 1
+	if devs == 0:
+		return 0.0
+	return clampf(float(site_drift()) / float(devs * 3), 0.0, 1.0)
+
+func reconcile_rack(r: Net.Rack) -> String:
+	## Cheap, boring, and exactly what a quiet afternoon is for.
+	var drift := rack_drift(r)
+	if drift == 0:
+		return "%s already matches the documentation" % r.name
+	if not try_spend(30):
+		return "walking the cabinet and writing it down costs $30"
+	for d in r.slots:
+		if d != null:
+			document_device(d)
+	log_event("DOCUMENTATION: %s walked and written up. %d fact(s) corrected." % [r.name, drift])
+	return ""
+
+func reconcile_after_change(targets: Array) -> void:
+	## Offered right after emergency work, because that is when it is skipped.
+	for name: String in targets:
+		for d: Net.NDevice in all_devices():
+			if d.name == name:
+				document_device(d)
 
 func orphan_list() -> Array:
 	## Things nobody claims: read off the live estate rather than remembered.
@@ -1662,7 +1745,7 @@ func tour_factor(name: String) -> float:
 			for d: Net.NDevice in devs:
 				if not d.note.is_empty() and not config_dirty(d):
 					documented += 1
-			return clampf(float(documented) / float(devs.size()), 0.0, 1.0)
+			return clampf(float(documented) / float(devs.size()) - drift_factor(), 0.0, 1.0)
 		"records":
 			var open_reviews := 0
 			for inc: Dictionary in incidents:
@@ -3990,6 +4073,8 @@ func audit_findings() -> Array:
 	var out: Array = []
 	if not data_risks.is_empty():
 		out.append("%d unit(s) left without a certificate of destruction" % data_risks.size())
+	if drift_factor() > 0.4:
+		out.append("documentation that no longer describes the floor (%d fact(s) adrift)" % site_drift())
 	if packaging > 2 or aisle_blocked():
 		out.append("cardboard and crates in the aisle: a fire load and a trip hazard")
 	var orphans := orphan_list().size()
@@ -5995,7 +6080,7 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
 		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
@@ -6326,6 +6411,7 @@ func _apply(data: Dictionary) -> void:
 	renewals = data.get("renewals", [])
 	tac_cases = data.get("tac_cases", [])
 	orphan_intel = data.get("orphan_intel", {})
+	docs = data.get("docs", {})
 	remote_jobs = data.get("remote_jobs", [])
 	crates = data.get("crates", [])
 	stockouts = data.get("stockouts", {})
