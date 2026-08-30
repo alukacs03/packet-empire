@@ -4778,6 +4778,7 @@ func _ready() -> void:
 		Legacy.path = "user://legacy_test.json"
 		history_path = "user://run_history_test.json"
 	Legacy.load_file()
+	Pack.load_all()  # authored content, if anybody has written any
 	topology_changed.connect(Sim.flush_learned_state)
 	cycle_timer = Timer.new()
 	cycle_timer.wait_time = SLA_PERIOD

@@ -3359,6 +3359,11 @@ func _build_menu() -> void:
 		get_parent().rebuild_racks()
 		_show_drill_banner())
 	v.add_child(drill_btn)
+	var workshop := Button.new()
+	workshop.text = "Content workshop…  (%d pack(s))" % Pack.loaded.size()
+	workshop.tooltip_text = "Packs are JSON files: what is on the floor, what has to become true, and what happens then."
+	workshop.pressed.connect(func() -> void: _workshop_menu(workshop))
+	v.add_child(workshop)
 	var diagram := Button.new()
 	diagram.text = "Export the topology (diagram + listing)"
 	diagram.tooltip_text = "Mermaid for a picture, plain text for a report. Copied to the clipboard as well."
@@ -5269,6 +5274,47 @@ func _offer_fact(caption: String, value: String, semantic: String) -> PanelConta
 	box.add_child(cap)
 	box.add_child(_wrap(value, 12, UIW.colour("text"), 180))
 	return panel
+
+func _workshop_menu(at: Control) -> void:
+	## Authored packs: what was found, what is in it, and how to get more.
+	var rows: Array = Pack.workshop_rows()
+	var opts: Array = []
+	for row: Dictionary in rows:
+		var summary: String = String(row["detail"])
+		if bool(row["ok"]):
+			summary = "%d scenario(s), by %s" % [row["scenarios"].size(), row["author"]]
+		opts.append("%s %s — %s" % ["✓" if bool(row["ok"]) else "✗", row["name"], summary])
+	opts.append("Reload packs from disk")
+	opts.append("Import a pack from the clipboard")
+	opts.append("Copy a diagnostic report")
+	_menu(at, opts, func(id: int) -> void: _workshop_pick(id, rows))
+
+func _workshop_pick(id: int, rows: Array) -> void:
+	if id < rows.size():
+		var row: Dictionary = rows[id]
+		Game.log_event("PACK %s (%s)" % [row["name"], row["source"]])
+		for line: String in row["scenarios"]:
+			Game.log_event("  · %s" % line)
+		for pack: Dictionary in Pack.loaded:
+			if String(pack["id"]) != String(row["id"]):
+				continue
+			for scenario in pack["scenarios"]:
+				for prev: String in Pack.preview(pack, scenario):
+					Game.log_event("    %s" % prev)
+		hud_toast("Pack details are in the log.", bool(row["ok"]))
+		return
+	if id == rows.size():
+		Pack.load_all()
+		var msg := "Reloaded: %d pack(s), %d problem(s)." % [Pack.loaded.size(),
+			Pack.problems.size()]
+		hud_toast(msg, Pack.problems.is_empty())
+		return
+	if id == rows.size() + 1:
+		var err: String = Pack.import_text(DisplayServer.clipboard_get())
+		hud_toast(err if err != "" else "Imported. It is in your contracts now.", err == "")
+		return
+	DisplayServer.clipboard_set(Pack.diagnostic_report())
+	hud_toast("Diagnostics copied to the clipboard.", true)
 
 func _toast(text: String) -> void:
 	if _toast_lbl == null or not is_instance_valid(_toast_lbl):

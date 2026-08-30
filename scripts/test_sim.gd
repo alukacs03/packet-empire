@@ -7361,5 +7361,109 @@ static func run() -> int:
 			and FileAccess.file_exists("user://topology_test.md"),
 		"export: it is written to a file and handed back for the clipboard")
 
+	# --- content packs ---
+	Pack.load_all()
+	check(not Pack.loaded.is_empty() and Pack.problems.is_empty(),
+		"packs: the bundled pack loads and validates")
+	var pk: Dictionary = Pack.loaded[0]
+	check(Pack.validate(pk).is_empty() and pk["scenarios"].size() >= 4,
+		"packs: a pack is metadata plus scenarios, and it is checked before it is used")
+	check(Pack.validate({"id": "x"})[0].contains("missing field"),
+		"packs: a malformed pack is rejected with the field that is wrong")
+	check(String(Pack.validate({"id": "x", "name": "x", "schema": 99, "scenarios": [{}]})[0]).contains("version"),
+		"packs: a pack from another schema version is refused rather than half-read")
+	var bad_pred := Pack.validate({"id": "x", "name": "x", "schema": 1, "scenarios": [
+		{"id": "s", "title": "t", "brief": "b",
+			"requirements": [{"kind": "reachable", "from": "not-an-address", "to": "10.0.0.1"}]}]})
+	check(not bad_pred.is_empty() and String(bad_pred[0]).contains("scenarios[0].requirements[0]"),
+		"packs: errors name the exact field, so an author can fix the file")
+	check(Pack.validate({"id": "x", "name": "x", "schema": 1, "scenarios": [
+		{"id": "s", "title": "t", "brief": "b", "requirements": [],
+			"future_field": {"anything": true}}]}).is_empty(),
+		"packs: unknown future fields are preserved rather than rejected")
+	# the predicates run against the live simulation, like everything else
+	var pk_rack := Game.add_rack(Vector2i(92, 1))
+	var pk_sw := Game.new_device("sw-8")
+	var pk_a := Game.new_device("srv-1")
+	var pk_b := Game.new_device("srv-1")
+	pk_rack.slots[0] = pk_sw
+	pk_rack.slots[1] = pk_a
+	pk_rack.slots[2] = pk_b
+	Game.connect_ifaces(pk_a.ifaces[0], pk_sw.ifaces[0])
+	Game.connect_ifaces(pk_b.ifaces[0], pk_sw.ifaces[1])
+	var unreachable := Pack.evaluate({"kind": "reachable", "from": "10.90.0.10", "to": "10.90.0.11"})
+	check(not bool(unreachable["ok"]) and String(unreachable["why"]) != "",
+		"packs: a failing requirement says what is missing, not just that it failed")
+	Game.add_ip(pk_a.ifaces[0], "10.90.0.10/24")
+	Game.add_ip(pk_b.ifaces[0], "10.90.0.11/24")
+	Sim.flush_learned_state()
+	check(bool(Pack.evaluate({"kind": "reachable", "from": "10.90.0.10", "to": "10.90.0.11"})["ok"]),
+		"packs: and passes once the network actually does it")
+	check(bool(Pack.evaluate({"kind": "all", "of": [
+			{"kind": "device_count", "type": "switch", "min": 1},
+			{"kind": "link_between", "a": pk_a.name, "b": pk_sw.name}]})["ok"]),
+		"packs: predicates compose with all/any/not")
+	check(not bool(Pack.evaluate({"kind": "not", "of": [
+			{"kind": "device_count", "type": "switch", "min": 1}]})["ok"]),
+		"packs: negation works the way an author would expect")
+	check(String(Pack.describe({"kind": "vlan_access", "vid": 10})).contains("VLAN 10"),
+		"packs: every requirement can describe itself for the checklist")
+	# the authored jobs behave exactly like built-in contracts
+	var authored := Pack.contracts()
+	check(authored.size() >= 4 and String(authored[0]["id"]).begins_with("packetempire.starter."),
+		"packs: authored scenarios arrive as contracts with namespaced ids")
+	var live_first_light := {}
+	for c_a: Dictionary in authored:
+		if String(c_a["id"]).ends_with("first_light"):
+			live_first_light = c_a
+	var all_pass := true
+	for req: Dictionary in live_first_light["reqs"]:
+		if not bool((req["t"] as Callable).call()):
+			all_pass = false
+	check(all_pass, "packs: an authored job verifies against the live network, like the campaign")
+	# actions are a small, safe set
+	var pk_money := Game.money
+	Pack.run_actions([{"kind": "reward", "amount": 100},
+		{"kind": "break_link", "device": pk_sw.name}])
+	check(Game.money == pk_money + 100 and not pk_sw.ifaces[0].enabled,
+		"packs: the action set can pay and can break a link, deterministically")
+	Pack.run_actions([{"kind": "restore_links"}])
+	check(pk_sw.ifaces[0].enabled, "packs: and can put it back")
+	check(Pack._validate_action({"kind": "rm -rf"}, "x")[0].contains("unknown action"),
+		"packs: nothing outside the action set is even a word")
+
+	# the workshop: find them, read them, import one, explain the broken ones
+	var rows := Pack.workshop_rows()
+	check(not rows.is_empty() and bool(rows[0]["ok"]) and rows[0]["scenarios"].size() >= 4,
+		"workshop: every pack found is listed with its status and what is in it")
+	var preview_lines := Pack.preview(pk, pk["scenarios"][1])
+	check(preview_lines.size() > 3 and String(preview_lines[preview_lines.size() - 1]).begins_with("  · "),
+		"workshop: a scenario can be previewed before anybody starts it")
+	check(Pack.diagnostic_report().contains("schema"),
+		"workshop: broken packs produce a report an author can paste to whoever wrote it")
+	var import_err := Pack.import_text("{\"id\": \"broken\"}")
+	check(import_err.contains("not valid") or import_err.contains("missing"),
+		"workshop: an invalid pack is refused on import, not on play")
+	var minimal := JSON.stringify({"id": "classroom.minimal", "name": "Minimal classroom pack",
+		"schema": 1, "author": "you",
+		"description": "Copy this, change the objective, play it.",
+		"scenarios": [{"id": "one_ping", "title": "One ping", "brief": "Make 10.90.0.10 reach 10.90.0.11.",
+			"reward": 200,
+			"requirements": [{"kind": "reachable", "from": "10.90.0.10", "to": "10.90.0.11"}]}]})
+	check(Pack.import_text(minimal, "classroom_test") == "",
+		"workshop: a valid pack imports without touching the project source")
+	var imported := false
+	for pack_row: Dictionary in Pack.workshop_rows():
+		if String(pack_row["id"]) == "classroom.minimal":
+			imported = true
+	check(imported, "workshop: and shows up immediately, with no restart")
+	var shared := Pack.share_text(pk)
+	check(shared.contains("scenarios") and not shared.contains("source"),
+		"workshop: sharing a pack carries the content and nothing about this machine")
+	check(FileAccess.file_exists("res://docs/PACKS.md"),
+		"workshop: the format is documented where an author will look for it")
+	DirAccess.remove_absolute("%s/classroom_test.json" % Pack.USER_DIR)
+	Pack.load_all()
+
 	print("---- %d failures" % fails)
 	return fails

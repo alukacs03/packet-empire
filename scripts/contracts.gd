@@ -140,7 +140,11 @@ static func retired(id: String) -> bool:
 	return false
 
 static func all() -> Array:
-	return Demo.visible_contracts(_campaign())
+	## Authored packs sit beside the built-in campaign and behave identically,
+	## except in the demo, which is a fixed arc with a fixed ending.
+	if Game.demo:
+		return Demo.visible_contracts(_campaign())
+	return Demo.visible_contracts(_campaign()) + Pack.contracts()
 
 static func _campaign() -> Array:
 	return [
