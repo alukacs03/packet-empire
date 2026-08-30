@@ -203,6 +203,14 @@ static func ui_smoke(world: Node2D) -> int:
 	for ops_entry in UILayer.OPS_TABS:
 		ui.ops_tab = String(ops_entry[0])
 		ui._refresh_ops()
+	ui.ops_tab = "Company"
+	ui._refresh_ops()
+	var trend_visible := false
+	for ops_child in ui.ops_box.get_children():
+		if ops_child is Label and ops_child.visible \
+				and String((ops_child as Label).text).contains("Reliability:"):
+			trend_visible = true
+	check(trend_visible, "ui: the company tab actually shows the trend read")
 	var ops_shown := 0
 	var ops_hidden := 0
 	for ops_child in ui.ops_box.get_children():
