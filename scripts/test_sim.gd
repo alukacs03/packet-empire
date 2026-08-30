@@ -8393,6 +8393,25 @@ static func run() -> int:
 	check(Game.pl_totals.is_empty() and Game.renewals.is_empty() and Game.skill_log.is_empty() \
 			and Game.company_name == "Legacy Networks",
 		"save compat: a field removed from the payload reads as its default, not as a crash")
+	# everything the newest systems keep survives being written down and read back
+	Game.restore(live_before)
+	Game.oncall = "Somebody"
+	Game.callout_who = "Somebody"
+	Game.callout_until = Game.cycle + 1
+	Game.night_call = {"reason": "the panel is showing smoke", "cycle": Game.cycle}
+	Game.handover = {"cycle": Game.cycle, "from": "night", "lines": ["a"], "read": false,
+		"substantive": 1}
+	Game.dr_test = {"booked": Game.cycle + 3, "ends": -1, "taken": [], "failed": []}
+	var new_state := Game.snapshot()
+	Game.oncall = ""
+	Game.night_call = {}
+	Game.handover = {}
+	Game.dr_test = {}
+	Game.restore(new_state)
+	check(Game.oncall == "Somebody" and Game.callout_until == Game.cycle + 1 \
+			and not Game.night_call.is_empty() and not Game.handover.is_empty() \
+			and int(Game.dr_test.get("booked", -1)) == Game.cycle + 3,
+		"save: the rota, the phone, the handover and a booked test all come back")
 	Game.restore(live_before)
 
 	# --- one command that collects what a vendor asks for ---
