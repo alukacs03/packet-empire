@@ -1484,15 +1484,19 @@ class EOS extends Session:
 		return out if any else out + "  (no switch-to-switch links)\n"
 
 	func _show_counters(_r: Array) -> String:
-		var out := "%-11s %12s %12s\n" % ["Port", "InFrames", "OutFrames"]
+		# input errors and receive light are where a grey failure shows itself
+		var out := "%-11s %12s %12s %10s %9s\n" % ["Port", "InFrames", "OutFrames",
+			"InErrors", "Rx(dBm)"]
 		for i: Net.Iface in dev.ifaces:
-			out += "%-11s %12d %12d\n" % [EOS._short(i.name), i.rx_frames, i.tx_frames]
+			out += "%-11s %12d %12d %10d %9.1f\n" % [EOS._short(i.name), i.rx_frames,
+				i.tx_frames, i.rx_errors, i.light_dbm]
 		return out
 
 	func _clear_counters(_r: Array) -> String:
 		for i: Net.Iface in dev.ifaces:
 			i.tx_frames = 0
 			i.rx_frames = 0
+			i.rx_errors = 0
 		return ""
 
 	func _show_lldp(_r: Array) -> String:

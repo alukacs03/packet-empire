@@ -986,6 +986,10 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if not peer.enabled or peer.dev.status != "active":
 		return
 	iface.tx_frames += 1
+	if Game.grey_drops(iface, peer, frame_size(frame)):
+		# the link is up and the frame is gone: this is what a grey failure is
+		peer.rx_errors += 1
+		return
 	peer.rx_frames += 1
 	rtt_ms += Game.link_latency_ms(l)
 	if last_trace.size() < 300:

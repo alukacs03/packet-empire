@@ -254,6 +254,7 @@ var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
 var lockout_state := {}  # device name -> was it unreachable last cycle
+var grey_faults := {}  # "device|iface" -> {kind, since}: up, and lying
 var tickets: Array = []  # what customers say, which is not what is wrong
 var _ticket_seq := 0
 var confirm_commits := {}  # device name -> {cfg, due}: revert unless somebody confirms
@@ -1263,6 +1264,107 @@ func remote_hands_tick() -> void:
 			log_event("REMOTE HANDS: they did it to %s%s. That is what the label said, or rather did not."
 				% [target_dev.name, " %s" % target_iface.name if target_iface != null else ""])
 		topology_changed.emit()
+
+const GREY_KINDS := {
+	"dirty_optic": {"label": "contaminated or third-party optic",
+		"symptom": "input errors climbing and big packets going missing under load",
+		"repair": "replace optic"},
+	"loose_connector": {"label": "a connector that was never quite seated",
+		"symptom": "intermittent loss in both directions, and it comes and goes",
+		"repair": "reseat"},
+	"one_way": {"label": "a damaged pair in the patch lead",
+		"symptom": "traffic leaves and nothing comes back on that port",
+		"repair": "replace cable"},
+	"mtu": {"label": "an MTU somebody changed and nobody wrote down",
+		"symptom": "small packets pass and large ones vanish, with no error anywhere",
+		"repair": "fix config"},
+}
+const GREY_REPAIRS := ["reseat", "replace optic", "replace cable", "fix config"]
+
+func iface_key(i: Net.Iface) -> String:
+	return "%s|%s" % [i.dev.name, i.name]
+
+func grey_fault(i: Net.Iface) -> Dictionary:
+	return grey_faults.get(iface_key(i), {})
+
+func grey_drops(from_if: Net.Iface, to_if: Net.Iface, bytes: int) -> bool:
+	## Called on every hop, so it costs nothing at all when nothing is wrong.
+	if grey_faults.is_empty():
+		return false
+	for pair: Array in [[from_if, "tx"], [to_if, "rx"]]:
+		var fault: Dictionary = grey_fault(pair[0])
+		if fault.is_empty():
+			continue
+		match String(fault["kind"]):
+			"dirty_optic":
+				if randf() < (0.45 if bytes > 512 else 0.12):
+					return true
+			"loose_connector":
+				if randf() < 0.3:
+					return true
+			"one_way":
+				# one direction only, which is what makes it so confusing
+				if String(pair[1]) == "rx":
+					return true
+	return false
+
+func inject_grey_fault(i: Net.Iface, kind: String) -> String:
+	if not GREY_KINDS.has(kind):
+		return "there is no such fault"
+	grey_faults[iface_key(i)] = {"kind": kind, "since": cycle, "was_mtu": i.mtu}
+	if kind == "dirty_optic":
+		i.light_dbm = -18.5  # a dying receive level, visible to anybody who looks
+	elif kind == "mtu":
+		i.mtu = 1400  # quietly, and nothing goes red
+	device_log(i.dev, "%s: no change logged" % i.name)
+	return ""
+
+func repair_grey(i: Net.Iface, action: String) -> String:
+	## The wrong repair costs the part and the afternoon, and fixes nothing.
+	if action not in GREY_REPAIRS:
+		return "that is not something you can do to a port"
+	var fault := grey_fault(i)
+	if action == "replace optic" and not take_part("optic"):
+		return "no optics in the drawer"
+	if action == "replace cable" and not take_part("patch"):
+		return "no patch leads in the drawer"
+	if fault.is_empty():
+		log_event("MAINTENANCE: %s %s %s. Nothing was wrong with it."
+			% [i.dev.name, i.name, action])
+		return ""
+	if action != String(GREY_KINDS[fault["kind"]]["repair"]):
+		log_event("NO CHANGE: %s on %s %s, and the errors are still climbing."
+			% [action.capitalize(), i.dev.name, i.name])
+		return ""
+	grey_faults.erase(iface_key(i))
+	i.rx_errors = 0
+	i.light_dbm = -6.0
+	if String(fault["kind"]) == "mtu":
+		i.mtu = int(fault.get("was_mtu", 1500))
+	log_event("FIXED: %s on %s %s cleared the fault. The counters stop moving."
+		% [action.capitalize(), i.dev.name, i.name])
+	topology_changed.emit()
+	return ""
+
+func _maybe_grey_fault() -> void:
+	## Aging hardware, a third-party optic, an improvised patch lead. Never
+	## announced, and never red.
+	# a fault like this belongs to an estate with some age on it
+	if stage < 2 or grey_faults.size() >= 2 or biz_roll() > 0.02 * fault_scale():
+		return
+	var candidates: Array = []
+	for l: Net.Link in links:
+		for i: Net.Iface in [l.a, l.b]:
+			if i.enabled and not i.name.begins_with("Management") and grey_fault(i).is_empty():
+				candidates.append(i)
+	if candidates.is_empty():
+		return
+	var victim: Net.Iface = candidates[int(biz_roll() * candidates.size()) % candidates.size()]
+	var kinds: Array = GREY_KINDS.keys()
+	var kind: String = kinds[int(biz_roll() * kinds.size()) % kinds.size()]
+	if cable_debt > 0 and biz_roll() < 0.5:
+		kind = "one_way"  # the improvised lead somebody put in at 2am
+	inject_grey_fault(victim, kind)
 
 const TICKET_AREAS := ["network", "power", "customer side", "upstream"]
 const TICKET_WORDS := {
@@ -5499,6 +5601,7 @@ func sla_tick() -> void:
 	remote_hands_tick()
 	lockout_tick()
 	ticket_tick()
+	_maybe_grey_fault()
 	receiving_tick()
 	stockout_tick()
 	rma_tick()
@@ -6324,7 +6427,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
-		"confirm_commits": confirm_commits, "tickets": tickets, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
+		"confirm_commits": confirm_commits, "tickets": tickets, "grey_faults": grey_faults, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
 		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
@@ -6658,6 +6761,7 @@ func _apply(data: Dictionary) -> void:
 	docs = data.get("docs", {})
 	confirm_commits = data.get("confirm_commits", {})
 	tickets = data.get("tickets", [])
+	grey_faults = data.get("grey_faults", {})
 	physical_access = data.get("physical_access", {})
 	remote_jobs = data.get("remote_jobs", [])
 	crates = data.get("crates", [])

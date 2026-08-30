@@ -3872,6 +3872,71 @@ static func run() -> int:
 	Game.tickets = []
 	Game.deals = tk_deals
 
+	# --- grey failures ---
+	Game.grey_faults = {}
+	Game.parts = {"patch": 10, "optic": 10, "power": 10, "blank": 10}
+	Game.parts_auto = false
+	var gf_rack := Game.add_rack(Vector2i(60, 1))
+	var gf_sw := Game.new_device("sw-8")
+	var gf_a := Game.new_device("srv-1")
+	var gf_b := Game.new_device("srv-1")
+	gf_rack.slots[0] = gf_sw
+	gf_rack.slots[1] = gf_a
+	gf_rack.slots[2] = gf_b
+	Game.connect_ifaces(gf_a.ifaces[0], gf_sw.ifaces[0])
+	Game.connect_ifaces(gf_b.ifaces[0], gf_sw.ifaces[1])
+	Game.add_ip(gf_a.ifaces[0], "10.95.0.10/24")
+	Game.add_ip(gf_b.ifaces[0], "10.95.0.11/24")
+	check(Sim.ping(gf_a, "10.95.0.11")["ok"], "grey: the link starts out honest")
+	# one direction only: the port is up and nothing comes back
+	Game.inject_grey_fault(gf_sw.ifaces[1], "one_way")
+	check(gf_sw.ifaces[1].enabled and Game.link_at(gf_sw.ifaces[1]) != null \
+			and not Sim.ping(gf_a, "10.95.0.11")["ok"],
+		"grey: a damaged pair kills the traffic without taking the link down")
+	check(gf_sw.ifaces[1].rx_errors > 0,
+		"grey: the evidence is in the interface counters, where it would be in reality")
+	check(Game.repair_grey(gf_sw.ifaces[1], "reseat") == "" \
+			and not Game.grey_fault(gf_sw.ifaces[1]).is_empty(),
+		"grey: the wrong repair costs the afternoon and fixes nothing")
+	check(Game.repair_grey(gf_sw.ifaces[1], "replace cable") == "" \
+			and Game.grey_fault(gf_sw.ifaces[1]).is_empty() \
+			and Sim.ping(gf_a, "10.95.0.11")["ok"],
+		"grey: each fault has one repair that actually addresses it")
+	# an MTU somebody changed: small packets pass, large ones vanish
+	Game.inject_grey_fault(gf_sw.ifaces[0], "mtu")
+	check(Sim.ping(gf_a, "10.95.0.11", 64, "", 64)["ok"] \
+			and not Sim.ping(gf_a, "10.95.0.11", 64, "", 1450)["ok"],
+		"grey: an MTU black hole passes small packets and swallows large ones")
+	check(Game.repair_grey(gf_sw.ifaces[0], "replace optic") == "" \
+			and not Game.grey_fault(gf_sw.ifaces[0]).is_empty() \
+			and Game.repair_grey(gf_sw.ifaces[0], "fix config") == "" \
+			and Sim.ping(gf_a, "10.95.0.11", 64, "", 1450)["ok"],
+		"grey: swapping hardware never fixes a configuration fault")
+	# a dying optic reports its own light level long before anybody notices
+	Game.inject_grey_fault(gf_sw.ifaces[0], "dirty_optic")
+	check(gf_sw.ifaces[0].light_dbm < -15.0,
+		"grey: a dying optic shows its receive level to anybody who looks")
+	var lossy := 0
+	for _gp in 40:
+		if not Sim.ping(gf_a, "10.95.0.11", 64, "", 1200)["ok"]:
+			lossy += 1
+	check(lossy > 0 and lossy < 40,
+		"grey: contamination is intermittent under load, which is what makes it maddening")
+	Game.repair_grey(gf_sw.ifaces[0], "replace optic")
+	check(Game.grey_fault(gf_sw.ifaces[0]).is_empty() and gf_sw.ifaces[0].light_dbm > -10.0,
+		"grey: a new optic clears both the loss and the light reading")
+	# and a loose connector is its own thing again
+	Game.inject_grey_fault(gf_sw.ifaces[1], "loose_connector")
+	var flaky := 0
+	for _gp2 in 40:
+		if not Sim.ping(gf_a, "10.95.0.11")["ok"]:
+			flaky += 1
+	check(flaky > 0 and Game.repair_grey(gf_sw.ifaces[1], "reseat") == "" \
+			and Game.grey_fault(gf_sw.ifaces[1]).is_empty(),
+		"grey: a connector nobody seated properly comes and goes until somebody reseats it")
+	Game.grey_faults = {}
+	Game.parts_auto = true
+
 	# --- consumables ---
 	var pt_rack := Game.add_rack(Vector2i(48, 1))
 	var pt_sw := Game.new_device("sw-8")

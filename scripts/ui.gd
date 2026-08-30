@@ -1520,6 +1520,17 @@ func _build_if_overlay() -> void:
 	if_cable_lbl = _label("", 14)
 	if_cable_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cable_row.add_child(if_cable_lbl)
+	var repair_btn := Button.new()
+	repair_btn.text = "Physical work…"
+	repair_btn.tooltip_text = "Reseat it, swap the optic, swap the lead. The wrong one costs the part and fixes nothing."
+	repair_btn.pressed.connect(func() -> void:
+		_menu(repair_btn, Game.GREY_REPAIRS, func(id: int) -> void:
+			var err: String = Game.repair_grey(cur_if, String(Game.GREY_REPAIRS[id]))
+			if err != "":
+				_toast(err)
+			_refresh_ports()
+			_refresh_money()))
+	cable_row.add_child(repair_btn)
 	if_note_btn = Button.new()
 	if_note_btn.text = "✎ TAG PORT"
 	if_note_btn.tooltip_text = "Leave physical handover context on this jack"
@@ -5032,10 +5043,6 @@ func _refresh_open() -> void:
 		_refresh_slots()
 
 func _toggle_cli() -> void:
-	if not cli_box.visible and cur_dev != null and Game.locked_out(cur_dev):
-		# it is running your new configuration and nothing can reach it
-		_toast("%s is unreachable. Console server, a walk to the rack, or a site visit." % cur_dev.name)
-		return
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
 		cli_out.custom_minimum_size.y = 220
@@ -5047,6 +5054,10 @@ func _toggle_cli() -> void:
 		cli_prompt.text = cli_session.prompt() + " "
 		cli_out.clear()
 		cli_out.append_text(cli_session.banner())
+		if cur_dev != null and Game.locked_out(cur_dev):
+			# it is running your new configuration and nothing can reach it
+			cli_out.append_text("\n% no route to %s: console server, a walk to the rack, or a site visit\n"
+				% cur_dev.name)
 		cli_in.call_deferred("grab_focus")
 		_scroll_to_bottom.call_deferred()
 	else:
@@ -5109,6 +5120,9 @@ func _cli_key(e: InputEvent) -> void:
 
 func _cli_submit(cmd: String) -> void:
 	cli_in.clear()
+	if cli_session != null and cur_dev != null and Game.locked_out(cur_dev):
+		cli_out.append_text("% " + cur_dev.name + " is unreachable from here.\n")
+		return
 	cli_in.call_deferred("grab_focus")
 	if cmd.strip_edges() != "":
 		cli_history.append(cmd)
