@@ -227,6 +227,8 @@ func repay() -> bool:
 var events: Array = []  # operational event log (newest first)
 var incidents_seen := {}  # "srv|dev" -> true, one breach per exposed pair
 var rivals: Array = []  # AI competitors
+var nemesis := ""  # the one rival who took it personally, and why
+var nemesis_reason := ""
 var market_intel := 0  # bids observed: the more you have seen, the tighter your estimate
 var templates: Array = []  # golden configs: {name, type, cfg}
 var blueprints: Array = []  # rack layouts: {name, slots: [model|null]}
@@ -1318,6 +1320,10 @@ func make_report() -> Dictionary:
 	log_event("QUARTER %d closed: net %s$%d, %d customers, %d%% delivered, rank %s."
 		% [int(rep["quarter"]), "+" if net >= 0 else "-", absi(net), deals.size(),
 			int(rep["uptime"]), rep["rank"]])
+	if nemesis != "":
+		# they never miss a quarter without a comment
+		rep["needle"] = Rivals.nemesis_line()
+		log_event("QUARTERLY NEEDLE: %s" % rep["needle"])
 	return rep
 
 func accept_buyout() -> String:
@@ -1748,6 +1754,10 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 			return "undercut"
 	match result:
 		"accepted":
+			if not rival.is_empty():
+				Rivals.remember(rival, -1, "you took %s off them" % offer["customer"])
+				log_event("MARKET: %s heard you won %s. %s" % [rival["name"], offer["customer"],
+					Rivals.temper_of(rival)["win"]])
 			_offer_to_deal(offer, quote)
 		"counter":
 			offer["state"] = "counter"
@@ -2685,6 +2695,10 @@ func _maybe_upstream_event() -> void:
 		"protected": multihomed() if kind == "regional" else carrier_diverse(0, 0)}
 	if kind == "carrier":
 		carrier_outage[party] = int(upstream["until"])
+	var friends := Rivals.friendly()
+	if not friends.is_empty():
+		log_event("HEADS UP: %s rang first: their circuits went the same way ten minutes ago. %s"
+			% [friends[0]["name"], Rivals.temper_of(friends[0])["favour"]])
 	log_event("UPSTREAM: %s. This one is not yours to fix: open a case, chase it, and tell your customers before they ask."
 		% ("%s has a regional failure" % party if kind == "regional"
 			else "%s is down across the region" % party))
@@ -3584,6 +3598,10 @@ func _maybe_poach() -> void:
 	if not deal.has("budget"):
 		return  # no market reference for this contract
 	var rival := Rivals.best_bidder({"budget": int(deal["budget"])})
+	if nemesis != "" and randf() < 0.6:
+		var personal := Rivals.by_name(nemesis)
+		if not personal.is_empty() and Rivals.alive(personal):
+			rival = personal  # they are not bidding on the market, they are bidding at you
 	if rival.is_empty():
 		return
 	var their_price := Rivals.bid_for(rival, {"budget": int(deal["budget"])})
@@ -3789,6 +3807,8 @@ func sla_tick() -> void:
 			log_event("APPROACH: %s has withdrawn their offer." % buyout_offer["rival"])
 			buyout_offer = {}
 	Rivals.maybe_offer_for_player()
+	Rivals.maybe_favour()
+	Rivals.check_nemesis_beaten()
 	_maybe_poach()
 	_attack_tick()
 	if scrubbing:
@@ -4482,7 +4502,7 @@ func _serialize() -> Dictionary:
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
 		"difficulty": difficulty, "achievements": achievements,
-		"market_intel": market_intel, "staff": staff, "candidates": candidates,
+		"market_intel": market_intel, "nemesis": nemesis, "nemesis_reason": nemesis_reason, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates, "reports": reports,
 		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
 		"sandbox": sandbox, "blueprints": blueprints,
@@ -4811,6 +4831,8 @@ func _apply(data: Dictionary) -> void:
 	_ensure_sites()
 	current_site = mini(int(data.get("current_site", 0)), sites.size() - 1)
 	market_intel = int(data.get("market_intel", 0))
+	nemesis = String(data.get("nemesis", ""))
+	nemesis_reason = String(data.get("nemesis_reason", ""))
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
 	incidents = data.get("incidents", [])

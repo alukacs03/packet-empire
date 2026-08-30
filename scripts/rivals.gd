@@ -46,6 +46,31 @@ const STRATEGIES := {
 	"predator": {"label": "acquisitive", "bid": 1.0, "min": 1.0, "quality": 1.0,
 		"blurb": "Would rather buy a competitor than out-bid one."},
 }
+## Who they are, which is not the same as how they price. The industry is
+## small: these are the four people everyone in it has met.
+const TEMPERAMENTS := {
+	"salesman": {"label": "all mouth", "friendly": true,
+		"blurb": "Wins on charm and price, and cannot always deliver what he sold.",
+		"win": "“No hard feelings. You will find out what that customer is like soon enough.”",
+		"favour": "“Look, I have oversold myself again. Could you take one off my hands?”",
+		"grudge": "“You are going around telling people I do not deliver. Noted.”"},
+	"engineer": {"label": "pure tech", "friendly": true,
+		"blurb": "Beautiful network, terrible pricing, no patience for customers at all.",
+		"win": "“Fine. They wanted hand-holding, and I do not do hand-holding.”",
+		"favour": "“I have a spare optic and you clearly need one. Come and get it.”",
+		"grudge": "“Your design is wrong and I have stopped explaining why.”"},
+	"discounter": {"label": "cheap and cheerful", "friendly": false,
+		"blurb": "Undercuts everyone and cuts the corners you can see from here.",
+		"win": "“Enjoy it. We will have them back next quarter at half your price.”",
+		"favour": "“Cover a shift for us and we will remember it. Probably.”",
+		"grudge": "“We will be quoting under you on everything now. Everything.”"},
+	"old_hand": {"label": "twenty years in", "friendly": true,
+		"blurb": "Has done all of this before and is simply better at it for a long while.",
+		"win": "“Good quote. You are learning. Do not get comfortable.”",
+		"favour": "“Heard you had a bad night. Ring me before the next one.”",
+		"grudge": "“I have been doing this since before your first switch. Watch.”"},
+}
+
 ## What a specialist actually specialises in.
 const NICHES := ["secure_host", "public_hosting", "redundant_gw", "own_vlan"]
 
@@ -76,6 +101,8 @@ static func spawn() -> Array:
 		s["revenue"] = 0
 		s["base_aggression"] = s["aggression"]  # difficulty scales this later
 		s["strategy"] = STRATEGIES.keys()[i % STRATEGIES.size()]
+		s["temper"] = TEMPERAMENTS.keys()[i % TEMPERAMENTS.size()]
+		s["standing"] = 0  # how you two are, from -5 (nemesis) to +5 (a friend)
 		if s["strategy"] == "specialist":
 			s["niche"] = NICHES[i % NICHES.size()]
 		out.append(s)
@@ -229,3 +256,71 @@ static func _maybe_consolidate() -> void:
 	prey["merged_into"] = buyer["name"]
 	Game.log_event("MARKET: %s acquired %s. The field is getting smaller."
 		% [buyer["name"], prey["name"]])
+
+static func temper_of(r: Dictionary) -> Dictionary:
+	return TEMPERAMENTS.get(String(r.get("temper", "old_hand")), TEMPERAMENTS["old_hand"])
+
+static func by_name(name: String) -> Dictionary:
+	for r in Game.rivals:
+		if String(r.get("name", "")) == name:
+			return r
+	return {}
+
+static func remember(r: Dictionary, delta: int, why: String) -> void:
+	## Favours and slights are remembered in both directions, and the first
+	## person you push too far becomes the nemesis for this run.
+	if r.is_empty():
+		return
+	r["standing"] = clampi(int(r.get("standing", 0)) + delta, -5, 5)
+	if delta < 0 and int(r["standing"]) <= -3 and Game.nemesis == "":
+		Game.nemesis = String(r["name"])
+		Game.nemesis_reason = why
+		r["aggression"] = maxf(0.4, float(r.get("aggression", 1.0)) - 0.12)
+		Game.log_event("NEMESIS: %s has taken it personally: %s. %s"
+			% [r["name"], why, temper_of(r)["grudge"]])
+	elif delta > 0 and int(r["standing"]) == 2:
+		Game.log_event("MARKET: %s owes you one. %s" % [r["name"], temper_of(r)["favour"]])
+
+static func friendly() -> Array:
+	var out: Array = []
+	for r in Game.rivals:
+		if alive(r) and int(r.get("standing", 0)) >= 2:
+			out.append(r)
+	return out
+
+static func maybe_favour() -> void:
+	## Somebody decent passes you work they cannot take. It arrives as a real
+	## lead, not as a compliment.
+	var friends := friendly()
+	if friends.is_empty() or _roll() > 0.08:
+		return
+	var r: Dictionary = friends[0]
+	for lead: Dictionary in Game.leads:
+		if String(lead.get("from_rival", "")) == String(r["name"]):
+			return
+	Game.leads.append(Market.rival_referral_lead(String(r["name"])))
+	r["standing"] = maxi(0, int(r["standing"]) - 1)  # a favour spent is a favour spent
+	Game.log_event("REFERRAL: %s cannot take a job and sent it to you. %s"
+		% [r["name"], temper_of(r)["favour"]])
+
+static func nemesis_line() -> String:
+	var r := by_name(Game.nemesis)
+	if r.is_empty():
+		return ""
+	return "%s: %s" % [r["name"], temper_of(r)["grudge"]]
+
+static func check_nemesis_beaten() -> void:
+	## Beaten specifically, not statistically: they lose their customers, or
+	## you buy them outright.
+	if Game.nemesis == "":
+		return
+	var r := by_name(Game.nemesis)
+	if r.is_empty():
+		return
+	if alive(r) and int(r.get("deals", 0)) > 0:
+		return
+	Game.log_event("NEMESIS SETTLED: %s is %s. Whatever it was between you, it is over."
+		% [r["name"], "no longer trading" if not alive(r) else "down to no customers at all"])
+	r["standing"] = 0
+	Game.nemesis = ""
+	Game.nemesis_reason = ""

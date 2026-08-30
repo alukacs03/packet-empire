@@ -3710,6 +3710,12 @@ func _build_market_tab() -> void:
 			strat["blurb"], r["name"], Rivals.racks_needed(r), int(r["deals"]),
 			("Their site '%s' comes with the company." % r["site"]["name"]) if Rivals.has_site(r)
 			else "Their racks must fit on a floor you already have."])
+		var temper: Dictionary = Rivals.temper_of(r)
+		var standing := int(r.get("standing", 0))
+		l.tooltip_text += "\n\n%s %s" % [temper["blurb"],
+			"They are your nemesis: %s." % Game.nemesis_reason if String(r["name"]) == Game.nemesis
+			else ("They owe you one." if standing >= 2
+				else ("There is friction there." if standing <= -1 else ""))]
 		l.add_theme_font_override("font", mono)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)

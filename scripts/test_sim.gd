@@ -3092,6 +3092,50 @@ static func run() -> int:
 		"customer eye: dropping the one night that mattered costs standing and loyalty")
 	Game.deals = eye_deals
 
+	# --- a nemesis with a face, and a competitor worth being decent to ---
+	var nem_rivals := Game.rivals.duplicate(true)
+	var nem_leads := Game.leads.duplicate(true)
+	Game.rivals = Rivals.spawn()
+	Game.leads = []
+	Game.nemesis = ""
+	Game.nemesis_reason = ""
+	var villain: Dictionary = Game.rivals[0]
+	check(String(villain.get("temper", "")) != "" and Rivals.temper_of(villain).has("grudge"),
+		"rivals: every competitor is a person with a temperament, not only a pricing weight")
+	for _p in 2:
+		Rivals.remember(villain, -1, "you took the Duna account off them")
+	check(Game.nemesis == "" , "rivals: ordinary competition does not make an enemy")
+	Rivals.remember(villain, -1, "you took the Duna account off them")
+	check(Game.nemesis == String(villain["name"]) \
+			and "Duna account" in Game.nemesis_reason,
+		"rivals: exactly one rival escalates, and the player can say what started it")
+	var second: Dictionary = Game.rivals[1]
+	for _p2 in 4:
+		Rivals.remember(second, -1, "you undercut them again")
+	check(Game.nemesis == String(villain["name"]),
+		"rivals: the nemesis is the first one you pushed too far, not whoever is angriest today")
+	var report_nemesis := Game.make_report()
+	check("needle" in report_nemesis and String(villain["name"]) in String(report_nemesis["needle"]),
+		"rivals: your nemesis has something to say in every quarterly report")
+	villain["deals"] = 0
+	Rivals.check_nemesis_beaten()
+	check(Game.nemesis == "", "rivals: a nemesis can be beaten specifically rather than statistically")
+	# and the decent ones are worth something concrete
+	var friend: Dictionary = Game.rivals[3]
+	Rivals.remember(friend, 2, "you covered for them")
+	check(Rivals.friendly().has(friend), "rivals: a favour is remembered in the other direction too")
+	for _f in 200:
+		Rivals.maybe_favour()
+		if not Game.leads.is_empty():
+			break
+	check(Game.leads.size() == 1 and String(Game.leads[0]["from_rival"]) == String(friend["name"]) \
+			and int(Game.leads[0]["size"]) > 0,
+		"rivals: a friendly competitor's referral arrives as a real contract to win")
+	Game.rivals = nem_rivals
+	Game.leads = nem_leads
+	Game.nemesis = ""
+	Game.nemesis_reason = ""
+
 	# --- virtual machines and live migration ---
 	var vm_rack := Game.add_rack(Vector2i(22, 1))
 	var vm_sw := Game.new_device("sw-8")

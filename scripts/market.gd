@@ -265,6 +265,25 @@ static func legacy_referral_lead(customer: String) -> Dictionary:
 		"legacy": true,
 	}
 
+static func rival_referral_lead(from_rival: String) -> Dictionary:
+	## Work a competitor could not take. An ordinary contract, arriving through
+	## a person rather than the market.
+	return {
+		"id": "lead_rival_%s" % from_rival.to_lower().replace(" ", "_"),
+		"customer": "%s (referred)" % NAMES[absi(from_rival.hash()) % NAMES.size()],
+		"kind": "hosting",
+		"ctype": "smb",
+		"stage": "lead",
+		"heard": "%s could not take the job and passed on your number" % from_rival,
+		"size": 140,
+		"sla": 0,
+		"params": {"ip": "10.61.10.10"},
+		"load": 140,
+		"public": false,
+		"ttl": 12,
+		"from_rival": from_rival,
+	}
+
 static func cost_to_serve(lead: Dictionary) -> Dictionary:
 	## An honest estimate, not an oracle. It amortises unavoidable hardware over
 	## the initial 18-cycle term and leaves the customer's hidden budget hidden.
