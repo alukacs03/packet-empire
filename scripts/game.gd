@@ -4470,6 +4470,14 @@ func dr_tick() -> void:
 	if not dr_running():
 		if cycle < int(dr_test["booked"]):
 			return
+		# never run a test into a room that is already in trouble: that is not
+		# a test, it is a second incident
+		if customer_down_now() or upstream_active() or not hazards.is_empty():
+			if not bool(dr_test.get("held", false)):
+				dr_test["held"] = true
+				log_event("FAILOVER TEST: held. The floor is already dealing with something; it runs when that is over.")
+			return
+		dr_test["held"] = false
 		var taken: Array = []
 		for d in dr_candidates():
 			d.status = "offline"

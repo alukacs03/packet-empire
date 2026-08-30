@@ -2993,9 +2993,13 @@ static func run() -> int:
 	Game.night_call_tick()
 	# --- proving the redundancy on a day you chose ---
 	var dr_deals := Game.deals.duplicate(true)
+	var dr_haz := Game.hazards.duplicate(true)
 	var dr_rep := Game.reputation
 	Game.dr_test = {}
 	Game.deals = []
+	Game.hazards = []          # a test never runs into a room already in trouble
+	Game.customer_outage_active = false
+	Game.upstream = {}
 	var dr_uplinks: Array = Game.dr_candidates()
 	check(not dr_uplinks.is_empty() or Game.book_dr_test() != "",
 		"failover test: with nothing to take away it is refused")
@@ -3035,6 +3039,21 @@ static func run() -> int:
 		"failover test: a customer that did not survive it is named, and it costs")
 	check(dr_uplinks[0].status == "active",
 		"failover test: the upstream comes back whatever the result")
+	# a test booked into a live incident waits rather than making it worse
+	Game.dr_test = {}
+	Game.deals = []
+	check(Game.book_dr_test() == "", "failover test: bookable again once the last one is done")
+	Game.cycle += Game.DR_NOTICE
+	Game.customer_outage_active = true
+	Game.dr_tick()
+	check(not Game.dr_running() and bool(Game.dr_test.get("held", false)),
+		"failover test: it holds while the floor is already dealing with something")
+	Game.customer_outage_active = false
+	Game.dr_tick()
+	check(Game.dr_running(), "failover test: and runs as soon as that is over")
+	Game.cycle += Game.DR_LENGTH
+	Game.dr_tick()
+
 	# a customer who pays for strict service levels asks for the result
 	Game.control_evidence.erase("failover")
 	Game.deals = [{"id": "strict", "customer": "Strict Zrt", "kind": "hosting", "params": {},
@@ -3055,6 +3074,7 @@ static func run() -> int:
 	check(not Game.deals[0].has("dr_due") and float(Game.deals[0]["loyalty"]) < 0.6,
 		"failover request: ignoring it costs the relationship, not a fine")
 	Game.deals = dr_deals
+	Game.hazards = dr_haz
 
 	# --- kit that is not on the floor you are standing on ---
 	var el_dev: Net.NDevice = Game.all_devices()[0]
