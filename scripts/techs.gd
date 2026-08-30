@@ -246,6 +246,13 @@ func _work_spot(idx := 0) -> Vector2:
 				broken.append(r)
 			elif Game.config_dirty(d):
 				untidy.append(r)
+	# whatever the crew actually did this cycle outranks the standing state:
+	# somebody was at that cabinet, so put them there
+	var focus := Game.crew_focus_rack()
+	if focus != "" and idx == 0:
+		for r_focus: Net.Rack in Game.racks_on(Game.current_site):
+			if r_focus.name == focus:
+				return _in_front_of(r_focus, idx)
 	# a cabinet with something happening in it outranks everything else
 	var burning: Array = []
 	for haz: Dictionary in Game.hazards:
@@ -261,7 +268,9 @@ func _work_spot(idx := 0) -> Vector2:
 		return _quiet_spot(idx)
 	# Stable assignment keeps a visible operator attached to the fault they are
 	# depicting; additional crew members fan out across additional cabinets.
-	var r2: Net.Rack = pool[idx % pool.size()]
+	return _in_front_of(pool[idx % pool.size()], idx)
+
+func _in_front_of(r2: Net.Rack, idx := 0) -> Vector2:
 	# stand on the tile in front of the cabinet, which in isometric means one
 	# step along BOTH axes, not simply further down the screen
 	var g2: Vector2i = Game.grid_size()

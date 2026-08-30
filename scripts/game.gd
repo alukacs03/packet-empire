@@ -1066,6 +1066,8 @@ func duties_tick() -> void:
 							continue
 						if good:
 							i.note = {"text": "%s: patched %s" % [name, d.name], "cycle": cycle}
+							var lbl_rack := rack_of(d)
+							note_crew_focus(lbl_rack.name if lbl_rack != null else "", "labelling")
 							last_digest.append("%s labelled %s %s" % [name, d.name, i.name])
 						else:
 							# a tired tech puts the label on the wrong port, which
@@ -1736,6 +1738,21 @@ func answer_night_call(get_them_in: bool) -> String:
 
 var handover := {}      # what the shift going home left for the one coming in
 var _handover_slot := -1
+
+var crew_focus := {}  # {rack, cycle, what}: where the crew's last real job was
+
+func note_crew_focus(rack_name: String, what: String) -> void:
+	## Work that happens during the tick still happens somewhere. The floor
+	## reads this so the person doing it is standing in the right place.
+	if rack_name == "":
+		return
+	crew_focus = {"rack": rack_name, "cycle": cycle, "what": what}
+
+func crew_focus_rack() -> String:
+	## Only for the cycle it happened in: a stale focus is just a place.
+	if crew_focus.is_empty() or int(crew_focus.get("cycle", -1)) != cycle:
+		return ""
+	return String(crew_focus.get("rack", ""))
 
 func handover_lines() -> Array:
 	## What a person would actually write at the end of a long night, read off

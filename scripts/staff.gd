@@ -236,6 +236,8 @@ static func work_cycle() -> void:
 			if Game.config_dirty(d) and rng.randf() < 0.4 + 0.12 * int(eng["skill"]):
 				d.startup = Game.device_config(d)
 				Game.save_config_version(d)
+				var saved_rack := Game.rack_of(d)
+				Game.note_crew_focus(saved_rack.name if saved_rack != null else "", "saving")
 				Game.log_event("STAFF: %s saved the configuration on %s." % [eng["name"], d.name])
 				break
 

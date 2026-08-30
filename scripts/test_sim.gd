@@ -3017,6 +3017,16 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# work that happens during the tick still happens somewhere
+	Game.crew_focus = {}
+	check(Game.crew_focus_rack() == "", "crew: with nothing done this cycle, nobody is sent anywhere")
+	Game.note_crew_focus("R1", "saving")
+	check(Game.crew_focus_rack() == "R1", "crew: and the cabinet somebody worked on is named")
+	Game.cycle += 1
+	check(Game.crew_focus_rack() == "", "crew: a job from last cycle is not where anybody is now")
+	Game.cycle -= 1
+	Game.crew_focus = {}
+
 	# the newest systems are classified, so they neither shout nor vanish
 	check(Game.event_severity("THE PHONE: a customer is off the air") == "critical",
 		"log: the phone ringing out of hours is not routine")
