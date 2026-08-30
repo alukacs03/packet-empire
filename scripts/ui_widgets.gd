@@ -1247,7 +1247,8 @@ class Faceplate extends Control:
 		_draw_vendor_mark(String(visual["mark"]), Vector2(28, size.y / 2.0), col, ink)
 		draw_string(_mono, Vector2(58, size.y / 2.0 - 4), Game.MODELS[dev.model]["label"].split(" ")[0],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, ink)
-		draw_string(_mono, Vector2(24, size.y / 2.0 + 13),
+		# aligned under the brand, not under the logo mark it used to collide with
+		draw_string(_mono, Vector2(58, size.y / 2.0 + 13),
 			" ".join(PackedStringArray(Array(Game.MODELS[dev.model]["label"].split(" ")).slice(1))),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(ink, 0.68))
 		if dev.type == "server":
