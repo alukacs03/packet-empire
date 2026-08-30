@@ -358,7 +358,7 @@ func _draw_reliability_sign(progress: float) -> void:
 	draw_string(UIW.mono_font(), rect.position + Vector2(94, 45), "CYCLES",
 		HORIZONTAL_ALIGNMENT_LEFT, 64, 13, UIW.colour("text_strong"))
 	draw_string(UIW.mono_font(), rect.position + Vector2(14, 61), "BEST %03d  ·  LIVE CUSTOMERS" \
-		% Game.best_outage_streak, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 28, 7,
+		% Game.best_streak(), HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 28, 7,
 		UIW.colour("muted"))
 
 

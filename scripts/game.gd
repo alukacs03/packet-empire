@@ -1739,7 +1739,7 @@ func trend_read() -> Array:
 			then = h
 	var out: Array = []
 	out.append("Reliability: %d cycle(s) clear, best %d." % [cycles_since_customer_outage(),
-		best_outage_streak])
+		best_streak()])
 	var tidy := floor_tidiness()
 	out.append("The floor: %d%% kept, %s." % [int(tidy * 100.0),
 		_trend_word(tidy, float(then.get("tidy", tidy)), true)])
@@ -8436,6 +8436,11 @@ func customer_down_now() -> bool:
 	## Somebody's service is off the air, whatever put it there: the flag the
 	## economy sets, or the teaching outage that is just as real to look at.
 	return customer_outage_active or guided_outage_active()
+
+func best_streak() -> int:
+	## The record cannot be behind the run you are having: a streak in progress
+	## that is already longer than the best is the best.
+	return maxi(best_outage_streak, cycles_since_customer_outage())
 
 func cycles_since_customer_outage() -> int:
 	## A streak starts at founding and resets only when an established live

@@ -2995,6 +2995,9 @@ static func run() -> int:
 	var tr_hist := Game.history.duplicate(true)
 	Game.history = [{"cycle": Game.cycle - 30, "tidy": 0.2, "drift": 0.1}]
 	var tr_lines := Game.trend_read()
+	Game.best_outage_streak = 0
+	check(Game.best_streak() >= Game.cycles_since_customer_outage(),
+		"trend: the record is never behind the streak you are already having")
 	check(tr_lines.size() >= 4 and String(tr_lines[0]).begins_with("Reliability:"),
 		"trend: the panel reads reliability, the floor, the documentation and the habits")
 	check(Game._trend_word(0.9, 0.4, true) == "getting better" \
