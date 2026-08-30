@@ -143,6 +143,9 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 			Game.staff.erase(m)
 			if String(m.get("name", "")) == Game.oncall:
 				Game.oncall = ""
+			if String(m.get("name", "")) == Game.callout_who:
+				Game.callout_who = ""
+				Game.callout_until = -1
 			Game.reputation = maxi(0, Game.reputation - 1)
 			Game.log_event("STAFF: %s has resigned. Morale was %d and the pay was %s."
 				% [m["name"], int(m["morale"]),

@@ -8395,6 +8395,8 @@ static func run() -> int:
 		"save compat: a field removed from the payload reads as its default, not as a crash")
 	# everything the newest systems keep survives being written down and read back
 	Game.restore(live_before)
+	Game.staff = [{"name": "Somebody", "role": "tech", "skill": 2, "salary": 100,
+		"morale": 70, "shift": "day", "hired_cycle": 0}]
 	Game.oncall = "Somebody"
 	Game.callout_who = "Somebody"
 	Game.callout_until = Game.cycle + 1
@@ -8412,6 +8414,11 @@ static func run() -> int:
 			and not Game.night_call.is_empty() and not Game.handover.is_empty() \
 			and int(Game.dr_test.get("booked", -1)) == Game.cycle + 3,
 		"save: the rota, the phone, the handover and a booked test all come back")
+	var gone_state: Dictionary = JSON.parse_string(new_state)
+	gone_state["staff"] = []  # they resigned between the save and the load
+	Game.restore(JSON.stringify(gone_state))
+	check(Game.oncall == "" and Game.callout_who == "" and Game.callout_until == -1,
+		"save: a rota naming somebody who no longer works here comes back empty")
 	Game.restore(live_before)
 
 	# --- one command that collects what a vendor asks for ---

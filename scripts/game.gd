@@ -6080,6 +6080,9 @@ func fire(member: Dictionary) -> void:
 	staff.erase(member)
 	if String(member.get("name", "")) == oncall:
 		oncall = ""  # nobody is carrying the phone until somebody else is asked
+	if String(member.get("name", "")) == callout_who:
+		callout_who = ""  # and nobody who has left is still in the building
+		callout_until = -1
 	reputation = maxi(0, reputation - 1)
 	log_event("LET GO: %s has left the company." % member["name"])
 	money_changed.emit()
@@ -9803,6 +9806,12 @@ func _apply(data: Dictionary) -> void:
 	history = data.get("history", [])
 	reports = data.get("reports", [])
 	staff = data.get("staff", [])
+	# a name is not a person: whoever the rota named may have left since
+	if callout_who != "" and Staff.by_name(callout_who).is_empty():
+		callout_who = ""
+		callout_until = -1
+	if oncall != "" and Staff.by_name(oncall).is_empty():
+		oncall = ""
 	candidates = data.get("candidates", [])
 	rivals = data.get("rivals", [])
 	if rivals.is_empty():
