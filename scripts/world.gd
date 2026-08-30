@@ -201,6 +201,21 @@ func _shoot_all() -> void:
 				loose.blanked = {}
 			Game.topology_changed.emit()
 			$Floor.queue_redraw()],
+		["floor_settled",
+			func() -> void:
+				# a floor that has been run properly for a long time
+				ui.close_contracts()
+				Game.stage = 0
+				Game.current_site = 0
+				rebuild_racks()
+				Game.last_customer_outage_cycle = Game.cycle - 200
+				Game.stats["failovers_passed"] = 2
+				Game.habits["tidy"] = 1.0
+				for settled_rack: Net.Rack in Game.racks_on(0):
+					for slot_i in Net.Rack.SLOTS:
+						if settled_rack.slots[slot_i] == null:
+							settled_rack.blanked[slot_i] = true
+				$Floor.queue_redraw()],
 		["floor_summer", func() -> void:
 			# the season the cooling finds out about, with the borrowed fan
 			Game.stage = 0

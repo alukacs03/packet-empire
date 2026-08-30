@@ -77,6 +77,7 @@ func _draw() -> void:
 		_draw_tile(hover_tile, Color(UIW.colour("accent"), pulse))
 		_outline(hover_tile, UIW.colour("focus"), 2.5)
 	_draw_season_cast(grid)
+	_draw_settled_room(grid)
 	_draw_owned_edge(grid, progress)
 	_draw_building_exits(grid)
 	_draw_housekeeping(grid, progress)
@@ -288,6 +289,32 @@ func _draw_site_plate(grid: Vector2i) -> void:
 	draw_rect(plate, Color.from_hsv(hue, 0.4, 1.0, 0.55), false, 1.0)
 	draw_string(font, plate.position + Vector2(14, 20), name,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, UIW.colour("text_strong"))
+
+func _draw_settled_room(grid: Vector2i) -> void:
+	## A room that has been run well for a long time looks it: the aisle is
+	## marked out properly, the floor has been kept, and somebody has put down
+	## the anti-static matting they kept meaning to buy.
+	var settled := Game.room_maturity()
+	if settled < 0.35:
+		return
+	var tone := Color(0.68, 0.82, 0.9, 0.06 + 0.10 * settled)
+	# a walked aisle down the middle of the floor, worn clean, with the centre
+	# line somebody finally got round to painting
+	var mid := int(maxi(1, grid.y / 2))
+	for x in grid.x:
+		_draw_tile(Vector2i(x, mid), tone)
+	var from := Iso.tile_to_world(Vector2i(0, mid))
+	var to := Iso.tile_to_world(Vector2i(maxi(0, grid.x - 1), mid))
+	draw_line(from, to, Color(0.75, 0.85, 0.9, 0.20 + 0.25 * settled), 2.0)
+	if settled < 0.5:
+		return
+	# matting at the head of the aisle, once the place is genuinely kept
+	var mat_at := Iso.tile_to_world(Vector2i(0, mid)) + Vector2(-Iso.TILE_W * 0.55, 0)
+	var mat := PackedVector2Array([
+		mat_at + Vector2(0, -Iso.TILE_H * 0.42), mat_at + Vector2(Iso.TILE_W * 0.42, 0),
+		mat_at + Vector2(0, Iso.TILE_H * 0.42), mat_at + Vector2(-Iso.TILE_W * 0.42, 0)])
+	draw_colored_polygon(mat, Color(0.10, 0.13, 0.15, 0.55))
+	draw_polyline(mat + PackedVector2Array([mat[0]]), Color(0.55, 0.72, 0.78, 0.45), 1.5)
 
 func _draw_building_exits(grid: Vector2i) -> void:
 	## A cable to another city has no far end on this screen. Show where it

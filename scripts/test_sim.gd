@@ -3463,6 +3463,19 @@ static func run() -> int:
 	Game.sites = el_sites
 	Game.current_site = el_here
 
+	# a room that has been run well for a long time looks it
+	var rm_stats := int(Game.stats.get("failovers_passed", 0))
+	Game.stats["failovers_passed"] = 0
+	Game.last_customer_outage_cycle = Game.cycle
+	var rm_fresh := Game.room_maturity()
+	Game.last_customer_outage_cycle = Game.cycle - 200
+	Game.stats["failovers_passed"] = 2
+	check(Game.room_maturity() > rm_fresh,
+		"room: a long clear run with the redundancy proved reads as a settled room")
+	check(Game.room_maturity() <= 1.0 and rm_fresh >= 0.0,
+		"room: and the measure stays inside its bounds")
+	Game.stats["failovers_passed"] = rm_stats
+
 	# --- the slow measures, with a direction ---
 	var tr_hist := Game.history.duplicate(true)
 	Game.history = [{"cycle": Game.cycle - 30, "tidy": 0.2, "drift": 0.1}]

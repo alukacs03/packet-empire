@@ -1870,6 +1870,16 @@ func _trend_word(now: float, before: float, higher_is_better: bool, slack := 0.0
 	var better := (now > before) == higher_is_better
 	return "getting better" if better else "getting worse"
 
+func room_maturity() -> float:
+	## How settled the room looks: a long clear run, documentation that still
+	## describes the floor, a tidy estate and a redundancy somebody has tested.
+	## Nothing here is time alone, so an idle run does not age into a good one.
+	var streak := clampf(float(cycles_since_customer_outage()) / 60.0, 0.0, 1.0)
+	var kept := floor_tidiness()
+	var described := 1.0 - drift_factor()
+	var proved := 1.0 if int(stats.get("failovers_passed", 0)) > 0 else 0.0
+	return clampf(streak * 0.3 + kept * 0.3 + described * 0.25 + proved * 0.15, 0.0, 1.0)
+
 func trend_read() -> Array:
 	## The slow measures, with a direction, while there is still time to do
 	## something about them. Everything here is read off state the game keeps.
