@@ -1327,6 +1327,27 @@ func _build_dev_overlay() -> void:
 				"armed" if Game.confirm_commits.has(cur_dev.name) else "confirmed", cur_dev.name],
 				true))
 	btn_row.add_child(confirm_btn)
+	if Game.site_count() > 1:
+		var move_btn := Button.new()
+		move_btn.text = "Send to another floor…"
+		move_btn.tooltip_text = "It leaves the rack now and arrives on the other dock as a crate. Its configuration stays behind."
+		move_btn.pressed.connect(func() -> void:
+			var move_targets: Array = []
+			var move_names: Array = []
+			for si in Game.site_count():
+				if si == Game.site_of_device(cur_dev):
+					continue
+				move_targets.append(si)
+				move_names.append("%s   (%d cycle(s) in transit)" % [Game.site_name(si),
+					Game.TRANSIT_CYCLES])
+			_menu(move_btn, move_names, func(id: int) -> void:
+				var err := Game.send_device_to(cur_dev, int(move_targets[id]))
+				if err != "":
+					_toast(err)
+				else:
+					close_dev()
+					get_parent().rebuild_racks()))
+		btn_row.add_child(move_btn)
 	var uninstall := Button.new()
 	uninstall.text = "Decommission…"
 	uninstall.tooltip_text = "Pulling it is the fast half. What you skip is what an auditor asks about later."

@@ -3017,6 +3017,33 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# --- moving hardware between the floors you own ---
+	var mv_sites := Game.sites.duplicate(true)
+	var mv_here := Game.current_site
+	var mv_crates := Game.crates.duplicate(true)
+	Game.crates = []
+	var mv_to := Game.add_site("Gyor annex", Vector2i(5, 5), "acquired", "Gyor")
+	var mv_rack := Game.add_rack(Vector2i(95, 1), 0)
+	var mv_dev := Game.new_device("sw-8")
+	mv_rack.slots[0] = mv_dev
+	Game.current_site = 0
+	check(Game.send_device_to(mv_dev, 0) != "", "transfer: it is already on that floor")
+	check(Game.send_device_to(mv_dev, mv_to) == "" and Game.rack_of(mv_dev) == null,
+		"transfer: it leaves the rack the moment it is sent")
+	check(Game.crates_waiting(mv_to).is_empty(),
+		"transfer: and is on a van rather than on a dock")
+	Game.cycle += Game.TRANSIT_CYCLES
+	Game.receiving_tick()
+	check(Game.crates_waiting(0).is_empty() and Game.crates_waiting(mv_to).size() == 1,
+		"transfer: it turns up on the dock of the floor it was sent to, and not the one it left")
+	var mv_before := int(Game.spares.get("sw-8", 0))
+	Game.unpack_crate(Game.crates_waiting(mv_to)[0])
+	check(int(Game.spares.get("sw-8", 0)) >= mv_before,
+		"transfer: unpacked at the other end like any other delivery")
+	Game.crates = mv_crates
+	Game.sites = mv_sites
+	Game.current_site = mv_here
+
 	# heat is a property of a room, not of a company
 	var heat_sites := Game.sites.duplicate(true)
 	var heat_here := Game.current_site

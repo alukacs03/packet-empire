@@ -1239,7 +1239,7 @@ func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 		var damaged := randf() < 0.1
 		var wrong := "" if damaged or randf() > 0.1 else _wrong_model(model)
 		crates.append({"model": model, "shipped": wrong if wrong != "" else model,
-			"ordered": cycle,
+			"ordered": cycle, "site": current_site,
 			"due": cycle + randi_range(int(spec["wait"][0]), int(spec["wait"][1])), "arrived": -1,
 			"checked": false, "damaged": damaged, "used": tier == "used",
 			"unpack_left": 2 if model in HEAVY_MODELS else 1})
@@ -1254,10 +1254,15 @@ func _wrong_model(model: String) -> String:
 			return other
 	return model
 
-func crates_waiting() -> Array:
+func crate_site(c: Dictionary) -> int:
+	return int(c.get("site", 0))  # crates from before floors were separate sat at home
+
+func crates_waiting(site := -1) -> Array:
+	## A crate sits on a dock in a building, not in the company.
+	var idx := current_site if site < 0 else site
 	var out: Array = []
 	for c: Dictionary in crates:
-		if int(c["arrived"]) >= 0:
+		if int(c["arrived"]) >= 0 and crate_site(c) == idx:
 			out.append(c)
 	return out
 
@@ -1315,6 +1320,36 @@ func unpack_crate(crate: Dictionary) -> String:
 	log_event("RECEIVING: a %s is unpacked and on the shelf.%s" % [MODELS[model]["label"],
 		"" if model == String(crate["model"])
 		else "  It is not what you ordered, and nobody noticed at the dock."])
+	return ""
+
+const TRANSIT_CYCLES := 2  # a van, not a teleport
+
+func send_device_to(dev: Net.NDevice, site: int) -> String:
+	## Stocking a second room means moving gear out of the first one. It leaves
+	## the rack now and turns up on the other dock as a crate like any other.
+	## ponytail: the spares shelf is company-wide, so what arrives is a spare of
+	## that model rather than this exact box; per-site stock if it ever matters.
+	if dev == null:
+		return "there is nothing there"
+	var r := rack_of(dev)
+	if r == null:
+		return "that is not racked anywhere"
+	if site < 0 or site >= site_count():
+		return "there is no such floor"
+	if site == int(r.site):
+		return "it is already on that floor"
+	for i: Net.Iface in dev.ifaces:
+		if link_at(i) != null:
+			return "unplug it first: it is still cabled"
+	var from_name := site_name(int(r.site))
+	free_slots(r, dev)
+	crates.append({"model": dev.model, "shipped": dev.model, "ordered": cycle,
+		"due": cycle + TRANSIT_CYCLES, "arrived": -1, "checked": true, "damaged": false,
+		"used": false, "site": site, "from": from_name,
+		"unpack_left": 2 if dev.model in HEAVY_MODELS else 1})
+	log_event("TRANSFER: %s left %s for %s. Its configuration stayed with the rack it came out of."
+		% [dev.name, from_name, site_name(site)])
+	topology_changed.emit()
 	return ""
 
 func clear_packaging() -> String:
