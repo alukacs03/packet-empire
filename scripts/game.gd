@@ -1300,7 +1300,8 @@ func request_remote_hands(dev: Net.NDevice, action: String, iface: Net.Iface = n
 	if not spend_on("remote hands", int(facility["cost"])):
 		return "a block of remote hands at %s costs $%d" % [facility["label"], int(facility["cost"])]
 	remote_jobs.append({"device": dev.name, "iface": iface.name if iface != null else "",
-		"action": action, "due": cycle + int(facility["wait"]),
+		"action": action,
+		"due": cycle + int(round(float(facility["wait"]) * season_contractor_delay())),
 		"precision": remote_precision(dev, iface), "site": int(rack.site)})
 	log_event("REMOTE HANDS: asked %s to %s %s%s. They arrive in %d cycle(s) and will do exactly what is written."
 		% [facility["label"], REMOTE_ACTIONS[action], dev.name,
@@ -3248,6 +3249,10 @@ func cooling_capacity() -> int:
 		if d.type == "cooling" and d.status == "active":
 			c += int(MODELS[d.model].get("cools", 0))
 	c = int(round(float(c) * (1.0 - 0.2 * filter_dirt())))  # dirty filters cost headroom first
+	if stage >= 1:
+		# in somebody else's colo the cooling is their problem; in your own room
+		# the outside air is part of it
+		c = int(round(float(c) * season_cooling()))
 	if heat_wave():
 		c = int(round(float(c) * 0.9))  # the outside air is against you this week
 	return maxi(BASE_COOLING / 4, c)
@@ -3698,12 +3703,53 @@ const DAY_CURVE := [0.35, 0.45, 0.9, 1.25, 1.35, 1.15, 0.85, 0.5]
 const DAY_NAMES := ["night", "early morning", "morning", "late morning",
 	"early afternoon", "afternoon", "evening", "late evening"]
 
+## A year is twelve working days of eight cycles: ninety-six cycles, four
+## seasons, read off the clock that already exists rather than a new one.
+const SEASON_LENGTH := DAY_CYCLES * 12
+const SEASONS := [
+	{"id": "spring", "label": "spring", "cooling": 1.0, "work": 1.08, "contractors": 1.0,
+		"line": "Spring: the quarter everybody wants their project finished in."},
+	{"id": "summer", "label": "summer", "cooling": 0.92, "work": 0.9, "contractors": 1.4,
+		"line": "Summer: hot enough to find out what your cooling is really worth, and half the country is away."},
+	{"id": "autumn", "label": "autumn", "cooling": 1.04, "work": 1.12, "contractors": 1.0,
+		"line": "Autumn: budgets reopen and the work comes back."},
+	{"id": "winter", "label": "winter", "cooling": 1.08, "work": 0.97, "contractors": 1.2,
+		"line": "Winter: cold enough that the generator gets asked a question, and nobody travels quickly."},
+]
+
+func season_index() -> int:
+	return int(float(cycle) / (float(SEASON_LENGTH) / 4.0)) % SEASONS.size()
+
+func season() -> Dictionary:
+	return SEASONS[season_index()]
+
+func season_cooling() -> float:
+	return float(season()["cooling"])
+
+func season_work() -> float:
+	return float(season()["work"])
+
+func season_contractor_delay() -> float:
+	return float(season()["contractors"])
+
+var _season_seen := -1
+
+func season_tick() -> void:
+	## Said in the log when it turns, so it is legible before it bites.
+	var now := season_index()
+	if now == _season_seen:
+		return
+	var first := _season_seen < 0
+	_season_seen = now
+	if not first:
+		log_event("SEASON: %s" % season()["line"])
+
 func day_slot() -> int:
 	return int(cycle) % DAY_CYCLES
 
 func day_factor() -> float:
 	## the seasonal part rides on top: business picks up towards year end
-	var seasonal := 1.0 + 0.12 * sin(TAU * float(cycle) / float(DAY_CYCLES * 12))
+	var seasonal := season_work()
 	return DAY_CURVE[day_slot()] * seasonal
 
 func day_name() -> String:
@@ -5678,7 +5724,7 @@ var events_logged := 0  # monotonic: events is capped, so its size cannot count
 const DIGEST_PREFIX := "SHIFT NOTES"
 ## Lines that are routine on their own but must never be folded away: anything
 ## that asks for a decision, names a customer, or is the game teaching.
-const DIGEST_EXEMPT := ["ARRIVAL", "PROMOTED", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
+const DIGEST_EXEMPT := ["ARRIVAL", "PROMOTED", "SEASON", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
 	"TICKET", "VISIT", "VISIT BOOKED", "AUDIT", "AUDIT OFFERED", "AUDIT RESULT", "DEBRIEF READY",
 	"RELATIONSHIP", "THE END", "CHALLENGE", "PACK", "HEADS UP", "CARRIED IT", "DROPPED IT",
 	"CONSEQUENCE", "LATER", "IDENTITY", "NEMESIS", "REFERRAL", "MASTERED"]
@@ -6774,7 +6820,7 @@ func lead_tick() -> void:
 		return
 	# bigger work arrives through people talking, not through a web form
 	var cap := 2 + int(marketing / MARKETING_STEP) + references.size()
-	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35:
+	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35 * season_work():
 		# one in four of them is somebody who will still be here in fifty
 		# cycles, with a story of their own
 		if identity_is("boutique") and biz_roll() < 0.5:
@@ -7715,6 +7761,7 @@ func sla_tick() -> void:
 	ticket_tick()
 	call_tick()
 	rank_tick()
+	season_tick()
 	remediation_tick()
 	_maybe_grey_fault()
 	receiving_tick()
@@ -8660,7 +8707,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
-		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "pl_totals": pl_totals, "rank_seen": rank_seen, "cameras": cameras,
+		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "pl_totals": pl_totals, "rank_seen": rank_seen, "season_seen": _season_seen, "cameras": cameras,
 		"access_log": access_log, "visitors": visitors,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
@@ -9002,6 +9049,7 @@ func _apply(data: Dictionary) -> void:
 	finale = data.get("finale", {})
 	pl_totals = data.get("pl_totals", {})
 	rank_seen = String(data.get("rank_seen", ""))
+	_season_seen = int(data.get("season_seen", -1))
 	cameras = bool(data.get("cameras", false))
 	access_log = data.get("access_log", [])
 	visitors = data.get("visitors", [])

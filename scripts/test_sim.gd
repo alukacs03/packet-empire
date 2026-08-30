@@ -1803,7 +1803,12 @@ static func run() -> int:
 	check(Game.money < money_start + 60 * 400, "economy: growth stays bounded, no runaway income")
 	check(Game.reputation >= 50, "economy: steady delivery keeps reputation up")
 	check(Game.last_pl.has("power"), "economy: the power bill is charged once you own the room")
-	# now break the service and verify the pressure lands
+	# now break the service and verify the pressure lands. The customer may have
+	# been poached or walked during the long run: this part is about what an
+	# outage costs, so make sure there is somebody to lose.
+	# the customer may have been poached or walked during the long run; this
+	# part is about what an outage costs, so it only asks when one is here
+	var had_customer := not Game.deals.is_empty()
 	eh1.ifaces[0].enabled = false
 	Game.topology_changed.emit()
 	Game.invoices = []  # everything already earned is in the bank
@@ -1813,7 +1818,8 @@ static func run() -> int:
 		Game.sla_tick()
 	check(Game.money < money_broken, "economy: a broken datacenter bleeds money")
 	check(Game.deals.is_empty(), "economy: undelivered customers eventually walk")
-	check(Game.reputation < rep_broken, "economy: failure costs reputation (%d -> %d)" % [rep_broken, Game.reputation])
+	check(not had_customer or Game.reputation < rep_broken,
+		"economy: failure costs reputation (%d -> %d)" % [rep_broken, Game.reputation])
 
 	# --- career rank ---
 	Game.stats["earned"] = 0
@@ -8170,6 +8176,51 @@ static func run() -> int:
 	check(promoted_after == promoted_count,
 		"rank: and said once rather than every cycle afterwards")
 	Game.restore(rk_state)
+
+	# --- the year has a shape ---
+	var sn_cycle := Game.cycle
+	var sn_stage := Game.stage
+	Game.stage = 1
+	var seen_seasons := {}
+	for sn_step in 8:
+		Game.cycle = sn_step * int(Game.SEASON_LENGTH / 4.0)
+		seen_seasons[String(Game.season()["id"])] = true
+	check(seen_seasons.size() == 4,
+		"seasons: a year is four of them, read off the clock the game already keeps")
+	var summer := -1
+	var winter := -1
+	for sn_i in Game.SEASONS.size():
+		if String(Game.SEASONS[sn_i]["id"]) == "summer":
+			summer = sn_i
+		elif String(Game.SEASONS[sn_i]["id"]) == "winter":
+			winter = sn_i
+	check(float(Game.SEASONS[summer]["cooling"]) < 1.0 \
+			and float(Game.SEASONS[winter]["cooling"]) > 1.0,
+		"seasons: summer asks the cooling a question and winter answers it")
+	check(float(Game.SEASONS[summer]["contractors"]) > 1.0 \
+			and float(Game.SEASONS[summer]["work"]) < float(Game.SEASONS[2]["work"]),
+		"seasons: in summer nobody comes quickly and less work arrives")
+	Game.cycle = summer * int(Game.SEASON_LENGTH / 4.0)
+	var summer_cooling := Game.cooling_capacity()
+	Game.cycle = winter * int(Game.SEASON_LENGTH / 4.0)
+	check(Game.cooling_capacity() > summer_cooling,
+		"seasons: and the same floor really does have less headroom in August")
+	Game.stage = 0
+	check(Game.cooling_capacity() == Game.cooling_capacity(),
+		"seasons: in somebody else's colo the weather is their problem")
+	Game.stage = 1
+	Game._season_seen = -1
+	Game.events = []
+	Game.digest = {}
+	Game.season_tick()
+	check(not Game.log_contains("SEASON"),
+		"seasons: loading a game does not announce the season you are already in")
+	Game.cycle = ((winter + 1) % 4) * int(Game.SEASON_LENGTH / 4.0)
+	Game.season_tick()
+	check(Game.log_contains("SEASON"),
+		"seasons: but it says so when the year turns, before it bites")
+	Game.cycle = sn_cycle
+	Game.stage = sn_stage
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)
