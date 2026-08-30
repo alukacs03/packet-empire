@@ -3285,6 +3285,16 @@ static func run() -> int:
 	Game.sites = prot_sites
 	Game.current_site = prot_here
 
+	# the first screen a Hungarian speaker sees is in Hungarian
+	var loc_was := Loc.language
+	Loc.language = "hu"
+	check(Loc.t("title.new") == "Új játék" and Loc.t("settings.language") == "Nyelv" \
+			and Loc.t("title.tagline") != Loc.t("title.eyebrow"),
+		"language: the title screen and its settings are translated, not only the welcome card")
+	Loc.language = "en"
+	check(Loc.t("title.new") == "New game", "language: and English is still English")
+	Loc.language = loc_was
+
 	# nothing that has to stay true is read out of a log that scrolls
 	var trim_events := Game.events.duplicate()
 	Game.events = []

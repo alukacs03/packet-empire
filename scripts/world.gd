@@ -100,6 +100,17 @@ func _shoot_all() -> void:
 		["title_slots", func() -> void: title.show_slots()],
 		["title_new", func() -> void: title.show_new_game(true)],
 		["title_settings", func() -> void: title.show_settings()],
+		["title_hungarian",
+			func() -> void:
+				# the first screen a Hungarian speaker sees should be in Hungarian
+				Prefs.language = "hu"
+				Loc.language = "hu"
+				title._build_menu()
+				title.show_settings(),
+			func() -> void:
+				Prefs.language = "en"
+				Loc.language = "en"],
+		["title_back_to_english", func() -> void: title._build_menu()],
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],

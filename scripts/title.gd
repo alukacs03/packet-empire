@@ -11,6 +11,9 @@ signal settings_requested
 const ACCENT: Color = UIW.COLORS["accent"]
 const MUTED: Color = UIW.COLORS["muted"]
 
+var eyebrow_lbl: Label
+var tagline_lbl: Label
+var esc_lbl: Label
 var root: Control
 var menu_box: VBoxContainer
 var panel_box: VBoxContainer  # the right-hand pane: slots, new game, credits
@@ -48,10 +51,11 @@ func _ready() -> void:
 	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(spacer_top)
 	left.add_child(_wordmark())
-	var eyebrow := _lbl("NETWORK OPERATIONS TYCOON", 12, UIW.colour("warm"))
-	eyebrow.add_theme_font_override("font", _mono)
-	left.add_child(eyebrow)
-	left.add_child(_lbl("Build the network. Win the contract. Survive the traffic.", 18, UIW.colour("text")))
+	eyebrow_lbl = _lbl(Loc.t("title.eyebrow"), 12, UIW.colour("warm"))
+	eyebrow_lbl.add_theme_font_override("font", _mono)
+	left.add_child(eyebrow_lbl)
+	tagline_lbl = _lbl(Loc.t("title.tagline"), 18, UIW.colour("text"))
+	left.add_child(tagline_lbl)
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 26)
 	left.add_child(gap)
@@ -83,7 +87,8 @@ func _ready() -> void:
 	panel_box.add_theme_constant_override("separation", 14)
 	panel_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(panel_box)
-	rv.add_child(_lbl("ESC returns to this briefing.", 11, UIW.colour("muted")))
+	esc_lbl = _lbl(Loc.t("title.esc"), 11, UIW.colour("muted"))
+	rv.add_child(esc_lbl)
 
 	_build_menu()
 	show_intro()
@@ -115,29 +120,44 @@ func _menu_button(text: String, sub: String, primary: bool) -> Button:
 	b.pressed.connect(func() -> void: Sfx.play("click"))
 	return b
 
+func _relabel() -> void:
+	## The header is built once; a language change has to reach it too.
+	if eyebrow_lbl:
+		eyebrow_lbl.text = Loc.t("title.eyebrow")
+	if tagline_lbl:
+		tagline_lbl.text = Loc.t("title.tagline")
+	if esc_lbl:
+		esc_lbl.text = Loc.t("title.esc")
+
 func _build_menu() -> void:
+	# queue_free is deferred, so the old buttons are still children while the
+	# new ones are added, and the numbering carried on from the last rebuild
+	_relabel()  # a rebuild is also the moment the language may have changed
 	for c in menu_box.get_children():
+		menu_box.remove_child(c)
 		c.queue_free()
 	Game.import_legacy_save()
 	var recent := _most_recent_slot()
 	if recent >= 0:
 		var info := Game.slot_info(recent)
-		var cont := _menu_button("Continue", "%s, cycle %d" % [info["company"], info["cycle"]], true)
+		var cont := _menu_button(Loc.t("title.continue"),
+			Loc.t("title.continue.sub", {"company": info["company"], "cycle": int(info["cycle"])}),
+			true)
 		cont.pressed.connect(func() -> void: continue_requested.emit(recent))
 		menu_box.add_child(cont)
-	var demo_b := _menu_button("Play the demo", "The opening arc, start to finish", recent < 0)
+	var demo_b := _menu_button(Loc.t("title.demo"), Loc.t("title.demo.sub"), recent < 0)
 	demo_b.pressed.connect(func() -> void: show_new_game(true))
 	menu_box.add_child(demo_b)
-	var new_b := _menu_button("New game", "The full campaign", false)
+	var new_b := _menu_button(Loc.t("title.new"), Loc.t("title.new.sub"), false)
 	new_b.pressed.connect(func() -> void: show_new_game(false))
 	menu_box.add_child(new_b)
-	var load_b := _menu_button("Load game", "Pick a save slot", false)
+	var load_b := _menu_button(Loc.t("title.load"), Loc.t("title.load.sub"), false)
 	load_b.pressed.connect(show_slots)
 	menu_box.add_child(load_b)
-	var set_b := _menu_button("Settings", "Scale, speed, colour", false)
+	var set_b := _menu_button(Loc.t("title.settings"), Loc.t("title.settings.sub"), false)
 	set_b.pressed.connect(show_settings)
 	menu_box.add_child(set_b)
-	var quit_b := _menu_button("Quit", "", false)
+	var quit_b := _menu_button(Loc.t("title.quit"), "", false)
 	quit_b.pressed.connect(func() -> void: get_tree().quit())
 	menu_box.add_child(quit_b)
 
@@ -268,16 +288,16 @@ func _free_slot() -> int:
 
 func show_settings() -> void:
 	_clear_pane()
-	pane_title.text = "Settings"
+	pane_title.text = Loc.t("title.settings")
 	var fs := CheckButton.new()
-	fs.text = "Fullscreen"
+	fs.text = Loc.t("settings.fullscreen")
 	fs.button_pressed = Prefs.fullscreen
 	fs.toggled.connect(func(on: bool) -> void:
 		Prefs.fullscreen = on
 		Prefs.apply())
 	panel_box.add_child(fs)
 	var snd := CheckButton.new()
-	snd.text = "Sound"
+	snd.text = Loc.t("settings.sound")
 	snd.button_pressed = Prefs.sound
 	snd.toggled.connect(func(on: bool) -> void:
 		Prefs.sound = on
@@ -285,14 +305,14 @@ func show_settings() -> void:
 		Sfx.play("click"))
 	panel_box.add_child(snd)
 	var cb := CheckButton.new()
-	cb.text = "Colourblind-friendly status colours"
+	cb.text = Loc.t("settings.colourblind")
 	cb.button_pressed = Prefs.colourblind
 	cb.toggled.connect(func(on: bool) -> void:
 		Prefs.colourblind = on
 		Prefs.apply())
 	panel_box.add_child(cb)
 	var motion := CheckButton.new()
-	motion.text = "Reduce motion"
+	motion.text = Loc.t("settings.motion")
 	motion.tooltip_text = "Replaces traveling highlights and decorative movement with static confirmations"
 	motion.button_pressed = Prefs.reduced_motion
 	motion.toggled.connect(func(on: bool) -> void:
@@ -300,7 +320,7 @@ func show_settings() -> void:
 		Prefs.apply())
 	panel_box.add_child(motion)
 	var toolbox := CheckButton.new()
-	toolbox.text = "Show the full toolbox from the start"
+	toolbox.text = Loc.t("settings.toolbox")
 	toolbox.tooltip_text = "For experienced players: reveal every navigation area without waiting for campaign unlocks"
 	toolbox.button_pressed = Prefs.show_everything
 	toolbox.toggled.connect(func(on: bool) -> void:
@@ -312,7 +332,7 @@ func show_settings() -> void:
 	var lang_row := HBoxContainer.new()
 	lang_row.add_theme_constant_override("separation", 6)
 	panel_box.add_child(lang_row)
-	lang_row.add_child(_lbl("Language", 13, MUTED))
+	lang_row.add_child(_lbl(Loc.t("settings.language"), 13, MUTED))
 	for code: String in Loc.languages():
 		var lb := Button.new()
 		lb.text = Loc.language_label(code)
@@ -322,9 +342,10 @@ func show_settings() -> void:
 			Prefs.language = code
 			Loc.language = code
 			Prefs.apply()
+			_build_menu()   # the menu behind the pane is in the old language
 			show_settings())
 		lang_row.add_child(lb)
-	panel_box.add_child(_lbl("Interface scale", 13, MUTED))
+	panel_box.add_child(_lbl(Loc.t("settings.scale"), 13, MUTED))
 	var scale_row := HBoxContainer.new()
 	scale_row.add_theme_constant_override("separation", 6)
 	panel_box.add_child(scale_row)
@@ -339,7 +360,7 @@ func show_settings() -> void:
 			Prefs.apply()
 			show_settings())
 		scale_row.add_child(b2)
-	panel_box.add_child(_para("You can change these again from the in-game menu."))
+	panel_box.add_child(_para(Loc.t("settings.again")))
 	settings_requested.emit()
 
 func show_slots() -> void:

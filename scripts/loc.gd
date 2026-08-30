@@ -10,6 +10,37 @@ static var language := "en"
 ## id -> {language -> text}. Ids are namespaced by screen or system so a
 ## translator can see where a line lives without reading the code.
 const CATALOG := {
+	"title.tagline": {
+		"en": "Build the network. Win the contract. Survive the traffic.",
+		"hu": "Építsd meg a hálózatot. Nyerd el a szerződést. Bírd a forgalmat."},
+	"title.eyebrow": {
+		"en": "NETWORK OPERATIONS TYCOON",
+		"hu": "HÁLÓZATÜZEMELTETŐ TYCOON"},
+	"title.continue": {"en": "Continue", "hu": "Folytatás"},
+	"title.continue.sub": {"en": "{company}, cycle {cycle}", "hu": "{company}, {cycle}. ciklus"},
+	"title.demo": {"en": "Play the demo", "hu": "Demó indítása"},
+	"title.demo.sub": {"en": "The opening arc, start to finish",
+		"hu": "A nyitó ív, elejétől a végéig"},
+	"title.new": {"en": "New game", "hu": "Új játék"},
+	"title.new.sub": {"en": "The full campaign", "hu": "A teljes kampány"},
+	"title.load": {"en": "Load game", "hu": "Játék betöltése"},
+	"title.load.sub": {"en": "Pick a save slot", "hu": "Válassz mentési helyet"},
+	"title.settings": {"en": "Settings", "hu": "Beállítások"},
+	"title.settings.sub": {"en": "Scale, speed, colour", "hu": "Méret, sebesség, szín"},
+	"title.quit": {"en": "Quit", "hu": "Kilépés"},
+	"settings.fullscreen": {"en": "Fullscreen", "hu": "Teljes képernyő"},
+	"settings.sound": {"en": "Sound", "hu": "Hang"},
+	"settings.colourblind": {"en": "Colourblind-friendly status colours",
+		"hu": "Színtévesztő-barát állapotszínek"},
+	"settings.motion": {"en": "Reduce motion", "hu": "Kevesebb mozgás"},
+	"settings.toolbox": {"en": "Show the full toolbox from the start",
+		"hu": "Mutasd a teljes eszköztárat az elejétől"},
+	"settings.language": {"en": "Language", "hu": "Nyelv"},
+	"settings.scale": {"en": "Interface scale", "hu": "Felület mérete"},
+	"title.esc": {"en": "ESC returns to this briefing.",
+		"hu": "Az ESC visszavisz ehhez az eligazításhoz."},
+	"settings.again": {"en": "You can change these again from the in-game menu.",
+		"hu": "Ezeket a játékon belüli menüből is átállíthatod."},
 	"welcome.title": {
 		"en": "Welcome to the floor",
 		"hu": "Üdv a gépteremben"},
