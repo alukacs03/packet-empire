@@ -65,6 +65,10 @@ The network is half the job. The other half is the company around it:
   time; blame after a human outage, which decides who reports the next one.
   When nobody is on shift and something is live, you can phone somebody at
   three in the morning: it costs a call-out fee and it costs their morale.
+- **More than one room.** Each floor keeps its own facility diary, its own
+  fire and water protection, its own heat and draw, and its own dock; hardware
+  moves between them on a van rather than by teleport, and every panel says
+  which floor it is talking about.
 - **Proving it.** A failover test you book, announced ahead so it can be
   prepared for: the upstream goes away on purpose and the result is judged on
   whether customers noticed. Strict-tier customers ask for it in writing, an
