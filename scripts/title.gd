@@ -307,6 +307,23 @@ func show_settings() -> void:
 		Prefs.show_everything = on
 		Prefs.apply())
 	panel_box.add_child(toolbox)
+	# label and buttons on one line: the pane is short and the scale row was
+	# being pushed off the bottom of it
+	var lang_row := HBoxContainer.new()
+	lang_row.add_theme_constant_override("separation", 6)
+	panel_box.add_child(lang_row)
+	lang_row.add_child(_lbl("Language", 13, MUTED))
+	for code: String in Loc.languages():
+		var lb := Button.new()
+		lb.text = Loc.language_label(code)
+		lb.toggle_mode = true
+		lb.button_pressed = Prefs.language == code
+		lb.pressed.connect(func() -> void:
+			Prefs.language = code
+			Loc.language = code
+			Prefs.apply()
+			show_settings())
+		lang_row.add_child(lb)
 	panel_box.add_child(_lbl("Interface scale", 13, MUTED))
 	var scale_row := HBoxContainer.new()
 	scale_row.add_theme_constant_override("separation", 6)
