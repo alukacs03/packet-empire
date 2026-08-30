@@ -7471,6 +7471,105 @@ static func run() -> int:
 		"workshop: sharing a pack carries the content and nothing about this machine")
 	check(FileAccess.file_exists("res://docs/PACKS.md"),
 		"workshop: the format is documented where an author will look for it")
+
+	# --- balance: a delivering operator grows at every difficulty, with the
+	# facility, parts, renewals and duties systems all switched on ---
+	var bal_difficulty := Game.difficulty
+	var bal_report: Array = []
+	var bal_ok := true
+	for bal_level in Game.DIFFICULTIES.size():
+		Game.racks = []
+		Game.links = []
+		Game.deals = []
+		Game.offers = []
+		Game.leads = []
+		Game.invoices = []
+		Game.events = []
+		Game.contracts_done = []
+		Game.sla_status = {}
+		Game.incidents = []
+		Game.incidents_seen = {}
+		Game.staff = []
+		Game.hazards = []
+		Game.protection = {}
+		Game.facility = {}
+		Game.renewals = []
+		Game.duties = {}
+		Game.tickets = []
+		Game.crates = []
+		Game.decisions = []
+		Game.consequences = []
+		Game.firmware_bugs = {}
+		Game.grey_faults = {}
+		Game.tour = {}
+		Game.audit = {}
+		Game.upstream = {}
+		Game.finale = {}
+		Game.visitors = []
+		Game.identity = ""
+		Game.parts = {"patch": 40, "optic": 8, "power": 20, "blank": 12}
+		Game.parts_auto = true
+		Game.apply_difficulty(bal_level)
+		Game.sites = [Game.sites[0]]  # one floor: the rest belong to other sections
+		Game.current_site = 0
+		Game.circuits = []
+		Game.stage = 1
+		Game.debt = 0
+		Game.reputation = 55
+		var bal_start: int = Game.money
+		var bal_rack := Game.add_rack(Vector2i(0, 0))
+		var bal_sw := Game.new_device("sw-8")
+		var bal_a := Game.new_device("srv-1")
+		var bal_b := Game.new_device("srv-1")
+		bal_rack.slots[0] = bal_sw
+		bal_rack.slots[1] = bal_a
+		bal_rack.slots[2] = bal_b
+		Game.connect_ifaces(bal_a.ifaces[0], bal_sw.ifaces[0])
+		Game.connect_ifaces(bal_b.ifaces[0], bal_sw.ifaces[1])
+		Game.add_ip(bal_a.ifaces[0], "10.99.0.10/24")
+		Game.add_ip(bal_b.ifaces[0], "10.99.0.11/24")
+		for bal_dev: Net.NDevice in [bal_sw, bal_a, bal_b]:
+			bal_dev.startup = Game.device_config(bal_dev)
+		# a competent operator fits detection and suppression before they need it
+		Game.buy_protection("detection")
+		Game.buy_protection("suppression")
+		Game.deals = [{"id": "bal", "customer": "SteadyCo", "kind": "hosting",
+			"params": {"ip": "10.99.0.10"}, "fee": 120, "load": 200, "brief": "",
+			"healthy": true, "budget": 120, "loyalty": 0.95}]
+		var bal_spend := {}
+		for _bal_cycle in 100:
+			# the operator keeps the housekeeping up, which is the point of it
+			Game.facility_auto = {"filters": true, "aircon": true, "generator": true, "ups": true}
+			for bal_item in Game.renewals:
+				bal_item["auto"] = true
+			Game.sla_tick()
+			for bal_key: String in Game.last_pl:
+				bal_spend[bal_key] = int(bal_spend.get(bal_key, 0)) + int(Game.last_pl[bal_key])
+			for bal_deal in Game.deals:
+				if bal_deal.has("renewal"):
+					Game.accept_renewal(bal_deal)
+			for bal_link: Net.Link in Game.links:  # a competent operator fixes faults
+				bal_link.a.enabled = true
+				bal_link.b.enabled = true
+			for bal_dev2: Net.NDevice in Game.all_devices():
+				if bal_dev2.status != "active":
+					bal_dev2.status = "active"
+		var bal_grew: bool = Game.money > bal_start
+		bal_ok = bal_ok and bal_grew
+		bal_report.append("%s %s ($%d → $%d)" % [Game.DIFFICULTIES[bal_level]["name"],
+			"grew" if bal_grew else "SHRANK", bal_start, Game.money])
+	check(bal_ok, "balance: a delivering operator grows at every difficulty: %s"
+		% "; ".join(PackedStringArray(bal_report)))
+	check(Game.pl_totals.has("power") and int(Game.pl_totals["power"]) < 0,
+		"balance: the run-to-date profit and loss says where the money went, per system")
+	var parts_total_before := int(Game.pl_totals.get("parts", 0))
+	Game.money = 5000
+	Game.spend_on("parts", 60)
+	check(int(Game.last_pl.get("parts", 0)) <= -60 \
+			and int(Game.pl_totals.get("parts", 0)) == parts_total_before,
+		"balance: a spend lands in this cycle's ledger and folds into the run total at the tick")
+	Game.apply_difficulty(bal_difficulty)
+	Game.facility_auto = {}
 	DirAccess.remove_absolute("%s/classroom_test.json" % Pack.USER_DIR)
 	Pack.load_all()
 

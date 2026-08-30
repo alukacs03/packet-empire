@@ -4247,6 +4247,21 @@ func _build_business_tab() -> void:
 		pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		pl.custom_minimum_size = Vector2(560, 0)
 		contracts_box.add_child(pl)
+	if not Game.pl_totals.is_empty():
+		# where the money has actually gone, per system, across the whole run
+		var totals: Array = []
+		for k2 in Game.pl_totals:
+			totals.append([String(k2), int(Game.pl_totals[k2])])
+		totals.sort_custom(func(x, y): return absi(int(x[1])) > absi(int(y[1])))
+		var total_parts: Array = []
+		for row in totals.slice(0, 12):
+			total_parts.append("%s %s$%d" % [row[0], "+" if int(row[1]) >= 0 else "-",
+				absi(int(row[1]))])
+		var run_pl := _label("      run to date:   " + "   ·   ".join(PackedStringArray(total_parts)),
+			12, Color(0.6, 0.66, 0.78))
+		run_pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		run_pl.custom_minimum_size = Vector2(560, 0)
+		contracts_box.add_child(run_pl)
 	var nr2 := Game.next_rank()
 	contracts_box.add_child(_label("rank: %s%s" % [Game.rank(),
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],

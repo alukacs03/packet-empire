@@ -964,7 +964,7 @@ func plan_cable(a: Net.Iface, b: Net.Iface) -> Dictionary:
 
 func connect_documented(a: Net.Iface, b: Net.Iface) -> bool:
 	## The slower way: it costs a little money and leaves nothing to come back to.
-	if not try_spend(25):
+	if not spend_on("cabling", 25):
 		return false
 	if not connect_ifaces(a, b):
 		_refund(25)
@@ -987,7 +987,7 @@ func buy_parts(kind: String, qty := 10) -> String:
 	if not PART_PRICES.has(kind):
 		return "there is no such part"
 	var price := int(PART_PRICES[kind]) * qty
-	if not try_spend(price):
+	if not spend_on("parts", price):
 		return "%d %s cost $%d" % [qty, PART_LABELS[kind], price]
 	parts[kind] = parts_of(kind) + qty
 	log_event("PARTS: %d %s into the drawer for $%d." % [qty, PART_LABELS[kind], price])
@@ -998,6 +998,7 @@ func take_part(kind: String) -> bool:
 	if parts_of(kind) <= 0 and parts_auto and money - refill_cost >= PARTS_CASH_FLOOR:
 		# the standing order exists precisely so this is not a chore every cycle
 		money -= refill_cost
+		last_pl["parts"] = int(last_pl.get("parts", 0)) - refill_cost
 		money_changed.emit()
 		parts[kind] = PART_REORDER
 		log_event("PARTS: the drawer ran out of %s and the standing order refilled it."
@@ -1035,6 +1036,7 @@ func parts_tick() -> void:
 		if money - price < PARTS_CASH_FLOOR:
 			continue  # the drawer is not worth going insolvent over
 		money -= price
+		last_pl["parts"] = int(last_pl.get("parts", 0)) - price
 		money_changed.emit()
 		parts[kind] = parts_of(kind) + qty
 		log_event("PARTS: the standing order topped up %s ($%d). It runs itself until the money does not."
@@ -1121,7 +1123,7 @@ func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 	qty = clampi(qty, 1, 4)
 	var spec: Dictionary = VENDOR_TIERS[tier]
 	var price := order_estimate(model, tier) * qty
-	if not try_spend(price):
+	if not spend_on("hardware orders", price):
 		return "that order comes to $%d" % price
 	for i in qty:
 		# a small proportion of every delivery is wrong or broken, and you only
@@ -1269,7 +1271,7 @@ func request_remote_hands(dev: Net.NDevice, action: String, iface: Net.Iface = n
 	if rack == null:
 		return "that device is not racked anywhere"
 	var facility := remote_facility(int(rack.site))
-	if not try_spend(int(facility["cost"])):
+	if not spend_on("remote hands", int(facility["cost"])):
 		return "a block of remote hands at %s costs $%d" % [facility["label"], int(facility["cost"])]
 	remote_jobs.append({"device": dev.name, "iface": iface.name if iface != null else "",
 		"action": action, "due": cycle + int(facility["wait"]),
@@ -1737,7 +1739,7 @@ func reconcile_rack(r: Net.Rack) -> String:
 	var drift := rack_drift(r)
 	if drift == 0:
 		return "%s already matches the documentation" % r.name
-	if not try_spend(30):
+	if not spend_on("documentation", 30):
 		return "walking the cabinet and writing it down costs $30"
 	for d in r.slots:
 		if d != null:
@@ -1830,7 +1832,7 @@ func investigate_orphan(orphan: Dictionary) -> String:
 	var level := orphan_intel_of(orphan)
 	if level >= 2:
 		return "you already know what that is"
-	if not try_spend(50):
+	if not spend_on("investigation", 50):
 		return "an afternoon of somebody's time costs $50"
 	orphan_intel[String(orphan["key"])] = level + 1
 	if level + 1 < 2:
@@ -1889,7 +1891,7 @@ func buy_support(tier: int) -> String:
 	tier = clampi(tier, 1, SUPPORT_TIERS.size() - 1)
 	if support_tier() >= tier:
 		return "you already have that cover"
-	if not try_spend(int(SUPPORT_TIERS[tier]["cost"])):
+	if not spend_on("support contract", int(SUPPORT_TIERS[tier]["cost"])):
 		return "that contract costs $%d" % int(SUPPORT_TIERS[tier]["cost"])
 	var item := add_renewal("support", "vendor support: %s" % SUPPORT_TIERS[tier]["label"],
 		int(SUPPORT_TIERS[tier]["cost"]) / 4, 40)
@@ -1980,7 +1982,7 @@ func escalate_case(c: Dictionary) -> String:
 		return "there is nothing to escalate yet"
 	if bool(c.get("escalated", false)):
 		return "it is already with the escalation team"
-	if not try_spend(200):
+	if not spend_on("support cases", 200):
 		return "insisting costs $200 of somebody's afternoon"
 	c["escalated"] = true
 	c["waiting_until"] = cycle + int(SUPPORT_TIERS[int(c["tier"])]["escalate"])
@@ -2054,7 +2056,7 @@ func renew_item(id: String) -> String:
 		return "there is no such renewal"
 	# a lapse is recoverable, at the premium everybody charges for late payment
 	var price := int(item["cost"]) * (2 if bool(item["lapsed"]) else 1)
-	if not try_spend(price):
+	if not spend_on("renewals", price):
 		return "that renewal costs $%d and you do not have it" % price
 	item["due"] = cycle + int(item["period"])
 	var was_lapsed: bool = item["lapsed"]
@@ -2089,6 +2091,7 @@ func renewal_tick() -> void:
 			# it takes it, whatever else is happening that cycle
 			if money >= int(item["cost"]):
 				money -= int(item["cost"])
+				last_pl["renewals"] = int(last_pl.get("renewals", 0)) - int(item["cost"])
 				money_changed.emit()
 				item["due"] = cycle + int(item["period"])
 				log_event("AUTO-RENEWED: %s, $%d taken." % [item["label"], int(item["cost"])])
@@ -2207,7 +2210,7 @@ func set_access_policy(policy: String) -> String:
 func buy_cameras() -> String:
 	if cameras:
 		return "the cameras are already up"
-	if not try_spend(1200):
+	if not spend_on("physical security", 1200):
 		return "camera coverage costs $1200"
 	cameras = true
 	log_event("ACCESS: cameras cover the aisles. They prevent nothing and explain everything.")
@@ -2334,7 +2337,7 @@ func buy_protection(kind: String) -> String:
 		return "there is no such system"
 	if bool(protection.get(kind, {}).get("installed", false)):
 		return "%s is already fitted" % PROTECTION[kind]["label"]
-	if not try_spend(int(PROTECTION[kind]["cost"])):
+	if not spend_on("fire and water protection", int(PROTECTION[kind]["cost"])):
 		return "%s costs $%d" % [PROTECTION[kind]["label"], int(PROTECTION[kind]["cost"])]
 	protection[kind] = {"installed": true, "serviced_cycle": cycle}
 	log_event("FACILITY: %s fitted. It is only worth what its last inspection says it is."
@@ -2344,7 +2347,7 @@ func buy_protection(kind: String) -> String:
 func service_protection(kind: String) -> String:
 	if not bool(protection.get(kind, {}).get("installed", false)):
 		return "that is not fitted"
-	if not try_spend(int(PROTECTION[kind]["cost"]) / 6):
+	if not spend_on("facility", int(PROTECTION[kind]["cost"]) / 6):
 		return "the inspection costs $%d" % (int(PROTECTION[kind]["cost"]) / 6)
 	protection[kind]["serviced_cycle"] = cycle
 	log_event("FACILITY: %s inspected and signed off." % PROTECTION[kind]["label"])
@@ -3048,7 +3051,7 @@ func cram_for_tour() -> String:
 		return "nobody is coming"
 	if float(tour.get("crammed", 0.0)) >= 0.1:
 		return "the place is as presentable as money can make it today"
-	if not try_spend(600):
+	if not spend_on("visit preparation", 600):
 		return "a crew at this notice costs $600"
 	tour["crammed"] = 0.1
 	log_event("SCRAMBLE: cleaners, cable ties and a skip, at short notice and full price. It will show, a little.")
@@ -3135,7 +3138,7 @@ func service_facility(task: String) -> String:
 	if not FACILITY_TASKS.has(task):
 		return "there is no such job"
 	var cost := int(FACILITY_TASKS[task]["cost"])
-	if not try_spend(cost):
+	if not spend_on("facility", cost):
 		return "that costs $%d and you do not have it" % cost
 	facility[task] = cycle
 	if task == "generator":
@@ -6606,6 +6609,7 @@ const EFFICIENCY_PRICE := 2600
 
 var buyout_offer := {}  # a rival's standing offer to buy you out
 var sold_out := false  # you took it; the game is over and the score is final
+var pl_totals := {}  # what each system has cost or earned across the run
 var finale := {}  # the frozen ending: how it ended, and the numbers it ended on
 var accountant := false
 var fixed_tariff := false  # a flat rate: dearer on average, immune to peaks
@@ -7485,6 +7489,11 @@ func sla_tick() -> void:
 				rep_hit = maxi(1, rep_hit / 2)  # you warned them, in writing
 			reputation = maxi(0, reputation - rep_hit)
 			deal["degraded"] = false
+			if bool(deal.get("upstream_down", false)):
+				# somebody else's outage: they do not walk over it, and they
+				# certainly do not walk over one you kept them informed about
+				deal["missed"] = mini(int(deal.get("missed", 0)), 3)
+				continue
 			deal["missed"] = int(deal.get("missed", 0)) + 1
 			var missed: int = deal["missed"]
 			if bool(deal.get("guided", false)) and not bool(deal.get("ever_healthy", false)):
@@ -7520,6 +7529,8 @@ func sla_tick() -> void:
 			advance_kiskacsa_arc(deal)
 	for deal_peak in deals:
 		peak_tick(deal_peak)  # the night they warned you about, judged on live delivery
+	for pl_key: String in last_pl:
+		pl_totals[pl_key] = int(pl_totals.get(pl_key, 0)) + int(last_pl[pl_key])
 	_update_reliability_streak(customer_outage_now)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
@@ -7651,6 +7662,14 @@ func try_spend(amount: int) -> bool:
 		return false
 	money -= amount
 	money_changed.emit()
+	return true
+
+func spend_on(category: String, amount: int) -> bool:
+	## The same spend, recorded in the cycle's profit and loss, so the Business
+	## panel can say where the money actually went.
+	if not try_spend(amount):
+		return false
+	last_pl[category] = int(last_pl.get(category, 0)) - amount
 	return true
 
 func _refund(amount: int) -> void:
@@ -8165,7 +8184,7 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
-		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "cameras": cameras,
+		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "pl_totals": pl_totals, "cameras": cameras,
 		"access_log": access_log, "visitors": visitors,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
@@ -8505,6 +8524,7 @@ func _apply(data: Dictionary) -> void:
 	access_policy = String(data.get("access_policy", "open"))
 	identity = String(data.get("identity", ""))
 	finale = data.get("finale", {})
+	pl_totals = data.get("pl_totals", {})
 	cameras = bool(data.get("cameras", false))
 	access_log = data.get("access_log", [])
 	visitors = data.get("visitors", [])
