@@ -3015,6 +3015,11 @@ static func run() -> int:
 	check(Game.dr_test.is_empty() and dr_uplinks[0].status == "active" \
 			and Game.reputation > dr_rep,
 		"failover test: nothing dropped, so it passed and everything came back")
+	var dr_ready := false
+	for dr_row: Dictionary in Game.audit_readiness():
+		if String(dr_row["id"]) == "failover":
+			dr_ready = true
+	check(dr_ready, "failover test: the auditor asks about it, like every other control")
 	check(String(Game.control_state("failover")["status"]) == "compliant",
 		"failover test: passing it is the evidence the control asks for")
 	# and a customer that does not survive it is named
