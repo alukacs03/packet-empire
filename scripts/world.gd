@@ -504,16 +504,26 @@ func _shoot_all() -> void:
 				# the rota: shifts, who carries the phone, and who is tired
 				var rng := RandomNumberGenerator.new()
 				rng.seed = 11
+				Game.money = maxi(Game.money, 5000)  # hiring is refused without it
 				Game.staff = []
 				for _i in 2:
-					Game.hire(Staff.make_candidate(rng, Game.habits))
+					var hire_c := Staff.make_candidate(rng, Game.habits)
+					hire_c["salary"] = int(hire_c.get("ask", 150))
+					Game.hire(hire_c)
 				if Game.staff.size() > 1:
 					Game.set_oncall(String(Game.staff[0]["name"]))
 					Game.staff[1]["tired_until"] = Game.cycle + 1
 				ui.contracts_tab = "Business"
 				ui.open_contracts(),
 			func() -> void:
-				ui._scroll_to_bottom()],  # the rota is at the bottom of the tab
+				# the rota is at the bottom of a long tab: scroll to it once the
+				# real heights are known
+				var box: Node = ui.contracts_box
+				while box != null and not (box is ScrollContainer):
+					box = box.get_parent()
+				if box != null:
+					var sc := box as ScrollContainer
+					sc.scroll_vertical = int(sc.get_v_scroll_bar().max_value)],
 		["contracts", func() -> void:
 			ui.contracts_tab = "Jobs"
 			ui.open_contracts()],

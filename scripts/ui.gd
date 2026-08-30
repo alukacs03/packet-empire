@@ -607,7 +607,15 @@ func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 
 	## a label that wraps instead of pushing its container sideways
 	var l := _label(text, size, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(width, 0)
+	# A wrapping label reports the height of one line as its minimum, so a card
+	# full of paragraphs was sized for a fraction of its content and then had
+	# nothing to scroll: the bottom of the panel was unreachable. Measure the
+	# wrapped height at the width we are about to give it.
+	var font := l.get_theme_font("font")
+	if font == null:
+		font = UIW.sans_font()
+	var wrapped := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, width, size)
+	l.custom_minimum_size = Vector2(width, maxf(wrapped.y, float(size)))
 	return l
 
 func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
@@ -701,9 +709,32 @@ func _fit_cards() -> void:
 					visible_count += 1
 			need_y += maxf(0, visible_count - 1) * stack.get_theme_constant("separation")
 			need_y += UIW.space("sm")
+		# Autowrapped labels report the minimum height of a single line, so the
+		# minimum-size sum understates a panel full of paragraphs: the card was
+		# sized too short AND believed it had nothing to scroll, which put the
+		# bottom of the panel out of reach entirely. Measure what was actually
+		# laid out and take whichever is larger.
+		need_y = maxf(need_y, _laid_out_height(content))
 		scroll.custom_minimum_size = Vector2(
 			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 160.0),
 			minf(need_y, vp.y - 190.0))
+
+func _laid_out_height(content: Control) -> float:
+	## The real height of what is in a card, after layout, including text that
+	## wrapped onto more lines than its minimum size admitted to.
+	var tallest := content.size.y
+	for child in content.get_children():
+		if child is Control and (child as Control).visible:
+			var inner := child as Control
+			var sum := 0.0
+			for row in inner.get_children():
+				if row is Control and (row as Control).visible:
+					sum += (row as Control).size.y
+			if inner is VBoxContainer:
+				sum += maxf(0.0, float(inner.get_child_count() - 1)) \
+					* float(inner.get_theme_constant("separation"))
+			tallest = maxf(tallest, maxf(sum, inner.size.y))
+	return tallest
 
 func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	var h := HBoxContainer.new()
