@@ -8117,6 +8117,11 @@ static func run() -> int:
 		"score: and the small hours sound like the small hours")
 	var sc_muted: bool = Sfx.muted
 	Sfx.muted = true
+	check(Sfx.mood_for({"incident": true, "heat": true}) == "incident",
+		"score: a real incident outranks the weather")
+	check(Sfx.mood_for({"heat": true}) == "heat" \
+			and Sfx.mood_for({"heat": true, "night": true}) == "night",
+		"score: a hot room has its own mood, and the small hours still win at night")
 	Sfx.score_tick(Game.score_state())
 	check(Sfx.score_mood == "", "score: muting the game silences the music with everything else")
 	Sfx.muted = sc_muted

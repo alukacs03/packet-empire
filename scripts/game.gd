@@ -922,7 +922,7 @@ func call_someone_out() -> String:
 	callout_until = cycle + 1
 	log_event("CALL-OUT: %s was phoned at %s and is coming in. It cost $%d and it cost them."
 		% [callout_who, day_name(), CALLOUT_FEE])
-	Sfx.play("alert")
+	Sfx.play("phone")
 	return ""
 
 func duty_quality(id: String) -> float:
@@ -1547,7 +1547,7 @@ func maybe_call(deal: Dictionary) -> void:
 		return
 	deal["call"] = {"words": _call_words(deal), "raised": cycle}
 	log_event("THE PHONE: %s is on the line about their service." % deal["customer"])
-	Sfx.play("alert")
+	Sfx.play("phone")
 
 func answer_call(deal: Dictionary, answer: String) -> String:
 	var call: Dictionary = deal.get("call", {})
@@ -6413,6 +6413,7 @@ func score_state() -> Dictionary:
 		if bool(deal2.get("ever_healthy", false)) and int(deal2.get("cycles", 99)) <= 1:
 			celebrating = true
 	return {"incident": incident, "upstream": upstream_active(),
+		"heat": heat_wave() or overheating(),
 		"night": day_slot() in [6, 7, 0, 1], "quiet": quiet_now(),
 		"first_light": celebrating}
 

@@ -44,6 +44,10 @@ static func install(parent: Node) -> void:
 		"cable": _tone([[320.0, 0.03], [640.0, 0.04]], 0.7),
 		"place": _tone([[150.0, 0.055], [82.0, 0.11]], 0.62),
 		"alert": _tone([[990.0, 0.08], [740.0, 0.08], [990.0, 0.1]], 0.5),
+		# the one sound that should make somebody look up: an old desk phone,
+		# two short bursts of the same pair rather than a warning tone
+		"phone": _tone([[1046.0, 0.07], [784.0, 0.07], [1046.0, 0.07], [784.0, 0.07],
+			[0.0, 0.06], [1046.0, 0.07], [784.0, 0.07], [1046.0, 0.07], [784.0, 0.09]], 0.55),
 		"money": _tone([[1180.0, 0.05], [1560.0, 0.05], [1980.0, 0.09]], 0.4),
 		# Diagnostic cues. Three shapes the player can learn apart with their
 		# eyes shut: the battery's flat double beep, heat's rising warble, and
@@ -172,6 +176,8 @@ const MOODS := {
 		"blurb": "the small hours, with nobody else in the building"},
 	"incident": {"notes": [155.6, 207.7, 233.1], "seconds": 7.0, "db": -26.0,
 		"blurb": "something of yours is down"},
+	"heat": {"notes": [174.6, 233.1, 246.9], "seconds": 8.0, "db": -29.0,
+		"blurb": "the room is hotter than the cooling was sold for"},
 	"upstream": {"notes": [130.8, 174.6, 196.0], "seconds": 8.0, "db": -28.0,
 		"blurb": "something somebody else owns is down"},
 	"first_light": {"notes": [261.6, 329.6, 392.0], "seconds": 6.0, "db": -24.0,
@@ -189,6 +195,10 @@ static func mood_for(state: Dictionary) -> String:
 		return "incident"
 	if bool(state.get("night", false)):
 		return "night"
+	# the hour wins over the heat: the small hours are about the building being
+	# empty, and a hot room is already shouting on the HUD and the cabinets
+	if bool(state.get("heat", false)):
+		return "heat"
 	if bool(state.get("quiet", false)):
 		return "quiet"
 	return ""
