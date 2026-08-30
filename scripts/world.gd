@@ -141,7 +141,23 @@ func _shoot_all() -> void:
 		["floor_outage", func() -> void:
 			Game.customer_outage_active = true
 			Game.last_customer_outage_cycle = Game.cycle],
+		["floor_receiving", func() -> void:
+			# crates on the dock, cardboard nobody cleared, and a cabinet alight
+			Game.crates = [
+				{"model": "srv-1", "shipped": "srv-1", "ordered": Game.cycle, "due": Game.cycle,
+					"arrived": Game.cycle, "checked": false, "damaged": false, "unpack_left": 1},
+				{"model": "sw-24", "shipped": "sw-24", "ordered": Game.cycle, "due": Game.cycle,
+					"arrived": Game.cycle, "checked": true, "damaged": false, "unpack_left": 2}]
+			Game.packaging = 3
+			if not Game.racks.is_empty():
+				Game.hazards = [{"kind": "smoke", "rack": Game.racks[0].name, "site": 0,
+					"tile": [Game.racks[0].tile.x, Game.racks[0].tile.y], "severity": 2,
+					"started": Game.cycle, "detected": true, "zone": [Game.racks[0].name]}]
+			$Floor.queue_redraw()],
 		["floor_mature", func() -> void:
+			Game.crates = []
+			Game.packaging = 0
+			Game.hazards = []
 			Game.customer_outage_active = false
 			Game.stage = Game.STAGES.size() - 1
 			rebuild_racks()

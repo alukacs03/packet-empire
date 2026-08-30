@@ -7975,6 +7975,24 @@ static func run() -> int:
 	check(Game.log_contains("Kis Andras") and Game.log_contains("CREW"),
 		"crew: what they say goes in the log, in their own words")
 	Game.staff = cv_staff
+
+	# --- the floor shows what the simulation already knows ---
+	var fl_crates := Game.crates.duplicate(true)
+	var fl_packaging := Game.packaging
+	var fl_hazards := Game.hazards.duplicate(true)
+	Game.crates = []
+	Game.packaging = 0
+	check(Game.crates_waiting().is_empty() and not Game.aisle_blocked(),
+		"floor props: an empty dock has nothing on it, which is the point of reading live state")
+	Game.crates = [{"model": "srv-1", "shipped": "srv-1", "ordered": Game.cycle,
+		"due": Game.cycle, "arrived": Game.cycle, "checked": false, "damaged": false,
+		"unpack_left": 1}]
+	Game.packaging = 6
+	check(Game.crates_waiting().size() == 1 and Game.aisle_blocked(),
+		"floor props: crates on the dock and cardboard nobody cleared are the same facts the panel reads")
+	Game.crates = fl_crates
+	Game.packaging = fl_packaging
+	Game.hazards = fl_hazards
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

@@ -51,6 +51,7 @@ func _draw() -> void:
 	var facility_accent := UIW.colour("warm").lerp(UIW.colour("accent"), progress)
 	_draw_room_atmosphere(grid)
 	_draw_reliability_sign(progress)
+	_draw_receiving(grid)
 	# Build cells are service-floor paint projected over the authored concrete.
 	# They never become a second raised board as the facility expands.
 	if Game.site_count() > 1:  # which floor am I standing on
@@ -226,3 +227,39 @@ func _draw_reliability_sign(progress: float) -> void:
 	draw_string(UIW.mono_font(), rect.position + Vector2(14, 61), "BEST %03d  ·  LIVE CUSTOMERS" \
 		% Game.best_outage_streak, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 28, 7,
 		UIW.colour("muted"))
+
+
+func _draw_receiving(grid: Vector2i) -> void:
+	## Everything here is reading something the simulation already tracks: what
+	## is on the dock, what nobody has taken out, and which cabinet is in
+	## trouble. No new state, and nothing invented.
+	var dock := Iso.tile_to_world(Vector2i(0, maxi(0, grid.y - 1))) + Vector2(-118, 26)
+	var waiting: int = Game.crates_waiting().size()
+	for i in mini(waiting, 4):
+		var at := dock + Vector2(i * 26 - 12, -i * 7)
+		# a crate: a flat lid, a body, and a strap, drawn small on purpose
+		draw_colored_polygon(PackedVector2Array([at + Vector2(2, 22), at + Vector2(26, 34),
+			at + Vector2(50, 22), at + Vector2(26, 10)]), Color(0, 0, 0, 0.28))  # shadow
+		draw_colored_polygon(PackedVector2Array([at, at + Vector2(24, 12),
+			at + Vector2(24, 30), at + Vector2(0, 18)]), Color("6b563a"))
+		draw_colored_polygon(PackedVector2Array([at, at + Vector2(24, 12),
+			at + Vector2(48, 0), at + Vector2(24, -12)]), Color("8a7048"))
+		draw_line(at + Vector2(6, 8), at + Vector2(30, -4), Color("cbb488"), 1.5)
+	for i in mini(Game.packaging, 5):
+		# flattened cardboard, lying in the aisle where nobody took it out
+		var at2 := dock + Vector2(104 + i * 6, 30 - i * 4)
+		var sheet := PackedVector2Array([at2, at2 + Vector2(34, 17),
+			at2 + Vector2(16, 26), at2 + Vector2(-18, 9)])
+		draw_colored_polygon(sheet, Color("8f7449").lightened(0.05 * i))
+		draw_polyline(sheet + PackedVector2Array([at2]), Color("5d4a2c", 0.8), 1.0)
+	if Game.aisle_blocked():
+		draw_string(ThemeDB.fallback_font, dock + Vector2(-6, 54), "AISLE BLOCKED",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1.0, 0.72, 0.45, 0.85))
+	# the cabinet itself carries the hazard mark; the floor only shows the tile
+	for haz: Dictionary in Game.hazards:
+		if int(haz.get("site", 0)) != Game.current_site:
+			continue
+		var tile := Vector2i(int(haz["tile"][0]), int(haz["tile"][1]))
+		var pulse := 0.35 + 0.2 * sin(Time.get_ticks_msec() / 220.0)
+		_draw_tile(tile, Color(0.95, 0.45, 0.25, pulse * 0.5) if String(haz["kind"]) != "water"
+			else Color(0.35, 0.72, 1.0, pulse * 0.5))

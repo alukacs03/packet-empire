@@ -222,6 +222,24 @@ func _draw() -> void:
 			Color("67552c"), 1.0)
 		draw_line(paper.position + Vector2(3, 11), paper.position + Vector2(10, 11),
 			Color("67552c"), 1.0)
+	# a cabinet with something actually happening in it says so on the cabinet
+	for haz: Dictionary in Game.hazards:
+		if String(haz.get("rack", "")) != rack.name:
+			continue
+		var pulse := 0.45 + 0.3 * sin(Time.get_ticks_msec() / 200.0)
+		var haz_col := Color(0.35, 0.72, 1.0, pulse) if String(haz["kind"]) == "water" \
+			else Color(0.98, 0.45, 0.22, pulse)
+		for ring_i in 2:
+			var halo := PackedVector2Array()
+			for p2 in [n, e, s, w, n]:
+				halo.append(p2 * (1.05 + 0.12 * ring_i) + up * 0.05)
+			draw_polyline(halo, Color(haz_col, pulse * (0.8 - 0.3 * ring_i)), 2.5)
+		var label := String(haz["kind"]).to_upper()
+		if not bool(haz.get("detected", false)):
+			label += " ?"  # nothing on this floor is watching for it
+		draw_string(UIW.sans_font(), Vector2(-ex * 0.5, -H - 16), label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(haz_col, 0.95))
+		break
 	# a hot cabinet glows at its base, so a bad row is visible from the floor
 	if Game.rack_hot(rack):
 		var pulse_h := 0.3 + 0.18 * sin(tms / 420.0)
