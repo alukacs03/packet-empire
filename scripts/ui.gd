@@ -1073,7 +1073,10 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 	elif target and Game.can_link(rack_cable_from, target):
 		if rack_cable_old_link:
 			Game.disconnect_iface(rack_cable_from)
-		Game.connect_ifaces(rack_cable_from, target)
+		if Game.cabling_documented:
+			Game.connect_documented(rack_cable_from, target)
+		else:
+			Game.connect_ifaces(rack_cable_from, target)
 		hud_toast("Cable run: %s %s ⇄ %s %s" % [rack_cable_from.dev.name,
 			rack_cable_from.name, target.dev.name, target.name], true)
 		_refresh_slots()
@@ -1675,7 +1678,10 @@ func _cable_action() -> void:
 		for t: Net.Iface in ports:
 			sub.add_item(t.name)
 		sub.id_pressed.connect(func(id: int) -> void:
-			Game.connect_ifaces(cur_if, ports[id])
+			if Game.cabling_documented:
+				Game.connect_documented(cur_if, ports[id])
+			else:
+				Game.connect_ifaces(cur_if, ports[id])
 			root.hide()
 			_refresh_iface())
 		root.add_child(sub)
@@ -2475,6 +2481,24 @@ func _refresh_ops() -> void:
 		Game.parts_auto = on
 		_refresh_ops())
 	parts_row.add_child(auto_parts)
+	var cabling_row := HBoxContainer.new()
+	cabling_row.add_theme_constant_override("separation", 8)
+	ops_box.add_child(cabling_row)
+	cabling_row.add_child(_wrap("  Cable debt: %d traceable item(s). Cabling properly costs $25 and two labels a run; doing it fast costs nothing now."
+		% Game.cable_debt_score(), 12,
+		Color(1.0, 0.82, 0.5) if Game.cable_debt_score() > 4 else Color(0.72, 0.8, 0.88), 520))
+	var cabling_btn := Button.new()
+	cabling_btn.toggle_mode = true
+	cabling_btn.button_pressed = Game.cabling_documented
+	cabling_btn.text = "Cabling: documented" if Game.cabling_documented else "Cabling: expedient"
+	cabling_btn.tooltip_text = "Documented runs label both ends and write themselves up as they go."
+	cabling_btn.toggled.connect(func(on: bool) -> void:
+		Game.cabling_documented = on
+		_refresh_ops())
+	cabling_row.add_child(cabling_btn)
+	for debt_item: Dictionary in Game.cable_debt_items().slice(0, 5):
+		ops_box.add_child(_label("      · %s  (%s)" % [debt_item["label"], debt_item["fix"]], 12,
+			Color(0.68, 0.74, 0.82)))
 	if Game.cable_debt > 0:
 		var redo := Button.new()
 		redo.text = "Redo the improvised leads (%d)" % Game.cable_debt

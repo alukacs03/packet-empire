@@ -3982,6 +3982,44 @@ static func run() -> int:
 	Game.parts = {"patch": 40, "optic": 8, "power": 20, "blank": 12}
 	Game.money = 5000
 
+	# --- cable debt as a choice, not a scolding ---
+	Game.cable_debt = 0
+	Game.docs = {}
+	Game.money = 5000
+	var cd_rack := Game.add_rack(Vector2i(68, 1))
+	var cd_sw := Game.new_device("sw-8")
+	var cd_a := Game.new_device("srv-1")
+	var cd_b := Game.new_device("srv-1")
+	cd_rack.slots[0] = cd_sw
+	cd_rack.slots[1] = cd_a
+	cd_rack.slots[2] = cd_b
+	var cd_plan := Game.plan_cable(cd_a.ifaces[0], cd_sw.ifaces[0])
+	check(int(cd_plan["expedient"]["cost"]) < int(cd_plan["documented"]["cost"]) \
+			and int(cd_plan["expedient"]["debt"]) > int(cd_plan["documented"]["debt"]),
+		"cable debt: both ways are offered, with the price and the debt stated before you commit")
+	var cd_debt_before := Game.cable_debt_score()
+	Game.connect_ifaces(cd_a.ifaces[0], cd_sw.ifaces[0])
+	check(Game.cable_debt_score() > cd_debt_before,
+		"cable debt: the fast way leaves something behind, and it is countable")
+	var cd_money := Game.money
+	check(Game.connect_documented(cd_b.ifaces[0], cd_sw.ifaces[1]) and Game.money < cd_money \
+			and not cd_b.ifaces[0].note.is_empty() and not cd_sw.ifaces[1].note.is_empty() \
+			and Game.docs.has(cd_b.name),
+		"cable debt: the documented way costs money and labels both ends on the way in")
+	var traced := Game.cable_debt_items()
+	var all_traceable := true
+	for cd_item: Dictionary in traced:
+		if String(cd_item.get("label", "")) == "" or String(cd_item.get("fix", "")) == "":
+			all_traceable = false
+	check(all_traceable and not traced.is_empty(),
+		"cable debt: every item names the condition and what would clear it")
+	var cd_tidy_messy := Game.rack_tidiness(cd_rack)
+	Game.set_note(cd_a.ifaces[0], "customer A")
+	Game.set_note(cd_sw.ifaces[0], "customer A")
+	check(Game.rack_tidiness(cd_rack) > cd_tidy_messy,
+		"cable debt: clearing an item during a quiet cycle shows up immediately")
+	Game.cable_debt = 0
+
 	# --- standing duties ---
 	var dt_staff := Game.staff.duplicate(true)
 	Game.duties = {}

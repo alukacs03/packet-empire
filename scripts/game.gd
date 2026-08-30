@@ -247,6 +247,7 @@ var last_digest: Array = []  # what the crew handled, skipped, or needs you for
 var parts := {"patch": 40, "optic": 8, "power": 20, "blank": 12}  # the parts drawer
 var parts_auto := true  # reorder when it runs low, so it is a decision once
 var cable_debt := 0  # wrong-length leads somebody improvised with
+var cabling_documented := false  # cable it properly on the way in, or clean it up later
 var latent_defects := {}  # model -> shelf units carrying somebody else's problem
 var stockouts := {}  # model -> the cycle supply comes back
 var rmas: Array = []  # dead units in transit, and what is coming back
@@ -904,6 +905,55 @@ func duties_tick() -> void:
 					last_digest.append("%s: everything is labelled" % name)
 	if not last_digest.is_empty():
 		log_event("DUTIES: %s." % "; ".join(PackedStringArray(last_digest)))
+
+func cable_debt_items() -> Array:
+	## Every penalty traces to one of these, and each is visible on the floor.
+	var out: Array = []
+	for i in cable_debt:
+		out.append({"kind": "improvised", "label": "an improvised lead of the wrong length",
+			"fix": "redo it with a proper lead"})
+	for l: Net.Link in links:
+		for i: Net.Iface in [l.a, l.b]:
+			if i.name.begins_with("Management"):
+				continue
+			if i.note.is_empty():
+				out.append({"kind": "unlabelled", "iface": i,
+					"label": "%s %s is patched and carries no label" % [i.dev.name, i.name],
+					"fix": "label it"})
+		if rack_of(l.a.dev) != rack_of(l.b.dev) and docs.get(l.a.dev.name, {}).is_empty():
+			out.append({"kind": "undocumented_run", "iface": l.a,
+				"label": "%s to %s runs between cabinets and is in nobody's documentation"
+					% [l.a.dev.name, l.b.dev.name],
+				"fix": "walk the cabinet and write it up"})
+	return out
+
+func cable_debt_score() -> int:
+	return cable_debt_items().size()
+
+func plan_cable(a: Net.Iface, b: Net.Iface) -> Dictionary:
+	## What each way of doing it costs, before anybody commits to either.
+	var cross := rack_of(a.dev) != rack_of(b.dev)
+	return {
+		"expedient": {"cost": 0, "parts": "one %s" % ("optic" if cross else "patch lead"),
+			"debt": 2 if cross else 1,
+			"why": "in now, labelled never, and it counts against you until somebody comes back"},
+		"documented": {"cost": 25, "parts": "one %s and two labels" % ("optic" if cross else "patch lead"),
+			"debt": 0,
+			"why": "both ends labelled and written up on the way in"},
+	}
+
+func connect_documented(a: Net.Iface, b: Net.Iface) -> bool:
+	## The slower way: it costs a little money and leaves nothing to come back to.
+	if not try_spend(25):
+		return false
+	if not connect_ifaces(a, b):
+		_refund(25)
+		return false
+	a.note = {"text": "patched to %s %s" % [b.dev.name, b.name], "cycle": cycle}
+	b.note = {"text": "patched to %s %s" % [a.dev.name, a.name], "cycle": cycle}
+	document_device(a.dev)
+	document_device(b.dev)
+	return true
 
 const PART_PRICES := {"patch": 6, "optic": 45, "power": 8, "blank": 12}
 const PART_LABELS := {"patch": "patch leads", "optic": "optics", "power": "power cords",
@@ -4464,7 +4514,15 @@ func rack_tidiness(r: Net.Rack) -> float:
 				continue
 			total += 1.0
 			points += 1.0 if not i.note.is_empty() else 0.0
-	return 1.0 if total == 0.0 else clampf(points / total - 0.05 * float(cable_debt), 0.0, 1.0)
+	# only this cabinet's own untidiness counts against this cabinet
+	var local_debt := 0
+	for item: Dictionary in cable_debt_items():
+		var owner: Variant = item.get("iface")
+		if owner is Net.Iface and rack_of((owner as Net.Iface).dev) == r:
+			local_debt += 1
+	# improvised leads are somewhere on this floor, so they count everywhere
+	return 1.0 if total == 0.0 else clampf(points / total - 0.03 * float(local_debt)
+		- 0.02 * float(cable_debt), 0.0, 1.0)
 
 func floor_tidiness() -> float:
 	var racks_here := racks_on(current_site)
@@ -6429,7 +6487,8 @@ func _serialize() -> Dictionary:
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
 		"confirm_commits": confirm_commits, "tickets": tickets, "grey_faults": grey_faults, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
 		"latent_defects": latent_defects, "parts": parts,
-		"parts_auto": parts_auto, "cable_debt": cable_debt, "duties": duties, "change_window": change_window,
+		"parts_auto": parts_auto, "cable_debt": cable_debt,
+		"cabling_documented": cabling_documented, "duties": duties, "change_window": change_window,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -6773,6 +6832,7 @@ func _apply(data: Dictionary) -> void:
 	duties = data.get("duties", {})
 	change_window = data.get("change_window", {})
 	cable_debt = int(data.get("cable_debt", 0))
+	cabling_documented = bool(data.get("cabling_documented", false))
 	packaging = int(data.get("packaging", 0))
 	firmware_bugs = data.get("firmware_bugs", {})
 	facility_auto = data.get("facility_auto", {})
