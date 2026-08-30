@@ -608,6 +608,9 @@ func _accent(b: Button) -> Button:
 	return UIW.style_button(b, "primary")
 
 
+func _on_off(on: bool) -> String:
+	return Loc.t("settings.on") if on else Loc.t("settings.off")
+
 func _section(text: String) -> Label:
 	return UIW.make_section(text)
 
@@ -3398,18 +3401,18 @@ func _build_menu() -> void:
 	var t := _header(v, func() -> void: menu_overlay.visible = false)
 	t.text = "Packet Empire"
 	var resume := Button.new()
-	resume.text = "Resume"
+	resume.text = Loc.t("menu.resume")
 	_accent(resume)
 	resume.pressed.connect(func() -> void: menu_overlay.visible = false)
 	v.add_child(resume)
 	var save := Button.new()
-	save.text = "Save game"
+	save.text = Loc.t("menu.save")
 	save.pressed.connect(func() -> void:
 		Game.save_game()
 		menu_overlay.visible = false)
 	v.add_child(save)
 	var save_as := Button.new()
-	save_as.text = "Save to slot…"
+	save_as.text = Loc.t("menu.save_as")
 	save_as.pressed.connect(func() -> void:
 		var opts: Array = []
 		for i in Game.SLOTS:
@@ -3422,14 +3425,14 @@ func _build_menu() -> void:
 			hud_toast("Saved to slot %d." % (id + 1), true)))
 	v.add_child(save_as)
 	var title_btn := Button.new()
-	title_btn.text = "Save and return to title"
+	title_btn.text = Loc.t("menu.to_title")
 	title_btn.pressed.connect(func() -> void:
 		Game.save_game()
 		menu_overlay.visible = false
 		get_parent().show_title())
 	v.add_child(title_btn)
 	var scen_btn := Button.new()
-	scen_btn.text = "Scenarios…"
+	scen_btn.text = Loc.t("menu.scenarios")
 	scen_btn.tooltip_text = "Authored situations to work through; your own datacenter waits for you"
 	scen_btn.pressed.connect(func() -> void:
 		var opts: Array = []
@@ -3442,7 +3445,7 @@ func _build_menu() -> void:
 			_show_scenario_banner()))
 	v.add_child(scen_btn)
 	var sandbox_btn := Button.new()
-	sandbox_btn.text = "Sandbox mode"
+	sandbox_btn.text = Loc.t("menu.sandbox")
 	sandbox_btn.tooltip_text = "Free hardware, no bills, no events: somewhere to try an idea"
 	sandbox_btn.pressed.connect(func() -> void:
 		Game.sandbox = not Game.sandbox
@@ -3453,16 +3456,16 @@ func _build_menu() -> void:
 		_refresh_money())
 	v.add_child(sandbox_btn)
 	var prefs_btn := Button.new()
-	prefs_btn.text = "Settings…"
+	prefs_btn.text = Loc.t("menu.settings")
 	prefs_btn.pressed.connect(func() -> void:
 		_menu(prefs_btn, [
-			"Fullscreen: %s" % ("on" if Prefs.fullscreen else "off"),
-			"Interface scale: %d%%" % int(Prefs.ui_scale * 100),
-			"Colourblind-friendly status colours: %s" % ("on" if Prefs.colourblind else "off"),
-			"Sound: %s" % ("on" if Prefs.sound else "off"),
-			"Reduced motion: %s" % ("on" if Prefs.reduced_motion else "off"),
-			"Full toolbox from start: %s" % ("on" if Prefs.show_everything else "off"),
-			"Language: %s" % Loc.language_label(Prefs.language),
+			"%s: %s" % [Loc.t("settings.fullscreen"), _on_off(Prefs.fullscreen)],
+			"%s: %d%%" % [Loc.t("settings.scale"), int(Prefs.ui_scale * 100)],
+			"%s: %s" % [Loc.t("settings.colourblind"), _on_off(Prefs.colourblind)],
+			"%s: %s" % [Loc.t("settings.sound"), _on_off(Prefs.sound)],
+			"%s: %s" % [Loc.t("settings.motion"), _on_off(Prefs.reduced_motion)],
+			"%s: %s" % [Loc.t("settings.toolbox"), _on_off(Prefs.show_everything)],
+			"%s: %s" % [Loc.t("settings.language"), Loc.language_label(Prefs.language)],
 		], func(id: int) -> void:
 			match id:
 				0:
@@ -3491,7 +3494,7 @@ func _build_menu() -> void:
 			hud_toast("Setting applied.", true)))
 	v.add_child(prefs_btn)
 	var diff_btn := Button.new()
-	diff_btn.text = "Difficulty…"
+	diff_btn.text = Loc.t("menu.difficulty")
 	diff_btn.pressed.connect(func() -> void:
 		var opts: Array = []
 		for i in Game.DIFFICULTIES.size():
@@ -3596,7 +3599,7 @@ func _build_menu() -> void:
 					bool(result["solved"]))))
 	v.add_child(chal_btn)
 	var quit := Button.new()
-	quit.text = "Save & quit"
+	quit.text = Loc.t("menu.quit")
 	quit.pressed.connect(func() -> void:
 		Game.save_game()
 		get_tree().quit())
@@ -4138,6 +4141,12 @@ func _rebuild_localised() -> void:
 	## be restarted and nothing is left in the old language.
 	welcome_overlay.queue_free()
 	_build_welcome()
+	# the system menu is where the language was changed from: it must not be
+	# the one panel left in the old one
+	var menu_was := menu_overlay.visible
+	menu_overlay.queue_free()
+	_build_menu()
+	menu_overlay.visible = menu_was
 	_refresh_tutorial()
 	_refresh_contracts()
 	if ops_overlay.visible:

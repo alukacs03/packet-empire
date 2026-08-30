@@ -3293,6 +3293,9 @@ static func run() -> int:
 		"language: the title screen and its settings are translated, not only the welcome card")
 	Loc.language = "en"
 	check(Loc.t("title.new") == "New game", "language: and English is still English")
+	Loc.language = "hu"
+	check(Loc.t("menu.quit") == "Mentés és kilépés" and Loc.t("settings.on") == "be",
+		"language: the menu a player opens with Esc is translated too")
 	Loc.language = "pseudo"
 	var pseudo_line := Loc.t("title.continue.sub", {"company": "Packet Empire", "cycle": 12})
 	check(not pseudo_line.contains("{company}") and pseudo_line.contains("12"),
