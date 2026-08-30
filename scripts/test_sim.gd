@@ -3017,6 +3017,22 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# carrying the phone for months is how a good engineer is lost slowly
+	var oc_staff := Game.staff.duplicate(true)
+	Game.staff = [{"name": "Rota Rita", "role": "noc", "skill": 3, "salary": 200,
+		"morale": 80, "shift": "day", "hired_cycle": 0}]
+	Game.set_oncall("Rota Rita")
+	check(Game.oncall_stint() == 0, "on call: a stint starts the cycle they pick it up")
+	Game.cycle += Game.ONCALL_STINT
+	var oc_morale := int(Game.staff[0]["morale"])
+	Game.oncall_tick()
+	check(int(Game.staff[0]["morale"]) < oc_morale,
+		"on call: a long stretch without a break wears them down")
+	Game.set_oncall("")
+	check(Game.oncall_stint() == 0, "on call: and handing it over clears it")
+	Game.cycle -= Game.ONCALL_STINT
+	Game.staff = oc_staff
+
 	# a cause the floor bears out is worth more than a convenient one
 	var pm_monitors := Game.monitors.duplicate(true)
 	Game.monitors = []

@@ -301,6 +301,7 @@ var rmas: Array = []  # dead units in transit, and what is coming back
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var oncall := ""         # who is carrying the phone this rota, if anyone
+var oncall_since := -1   # the cycle they picked it up, so a long stint can tell
 var callout_who := ""    # who was phoned out of hours, if anyone
 var callout_until := -1  # the last cycle they are counted as being on the floor
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
@@ -958,15 +959,40 @@ func callout_ready() -> bool:
 			return true
 	return false
 
+const ONCALL_STINT := 12  # cycles before carrying the phone starts to tell
+
+func oncall_stint() -> int:
+	## How long the same person has been reachable without a break.
+	if oncall == "" or oncall_since < 0:
+		return 0
+	return maxi(0, cycle - oncall_since)
+
+func oncall_tick() -> void:
+	## Nobody minds carrying the phone. Everybody minds carrying it for two
+	## months, and that is how a good engineer is lost slowly.
+	if oncall == "":
+		return
+	var who := Staff.by_name(oncall)
+	if who.is_empty():
+		oncall = ""
+		return
+	var stint := oncall_stint()
+	if stint > 0 and stint % ONCALL_STINT == 0:
+		who["morale"] = maxi(0, int(who.get("morale", 70)) - 4)
+		log_event("ROTA: %s has been on call for %d cycles without a break. It is starting to tell."
+			% [oncall, stint])
+
 func set_oncall(name: String) -> String:
 	## One person carries the phone. It is paid for, and it is why a call-out
 	## at three in the morning is an arrangement rather than an imposition.
 	if name == "":
 		oncall = ""
+		oncall_since = -1
 		return ""
 	if Staff.by_name(name).is_empty():
 		return "nobody by that name works here"
 	oncall = name
+	oncall_since = cycle
 	log_event("ROTA: %s is on call. The retainer is $%d a cycle." % [name, Staff.ONCALL_RETAINER])
 	return ""
 
@@ -8430,6 +8456,7 @@ func sla_tick() -> void:
 	lockout_tick()
 	ticket_tick()
 	call_tick()
+	oncall_tick()
 	dr_tick()
 	dr_request_tick()
 	handover_tick()
@@ -9385,6 +9412,7 @@ func _serialize() -> Dictionary:
 		"sandbox": sandbox, "blueprints": blueprints,
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"callout_who": callout_who, "callout_until": callout_until, "oncall": oncall,
+		"oncall_since": oncall_since,
 		"night_call": night_call, "handover": handover, "dr_test": dr_test,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
@@ -9727,6 +9755,7 @@ func _apply(data: Dictionary) -> void:
 	maintenance_until = int(data.get("maintenance_until", -1))
 	maintenance_used = int(data.get("maintenance_used", 0))
 	oncall = String(data.get("oncall", ""))
+	oncall_since = int(data.get("oncall_since", -1))
 	night_call = data.get("night_call", {})
 	handover = data.get("handover", {})
 	dr_test = data.get("dr_test", {})
