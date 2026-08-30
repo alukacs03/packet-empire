@@ -165,6 +165,31 @@ func _resize_crew() -> void:
 		add_child(p)
 		people.append(p)
 
+func _quiet_spot(idx: int) -> Vector2:
+	## With nothing broken, people are still somewhere for a reason: waiting on
+	## the dock when there are crates, tidying a cabinet that needs it, standing
+	## near the door in the small hours, and otherwise walking the aisle.
+	var g: Vector2i = Game.grid_size()
+	if not Game.crates_waiting().is_empty() and idx % 2 == 0:
+		return Iso.tile_to_world(Vector2i(0, maxi(0, g.y - 1))) + Vector2(-60, 20)
+	if Game.day_slot() in [6, 7, 0, 1]:
+		# the small hours with nothing broken: whoever is in gathers near the
+		# door rather than wandering an empty room
+		return Iso.tile_to_world(Vector2i(0, 0)) + Vector2(-30.0 + idx % 3 * 24.0, 26.0)
+	var untidiest: Net.Rack = null
+	var worst := 1.0
+	for r: Net.Rack in Game.racks_on(Game.current_site):
+		var tidy := Game.rack_tidiness(r)
+		if tidy < worst:
+			worst = tidy
+			untidiest = r
+	if untidiest != null and worst < 0.7:
+		var beside := untidiest.tile + Vector2i(1, 1)
+		beside.x = clampi(beside.x, 0, maxi(0, g.x - 1))
+		beside.y = clampi(beside.y, 0, maxi(0, g.y - 1))
+		return Iso.tile_to_world(beside) + Vector2(-20.0 + idx % 3 * 20.0, Iso.TILE_H * 0.375)
+	return _random_spot()
+
 func _random_spot() -> Vector2:
 	var g: Vector2i = Game.grid_size()
 	return Iso.tile_to_world(Vector2i(_rng.randi_range(0, maxi(0, g.x - 1)),
@@ -183,9 +208,19 @@ func _work_spot(idx := 0) -> Vector2:
 				broken.append(r)
 			elif Game.config_dirty(d):
 				untidy.append(r)
-	var pool: Array = broken if not broken.is_empty() else untidy
+	# a cabinet with something happening in it outranks everything else
+	var burning: Array = []
+	for haz: Dictionary in Game.hazards:
+		if int(haz.get("site", 0)) != Game.current_site:
+			continue
+		for r3: Net.Rack in Game.racks_on(Game.current_site):
+			if r3.name == String(haz.get("rack", "")):
+				burning.append(r3)
+	var pool: Array = burning
 	if pool.is_empty():
-		return _random_spot()
+		pool = broken if not broken.is_empty() else untidy
+	if pool.is_empty():
+		return _quiet_spot(idx)
 	# Stable assignment keeps a visible operator attached to the fault they are
 	# depicting; additional crew members fan out across additional cabinets.
 	var r2: Net.Rack = pool[idx % pool.size()]

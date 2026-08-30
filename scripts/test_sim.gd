@@ -8082,6 +8082,44 @@ static func run() -> int:
 	check(not Game.log_contains("ARRIVAL"),
 		"arrival: the demo keeps its own opening")
 	Game.restore(ar_state)
+
+	# --- the crew are where the work is ---
+	var qs_crates := Game.crates.duplicate(true)
+	var qs_hazards := Game.hazards.duplicate(true)
+	var qs_crew := Techs.new()
+	Game.add_child(qs_crew)
+	Game.crates = []
+	Game.hazards = []
+	var qs_rack := Game.add_rack(Vector2i(2, 2))
+	var qs_sw := Game.new_device("sw-8")
+	qs_rack.slots[0] = qs_sw
+	qs_sw.status = "offline"
+	var qs_broken_spot := qs_crew._work_spot(0)
+	check(Iso.world_to_tile(qs_broken_spot).distance_to(qs_rack.tile) <= 2.0,
+		"quiet floor: a dead cabinet is where somebody stands")
+	qs_sw.status = "active"
+	qs_sw.startup = Game.device_config(qs_sw)
+	Game.hazards = [{"kind": "smoke", "rack": qs_rack.name, "site": Game.current_site,
+		"tile": [qs_rack.tile.x, qs_rack.tile.y], "severity": 1, "started": Game.cycle,
+		"detected": true, "zone": [qs_rack.name]}]
+	check(Iso.world_to_tile(qs_crew._work_spot(0)).distance_to(qs_rack.tile) <= 2.0,
+		"quiet floor: and a cabinet with smoke in it outranks everything else")
+	Game.hazards = []
+	Game.crates = [{"model": "srv-1", "shipped": "srv-1", "ordered": Game.cycle,
+		"due": Game.cycle, "arrived": Game.cycle, "checked": false, "damaged": false,
+		"unpack_left": 1}]
+	var qs_dock := qs_crew._quiet_spot(0)
+	var qs_dock_tile := Iso.world_to_tile(qs_dock)
+	check(qs_dock_tile.y >= Game.grid_size().y - 2,
+		"quiet floor: with crates on the dock, somebody is waiting at the dock")
+	Game.crates = []
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 7  # the small hours
+	var qs_night := qs_crew._quiet_spot(0)
+	check(qs_night.distance_to(Iso.tile_to_world(Vector2i(0, 0))) < 120.0,
+		"quiet floor: at three in the morning whoever is in stays near the door")
+	Game.crates = qs_crates
+	Game.hazards = qs_hazards
+	qs_crew.queue_free()
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)
