@@ -184,6 +184,25 @@ static func guided_first_lead() -> Dictionary:
 		"attempts": 0,
 	}
 
+static func kiskacsa_referral_lead() -> Dictionary:
+	## A fixed premium follow-on makes trust tangible: it asks for a firewall
+	## and a new protected host, not just another paragraph of praise.
+	return {
+		"id": "lead_story_madaras",
+		"customer": "Madaras Játék Kft",
+		"kind": "secure_host",
+		"ctype": "enterprise",
+		"stage": "lead",
+		"heard": "Kiskacsa gave them your number after you kept the shop informed through its first outage",
+		"size": 310,
+		"sla": 1,
+		"params": {"ip": "10.42.24.10"},
+		"load": 260,
+		"public": false,
+		"ttl": 12,
+		"story_referral": "kiskacsa",
+	}
+
 static func cost_to_serve(lead: Dictionary) -> Dictionary:
 	## An honest estimate, not an oracle. It amortises unavoidable hardware over
 	## the initial 18-cycle term and leaves the customer's hidden budget hidden.

@@ -109,6 +109,7 @@ var mastered_contracts: Array = []
 var active_contract_debrief := {}
 var feature_intros_seen: Array = []  # one-time authored handoffs for newly revealed tools
 var feature_discovery_trace := {}  # counts/cycles only; never player-authored content
+var customer_arcs := {}  # stable customer id -> remembered story beats and outcomes
 
 const DISCOVERY_FEATURES := ["map", "market", "business", "log", "ops", "expand"]
 const DISCOVERY_IGNORED_CYCLES := 6
@@ -934,6 +935,28 @@ func customer_eye(deal: Dictionary) -> Dictionary:
 		"activity": "Their team is preparing products and waiting for the promised service.",
 		"voice": "“Tell us when it is ready; we would rather launch once than apologise twice.”",
 	}
+	var arc: Dictionary = customer_arcs.get("kiskacsa", {})
+	match String(arc.get("beat", "arrival")):
+		"arrival":
+			eye["relationship"] = "ARRIVAL  /  FIRST PROMISE"
+			var attempts := int(arc.get("proposal_attempts", 0))
+			eye["memory"] = ("They remember that you revised the proposal instead of walking away."
+				if attempts > 0 else "They chose you for the first launch and are watching how you operate.")
+		"complication":
+			eye["relationship"] = "COMPLICATION  /  FIRST OUTAGE"
+			eye["memory"] = ("You told them what was happening before touching the network."
+				if guided_outage.has("status_cycle") else "They are still waiting to hear what is happening.")
+		"recovery":
+			eye["relationship"] = "RECOVERY  /  PROVING THE FIX"
+			eye["memory"] = "They remember the %s you left behind. Trust now depends on several quiet, healthy cycles." \
+				% _kiskacsa_resilience_name(String(arc.get("resilience", "improvement")))
+		"payoff":
+			if String(arc.get("outcome", "")) == "trusted":
+				eye["relationship"] = "PAYOFF  /  TRUSTED OPERATOR"
+				eye["memory"] = "You communicated, repaired without a rescue, and proved the fix. Kiskacsa has sent Madaras Játék to your door."
+			else:
+				eye["relationship"] = "PAYOFF  /  CAUTIOUS CUSTOMER"
+				eye["memory"] = "Service is steady again, but the assisted restore made them renew cautiously and keep referrals close."
 	if not delivered:
 		return eye
 	if not healthy:
@@ -958,6 +981,16 @@ func customer_eye(deal: Dictionary) -> Dictionary:
 	else:
 		eye["voice"] = "“The next label just printed. That little sound means the shop is working.”"
 	return eye
+
+func _kiskacsa_resilience_name(choice: String) -> String:
+	match choice:
+		"spare":
+			return "cold spare"
+		"monitor":
+			return "permanent monitor"
+		"config":
+			return "saved recovery configuration"
+	return "resilience improvement"
 
 func peak_factor() -> float:
 	return DAY_CURVE.max()
@@ -2179,6 +2212,10 @@ func _maybe_start_guided_outage() -> void:
 		"iface": chosen.name, "peer_device": host.name, "peer_iface": host_iface.name,
 		"monitor_from": source, "target_ip": target_ip, "started_cycle": cycle,
 		"evidence": [], "timeline": []}
+	var arc: Dictionary = customer_arcs.get("kiskacsa", {})
+	arc["beat"] = "complication"
+	arc["outage_cycle"] = cycle
+	customer_arcs["kiskacsa"] = arc
 	chosen.enabled = false
 	_guided_outage_note("cycle %d · service monitor raised an availability alert" % cycle)
 	log_event("FIRST OUTAGE: Kiskacsa is unreachable. A known-safe access port tripped; acknowledge the alert and diagnose from evidence.")
@@ -2276,10 +2313,57 @@ func choose_guided_resilience(choice: String) -> String:
 	guided_outage["choice"] = choice
 	guided_outage["state"] = "complete"
 	stats["guided_outage_complete"] = 1
+	var arc: Dictionary = customer_arcs.get("kiskacsa", {})
+	arc["beat"] = "recovery"
+	arc["communicated"] = guided_outage.has("status_cycle")
+	arc["assisted"] = bool(guided_outage.get("assisted", false))
+	arc["resilience"] = choice
+	arc["recovered_cycle"] = int(guided_outage.get("recovered_cycle", cycle))
+	arc["healthy_after_incident"] = 0
+	customer_arcs["kiskacsa"] = arc
 	log_event("FIRST OUTAGE COMPLETE: calm diagnosis kept Kiskacsa and left the network more resilient.")
 	topology_changed.emit()
 	guided_outage_changed.emit()
 	return ""
+
+func advance_kiskacsa_arc(deal: Dictionary) -> void:
+	## Beat three is earned by the live service staying healthy. Dialogue alone
+	## cannot manufacture trust, and a fresh outage resets the proof clock.
+	var arc: Dictionary = customer_arcs.get("kiskacsa", {})
+	if String(arc.get("beat", "")) != "recovery":
+		return
+	if not bool(deal.get("healthy", false)):
+		arc["healthy_after_incident"] = 0
+		customer_arcs["kiskacsa"] = arc
+		return
+	arc["healthy_after_incident"] = int(arc.get("healthy_after_incident", 0)) + 1
+	if int(arc["healthy_after_incident"]) < 5:
+		customer_arcs["kiskacsa"] = arc
+		return
+	arc["beat"] = "payoff"
+	arc["payoff_cycle"] = cycle
+	var trusted := bool(arc.get("communicated", false)) and not bool(arc.get("assisted", false))
+	if trusted:
+		arc["outcome"] = "trusted"
+		if "Kiskacsa Kft" not in references:
+			references.append("Kiskacsa Kft")
+			reputation = mini(100, reputation + 4)
+		var already_referred := false
+		for lead: Dictionary in leads:
+			if String(lead.get("id", "")) == "lead_story_madaras":
+				already_referred = true
+				break
+		if not already_referred:
+			leads.append(Market.kiskacsa_referral_lead())
+		log_event("RELATIONSHIP: Kiskacsa remembers the honest outage response and five quiet cycles. They will be your reference—and sent Madaras Játék's firewalled hosting job.")
+	else:
+		arc["outcome"] = "cautious"
+		deal["fee"] = maxi(1, int(round(float(int(deal["fee"])) * 0.9)))
+		deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.75)) - 0.2)
+		deal["term"] = mini(int(deal.get("term", 18)), 10)
+		log_event("RELATIONSHIP: Kiskacsa stayed after five healthy cycles, but the assisted restore left them cautious: ten percent less fee and no referral.")
+	customer_arcs["kiskacsa"] = arc
+	topology_changed.emit()
 
 func give_up_guided_outage() -> String:
 	if not guided_outage_active():
@@ -2542,6 +2626,9 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 	if bool(lead.get("guided", false)):
 		deal["guided"] = true
 		deal["delivery_credit"] = int(Market.cost_to_serve(lead)["setup"])
+		customer_arcs["kiskacsa"] = {"beat": "arrival", "arrival_cycle": cycle,
+			"proposal_attempts": int(lead.get("attempts", 0)), "promised_sla": committed_sla,
+			"agreed_fee": price}
 		log_event("DELIVERY RESERVE: Kiskacsa set aside $%d for the server. It cannot be spent on anything else."
 			% int(deal["delivery_credit"]))
 	deals.append(deal)
@@ -3357,6 +3444,8 @@ func sla_tick() -> void:
 		# having it: it goes out as an invoice on the customer's terms
 		raise_invoice(deal, paid)
 		reputation = mini(100, reputation + 1)
+		if bool(deal.get("guided", false)):
+			advance_kiskacsa_arc(deal)
 	_update_reliability_streak(customer_outage_now)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
@@ -3871,6 +3960,7 @@ func _serialize() -> Dictionary:
 		"maintenance_until": maintenance_until, "maintenance_used": maintenance_used,
 		"status_posts": status_posts, "spares": spares,
 		"guided_outage": guided_outage,
+		"customer_arcs": customer_arcs,
 		"feature_intros_seen": feature_intros_seen,
 		"feature_discovery_trace": feature_discovery_trace,
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
@@ -4196,6 +4286,7 @@ func _apply(data: Dictionary) -> void:
 	status_posts = data.get("status_posts", [])
 	spares = data.get("spares", {})
 	guided_outage = data.get("guided_outage", {})
+	customer_arcs = data.get("customer_arcs", {})
 	feature_intros_seen = data.get("feature_intros_seen", [])
 	feature_discovery_trace = _feature_discovery_trace_from_data(data)
 	contract_debriefs = data.get("contract_debriefs", {})

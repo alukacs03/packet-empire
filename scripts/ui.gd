@@ -3841,6 +3841,14 @@ func _customer_eye_card(eye: Dictionary) -> PanelContainer:
 	head.add_child(eyebrow)
 	head.add_child(UIW.make_chip("%s  /  %s" % [String(eye.get("time", "NOW")), state.to_upper()], semantic))
 	box.add_child(_wrap(String(eye.get("identity", "")), 13, UIW.colour("text"), 760))
+	if String(eye.get("relationship", "")) != "":
+		var story := HBoxContainer.new()
+		story.add_theme_constant_override("separation", UIW.space("sm"))
+		box.add_child(story)
+		story.add_child(UIW.make_chip(String(eye["relationship"]), "warning"))
+		var memory := _wrap(String(eye.get("memory", "")), 12, UIW.colour("muted"), 540)
+		memory.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		story.add_child(memory)
 	var pulse := UIW.style_panel(PanelContainer.new(), "surface", "md")
 	box.add_child(pulse)
 	var pulse_box := VBoxContainer.new()

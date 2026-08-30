@@ -3574,6 +3574,8 @@ static func run() -> int:
 	var pl_quarter_profit := Game.quarter_profit
 	var pl_quarter_depreciation := Game.quarter_depreciation
 	var pl_guided_outage := Game.guided_outage.duplicate(true)
+	var pl_customer_arcs := Game.customer_arcs.duplicate(true)
+	var pl_references := Game.references.duplicate(true)
 	var pl_status_posts := Game.status_posts.duplicate(true)
 	var pl_spares := Game.spares.duplicate(true)
 	var pl_monitors := Game.monitors.duplicate(true)
@@ -3583,6 +3585,8 @@ static func run() -> int:
 	Game.invoices = []
 	Game.leads = []
 	Game.deals = []
+	Game.customer_arcs = {}
+	Game.references = []
 	Game.contracts_done = ["guided_a", "guided_b", "guided_c"]
 	Game.stats["guided_first_lead_seen"] = false
 	Game.lead_tick()
@@ -3601,6 +3605,9 @@ static func run() -> int:
 	check(Game.submit_proposal(guided, 1, int(guided["sla"])) == "" and not Game.deals.is_empty(),
 		"guided sales: a revised compliant proposal signs a live delivery deal")
 	var guided_deal: Dictionary = Game.deals[0]
+	check(String(Game.customer_arcs.get("kiskacsa", {}).get("beat", "")) == "arrival" \
+			and int(Game.customer_arcs["kiskacsa"]["proposal_attempts"]) == 1,
+		"customer arc: Kiskacsa remembers that the winning proposal took a patient revision")
 	check(Game.feature_unlocked("market") and not Game.feature_unlocked("business"),
 		"discovery: signing exposes the customer pipeline without prematurely opening the ledger")
 	check(int(guided_deal.get("delivery_credit", 0)) == int(serve["setup"]),
@@ -3664,6 +3671,8 @@ static func run() -> int:
 	check(String(Game.guided_outage.get("state", "")) == "alert" \
 			and Game.guided_outage_iface() != null and not Game.guided_outage_iface().enabled,
 		"guided outage: a deterministic reversible access-port fault raises the first alert")
+	check(String(Game.customer_arcs["kiskacsa"]["beat"]) == "complication",
+		"customer arc: the live service failure becomes Kiskacsa's remembered complication")
 	check(Game.feature_unlocked("log") and Game.feature_unlocked("ops"),
 		"discovery: incident communication and operations appear with the first outage need")
 	check(not bool(guided_deal["healthy"]) and String(guided_deal["payment_state"]) == "suspended",
@@ -3702,6 +3711,11 @@ static func run() -> int:
 	check(Game.choose_guided_resilience("monitor") == "" and Game.monitors.size() == 1 \
 			and int(Game.stats.get("guided_outage_complete", 0)) == 1,
 		"guided outage: the resilience choice leaves a permanent useful improvement")
+	check(String(Game.customer_arcs["kiskacsa"]["beat"]) == "recovery" \
+			and bool(Game.customer_arcs["kiskacsa"]["communicated"]) \
+			and not bool(Game.customer_arcs["kiskacsa"]["assisted"]) \
+			and String(Game.customer_arcs["kiskacsa"]["resilience"]) == "monitor",
+		"customer arc: Kiskacsa remembers communication, self-recovery, and the lasting monitor")
 	check(Game.deals.has(guided_deal) and Game.links.has(Game.link_at(delivery_server.ifaces[0])),
 		"guided outage: completion keeps the customer and reusable topology intact")
 	var customer_live := Game.customer_eye(guided_deal)
@@ -3715,6 +3729,9 @@ static func run() -> int:
 			and "CHECKOUT OFFLINE" in String(customer_down["metric"]) \
 			and "cannot submit" in String(customer_down["activity"]),
 		"customer eye: an outage shows the customer's real consequence, never fake success")
+	Game.advance_kiskacsa_arc(guided_deal)
+	check(int(Game.customer_arcs["kiskacsa"]["healthy_after_incident"]) == 0,
+		"customer arc: another live outage resets the quiet-cycle proof instead of advancing dialogue")
 	guided_deal["healthy"] = true
 	guided_deal["degraded"] = true
 	var customer_slow := Game.customer_eye(guided_deal)
@@ -3722,6 +3739,44 @@ static func run() -> int:
 			and "retry" in String(customer_slow["activity"]).to_lower(),
 		"customer eye: congestion reads as a human symptom rather than only a bandwidth number")
 	guided_deal["degraded"] = false
+	# The same saved recovery can materially diverge. First exercise the assisted
+	# branch on a clone, then restore the real, well-handled incident.
+	var trusted_arc: Dictionary = Game.customer_arcs["kiskacsa"].duplicate(true)
+	var cautious_deal := guided_deal.duplicate(true)
+	var cautious_fee := int(cautious_deal["fee"])
+	Game.customer_arcs["kiskacsa"] = trusted_arc.duplicate(true)
+	Game.customer_arcs["kiskacsa"]["assisted"] = true
+	var leads_before_cautious := Game.leads.duplicate(true)
+	var refs_before_cautious := Game.references.duplicate(true)
+	for _i in 5:
+		Game.advance_kiskacsa_arc(cautious_deal)
+	check(String(Game.customer_arcs["kiskacsa"]["outcome"]) == "cautious" \
+			and int(cautious_deal["fee"]) <= cautious_fee \
+			and int(cautious_deal["term"]) == 10 and float(cautious_deal["loyalty"]) < 0.75 \
+			and Game.leads.size() == leads_before_cautious.size(),
+		"customer arc: assisted recovery keeps Kiskacsa on cautious terms and earns no referral")
+	Game.customer_arcs["kiskacsa"] = trusted_arc
+	Game.leads = leads_before_cautious
+	Game.references = refs_before_cautious
+	var leads_before_trust := Game.leads.size()
+	for _i in 5:
+		Game.advance_kiskacsa_arc(guided_deal)
+	var referral: Dictionary = {}
+	for story_lead: Dictionary in Game.leads:
+		if String(story_lead.get("id", "")) == "lead_story_madaras":
+			referral = story_lead
+			break
+	check(String(Game.customer_arcs["kiskacsa"]["outcome"]) == "trusted" \
+			and "Kiskacsa Kft" in Game.references and Game.leads.size() == leads_before_trust + 1 \
+			and String(referral.get("kind", "")) == "secure_host",
+		"customer arc: five healthy cycles turn good incident work into a premium firewalled referral")
+	var payoff_eye := Game.customer_eye(guided_deal)
+	check("TRUSTED OPERATOR" in String(payoff_eye.get("relationship", "")) \
+			and "Madaras" in String(payoff_eye.get("memory", "")),
+		"customer arc: later customer-eye copy names the trust earned and the door it opened")
+	var arc_payload: Dictionary = JSON.parse_string(Game.snapshot())
+	check(String(arc_payload["customer_arcs"]["kiskacsa"]["outcome"]) == "trusted",
+		"customer arc: the three-beat outcome persists with the campaign")
 	Game.deals = []
 	Game.leads = []
 	Game.money = 100000
@@ -3781,6 +3836,8 @@ static func run() -> int:
 	Game.quarter_profit = pl_quarter_profit
 	Game.quarter_depreciation = pl_quarter_depreciation
 	Game.guided_outage = pl_guided_outage
+	Game.customer_arcs = pl_customer_arcs
+	Game.references = pl_references
 	Game.status_posts = pl_status_posts
 	Game.spares = pl_spares
 	Game.monitors = pl_monitors
