@@ -28,14 +28,21 @@ class Person extends Node2D:
 	var crew: Techs
 	var facing := 1.0
 	var visitor := false  # somebody signed in at the door, not on the payroll
+	var leaving := false  # walking out at the end of a shift, then gone
 
 	func _process(dt: float) -> void:
+		if leaving and position.distance_to(target) <= 2.0:
+			crew.people.erase(self)  # in case anything still holds it
+			queue_free()
+			return
 		if dwell > 0.0:
 			dwell -= dt
 		else:
 			var step := SPEED * dt
 			if position.distance_to(target) <= step:
 				position = target
+				if leaving:
+					return  # already at the door; the check above frees them
 				dwell = crew._rng.randf_range(DWELL.x, DWELL.y)
 				target = crew._visitor_spot(idx) if visitor else crew._work_spot(idx)
 			else:
@@ -166,14 +173,16 @@ func _visitor_spot(idx: int) -> Vector2:
 func _resize_crew() -> void:
 	var want := _crew_size() + Game.visitors.size()
 	while people.size() > want:
+		# a shift ends by walking out of the room, not by blinking out of it
 		var gone: Person = people.pop_back()
-		gone.queue_free()
+		gone.leaving = true
+		gone.dwell = 0.0
+		gone.target = _door_spot(gone.idx)
 	while people.size() < want:
 		var p := Person.new()
 		p.crew = self
 		p.idx = people.size()
-		# start people apart: two figures spawning on the same tile look like one
-		p.position = _random_spot() + Vector2(-30.0 + p.idx % 3 * 30.0, 0.0)
+		p.position = _door_spot(p.idx)  # everybody comes in through the door
 		p.target = _work_spot(p.idx)
 		p.phase = _rng.randf() * TAU
 		var spawn_tile := Iso.world_to_tile(p.position)
@@ -189,6 +198,10 @@ func _resize_crew() -> void:
 		person.visitor = i >= _crew_size()
 		person.kit = Color("8f9aa4") if person.visitor else (
 			Color("39a6bc") if i % 2 == 0 else Color("d98b45"))
+
+func _door_spot(idx: int) -> Vector2:
+	## The way in and out, which is also where people wait in the small hours.
+	return Iso.tile_to_world(Vector2i(0, 0)) + Vector2(-46.0 + float(idx % 3) * 22.0, 22.0)
 
 func _quiet_spot(idx: int) -> Vector2:
 	## With nothing broken, people are still somewhere for a reason: waiting on
