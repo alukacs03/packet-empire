@@ -7562,6 +7562,69 @@ static func run() -> int:
 		% "; ".join(PackedStringArray(bal_report)))
 	check(Game.pl_totals.has("power") and int(Game.pl_totals["power"]) < 0,
 		"balance: the run-to-date profit and loss says where the money went, per system")
+
+	# --- an old save still loads ---
+	# what a save looked like several dozen fields ago: everything since has to
+	# default rather than fail
+	var old_save := {
+		"money": 3210, "stage": 1, "cycle": 42, "company_name": "Legacy Networks",
+		"demo": false, "difficulty": 1, "reputation": 61, "debt": 0,
+		"stats": {"earned": 8800, "incidents": 2, "faults": 5, "contracts": 3, "deals": 2},
+		"contracts_done": ["rackup", "first_ping"], "offers": [], "deals": [],
+		"events": ["cycle 41: an old event"], "incidents_seen": {},
+		"counters": {"switch": 2, "server": 3, "router": 1, "firewall": 0, "uplink": 0,
+			"cooling": 0, "loadbalancer": 0, "ap": 0, "console": 0, "rack": 1, "mac": 9},
+		"sites": [{"name": "Home floor", "grid": [7, 7], "kind": "own"}], "current_site": 0,
+		"racks": [{"name": "R1", "tile": [2, 2], "site": 0,
+			"slots": ["sw_old", "srv_old", null, null, null, null, null, null],
+			"blanked": [], "note": {}}],
+		"devices": {
+			"sw_old": {"type": "switch", "model": "sw-8", "name": "sw_old", "status": "active",
+				"vlans": {"1": "default"}, "ifaces": [
+					{"name": "Ethernet1", "mac": "02:50:45:00:00:01", "enabled": true,
+						"mode": "access", "untagged_vlan": 1, "ips": [], "note": {}},
+					{"name": "Management1", "mac": "02:50:45:00:00:02", "enabled": true,
+						"mode": "routed", "untagged_vlan": 1, "ips": [], "note": {}}],
+				"note": {}},
+			"srv_old": {"type": "server", "model": "srv-1", "name": "srv_old", "status": "active",
+				"ifaces": [{"name": "eth0", "mac": "02:50:45:00:00:03", "enabled": true,
+					"mode": "routed", "untagged_vlan": 1, "ips": ["10.7.0.10/24"], "note": {}}],
+				"note": {}}},
+		"links": [["srv_old", "eth0", "sw_old", "Ethernet1"]]}
+	var live_before := Game.snapshot()
+	Game.restore(JSON.stringify(old_save))
+	check(Game.company_name == "Legacy Networks" and Game.money == 3210 \
+			and Game.racks.size() == 1 and Game.all_devices().size() == 2,
+		"save compat: a save written before three dozen fields existed still loads its world")
+	check(Game.facility.is_empty() and Game.hazards.is_empty() and Game.protection.is_empty() \
+			and Game.identity == "" and Game.finale.is_empty() and Game.tickets.is_empty() \
+			and Game.parts_auto and Game.access_policy == "open",
+		"save compat: everything added since defaults instead of failing")
+	var old_link_ok := false
+	for old_l: Net.Link in Game.links:
+		if old_l.a.dev.name == "srv_old" and old_l.b.dev.name == "sw_old":
+			old_link_ok = true
+	check(old_link_ok and Game.links.size() == 1,
+		"save compat: cabling written without a note field still restores")
+	Game.sandbox = true  # tick it without the economy inventing new work
+	Game.sla_tick()
+	Game.sandbox = false
+	check(Game.cycle == 43,
+		"save compat: and the world ticks afterwards rather than falling over")
+	var round_trip := Game.snapshot()
+	Game.restore(round_trip)
+	check(Game.company_name == "Legacy Networks" and Game.all_devices().size() == 2,
+		"save compat: saving it again keeps everything the old save carried")
+	# a payload missing a field the current build writes is not fatal either
+	var trimmed: Dictionary = JSON.parse_string(round_trip)
+	trimmed.erase("pl_totals")
+	trimmed.erase("renewals")
+	trimmed.erase("skill_log")
+	Game.restore(JSON.stringify(trimmed))
+	check(Game.pl_totals.is_empty() and Game.renewals.is_empty() and Game.skill_log.is_empty() \
+			and Game.company_name == "Legacy Networks",
+		"save compat: a field removed from the payload reads as its default, not as a crash")
+	Game.restore(live_before)
 	var parts_total_before := int(Game.pl_totals.get("parts", 0))
 	Game.money = 5000
 	Game.spend_on("parts", 60)

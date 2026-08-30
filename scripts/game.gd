@@ -8603,9 +8603,11 @@ func _apply(data: Dictionary) -> void:
 		var sd: Dictionary = data["devices"][dname]
 		var d := Net.NDevice.new(sd["type"], sd["name"])
 		d.model = sd.get("model", TYPE_DEFAULTS[sd["type"]])
-		d.status = sd["status"]
-		d.ip_forwarding = sd["ip_forwarding"]
-		d.static_routes = sd["static_routes"]
+		# every field defaults: a save written before one existed still loads
+		d.status = String(sd.get("status", "active"))
+		d.ip_forwarding = bool(sd.get("ip_forwarding", d.type in ["router", "firewall", "uplink",
+			"loadbalancer"]))
+		d.static_routes = sd.get("static_routes", [])
 		d.services = sd.get("services", {})
 		d.acls = sd.get("acls", [])
 		d.stateful = sd.get("stateful", false)
@@ -8635,14 +8637,14 @@ func _apply(data: Dictionary) -> void:
 		d.ntp_server = sd.get("ntp_server", "")
 		d.note = sd.get("note", {}).duplicate(true)
 		d.resolver = sd.get("resolver", "")
-		for vid in sd["vlans"]:
+		for vid in sd.get("vlans", {}):
 			d.vlans[int(vid)] = sd["vlans"][vid]
-		for si in sd["ifaces"]:
-			var i := Net.Iface.new(d, si["name"], si["mac"])
-			i.enabled = si["enabled"]
-			i.mtu = int(si["mtu"])
-			i.mode = si["mode"]
-			i.untagged_vlan = int(si["untagged_vlan"])
+		for si in sd.get("ifaces", []):
+			var i := Net.Iface.new(d, String(si["name"]), String(si.get("mac", _new_mac())))
+			i.enabled = bool(si.get("enabled", true))
+			i.mtu = int(si.get("mtu", 1500))
+			i.mode = String(si.get("mode", "access"))
+			i.untagged_vlan = int(si.get("untagged_vlan", 1))
 			for tv in si.get("tagged_vlans", []):
 				i.tagged_vlans.append(int(tv))
 			i.nat = si.get("nat", "")
@@ -8668,7 +8670,7 @@ func _apply(data: Dictionary) -> void:
 			i.wg_peers = si.get("wg_peers", [])
 			i.parent = si.get("parent", "")
 			i.dot1q = int(si.get("dot1q", 0))
-			i.ips = si["ips"]
+			i.ips = si.get("ips", [])
 			i.note = si.get("note", {}).duplicate(true)
 			d.ifaces.append(i)
 		if d.type == "switch":
@@ -8687,7 +8689,7 @@ func _apply(data: Dictionary) -> void:
 		r.note = rd.get("note", {}).duplicate(true)
 		for blanked_slot in rd.get("blanked", []):
 			r.blanked[int(blanked_slot)] = true
-		for si in rd["slots"].size():
+		for si in rd.get("slots", []).size():
 			if rd["slots"][si] != null:
 				var loaded_dev: Net.NDevice = by_name[rd["slots"][si]]
 				r.slots[si] = loaded_dev
