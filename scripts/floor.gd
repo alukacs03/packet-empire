@@ -333,7 +333,7 @@ func _draw_reliability_sign(progress: float) -> void:
 	## weather. It is deliberately not a HUD stat: the team has to walk past it.
 	var rect := Rect2(-286, -136, 174, 70)
 	var accent := UIW.colour("warm").lerp(UIW.colour("accent"), progress)
-	var active := Game.customer_outage_active
+	var active := Game.customer_down_now()
 	if active:
 		accent = Color("ff5b50")
 	var clock := Time.get_ticks_msec() / 1000.0

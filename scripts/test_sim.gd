@@ -2983,6 +2983,15 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	# the sign on the wall never contradicts the brief in the corner
+	var sign_guided := Game.guided_outage.duplicate(true)
+	Game.customer_outage_active = false
+	Game.guided_outage = {"state": "reported"}
+	check(Game.customer_down_now() and Game.cycles_since_customer_outage() == 0,
+		"sign: a teaching outage is still a customer being down, and stops the streak")
+	Game.guided_outage = {}
+	check(not Game.customer_down_now(), "sign: and with nothing down the streak runs again")
+	Game.guided_outage = sign_guided
 	check(Game.sentence("the panel is showing smoke in R1") == "The panel is showing smoke in R1",
 		"copy: a sentence gets one capital letter, and R1 stays R1")
 	check(not Game.night_call.is_empty() and String(Game.night_call["reason"]).contains("smoke"),

@@ -8299,10 +8299,15 @@ func sla_tick() -> void:
 	if cycle % 5 == 0:
 		save_game()
 
+func customer_down_now() -> bool:
+	## Somebody's service is off the air, whatever put it there: the flag the
+	## economy sets, or the teaching outage that is just as real to look at.
+	return customer_outage_active or guided_outage_active()
+
 func cycles_since_customer_outage() -> int:
 	## A streak starts at founding and resets only when an established live
 	## customer service is actually unavailable. Alerts and congestion do not.
-	return 0 if customer_outage_active else maxi(0, cycle - last_customer_outage_cycle)
+	return 0 if customer_down_now() else maxi(0, cycle - last_customer_outage_cycle)
 
 func _update_reliability_streak(outage_now: bool) -> void:
 	var current := cycles_since_customer_outage()
