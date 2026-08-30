@@ -3017,6 +3017,26 @@ static func run() -> int:
 	Game.current_site = fac_here
 	Game.facility = fac_state
 
+	# protection is fitted in a room, not in a company
+	var prot_state := Game.protection.duplicate(true)
+	var prot_sites := Game.sites.duplicate(true)
+	var prot_here := Game.current_site
+	Game.protection = {}
+	Game.current_site = 0
+	Game.buy_protection("detection")
+	check(Game.protection_ready("detection"), "protection: fitted on the floor that paid for it")
+	Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	Game.current_site = 1
+	check(not Game.protection_ready("detection"),
+		"protection: and not in a building three hundred kilometres away")
+	check(Game.buy_protection("detection") == "",
+		"protection: the second room can buy its own")
+	check(Game.protection_ready("detection", 1) and Game.protection_ready("detection", 0),
+		"protection: and then both rooms have it")
+	Game.protection = prot_state
+	Game.sites = prot_sites
+	Game.current_site = prot_here
+
 	# --- proving the redundancy on a day you chose ---
 	var dr_deals := Game.deals.duplicate(true)
 	var dr_haz := Game.hazards.duplicate(true)

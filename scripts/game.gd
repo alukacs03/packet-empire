@@ -2690,8 +2690,19 @@ const PROTECTION := {
 		"blurb": "Water goes somewhere other than into the bottom of a rack."},
 }
 
-func protection_ready(kind: String) -> bool:
-	var p: Dictionary = protection.get(kind, {})
+func protection_key(kind: String, site := -1) -> String:
+	## Fitted in a room, not in a company. An existing save keeps what it paid
+	## for on the floor it bought it for.
+	var idx := current_site if site < 0 else site
+	if idx == 0 and protection.has(kind):
+		return kind
+	return kind if idx == 0 else "%d|%s" % [idx, kind]
+
+func protection_fitted(kind: String, site := -1) -> bool:
+	return bool(protection.get(protection_key(kind, site), {}).get("installed", false))
+
+func protection_ready(kind: String, site := -1) -> bool:
+	var p: Dictionary = protection.get(protection_key(kind, site), {})
 	if p.is_empty() or not bool(p.get("installed", false)):
 		return false
 	# installed is not the same as maintained
@@ -2700,21 +2711,21 @@ func protection_ready(kind: String) -> bool:
 func buy_protection(kind: String) -> String:
 	if not PROTECTION.has(kind):
 		return "there is no such system"
-	if bool(protection.get(kind, {}).get("installed", false)):
-		return "%s is already fitted" % PROTECTION[kind]["label"]
+	if protection_fitted(kind):
+		return "%s is already fitted on this floor" % PROTECTION[kind]["label"]
 	if not spend_on("fire and water protection", int(PROTECTION[kind]["cost"])):
 		return "%s costs $%d" % [PROTECTION[kind]["label"], int(PROTECTION[kind]["cost"])]
-	protection[kind] = {"installed": true, "serviced_cycle": cycle}
+	protection[protection_key(kind)] = {"installed": true, "serviced_cycle": cycle}
 	log_event("FACILITY: %s fitted. It is only worth what its last inspection says it is."
 		% PROTECTION[kind]["label"])
 	return ""
 
 func service_protection(kind: String) -> String:
-	if not bool(protection.get(kind, {}).get("installed", false)):
-		return "that is not fitted"
+	if not protection_fitted(kind):
+		return "that is not fitted on this floor"
 	if not spend_on("facility", int(PROTECTION[kind]["cost"]) / 6):
 		return "the inspection costs $%d" % (int(PROTECTION[kind]["cost"]) / 6)
-	protection[kind]["serviced_cycle"] = cycle
+	protection[protection_key(kind)]["serviced_cycle"] = cycle
 	log_event("FACILITY: %s inspected and signed off." % PROTECTION[kind]["label"])
 	return ""
 
@@ -2730,14 +2741,14 @@ func hazard_risk(r: Net.Rack) -> float:
 		if d != null:
 			oldest = maxi(oldest, device_age(d))
 	risk += 0.25 * clampf(float(oldest - 60) / 80.0, 0.0, 1.0)
-	risk += 0.25 * clampf(float(facility_overdue("aircon")) / 60.0, 0.0, 1.0)
+	risk += 0.25 * clampf(float(facility_overdue("aircon", int(r.site))) / 60.0, 0.0, 1.0)
 	if not bool(site_feeds(int(r.site)).get("A", true)) or not bool(site_feeds(int(r.site)).get("B", true)):
 		risk += 0.15
 	return clampf(risk, 0.0, 1.0)
 
 func start_hazard(r: Net.Rack, kind: String) -> Dictionary:
 	var haz := {"kind": kind, "rack": r.name, "site": int(r.site), "tile": [r.tile.x, r.tile.y],
-		"severity": 1, "started": cycle, "detected": protection_ready("detection"),
+		"severity": 1, "started": cycle, "detected": protection_ready("detection", int(r.site)),
 		"zone": [r.name]}
 	hazards.append(haz)
 	if bool(haz["detected"]):
@@ -2779,12 +2790,13 @@ func hazard_tick() -> void:
 		if rack == null:
 			hazards.erase(haz)
 			continue
-		if not bool(haz["detected"]) and protection_ready("detection"):
+		var haz_site := int(haz.get("site", 0))
+		if not bool(haz["detected"]) and protection_ready("detection", haz_site):
 			haz["detected"] = true
 			log_event("ALARM: the panel has picked up the %s in %s."
 				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
 		var responded := false
-		if String(haz["kind"]) in ["smoke", "fire"] and protection_ready("suppression") \
+		if String(haz["kind"]) in ["smoke", "fire"] and protection_ready("suppression", haz_site) \
 				and bool(haz["detected"]):
 			responded = true
 			for d in rack.slots:
@@ -2792,7 +2804,8 @@ func hazard_tick() -> void:
 					d.status = "offline"  # suppression shuts the cabinet down doing its job
 			log_event("SUPPRESSION: the system discharged in %s. Everything in that cabinet is down, and the building is not on fire."
 				% haz["rack"])
-		elif String(haz["kind"]) == "water" and protection_ready("drainage") and bool(haz["detected"]):
+		elif String(haz["kind"]) == "water" and protection_ready("drainage", haz_site) \
+				and bool(haz["detected"]):
 			responded = true
 			log_event("DRAINAGE: the water went under the floor and out, which is what it is for.")
 		if responded:
