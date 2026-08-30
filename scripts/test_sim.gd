@@ -3039,6 +3039,15 @@ static func run() -> int:
 	fs_old.erase("handovers_read")
 	check(int(Game.finale_score(fs_old)["total"]) > 0,
 		"report: a snapshot written before any of that still scores")
+	var fs_never := fs_base.duplicate(true)
+	fs_never["failovers_passed"] = 0
+	fs_never["oncall_covered"] = 0
+	fs_never["sites"] = 2
+	fs_never["staff"] = 2
+	var fs_said: Array = Game.finale_callouts(fs_never)["losses"]
+	check("two rooms, and the failover never once tested" in fs_said \
+			and "nobody was ever asked to carry the phone" in fs_said,
+		"report: and says plainly what was never practised")
 
 	# --- how exposed a route is, before the digger arrives ---
 	var cdx_circuits := Game.circuits.duplicate(true)

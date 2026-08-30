@@ -4881,6 +4881,10 @@ func finale_callouts(snap: Dictionary) -> Dictionary:
 		losses.append("documentation that stopped describing the floor")
 	if int(snap.get("uptime", 0)) < 95:
 		losses.append("%d%% uptime across the run" % int(snap.get("uptime", 0)))
+	if int(snap.get("failovers_passed", 0)) == 0 and int(snap.get("sites", 1)) > 1:
+		losses.append("two rooms, and the failover never once tested")
+	if int(snap.get("oncall_covered", 0)) == 0 and int(snap.get("staff", 0)) > 0:
+		losses.append("nobody was ever asked to carry the phone")
 	return {"strength": best, "losses": losses}
 
 const HISTORY_PATH := "user://run_history.json"
