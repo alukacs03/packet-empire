@@ -101,8 +101,10 @@ The network is half the job. The other half is the company around it:
   changes, hints and collateral.
 - **Export.** The topology exports as a Mermaid diagram and a plain listing;
   a broken network exports as a puzzle somebody else can load and hand back.
-- **Language.** English and Hungarian, switchable at runtime, with a
-  pseudo-locale for finding clipped layouts.
+- **Language.** A catalogue with English and Hungarian, switchable at runtime
+  from the title screen or in game, and a pseudo-locale for finding clipped
+  layouts. The title, settings and onboarding copy are translated; the
+  operational panels are still English, and the catalogue is where to add them.
 
 ## What's simulated
 
