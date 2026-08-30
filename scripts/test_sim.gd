@@ -197,6 +197,24 @@ static func ui_smoke(world: Node2D) -> int:
 		# smallest window the game is played in rather than the card minimum
 		check(widest <= 1000.0, "ui: the %s tab fits comfortably in a 1280-wide window (%d px)"
 			% [company_tab, int(widest)])
+	# every panel a player opens, measured against the smallest window we claim
+	# to support: a row wider than that runs off the screen with no way back
+	for panel_case in [["operations", ui.ops_box], ["slots", ui.slot_box],
+			["interface", ui.if_state_box], ["search", ui.search_box],
+			["tutorial", ui.tutorial_box]]:
+		var panel_box := panel_case[1] as Control
+		if panel_box == null:
+			continue
+		var panel_widest := 0.0
+		var panel_worst := ""
+		for panel_row in panel_box.get_children():
+			if panel_row is Control:
+				var w := (panel_row as Control).get_combined_minimum_size().x
+				if w > panel_widest:
+					panel_widest = w
+					panel_worst = String(panel_row.name)
+		check(panel_widest <= 1000.0, "ui: the %s panel fits a 1280-wide window (%d px, %s)"
+			% [panel_case[0], int(panel_widest), panel_worst])
 	Game.staff = smoke_staff
 	Game.oncall = ""
 	ui.close_contracts()
