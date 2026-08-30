@@ -6054,6 +6054,111 @@ static func run() -> int:
 		"dns64: AAAA records and the DNS64 setting are visible in the zone listing")
 	dz_rcli.exec("dns64 64:ff9b::")
 
+	# --- NAT64: the translation half ---
+	var n64_rack := Game.add_rack(Vector2i(62, 1))
+	var n64_sw := Game.new_device("sw-8")
+	var n64_rtr := Game.new_device("rtr-edge")
+	var n64_client := Game.new_device("srv-1")   # IPv6 only, on purpose
+	var n64_legacy := Game.new_device("srv-1")   # IPv4 only, also on purpose
+	n64_rack.slots[0] = n64_sw
+	n64_rack.slots[1] = n64_rtr
+	n64_rack.slots[2] = n64_client
+	var n64_rack2 := Game.add_rack(Vector2i(63, 1))
+	n64_rack2.slots[0] = n64_legacy
+	Game.connect_ifaces(n64_client.ifaces[0], n64_sw.ifaces[0])
+	Game.connect_ifaces(n64_rtr.ifaces[0], n64_sw.ifaces[1])
+	Game.connect_ifaces(n64_rtr.ifaces[1], n64_legacy.ifaces[0])
+	Game.add_ip(n64_client.ifaces[0], "fd00:64::10/64")
+	Game.add_ip(n64_rtr.ifaces[0], "fd00:64::1/64")
+	Game.add_ip(n64_rtr.ifaces[1], "10.64.0.1/24")
+	Game.add_ip(n64_legacy.ifaces[0], "10.64.0.10/24")
+	Game.add_static_route(n64_client, "::", 0, "fd00:64::1")
+	Game.add_static_route(n64_legacy, "0.0.0.0", 0, "10.64.0.1")
+	Sim.flush_learned_state()
+	var n64_cli := CLI.new_session(n64_rtr)
+	n64_cli.exec("en")
+	n64_cli.exec("conf t")
+	check(Sim.synth64("64:ff9b::", "10.64.0.10") == "64:ff9b::a40:a" \
+			and Sim.extract64("64:ff9b::", "64:ff9b::a40:a") == "10.64.0.10",
+		"nat64: the address embedding round-trips, which is what makes it deterministic")
+	var n64_dest := Sim.synth64("64:ff9b::", "10.64.0.10")
+	check(not Sim.ping(n64_client, n64_dest)["ok"],
+		"nat64: without a translator the synthesized address goes nowhere")
+	check(n64_cli.exec("nat64 prefix 64:ff9b:: pool nonsense").contains("pool must be"),
+		"nat64: a pool that is not an IPv4 address you own is refused")
+	check(n64_cli.exec("nat64 prefix 64:ff9b:: pool 10.64.0.1") == "",
+		"nat64: a prefix and an egress address is the whole configuration")
+	check(Sim.ping(n64_client, n64_dest)["ok"],
+		"nat64: an IPv6-only client reaches an IPv4-only service through the translator")
+	check(Sim.ping(n64_client, "fd00:64::1")["ok"],
+		"nat64: native IPv6 to the router itself never touches translation")
+	var n64_state := n64_cli.exec("show nat64")
+	check(n64_state.contains("translated") and n64_state.contains("last error   none"),
+		"nat64: translation counters and the last failure reason are visible")
+	# state is bounded: each exchange consumes its entry rather than leaking one
+	check(n64_rtr.nat64_flows.is_empty(),
+		"nat64: the return leg consumes the state it was holding")
+	# and policy denial fails for a stated reason rather than silently
+	var n64_before := int(Sim.nat64_of(n64_rtr).get("translated", 0))
+	n64_rtr.ifaces[1].enabled = false  # the IPv4 side of the translator goes away
+	Sim.flush_learned_state()
+	check(not Sim.ping(n64_client, n64_dest)["ok"] \
+			and String(Sim.nat64_of(n64_rtr).get("last_error", "")).contains("no IPv4 route"),
+		"nat64: a missing IPv4 route fails for a stated reason instead of silently")
+	n64_rtr.ifaces[1].enabled = true
+	Sim.flush_learned_state()
+	check(Sim.ping(n64_client, n64_dest)["ok"] \
+			and int(Sim.nat64_of(n64_rtr).get("translated", 0)) > n64_before,
+		"nat64: translated traffic is accounted on the real path")
+	check(n64_cli.exec("no nat64") == "" and not Sim.ping(n64_client, n64_dest)["ok"] \
+			and n64_cli.exec("show nat64").contains("not configured"),
+		"nat64: a translator outage takes the whole path with it, and says so")
+	# the same translator, configured in the other dialect
+	var n64_ros := Game.new_device("rtr-lite")
+	var n64_rack3 := Game.add_rack(Vector2i(64, 1))
+	n64_rack3.slots[0] = n64_ros
+	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9") == "" \
+			and CLI.new_session(n64_ros).exec("/ipv6 nat64 print").contains("64:ff9b::"),
+		"nat64: PacketTik gear configures the same translator in its own dialect")
+
+	# the contract that only closes when both halves of the transition exist
+	var v6c_rack := Game.add_rack(Vector2i(66, 1))
+	var v6c_sw := Game.new_device("sw-8")
+	var v6c_rtr := Game.new_device("rtr-edge")
+	var v6c_tenant := Game.new_device("srv-1")
+	var v6c_native := Game.new_device("srv-1")
+	var v6c_legacy := Game.new_device("srv-1")
+	v6c_rack.slots[0] = v6c_sw
+	v6c_rack.slots[1] = v6c_rtr
+	v6c_rack.slots[2] = v6c_tenant
+	var v6c_rack2 := Game.add_rack(Vector2i(67, 1))
+	v6c_rack2.slots[0] = v6c_native
+	v6c_rack2.slots[1] = v6c_legacy
+	Game.connect_ifaces(v6c_tenant.ifaces[0], v6c_sw.ifaces[0])
+	Game.connect_ifaces(v6c_native.ifaces[0], v6c_sw.ifaces[1])
+	Game.connect_ifaces(v6c_rtr.ifaces[0], v6c_sw.ifaces[2])
+	Game.connect_ifaces(v6c_rtr.ifaces[1], v6c_legacy.ifaces[0])
+	Game.add_ip(v6c_tenant.ifaces[0], "2001:db8:64::10/64")
+	Game.add_ip(v6c_native.ifaces[0], "2001:db8:64::20/64")
+	Game.add_ip(v6c_rtr.ifaces[0], "2001:db8:64::1/64")
+	Game.add_ip(v6c_rtr.ifaces[1], "10.164.0.1/24")
+	Game.add_ip(v6c_legacy.ifaces[0], "10.164.0.10/24")
+	Game.add_static_route(v6c_tenant, "::", 0, "2001:db8:64::1")
+	Game.add_static_route(v6c_legacy, "0.0.0.0", 0, "10.164.0.1")
+	Sim.flush_learned_state()
+	var v6c := _contract("v6_only_tenant")
+	check(not Game.try_complete_contract(v6c),
+		"v6 tenant: reaching the native service is only the first half of the job")
+	var v6c_dns := CLI.new_session(v6c_native)
+	v6c_dns.exec("dns add legacy.turul.hu 10.164.0.10")
+	v6c_dns.exec("dns64 64:ff9b::")
+	var v6c_rcli := CLI.new_session(v6c_rtr)
+	v6c_rcli.exec("en")
+	v6c_rcli.exec("conf t")
+	v6c_rcli.exec("nat64 prefix 64:ff9b:: pool 10.164.0.1")
+	check(Game.try_complete_contract(v6c),
+		"v6 tenant: DNS64 names it and NAT64 carries it, and the tenant never gets an IPv4 address")
+
 	# --- carrier outages and diversity ---
 	Game.circuits = []
 	Game.carrier_outage = {}

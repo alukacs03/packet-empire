@@ -439,6 +439,45 @@ static func _campaign() -> Array:
 			],
 		},
 		{
+			"id": "v6_only_tenant",
+			"title": "The tenant with no IPv4",
+			"customer": "Turul Mobil",
+			"reward": 4000,
+			"brief": "Turul Mobil's platform is IPv6 only and they will not take an IPv4 address, not even one. Give their host 2001:db8:64::10/64 and make it reach two things: your own native IPv6 service at 2001:db8:64::20, and a legacy IPv4-only service at 10.164.0.10 that is never getting an IPv6 address. The second one needs both halves of the transition: DNS64 on their resolver to synthesize an AAAA from the A record ('dns64 64:ff9b::'), and NAT64 on the router to translate the flow ('nat64 prefix 64:ff9b:: pool <your v4 address>', or '/ipv6 nat64 set prefix=64:ff9b:: pool=<v4>' on PacketTik). Native IPv6 must not go anywhere near the translator.",
+			"reqs": [
+				{"d": "An IPv6-only tenant host at 2001:db8:64::10 with no IPv4", "t": func() -> bool:
+					var host := _owner("2001:db8:64::10")
+					if host == null:
+						return false
+					for i: Net.Iface in host.ifaces:
+						for cidr in i.ips:
+							if not Net.is_v6(String(cidr)):
+								return false
+					return true},
+				{"d": "It reaches a native IPv6 service without translation", "t": func() -> bool:
+					return _owner("2001:db8:64::20") != null and _ping("2001:db8:64::10", "2001:db8:64::20", true)},
+				{"d": "A resolver synthesizes AAAA for the IPv4-only service", "t": func() -> bool:
+					for d in Game.all_devices():
+						var svc: Dictionary = d.services.get("dns", {})
+						if bool(svc.get("dns64", {}).get("enabled", false)) \
+								and svc.get("records", {}).values().has("10.164.0.10"):
+							return true
+					return false},
+				{"d": "It reaches the IPv4-only service through NAT64", "t": func() -> bool:
+					var tenant := _owner("2001:db8:64::10")
+					if tenant == null or _owner("10.164.0.10") == null:
+						return false
+					for d in Game.all_devices():
+						var n64: Dictionary = Sim.nat64_of(d)
+						if n64.is_empty():
+							continue
+						var synth := Sim.synth64(String(n64.get("prefix", "")), "10.164.0.10")
+						if synth != "" and Sim.ping(tenant, synth)["ok"]:
+							return true
+					return false},
+			],
+		},
+		{
 			"id": "build_a_fabric",
 			"title": "Build a fabric",
 			"customer": "Panonia Data (consulting)",

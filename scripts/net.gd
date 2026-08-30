@@ -66,6 +66,7 @@ class NDevice:
 	var stp_priority := 32768  # lower wins the root election
 	var mst_instances := {}  # instance id -> [vlan ids] when running MST
 	var dns_cache := {}  # name -> {"ip": .., "expires": cycle}; why a change is not seen at once
+	var nat64_flows := {}  # translation state: flow id -> the IPv6 client waiting
 	var talkers := {}  # "src>dst" -> packets forwarded, netflow-style
 	var aaa := {}  # admin login: {"server": ip, "key": secret, "local": bool}
 	var snmp := ""  # read community; empty means the agent is not running

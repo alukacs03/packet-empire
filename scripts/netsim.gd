@@ -170,6 +170,26 @@ static func synth64(prefix: String, v4: String) -> String:
 		int(octets[0]) * 256 + int(octets[1]), int(octets[2]) * 256 + int(octets[3])]
 	return synth if synth.is_valid_ip_address() else ""
 
+static func extract64(prefix: String, v6: String) -> String:
+	## The inverse of synth64: pull the embedded IPv4 address back out.
+	if not prefix.ends_with("::") or not Net.is_v6(v6):
+		return ""
+	var head := prefix.trim_suffix("::")
+	if not v6.begins_with(head + "::"):
+		return ""
+	var tail := v6.substr((head + "::").length())
+	var groups := tail.split(":")
+	if groups.size() != 2:
+		return ""
+	var hi := ("0x" + String(groups[0])).hex_to_int()
+	var lo := ("0x" + String(groups[1])).hex_to_int()
+	if hi < 0 or lo < 0 or hi > 65535 or lo > 65535:
+		return ""
+	return "%d.%d.%d.%d" % [hi / 256, hi % 256, lo / 256, lo % 256]
+
+static func nat64_of(dev: Net.NDevice) -> Dictionary:
+	return dev.services.get("nat64", {})
+
 static func resolve(dev: Net.NDevice, name: String, use_cache := true, want_v6 := false) -> String:
 	## DNS lookup via the device's configured resolver, following delegations
 	## the way a real resolver does, and honouring the TTL it was given.
@@ -514,6 +534,7 @@ static func flush_learned_state() -> void:
 		d.mac_table.clear()
 		d.arp.clear()
 		d.nat_flows.clear()
+		d.nat64_flows.clear()
 		d.flows.clear()
 
 static func stp_blocked(i: Net.Iface) -> bool:
@@ -1401,6 +1422,22 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 					_tx(rt_back["iface"], {"src": rt_back["iface"].mac, "dst": mac_back,
 						"vlan": 0, "type": "ipv4", "pl": back_lb})
 			return
+		var n64_back := nat64_of(dev)
+		if not n64_back.is_empty() and dev.nat64_flows.has(flow_id) \
+				and Net.addr_eq(String(n64_back.get("pool", "")), String(p["dst_ip"])):
+			var back64 := p.duplicate(true)
+			back64["src_ip"] = synth64(String(n64_back.get("prefix", "")), String(p["src_ip"]))
+			back64["dst_ip"] = String(dev.nat64_flows[flow_id])
+			back64["ttl"] = int(p["ttl"]) - 1
+			dev.nat64_flows.erase(flow_id)  # bounded state: one exchange, one entry
+			n64_back["returned"] = int(n64_back.get("returned", 0)) + 1
+			var rt64 := _route_lookup(dev, back64["dst_ip"], "", iface.vrf)
+			if not rt64.is_empty():
+				var mac64 := _arp_resolve(dev, rt64["iface"], rt64["next_hop"])
+				if mac64 != "":
+					_tx(rt64["iface"], {"src": rt64["iface"].mac, "dst": mac64, "vlan": 0,
+						"type": "ipv4", "pl": back64})
+			return
 		var out_if := _nat_outside(dev)
 		if out_if != null and dev.nat_flows.has(flow_id) and _iface_owns_ip(out_if, p["dst_ip"]):
 			var back := p.duplicate(true)
@@ -1510,6 +1547,24 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			_send_ip(dev, p["src_ip"], 64,
 				{"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)}, iface.vrf)
 			return
+		# NAT64: an IPv6 packet addressed into the translation prefix leaves
+		# here as IPv4, and the state to bring the answer back lives on us
+		var n64 := nat64_of(dev)
+		if not n64.is_empty() and Net.is_v6(String(p["dst_ip"])):
+			var embedded := extract64(String(n64.get("prefix", "")), String(p["dst_ip"]))
+			if embedded != "":
+				if String(n64.get("pool", "")) == "":
+					n64["last_error"] = "no IPv4 pool address configured"
+					return
+				if _route_lookup(dev, embedded, "", iface.vrf).is_empty():
+					n64["last_error"] = "no IPv4 route to %s" % embedded
+					return
+				dev.nat64_flows[int(p["l4"].get("id", 0))] = String(p["src_ip"])
+				n64["translated"] = int(n64.get("translated", 0)) + 1
+				n64["last_error"] = ""
+				p = p.duplicate(true)
+				p["src_ip"] = String(n64["pool"])
+				p["dst_ip"] = embedded
 		var rt := _route_lookup(dev, p["dst_ip"],
 			"%s|%s|%s" % [p["src_ip"], p["dst_ip"], str(p["l4"].get("id", 0))], iface.vrf)
 		if rt.is_empty() or rt.get("next_hop", "") == "null0":

@@ -173,6 +173,13 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
 			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
+			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
+			{"m": ["config"], "p": ["no", "nat64"], "h": func(_r):
+				dev.services.erase("nat64")
+				dev.nat64_flows.clear()
+				Game.topology_changed.emit()
+				return ""},
+			{"m": EP, "p": ["show", "nat64"], "h": _show_nat64},
 			{"m": ["config"], "p": ["ip", "vrf"], "h": _cfg_vrf},
 			{"m": ["config"], "p": ["ssid"], "h": _cfg_ssid},
 			{"m": EP, "p": ["show", "ssid"], "h": _show_ssid},
@@ -1482,6 +1489,32 @@ class EOS extends Session:
 				"discarding" if blocked else "forwarding",
 				" ".join(PackedStringArray(per))]
 		return out if any else out + "  (no switch-to-switch links)\n"
+
+	func _cfg_nat64(r: Array) -> String:
+		# nat64 prefix <64:ff9b::> pool <ipv4>
+		if not dev.ip_forwarding:
+			return "% nat64 runs on a router or firewall\n"
+		if r.size() < 3 or String(r[1]) != "pool":
+			return "% usage: nat64 prefix <ipv6-prefix::> pool <ipv4-address>\n"
+		var prefix := String(r[0])
+		var pool := String(r[2])
+		if not prefix.ends_with("::") or not (prefix + "1").is_valid_ip_address():
+			return "% nat64: the prefix must be an IPv6 prefix ending in ::\n"
+		if not pool.is_valid_ip_address() or Net.is_v6(pool):
+			return "% nat64: the pool must be an IPv4 address you own\n"
+		dev.services["nat64"] = {"prefix": prefix, "pool": pool, "translated": 0,
+			"returned": 0, "last_error": ""}
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_nat64(_r: Array) -> String:
+		var cfg: Dictionary = dev.services.get("nat64", {})
+		if cfg.is_empty():
+			return "nat64 is not configured on this device\n"
+		return ("prefix       %s\npool         %s\ntranslated   %d\nreturned     %d\nstate        %d flow(s)\nlast error   %s\n"
+			% [cfg.get("prefix", ""), cfg.get("pool", ""), int(cfg.get("translated", 0)),
+				int(cfg.get("returned", 0)), dev.nat64_flows.size(),
+				cfg.get("last_error", "") if String(cfg.get("last_error", "")) != "" else "none"])
 
 	func _show_counters(_r: Array) -> String:
 		# input errors and receive light are where a grey failure shows itself

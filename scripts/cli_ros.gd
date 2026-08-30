@@ -272,6 +272,32 @@ func exec(line: String) -> String:
 				for mac in dev.mac_table[vid]:
 					out += " %-4d %-18s %s\n" % [vid, mac, dev.mac_table[vid][mac].name]
 			return out if vids else " (empty: send some traffic first)\n"
+		"ipv6 nat64 set":
+			if not dev.ip_forwarding:
+				return "nat64 runs on a router or firewall\n"
+			var pfx := String(p.get("prefix", ""))
+			var pool := String(p.get("pool", ""))
+			if not pfx.ends_with("::") or not (pfx + "1").is_valid_ip_address():
+				return "nat64: prefix must be an IPv6 prefix ending in ::\n"
+			if not pool.is_valid_ip_address() or Net.is_v6(pool):
+				return "nat64: pool must be an IPv4 address you own\n"
+			dev.services["nat64"] = {"prefix": pfx, "pool": pool, "translated": 0,
+				"returned": 0, "last_error": ""}
+			Game.topology_changed.emit()
+			return ""
+		"ipv6 nat64 print":
+			var cfg64: Dictionary = dev.services.get("nat64", {})
+			if cfg64.is_empty():
+				return "nat64 is not configured on this device\n"
+			return " prefix=%s pool=%s translated=%d returned=%d state=%d last-error=%s\n" % [
+				cfg64.get("prefix", ""), cfg64.get("pool", ""), int(cfg64.get("translated", 0)),
+				int(cfg64.get("returned", 0)), dev.nat64_flows.size(),
+				cfg64.get("last_error", "") if String(cfg64.get("last_error", "")) != "" else "none"]
+		"ipv6 nat64 remove":
+			dev.services.erase("nat64")
+			dev.nat64_flows.clear()
+			Game.topology_changed.emit()
+			return ""
 		"ip firewall nat add":
 			if dev.type == "switch":
 				return "failure: NAT needs a router\n"
@@ -396,6 +422,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"ipv6 address add", "ipv6 address print",
 	"ip route add", "ip route remove", "ip route print",
 	"ip firewall nat add", "ip firewall nat print",
+	"ipv6 nat64 set", "ipv6 nat64 print", "ipv6 nat64 remove",
 	"routing bgp set", "routing bgp peer add", "routing bgp network add", "routing bgp print",
 	"routing ospf network add", "routing ospf network remove", "routing ospf print"]
 
