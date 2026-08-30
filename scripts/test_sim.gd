@@ -4241,58 +4241,7 @@ static func run() -> int:
 	Game.consequences = []
 	Game.decisions_seen = []
 
-	# --- named customers who remember ---
-	Game.customer_arcs.erase("fonix")
-	Game.customer_arcs.erase("tisza")
-	var st_deals := Game.deals.duplicate(true)
-	Game.reputation = 60
-	Game.references = []
-	Game.leads = []
-	check(Game.STORY_CUSTOMERS.size() >= 5,
-		"story: there are a handful of customers who come back, not one")
-	var st_deal := {"id": "st1", "customer": "Fonix Klinika", "ctype": "smb", "kind": "hosting",
-		"params": {}, "fee": 150, "brief": "", "load": 200, "healthy": true,
-		"ever_healthy": true, "cycles": 10, "up_cycles": 10, "loyalty": 0.7}
-	Game.deals = [st_deal]
-	Game.customer_arcs["fonix"] = {"beat": "arrival", "since": Game.cycle - 9, "outages": 0}
-	Game.story_tick()
-	var st_arc: Dictionary = Game.customer_arcs["fonix"]
-	check(String(st_arc["beat"]) == "complication" and int(st_deal["load"]) == 400,
-		"story: the complication is a change to their real service, not a line of dialogue")
-	var st_eye := Game.customer_eye(st_deal)
-	check(String(st_eye["relationship"]).contains("COMPLICATION") \
-			and String(st_eye["memory"]).contains("outage"),
-		"story: the customer card says which beat they are on and what they have on record")
-	# carrying it earns the payoff, and it is a fact about delivery
-	st_deal["degraded"] = false
-	Game.story_tick()
-	check(String(Game.customer_arcs["fonix"]["outcome"]) == "kept" \
-			and Game.references.has("Fonix Klinika") and Game.leads.size() == 1,
-		"story: carrying their growth ends the arc in a reference and a door")
-	# the same arc, the other way
-	Game.customer_arcs.erase("orban")
-	Game.references = []
-	Game.leads = []
-	var st_deal2 := {"id": "st2", "customer": "Orban es Tarsa", "ctype": "smb", "kind": "hosting",
-		"params": {}, "fee": 200, "brief": "", "load": 200, "healthy": true,
-		"ever_healthy": true, "cycles": 20, "up_cycles": 8, "loyalty": 0.7}
-	Game.deals = [st_deal2]
-	Game.customer_arcs["orban"] = {"beat": "complication", "since": Game.cycle,
-		"deadline": Game.cycle - 1, "outages": 3}
-	var rep_story := Game.reputation
-	Game.story_tick()
-	check(String(Game.customer_arcs["orban"]["outcome"]) == "lost" and Game.deals.is_empty() \
-			and Game.reputation < rep_story,
-		"story: the same arc ends materially differently when the build never happened")
-	Game.deals = st_deals
-	Game.customer_arcs.erase("fonix")
-	Game.customer_arcs.erase("orban")
-	Game.references = []
-	Game.leads = []
 
-	# --- fire, smoke and water ---
-	Game.hazards = []
-	Game.protection = {}
 	Game.money = 20000
 	Game.difficulty = 1
 	var hz_rack := Game.add_rack(Vector2i(78, 1))
@@ -4346,6 +4295,7 @@ static func run() -> int:
 	Game.staff = hz_staff
 	Game.hazards = []
 	Game.protection = {}
+
 	Game.money = 20000
 	Game.reputation = 60
 	check(Game.DECISIONS.size() >= 12,
@@ -6866,6 +6816,129 @@ static func run() -> int:
 		"snmp: no route means no monitoring, which is the lesson")
 	snm_mon.ifaces[0].enabled = true
 	Sim.flush_learned_state()
+
+	# --- named customers who remember ---
+	Game.customer_arcs.erase("fonix")
+	Game.customer_arcs.erase("tisza")
+	var st_deals := Game.deals.duplicate(true)
+	Game.reputation = 60
+	Game.references = []
+	Game.leads = []
+	check(Game.STORY_CUSTOMERS.size() >= 5,
+		"story: there are a handful of customers who come back, not one")
+	var st_deal := {"id": "st1", "customer": "Fonix Klinika", "ctype": "smb", "kind": "hosting",
+		"params": {}, "fee": 150, "brief": "", "load": 200, "healthy": true,
+		"ever_healthy": true, "cycles": 10, "up_cycles": 10, "loyalty": 0.7}
+	Game.deals = [st_deal]
+	Game.customer_arcs["fonix"] = {"beat": "arrival", "since": Game.cycle - 9, "outages": 0}
+	Game.story_tick()
+	var st_arc: Dictionary = Game.customer_arcs["fonix"]
+	check(String(st_arc["beat"]) == "complication" and int(st_deal["load"]) == 400,
+		"story: the complication is a change to their real service, not a line of dialogue")
+	var st_eye := Game.customer_eye(st_deal)
+	check(String(st_eye["relationship"]).contains("COMPLICATION") \
+			and String(st_eye["memory"]).contains("outage"),
+		"story: the customer card says which beat they are on and what they have on record")
+	# carrying it earns the payoff, and it is a fact about delivery
+	st_deal["degraded"] = false
+	Game.story_tick()
+	check(String(Game.customer_arcs["fonix"]["outcome"]) == "kept" \
+			and Game.references.has("Fonix Klinika") and Game.leads.size() == 1,
+		"story: carrying their growth ends the arc in a reference and a door")
+	# the same arc, the other way
+	Game.customer_arcs.erase("orban")
+	Game.references = []
+	Game.leads = []
+	# --- fire, smoke and water ---
+	Game.hazards = []
+	Game.protection = {}
+
+	# --- who is on the floor ---
+	Game.access_policy = "open"
+	Game.cameras = false
+	Game.access_log = []
+	Game.visitors = []
+	Game.money = 20000
+	var ac_rack := Game.add_rack(Vector2i(80, 1))
+	var ac_sw := Game.new_device("sw-8")
+	var ac_srv := Game.new_device("srv-1")
+	ac_rack.slots[0] = ac_sw
+	ac_rack.slots[1] = ac_srv
+	Game.connect_ifaces(ac_srv.ifaces[0], ac_sw.ifaces[0])
+	var ac_deals := Game.deals.duplicate(true)
+	Game.deals = [{"id": "ac", "customer": "Access Kft", "kind": "hosting", "params": {},
+		"fee": 100, "brief": "", "load": 100, "healthy": true, "ever_healthy": true}]
+	var ac_stage := Game.stage
+	Game.stage = 2
+	Game.admit_visitor("Vas Elektro", "aircon service")
+	check(Game.visitors.size() == 1 and Game.access_log.size() == 1 \
+			and Game.access_investigation().is_empty(),
+		"access: a contractor signs in, and on an open floor that record is not worth anything")
+	# an open floor: the incident happens and there is nothing to find afterwards
+	Game.access_log = []
+	var ac_fired := false
+	for _ac in 500:
+		Game.access_incident_tick()
+		for ac_entry: Dictionary in Game.access_log:
+			if String(ac_entry["what"]).contains("unplugged"):
+				ac_fired = true
+		if ac_fired:
+			break
+	check(ac_fired and String(Game.incidents[0]["kind"]) == "access",
+		"access: on an open floor somebody eventually touches something they should not")
+	var open_trail := Game.access_investigation()
+	var found_unplug := false
+	for ac_line: String in open_trail:
+		if ac_line.contains("unplugged"):
+			found_unplug = true
+	check(not found_unplug,
+		"access: with no badges and no cameras, the investigation ends where it started")
+	Game.cameras = true
+	Game.access_log = []
+	for _ac2 in 500:
+		Game.access_incident_tick()
+		if not Game.access_investigation().is_empty():
+			break
+	var camera_trail := Game.access_investigation()
+	var camera_found := false
+	for ac_line2: String in camera_trail:
+		if ac_line2.contains("unplugged"):
+			camera_found = true
+	check(camera_found,
+		"access: cameras prevent nothing and let you reconstruct exactly what happened")
+	# badges change what the incident is; escorting stops it at the door
+	check(Game.set_access_policy("badges") == "" and Game.access_policy == "badges",
+		"access: a stricter policy is a purchase, not a toggle")
+	Game.access_log = []
+	for _ac3 in 800:
+		Game.access_incident_tick()
+		if not Game.access_investigation().is_empty():
+			break
+	var badge_trail := Game.access_investigation()
+	var tailgate := false
+	for ac_line3: String in badge_trail:
+		if ac_line3.contains("tailgated"):
+			tailgate = true
+	var badge_unplug := false
+	for ac_line4: String in badge_trail:
+		if ac_line4.contains("unplugged"):
+			badge_unplug = true
+	check(not badge_unplug and (tailgate or badge_trail.is_empty()),
+		"access: badged, the same person gets as far as the room and no further")
+	Game.set_access_policy("escorted")
+	check(Game.access_friction() > 0.3 \
+			and float(Game.ACCESS_POLICIES["escorted"]["risk"]) < float(Game.ACCESS_POLICIES["open"]["risk"]),
+		"access: control costs time on every visit, which is the trade")
+	var ac_before_phys := String(Game.control_state("physical_access")["why"])
+	Game.access_policy = "open"
+	check(String(Game.control_state("physical_access")["why"]).contains("open to the building") \
+			and not ac_before_phys.contains("open to the building"),
+		"access: the compliance control reads the access policy, not a checkbox")
+	Game.access_policy = "badges"
+	Game.deals = ac_deals
+	Game.stage = ac_stage
+	Game.visitors = []
+	Game.access_log = []
 
 	print("---- %d failures" % fails)
 	return fails

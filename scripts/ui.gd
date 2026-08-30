@@ -2289,6 +2289,47 @@ func _refresh_ops() -> void:
 				item["auto"] = on
 				_refresh_ops())
 			rrow.add_child(auto_r)
+	ops_box.add_child(_section("WHO IS ON THE FLOOR"))
+	var acc_row := HBoxContainer.new()
+	acc_row.add_theme_constant_override("separation", 8)
+	ops_box.add_child(acc_row)
+	acc_row.add_child(_wrap("  %s. %s%s" % [Game.ACCESS_POLICIES[Game.access_policy]["label"],
+		Game.ACCESS_POLICIES[Game.access_policy]["blurb"],
+		"  Cameras up." if Game.cameras else ""], 12, Color(0.72, 0.8, 0.88), 520))
+	for pol_id: String in Game.ACCESS_POLICIES:
+		if pol_id == Game.access_policy:
+			continue
+		var polb := Button.new()
+		polb.text = "%s ($%d)" % [Game.ACCESS_POLICIES[pol_id]["label"],
+			int(Game.ACCESS_POLICIES[pol_id]["cost"])]
+		polb.tooltip_text = String(Game.ACCESS_POLICIES[pol_id]["blurb"])
+		polb.pressed.connect(func() -> void:
+			var err: String = Game.set_access_policy(pol_id)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		acc_row.add_child(polb)
+	if not Game.cameras:
+		var cam := Button.new()
+		cam.text = "Put cameras in ($1200)"
+		cam.tooltip_text = "They prevent nothing and explain everything."
+		cam.pressed.connect(func() -> void:
+			var err: String = Game.buy_cameras()
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		ops_box.add_child(cam)
+	for vis: Dictionary in Game.visitors:
+		ops_box.add_child(_label("  visitor: %s (%s)%s" % [vis["name"], vis["reason"],
+			", escorted" if bool(vis["escorted"]) else ""], 12, Color(1.0, 0.82, 0.5)))
+	var acc_lines: Array = Game.access_investigation()
+	if acc_lines.is_empty():
+		ops_box.add_child(_label("  Nothing on record. On an open floor there is nothing to have on record.",
+			12, MUTED))
+	for acc_line: String in acc_lines.slice(0, 6):
+		ops_box.add_child(_label("      %s" % acc_line, 12, Color(0.68, 0.74, 0.82)))
 	ops_box.add_child(_section("FIRE, SMOKE AND WATER"))
 	for prot_id: String in Game.PROTECTION:
 		var prot: Dictionary = Game.PROTECTION[prot_id]

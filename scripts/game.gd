@@ -249,7 +249,8 @@ var change_window := {}  # the plan, the clock, and the point of no safe return
 var duties := {}  # duty id -> the name of whoever holds it
 var last_digest: Array = []  # what the crew handled, skipped, or needs you for
 var parts := {"patch": 40, "optic": 8, "power": 20, "blank": 12}  # the parts drawer
-var parts_auto := true  # reorder when it runs low, so it is a decision once
+var parts_auto := true  # a standing order, which never spends the last of the money
+const PARTS_CASH_FLOOR := 500  # the drawer is not worth going insolvent over
 var cable_debt := 0  # wrong-length leads somebody improvised with
 var cabling_documented := false  # cable it properly on the way in, or clean it up later
 var latent_defects := {}  # model -> shelf units carrying somebody else's problem
@@ -269,6 +270,10 @@ var orphan_intel := {}  # orphan key -> how much digging the player has done (0-
 var tac_cases: Array = []  # vendor support cases and how far each one has got
 var firmware_bugs := {}  # device name -> a fault no configuration of yours will fix
 var renewals: Array = []  # dated obligations: domains, allocations, support, licences
+var access_policy := "open"  # open | badges | escorted: convenience against control
+var access_log: Array = []  # who approached what, and whether anybody could tell
+var cameras := false
+var visitors: Array = []  # contractors on the floor right now
 var hazards: Array = []  # fire, smoke and water, with a place and a clock
 var protection := {}  # kind -> {installed, serviced_cycle}: what is fitted, and how fresh it is
 var decisions: Array = []  # decisions waiting on the player, oldest first
@@ -987,9 +992,10 @@ func buy_parts(kind: String, qty := 10) -> String:
 	return ""
 
 func take_part(kind: String) -> bool:
-	if parts_of(kind) <= 0 and parts_auto and money >= int(PART_PRICES.get(kind, 0)) * PART_REORDER:
+	var refill_cost := int(PART_PRICES.get(kind, 0)) * PART_REORDER
+	if parts_of(kind) <= 0 and parts_auto and money - refill_cost >= PARTS_CASH_FLOOR:
 		# the standing order exists precisely so this is not a chore every cycle
-		money -= int(PART_PRICES[kind]) * PART_REORDER
+		money -= refill_cost
 		money_changed.emit()
 		parts[kind] = PART_REORDER
 		log_event("PARTS: the drawer ran out of %s and the standing order refilled it."
@@ -1024,8 +1030,8 @@ func parts_tick() -> void:
 			continue
 		var qty := PART_REORDER * 2 - parts_of(kind)
 		var price := int(PART_PRICES[kind]) * qty
-		if money < price:
-			continue
+		if money - price < PARTS_CASH_FLOOR:
+			continue  # the drawer is not worth going insolvent over
 		money -= price
 		money_changed.emit()
 		parts[kind] = parts_of(kind) + qty
@@ -1636,7 +1642,7 @@ func walk_to_device(d: Net.NDevice) -> String:
 	var label := "a walk across the floor" if site == 0 else "a site visit to %s" % site_name(site)
 	if cost > 0 and not try_spend(cost):
 		return "%s costs $%d" % [label, cost]
-	physical_access[d.name] = cycle + 2
+	physical_access[d.name] = cycle + 2 - (1 if access_friction() > 0.3 else 0)
 	log_event("PHYSICAL ACCESS: %s. You are at %s's console for the next couple of cycles.%s"
 		% [label.capitalize(), d.name, "" if cost == 0 else "  That cost $%d." % cost])
 	return ""
@@ -2106,6 +2112,129 @@ func renewal_tick() -> void:
 			# only the customer-facing lapses are visible from outside
 			reputation = maxi(0, reputation - 1)
 
+## The human half of physical security. Strict access slows the work down;
+## loose access is what makes the incidents possible in the first place.
+const ACCESS_POLICIES := {
+	"open": {"label": "Open floor", "cost": 0, "friction": 0.0, "risk": 1.0,
+		"blurb": "Anybody who is in the building is on the floor. Nothing to badge, nothing to log."},
+	"badges": {"label": "Badged zones", "cost": 700, "friction": 0.15, "risk": 0.45,
+		"blurb": "Staff badge into the room, and every approach is written down."},
+	"escorted": {"label": "Badged and escorted", "cost": 1400, "friction": 0.35, "risk": 0.15,
+		"blurb": "Nobody who does not work here walks the floor alone. It costs you time on every visit."},
+}
+
+func set_access_policy(policy: String) -> String:
+	if not ACCESS_POLICIES.has(policy):
+		return "there is no such policy"
+	if policy == access_policy:
+		return "that is already the policy"
+	var cost := int(ACCESS_POLICIES[policy]["cost"])
+	if cost > 0 and not try_spend(cost):
+		return "%s costs $%d to put in" % [ACCESS_POLICIES[policy]["label"], cost]
+	access_policy = policy
+	log_event("ACCESS: the floor is now %s. %s" % [ACCESS_POLICIES[policy]["label"].to_lower(),
+		ACCESS_POLICIES[policy]["blurb"]])
+	return ""
+
+func buy_cameras() -> String:
+	if cameras:
+		return "the cameras are already up"
+	if not try_spend(1200):
+		return "camera coverage costs $1200"
+	cameras = true
+	log_event("ACCESS: cameras cover the aisles. They prevent nothing and explain everything.")
+	return ""
+
+func access_note(who: String, what: String, authorised: bool) -> void:
+	access_log.push_front({"cycle": cycle, "who": who, "what": what, "authorised": authorised,
+		"seen": cameras or access_policy != "open"})
+	if access_log.size() > 20:
+		access_log.pop_back()
+
+func admit_visitor(name: String, reason: String) -> String:
+	## A contractor on the floor is useful and is also somebody you do not know.
+	visitors.append({"name": name, "reason": reason, "since": cycle,
+		"escorted": access_policy == "escorted"})
+	access_note(name, "signed in: %s" % reason, true)
+	log_event("VISITOR: %s is on the floor (%s)%s." % [name, reason,
+		", escorted" if access_policy == "escorted" else ""])
+	return ""
+
+func visitor_leaves(name: String) -> void:
+	for v in visitors.duplicate():
+		if String(v["name"]) == name:
+			visitors.erase(v)
+			access_note(name, "signed out", true)
+
+func access_incident_tick() -> void:
+	## Rare, and never invisible: what happens depends on the policy, and what
+	## you can find out afterwards depends on the cameras and the log.
+	# somebody who does not work here has to be on the floor for any of this
+	if guided_outage_active() or stage < 2 or racks.is_empty() or visitors.is_empty():
+		return
+	if biz_roll() > 0.02 * float(ACCESS_POLICIES[access_policy]["risk"]):
+		return
+	# whatever they touch has to be something that is actually plugged in
+	var candidates: Array = []
+	for cand: Net.Rack in racks_on(current_site):
+		for d_c in cand.slots:
+			if d_c == null:
+				continue
+			for i_c: Net.Iface in d_c.ifaces:
+				if link_at(i_c) != null and not i_c.name.begins_with("Management"):
+					candidates.append(cand)
+					break
+			break
+	if candidates.is_empty():
+		return
+	var r: Net.Rack = candidates[int(biz_roll() * float(candidates.size())) % candidates.size()]
+	var who: String = String(visitors[0]["name"]) if not visitors.is_empty() \
+		else "somebody nobody recognised"
+	match access_policy:
+		"escorted":
+			access_note(who, "turned back at the door to %s" % r.name, false)
+			log_event("ACCESS: %s tried to follow somebody in and was turned back. Escorting works, and it is why every visit takes longer."
+				% who)
+			return
+		"badges":
+			access_note(who, "tailgated into the room, near %s" % r.name, false)
+			log_event("ACCESS: the badge log shows a tailgate near %s. Nothing was touched, and you know it happened."
+				% r.name)
+			return
+		_:
+			pass
+	# an open floor: somebody touched something, and the only question is
+	# whether anything on this floor can tell you who
+	for d in r.slots:
+		if d == null:
+			continue
+		for i: Net.Iface in d.ifaces:
+			if link_at(i) != null and not i.name.begins_with("Management"):
+				i.enabled = false
+				access_note(who, "unplugged %s %s" % [d.name, i.name], false)
+				device_log(d, "%s changed state to down (no change logged)" % i.name)
+				record_incident("access", "a cable was pulled in %s and nobody was badged" % r.name)
+				log_event("ACCESS: something in %s was unplugged. %s" % [r.name,
+					"The cameras have it." if cameras
+					else "There is no badge log and no camera, so that is where the investigation ends."])
+				topology_changed.emit()
+				return
+
+func access_investigation(since := 12) -> Array:
+	## What you can actually reconstruct afterwards.
+	var out: Array = []
+	for entry: Dictionary in access_log:
+		if cycle - int(entry["cycle"]) > since:
+			continue
+		if not bool(entry["seen"]):
+			continue
+		out.append("cycle %d · %s %s%s" % [int(entry["cycle"]), entry["who"], entry["what"],
+			"" if bool(entry["authorised"]) else "  (not authorised)"])
+	return out
+
+func access_friction() -> float:
+	return float(ACCESS_POLICIES[access_policy]["friction"])
+
 ## Environmental hazards: bounded, telegraphed, and always traceable to a
 ## reason the player could have seen coming.
 const HAZARD_KINDS := {
@@ -2191,9 +2320,16 @@ func _hazard_rack(name: String) -> Net.Rack:
 			return r
 	return null
 
+func visitor_tick() -> void:
+	for v in visitors.duplicate():
+		if cycle - int(v["since"]) >= 3:
+			visitor_leaves(String(v["name"]))
+
 func hazard_tick() -> void:
 	## Ignition is a slow function of visible risk, and Apprentice difficulty
 	## keeps a floor under how bad it can get.
+	if guided_outage_active():
+		return  # the teaching incident owns the floor while it is running
 	if hazards.is_empty() and stage >= 1:
 		for r: Net.Rack in racks_on(current_site):
 			var risk := hazard_risk(r)
@@ -2610,12 +2746,14 @@ func control_state(id: String) -> Dictionary:
 			why = "%d unsaved configuration(s), %d device(s) with history" % [dirty, versioned]
 		"physical_access":
 			var console := false
+			var badged := access_policy != "open"
 			for d: Net.NDevice in control_devices():
 				if d.type == "console" and d.status == "active":
 					console = true
-			passing = console and drift_factor() < 0.4
-			why = "%s, documentation %s" % ["a console server is on the floor" if console
-				else "no out-of-band access", "current" if drift_factor() < 0.4 else "adrift"]
+			passing = console and badged and drift_factor() < 0.4
+			why = "%s, access %s, documentation %s" % ["a console server is on the floor" if console
+				else "no out-of-band access", "controlled" if badged else "open to the building",
+				"current" if drift_factor() < 0.4 else "adrift"]
 		"incident_review":
 			var open_old := 0
 			for inc: Dictionary in incidents:
@@ -2947,6 +3085,8 @@ func service_facility(task: String) -> String:
 		else:
 			log_event("GENERATOR TEST: clean transfer to backup power and back. It will start when you need it.")
 	else:
+		if task == "aircon":
+			admit_visitor("Vas Elektro", "aircon service")
 		log_event("FACILITY: %s done for $%d." % [FACILITY_TASKS[task]["label"], cost])
 	return ""
 
@@ -6687,6 +6827,8 @@ func sla_tick() -> void:
 	consequence_tick()
 	story_tick()
 	hazard_tick()
+	access_incident_tick()
+	visitor_tick()
 	decom_tick()
 	housekeeping_tick()
 	Skills.recognition_tick()
@@ -7559,7 +7701,8 @@ func _serialize() -> Dictionary:
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
-		"protection": protection,
+		"protection": protection, "access_policy": access_policy, "cameras": cameras,
+		"access_log": access_log, "visitors": visitors,
 		"decisions_seen": decisions_seen, "decision_notes": decision_notes,
 		"control_evidence": control_evidence, "trust_marker": trust_marker, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "docs": docs,
 		"confirm_commits": confirm_commits, "tickets": tickets, "grey_faults": grey_faults, "physical_access": physical_access, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "stockouts": stockouts, "rmas": rmas,
@@ -7895,6 +8038,10 @@ func _apply(data: Dictionary) -> void:
 	audit = data.get("audit", {})
 	decisions = data.get("decisions", [])
 	hazards = data.get("hazards", [])
+	access_policy = String(data.get("access_policy", "open"))
+	cameras = bool(data.get("cameras", false))
+	access_log = data.get("access_log", [])
+	visitors = data.get("visitors", [])
 	protection = data.get("protection", {})
 	consequences = data.get("consequences", [])
 	decisions_seen = data.get("decisions_seen", [])
