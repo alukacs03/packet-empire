@@ -4398,6 +4398,11 @@ func site_of_device(d: Net.NDevice) -> int:
 	var r := rack_of(d)
 	return r.site if r != null else 0
 
+func site_hue(name: String) -> float:
+	## One colour per site, derived from its name so it never moves, and shared
+	## by the floor and the switcher so they cannot disagree.
+	return float(absi(hash(name)) % 360) / 360.0
+
 func elsewhere(d: Net.NDevice) -> String:
 	## Where this device physically is, when that is not where you are. Acting
 	## on another building's kit by accident is the expensive mistake.

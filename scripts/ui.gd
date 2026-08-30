@@ -517,6 +517,10 @@ func _refresh_money() -> void:
 	if site_btn:
 		site_btn.text = Game.site_name(Game.current_site)
 		site_btn.visible = Game.site_count() > 1
+		# the same colour the floor itself is cast in, so the button and the
+		# room agree about which building you are in
+		site_btn.add_theme_color_override("font_color",
+			Color.from_hsv(Game.site_hue(Game.site_name(Game.current_site)), 0.45, 1.0))
 	if Game.current_site != 0:
 		expand_btn.visible = false  # acquired floors come as they are
 	elif Game.stage < Game.STAGES.size() - 1:

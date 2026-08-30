@@ -275,8 +275,7 @@ func _draw_site_plate(grid: Vector2i) -> void:
 	## thing in the wrong building. Each site gets a cast of its own, keyed off
 	## its name so it is the same every time, and a plate you cannot miss.
 	var name := Game.site_name(Game.current_site)
-	var key := absi(hash(name))
-	var hue := float(key % 360) / 360.0
+	var hue := Game.site_hue(name)
 	var cast := Color.from_hsv(hue, 0.55, 0.9, 0.05)
 	draw_colored_polygon(_floor_corners(grid, 2.2), cast)
 	var font := UIW.mono_font()
