@@ -2303,6 +2303,54 @@ func _refresh_ops() -> void:
 				hud_toast("UPS installed.", true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
+	ops_box.add_child(_section("THE PARTS DRAWER"))
+	var parts_row := HBoxContainer.new()
+	parts_row.add_theme_constant_override("separation", 8)
+	ops_box.add_child(parts_row)
+	var drawer: Array = []
+	for kind_p: String in Game.PART_LABELS:
+		drawer.append("%s %d" % [Game.PART_LABELS[kind_p], Game.parts_of(kind_p)])
+	var drawer_lbl := _label("  %s%s" % [", ".join(PackedStringArray(drawer)),
+		"   ·   %d improvised lead(s) still in place" % Game.cable_debt if Game.cable_debt > 0 else ""],
+		12, Color(0.72, 0.8, 0.88))
+	drawer_lbl.add_theme_font_override("font", mono)
+	drawer_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	parts_row.add_child(drawer_lbl)
+	var buy_parts_btn := Button.new()
+	buy_parts_btn.text = "Stock up…"
+	buy_parts_btn.pressed.connect(func() -> void:
+		var kinds: Array = Game.PART_LABELS.keys()
+		var opts_p: Array = []
+		for kind_o: String in kinds:
+			opts_p.append("10 %s   $%d" % [Game.PART_LABELS[kind_o],
+				int(Game.PART_PRICES[kind_o]) * 10])
+		_menu(buy_parts_btn, opts_p, func(id: int) -> void:
+			var err: String = Game.buy_parts(String(kinds[id]), 10)
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money()))
+	parts_row.add_child(buy_parts_btn)
+	var auto_parts := Button.new()
+	auto_parts.toggle_mode = true
+	auto_parts.button_pressed = Game.parts_auto
+	auto_parts.text = "Standing order" if Game.parts_auto else "Order by hand"
+	auto_parts.tooltip_text = "Keep the drawer topped up automatically, while there is money to do it"
+	auto_parts.toggled.connect(func(on: bool) -> void:
+		Game.parts_auto = on
+		_refresh_ops())
+	parts_row.add_child(auto_parts)
+	if Game.cable_debt > 0:
+		var redo := Button.new()
+		redo.text = "Redo the improvised leads (%d)" % Game.cable_debt
+		redo.tooltip_text = "Proper lengths, out of the drawer. It shows on a tour."
+		redo.pressed.connect(func() -> void:
+			var err: String = Game.redo_cable_debt()
+			if err != "":
+				_toast(err)
+			_refresh_ops()
+			_refresh_money())
+		ops_box.add_child(redo)
 	ops_box.add_child(_section("RECEIVING"))
 	var order_btn := Button.new()
 	order_btn.text = "Order hardware (15% off, delivered in a few cycles)…"

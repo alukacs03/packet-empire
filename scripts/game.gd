@@ -241,6 +241,9 @@ var habits := {"saves": 0.5, "documents": 0.5, "windows": 0.5, "tidy": 0.5}
 var skill_log := {}  # skill id -> {count, first_cycle, said}: what the player has demonstrated
 var skill_fumbles := {}  # skill id -> how many times it went the other way
 var pending_recognition: Array = []  # lines waiting for a quiet moment
+var parts := {"patch": 40, "optic": 8, "power": 20, "blank": 12}  # the parts drawer
+var parts_auto := true  # reorder when it runs low, so it is a decision once
+var cable_debt := 0  # wrong-length leads somebody improvised with
 var crates: Array = []  # what the courier left in the receiving area
 var packaging := 0  # cardboard and pallet wrap nobody has taken out yet
 var remote_jobs: Array = []  # somebody else's hands, doing exactly what you wrote
@@ -589,6 +592,70 @@ func expand() -> bool:
 	stage += 1
 	topology_changed.emit()
 	return true
+
+const PART_PRICES := {"patch": 6, "optic": 45, "power": 8, "blank": 12}
+const PART_LABELS := {"patch": "patch leads", "optic": "optics", "power": "power cords",
+	"blank": "blanking panels"}
+const PART_REORDER := 8  # top the drawer back up to this when it runs low
+
+func parts_of(kind: String) -> int:
+	return int(parts.get(kind, 0))
+
+func buy_parts(kind: String, qty := 10) -> String:
+	if not PART_PRICES.has(kind):
+		return "there is no such part"
+	var price := int(PART_PRICES[kind]) * qty
+	if not try_spend(price):
+		return "%d %s cost $%d" % [qty, PART_LABELS[kind], price]
+	parts[kind] = parts_of(kind) + qty
+	log_event("PARTS: %d %s into the drawer for $%d." % [qty, PART_LABELS[kind], price])
+	return ""
+
+func take_part(kind: String) -> bool:
+	if parts_of(kind) <= 0 and parts_auto and money >= int(PART_PRICES.get(kind, 0)) * PART_REORDER:
+		# the standing order exists precisely so this is not a chore every cycle
+		money -= int(PART_PRICES[kind]) * PART_REORDER
+		money_changed.emit()
+		parts[kind] = PART_REORDER
+		log_event("PARTS: the drawer ran out of %s and the standing order refilled it."
+			% PART_LABELS[kind])
+	if parts_of(kind) <= 0:
+		return false
+	parts[kind] = parts_of(kind) - 1
+	return true
+
+func improvise_part(kind: String) -> void:
+	## The wrong length, at two in the morning. It works, and it is visible for
+	## as long as it stays there.
+	cable_debt += 1
+	log_event("IMPROVISED: no %s of the right sort in the drawer, so something else went in. That is cable debt now."
+		% PART_LABELS[kind])
+
+func redo_cable_debt() -> String:
+	if cable_debt <= 0:
+		return "there is nothing improvised in there"
+	if not take_part("patch"):
+		return "there is nothing in the drawer to redo it with"
+	cable_debt -= 1
+	log_event("CABLING: one improvised lead replaced with the right length.")
+	topology_changed.emit()
+	return ""
+
+func parts_tick() -> void:
+	if not parts_auto:
+		return
+	for kind: String in PART_PRICES:
+		if parts_of(kind) >= PART_REORDER:
+			continue
+		var qty := PART_REORDER * 2 - parts_of(kind)
+		var price := int(PART_PRICES[kind]) * qty
+		if money < price:
+			continue
+		money -= price
+		money_changed.emit()
+		parts[kind] = parts_of(kind) + qty
+		log_event("PARTS: the standing order topped up %s ($%d). It runs itself until the money does not."
+			% [PART_LABELS[kind], price])
 
 const RECEIVING_SPACE := 4  # crates the receiving area holds before it is an aisle problem
 const HEAVY_MODELS := ["sw-24", "srv-2", "rtr-edge", "crac-1", "lb-1"]
@@ -1428,6 +1495,9 @@ func toggle_blanking(r: Net.Rack, idx: int) -> bool:
 	if r.blanked.has(idx):
 		r.blanked.erase(idx)
 	else:
+		if not take_part("blank"):
+			log_event("BLOCKED: no blanking panels left in the drawer.")
+			return false
 		r.blanked[idx] = true
 	observe_habit("tidy", r.blanked.get(idx, false))
 	Sfx.play("cable")
@@ -3578,7 +3648,7 @@ func rack_tidiness(r: Net.Rack) -> float:
 				continue
 			total += 1.0
 			points += 1.0 if not i.note.is_empty() else 0.0
-	return 1.0 if total == 0.0 else clampf(points / total, 0.0, 1.0)
+	return 1.0 if total == 0.0 else clampf(points / total - 0.05 * float(cable_debt), 0.0, 1.0)
 
 func floor_tidiness() -> float:
 	var racks_here := racks_on(current_site)
@@ -4711,6 +4781,7 @@ func sla_tick() -> void:
 	tac_tick()
 	remote_hands_tick()
 	receiving_tick()
+	parts_tick()
 	maybe_schedule_tour()
 	tour_tick()
 	decom_tick()
@@ -5286,6 +5357,15 @@ func peer_label(i: Net.Iface) -> String:
 func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	if not can_link(a, b):
 		return false  # different sites need a leased circuit first
+	# every run eats a lead: a different cabinet means a long one, and there is
+	# nothing to improvise with when the drawer is genuinely empty
+	var kind := "patch" if rack_of(a.dev) == rack_of(b.dev) else "optic"
+	if not take_part(kind):
+		if not take_part("patch"):
+			log_event("BLOCKED: no %s left in the drawer. The run waits for a delivery."
+				% PART_LABELS[kind])
+			return false
+		improvise_part(kind)
 	links.append(Net.Link.new(a, b))
 	Sfx.play("cable")
 	topology_changed.emit()
@@ -5518,7 +5598,8 @@ func _serialize() -> Dictionary:
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
 		"destruction_certs": destruction_certs, "data_risks": data_risks,
-		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging,
+		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "tac_cases": tac_cases, "orphan_intel": orphan_intel, "remote_jobs": remote_jobs, "crates": crates, "packaging": packaging, "parts": parts,
+		"parts_auto": parts_auto, "cable_debt": cable_debt,
 		"firmware_bugs": firmware_bugs, "heat_wave_until": heat_wave_until, "habits": habits,
 		"upstream": upstream, "last_upstream_cycle": last_upstream_cycle,
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
@@ -5849,6 +5930,9 @@ func _apply(data: Dictionary) -> void:
 	orphan_intel = data.get("orphan_intel", {})
 	remote_jobs = data.get("remote_jobs", [])
 	crates = data.get("crates", [])
+	parts = data.get("parts", {"patch": 40, "optic": 8, "power": 20, "blank": 12})
+	parts_auto = bool(data.get("parts_auto", true))
+	cable_debt = int(data.get("cable_debt", 0))
 	packaging = int(data.get("packaging", 0))
 	firmware_bugs = data.get("firmware_bugs", {})
 	facility_auto = data.get("facility_auto", {})

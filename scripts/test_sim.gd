@@ -3643,6 +3643,51 @@ static func run() -> int:
 	Game.crates = []
 	Game.packaging = 0
 	Game.spares = {}
+
+	# --- consumables ---
+	var pt_rack := Game.add_rack(Vector2i(48, 1))
+	var pt_sw := Game.new_device("sw-8")
+	var pt_srv := Game.new_device("srv-1")
+	pt_rack.slots[0] = pt_sw
+	pt_rack.slots[1] = pt_srv
+	Game.parts = {"patch": 1, "optic": 0, "power": 5, "blank": 0}
+	Game.parts_auto = false
+	Game.cable_debt = 0
+	check(Game.connect_ifaces(pt_srv.ifaces[0], pt_sw.ifaces[0]) and Game.parts_of("patch") == 0,
+		"parts: an install takes a lead out of the drawer")
+	var pt_srv2 := Game.new_device("srv-1")
+	pt_rack.slots[2] = pt_srv2
+	check(not Game.connect_ifaces(pt_srv2.ifaces[0], pt_sw.ifaces[1]) \
+			and Game.link_at(pt_srv2.ifaces[0]) == null,
+		"parts: an empty drawer blocks the cutover until something arrives")
+	var pt_rack2 := Game.add_rack(Vector2i(49, 1))
+	var pt_far := Game.new_device("srv-1")
+	pt_rack2.slots[0] = pt_far
+	Game.parts["patch"] = 2
+	check(Game.connect_ifaces(pt_far.ifaces[0], pt_sw.ifaces[2]) and Game.cable_debt == 1 \
+			and Game.parts_of("optic") == 0,
+		"parts: a run to another cabinet wants an optic, and improvising with what is there is cable debt")
+	var tidy_with_debt := Game.rack_tidiness(pt_rack)
+	Game.money = 2000
+	check(Game.redo_cable_debt() == "" and Game.cable_debt == 0 \
+			and Game.rack_tidiness(pt_rack) > tidy_with_debt,
+		"parts: redoing an improvised lead properly is visible in the cabinet")
+	check(not Game.toggle_blanking(pt_rack, Net.Rack.SLOTS - 1) \
+			and Game.buy_parts("blank", 2) == "" and Game.toggle_blanking(pt_rack, Net.Rack.SLOTS - 1) \
+			and Game.rack_airflow_seal(pt_rack) > 0.0,
+		"parts: blanking panels come out of the same drawer and still buy you airflow")
+	Game.parts_auto = true
+	Game.parts["patch"] = 2
+	Game.money = 5000
+	Game.parts_tick()
+	check(Game.parts_of("patch") >= Game.PART_REORDER,
+		"parts: a standing order makes this a decision once rather than a chore every cycle")
+	Game.money = 0
+	Game.parts = {"patch": 0, "optic": 0, "power": 0, "blank": 0}
+	check(not Game.connect_ifaces(pt_srv2.ifaces[0], pt_sw.ifaces[3]),
+		"parts: a standing order with no money behind it is not a delivery")
+	Game.parts = {"patch": 40, "optic": 8, "power": 20, "blank": 12}
+	Game.money = 5000
 	Game.money = 8000
 	var zr := Game.add_rack(Vector2i(46, 1))
 	var z_sw := Game.new_device("sw-8")
