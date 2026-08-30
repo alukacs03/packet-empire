@@ -78,14 +78,34 @@ func _draw() -> void:
 		var pulse := 0.35 + 0.2 * sin(Time.get_ticks_msec() / 280.0)
 		_draw_tile(hover_tile, Color(UIW.colour("accent"), pulse))
 		_outline(hover_tile, UIW.colour("focus"), 2.5)
-	# glowing boundary of the owned floor
+	_draw_owned_edge(grid, progress)
+
+func _draw_owned_edge(grid: Vector2i, progress: float) -> void:
+	## Where the owned floor stops is a painted safety line, not an overlay:
+	## worn cage yellow while the space is rented, cool aisle white once the
+	## facility is purpose-built. Hatching sells it as paint on concrete.
 	var corners := [Vector2i(0, 0), Vector2i(grid.x, 0), Vector2i(grid.x, grid.y), Vector2i(0, grid.y)]
 	var pts := PackedVector2Array()
 	for cnr in corners:
 		pts.append(Iso.tile_to_world(cnr) - Vector2(0, Iso.TILE_H / 2.0))
 	pts.append(pts[0])
-	draw_polyline(pts, Color(facility_accent, 0.11), 7.0)
-	draw_polyline(pts, Color(facility_accent, 0.78), 2.5)
+	var paint := Color("d8a33a").lerp(Color("cfe9f5"), progress)
+	draw_polyline(pts, Color(paint, 0.10), 9.0)  # the halo the paint throws
+	draw_polyline(pts, Color(paint, 0.30), 5.0)  # worn edges of the stripe
+	draw_polyline(pts, Color(paint, 0.72), 2.0)  # the stripe itself
+	# hazard hatching, leaning into the floor rather than across it
+	for i in pts.size() - 1:
+		var a: Vector2 = pts[i]
+		var b: Vector2 = pts[i + 1]
+		var span := a.distance_to(b)
+		var dir := (b - a) / maxf(span, 1.0)
+		var step := 26.0
+		var k := step * 0.5
+		while k < span:
+			var base := a + dir * k
+			var lean := Vector2(dir.y, -dir.x) * 7.0 + dir * 5.0
+			draw_line(base - lean, base + lean, Color(paint, 0.34), 2.0)
+			k += step
 
 func _tile_points(t: Vector2i) -> PackedVector2Array:
 	var c := Iso.tile_to_world(t)
