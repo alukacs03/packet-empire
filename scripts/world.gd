@@ -379,6 +379,21 @@ func _shoot_all() -> void:
 			Game.last_cycle_delta = 20
 			ui.contracts_tab = "Business"
 			ui.open_contracts()],
+		["business_staff",
+			func() -> void:
+				# the rota: shifts, who carries the phone, and who is tired
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 11
+				Game.staff = []
+				for _i in 2:
+					Game.hire(Staff.make_candidate(rng, Game.habits))
+				if Game.staff.size() > 1:
+					Game.set_oncall(String(Game.staff[0]["name"]))
+					Game.staff[1]["tired_until"] = Game.cycle + 1
+				ui.contracts_tab = "Business"
+				ui.open_contracts(),
+			func() -> void:
+				ui._scroll_to_bottom()],  # the rota is at the bottom of the tab
 		["contracts", func() -> void:
 			ui.contracts_tab = "Jobs"
 			ui.open_contracts()],
@@ -431,6 +446,12 @@ func _shoot_all() -> void:
 		shot[1].call()
 		for _f in 16:  # let fades and layout settle
 			await get_tree().process_frame
+		if shot.size() > 2:
+			# anything that needs real sizes (scroll positions) happens here,
+			# once layout has actually run
+			(shot[2] as Callable).call()
+			for _f2 in 3:
+				await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		img.save_png("%s/%s.png" % [dir, shot[0]])

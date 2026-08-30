@@ -173,7 +173,29 @@ static func ui_smoke(world: Node2D) -> int:
 	ui.close_iface()
 	ui.close_dev()
 	ui.close_rack()
-	ui.open_contracts()
+	# every company tab builds, and nothing in it is wider than the card it
+	# sits in: a row that outgrows the panel is how buttons end up off screen
+	var smoke_staff := Game.staff.duplicate(true)
+	if Game.staff.size() < 2:  # the widest rows in the tab are people
+		var smoke_rng := RandomNumberGenerator.new()
+		smoke_rng.seed = 5
+		while Game.staff.size() < 2:
+			Game.hire(Staff.make_candidate(smoke_rng, Game.habits))
+	Game.set_oncall(String(Game.staff[0]["name"]))
+	for company_tab in ["Jobs", "Business", "Market", "Log"]:
+		ui.contracts_tab = company_tab
+		ui.open_contracts()
+		ui._refresh_contracts()
+		var widest := 0.0
+		for row in ui.contracts_box.get_children():
+			if row is Control:
+				widest = maxf(widest, (row as Control).get_combined_minimum_size().x)
+		# the card grows with its content up to the window, so the bar is the
+		# smallest window the game is played in rather than the card minimum
+		check(widest <= 1200.0, "ui: the %s tab fits a 1280-wide window (%d px)"
+			% [company_tab, int(widest)])
+	Game.staff = smoke_staff
+	Game.oncall = ""
 	ui.close_contracts()
 	ui.toggle_map()
 	ui.toggle_map()
