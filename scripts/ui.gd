@@ -5400,6 +5400,9 @@ func _build_jobs_tab() -> void:
 						Game.answer_call(deal, String(option["id"]))
 						_refresh_contracts())
 					call_row.add_child(ob2)
+			if deal.has("dr_due") and not bool(deal.get("dr_done", false)):
+				contracts_box.add_child(_label("      they want the failover tested and the result sent, by cycle %d"
+					% int(deal["dr_due"]), 12, UIW.colour("warning")))
 			if deal.has("promised_by"):
 				contracts_box.add_child(_label("      you promised them it would be back by cycle %d"
 					% int(deal["promised_by"]), 12, Color(1.0, 0.82, 0.5)))

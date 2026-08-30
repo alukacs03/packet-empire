@@ -4413,6 +4413,34 @@ func dr_candidates() -> Array:
 			out.append(d)
 	return out
 
+func dr_request_tick() -> void:
+	## The customers who pay for a strict service level are the ones who ask,
+	## once, in writing, and remember the answer either way.
+	for deal in deals:
+		if int(deal.get("sla", 0)) < 2 or deal.has("dr_asked") or not bool(deal.get("healthy", false)):
+			continue
+		if biz_roll() > 0.05:
+			continue
+		deal["dr_asked"] = cycle
+		deal["dr_due"] = cycle + 12
+		log_event("%s wants the failover tested and the result sent to them, by cycle %d."
+			% [deal["customer"], int(deal["dr_due"])])
+	for deal2 in deals:
+		if not deal2.has("dr_due") or bool(deal2.get("dr_done", false)):
+			continue
+		var proved := int(control_evidence.get("failover", -999))
+		if proved >= int(deal2["dr_asked"]):
+			deal2["dr_done"] = true
+			deal2["loyalty"] = minf(1.0, float(deal2.get("loyalty", 0.6)) + 0.15)
+			reputation = mini(100, reputation + 2)
+			log_event("%s has the failover result they asked for. They did not want it to be interesting, and it was not."
+				% deal2["customer"])
+		elif cycle > int(deal2["dr_due"]):
+			deal2.erase("dr_due")
+			deal2["loyalty"] = maxf(0.0, float(deal2.get("loyalty", 0.6)) - 0.2)
+			log_event("%s asked for a failover test and never got one. They have written that down."
+				% deal2["customer"])
+
 func book_dr_test() -> String:
 	## Announced, not sprung: the point of a test is that everybody knew.
 	if not dr_test.is_empty():
@@ -8170,6 +8198,7 @@ func sla_tick() -> void:
 	ticket_tick()
 	call_tick()
 	dr_tick()
+	dr_request_tick()
 	handover_tick()
 	night_call_tick()
 	rank_tick()

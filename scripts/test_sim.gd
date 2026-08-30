@@ -3035,6 +3035,25 @@ static func run() -> int:
 		"failover test: a customer that did not survive it is named, and it costs")
 	check(dr_uplinks[0].status == "active",
 		"failover test: the upstream comes back whatever the result")
+	# a customer who pays for strict service levels asks for the result
+	Game.control_evidence.erase("failover")
+	Game.deals = [{"id": "strict", "customer": "Strict Zrt", "kind": "hosting", "params": {},
+		"fee": 300, "load": 10, "brief": "", "healthy": true, "sla": 2, "loyalty": 0.6,
+		"dr_asked": Game.cycle, "dr_due": Game.cycle + 12}]
+	Game.dr_request_tick()
+	check(not bool(Game.deals[0].get("dr_done", false)),
+		"failover request: nothing is satisfied by a promise")
+	Game.control_evidence["failover"] = Game.cycle
+	Game.dr_request_tick()
+	check(bool(Game.deals[0]["dr_done"]) and float(Game.deals[0]["loyalty"]) > 0.6,
+		"failover request: a test they can be told about is worth more than the test alone")
+	Game.control_evidence.erase("failover")
+	Game.deals = [{"id": "ignored", "customer": "Patient Kft", "kind": "hosting", "params": {},
+		"fee": 300, "load": 10, "brief": "", "healthy": true, "sla": 2, "loyalty": 0.6,
+		"dr_asked": Game.cycle - 20, "dr_due": Game.cycle - 1}]
+	Game.dr_request_tick()
+	check(not Game.deals[0].has("dr_due") and float(Game.deals[0]["loyalty"]) < 0.6,
+		"failover request: ignoring it costs the relationship, not a fine")
 	Game.deals = dr_deals
 
 	# --- kit that is not on the floor you are standing on ---
