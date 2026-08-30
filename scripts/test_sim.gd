@@ -3376,6 +3376,30 @@ static func run() -> int:
 	Game.sites = tr_sites2
 	Game.current_site = tr_here2
 
+	# --- hands at a building you are not standing in ---
+	var rhx_sites := Game.sites.duplicate(true)
+	var rhx_jobs := Game.remote_jobs.duplicate(true)
+	var rhx_site := Game.add_site("Sopron colo", Vector2i(4, 4), "acquired", "Gyor")
+	var rhx_rack := Game.add_rack(Vector2i(2, 2), rhx_site)
+	var rhx_dev := Game.new_device("sw-8")
+	rhx_rack.slots[0] = rhx_dev
+	Game.remote_jobs = []
+	check(Game.request_remote_hands(rhx_dev, "check") == "",
+		"remote hands: they can be sent to a floor you are not standing on")
+	check(Game.remote_jobs.size() == 1 and int(Game.remote_jobs[0]["site"]) == rhx_site,
+		"remote hands: and the job knows which building it is for")
+	# the device goes away while the van is on its way
+	rhx_rack.slots[0] = null
+	Game.racks.erase(rhx_rack)
+	Game.cycle += 5
+	Game.remote_hands_tick()
+	check(Game.remote_jobs.is_empty(),
+		"remote hands: a job for a device that has gone is closed, not left hanging")
+	check(not Game.remote_facility(999).is_empty(),
+		"remote hands: a floor that is no longer in the list does not take the game with it")
+	Game.remote_jobs = rhx_jobs
+	Game.sites = rhx_sites
+
 	# --- moving hardware between the floors you own ---
 	var mv_sites := Game.sites.duplicate(true)
 	var mv_here := Game.current_site

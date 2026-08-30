@@ -1457,8 +1457,13 @@ const REMOTE_ACTIONS := {
 func remote_facility(site: int) -> Dictionary:
 	## Your own floor has your own hands. Anywhere else you are buying them,
 	## and cheap facilities are slower and sloppier.
+	_ensure_sites()
 	if site == 0:
 		return {"label": "your own floor", "cost": 0, "wait": 0, "care": 1.0}
+	if site < 0 or site >= sites.size():
+		# a floor that is no longer in the list: a drill restored underneath it,
+		# or a site was given up. Treat it as somebody else's building.
+		return {"label": "a cheap colo", "cost": 120, "wait": 3, "care": 0.8}
 	var kind := String(sites[site].get("kind", "acquired"))
 	if kind == "floor":
 		return {"label": "a staffed datacenter", "cost": 220, "wait": 1, "care": 1.0}
