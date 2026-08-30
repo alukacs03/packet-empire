@@ -131,9 +131,13 @@ static func t(id: String, args := {}) -> String:
 	var entry: Dictionary = CATALOG[id]
 	var text: String = String(entry.get(language, entry.get(FALLBACK, id)))
 	if language == "pseudo":
-		text = pseudo(String(entry.get(FALLBACK, id)))
+		text = String(entry.get(FALLBACK, id))
+	# substitute first: the pseudo transform accents the letters inside a
+	# placeholder too, and then nothing matches and the braces ship
 	for key: String in args:
 		text = text.replace("{%s}" % key, str(args[key]))
+	if language == "pseudo":
+		text = pseudo(text)
 	return text
 
 static func plural(id: String, count: int, args := {}) -> String:

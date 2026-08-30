@@ -110,6 +110,17 @@ func _shoot_all() -> void:
 			func() -> void:
 				Prefs.language = "en"
 				Loc.language = "en"],
+		["title_pseudo",
+			func() -> void:
+				# the locale that exists to find clipping: if this shot looks
+				# wrong, a real translation will look wrong too
+				Prefs.language = "pseudo"
+				Loc.language = "pseudo"
+				title._build_menu()
+				title.show_settings(),
+			func() -> void:
+				Prefs.language = "en"
+				Loc.language = "en"],
 		["title_back_to_english", func() -> void: title._build_menu()],
 		["floor", func() -> void:
 			title.visible = false

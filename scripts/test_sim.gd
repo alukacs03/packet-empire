@@ -3293,6 +3293,10 @@ static func run() -> int:
 		"language: the title screen and its settings are translated, not only the welcome card")
 	Loc.language = "en"
 	check(Loc.t("title.new") == "New game", "language: and English is still English")
+	Loc.language = "pseudo"
+	var pseudo_line := Loc.t("title.continue.sub", {"company": "Packet Empire", "cycle": 12})
+	check(not pseudo_line.contains("{company}") and pseudo_line.contains("12"),
+		"language: the layout-test locale substitutes before it accents, so no braces ship")
 	Loc.language = loc_was
 
 	# nothing that has to stay true is read out of a log that scrolls
