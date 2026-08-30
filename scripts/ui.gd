@@ -1414,7 +1414,12 @@ func close_dev() -> void:
 	cur_dev = null
 
 func _refresh_dev_header() -> void:
-	dev_title.text = "%s  /  %s: %s" % [Game.rack_of(cur_dev).name, cur_dev.name, Game.MODELS[cur_dev.model]["label"]]
+	var away := Game.elsewhere(cur_dev)
+	dev_title.text = "%s  /  %s: %s%s" % [Game.rack_of(cur_dev).name, cur_dev.name,
+		Game.MODELS[cur_dev.model]["label"],
+		"" if away == "" else "   ⚑ AT %s, NOT THIS FLOOR" % away.to_upper()]
+	dev_title.add_theme_color_override("font_color",
+		UIW.colour("warning") if away != "" else UIW.colour("text_strong"))
 	name_edit.text = cur_dev.name
 	status_opt.select(0 if cur_dev.status == "active" else 1)
 	psu_opt.select(["A", "B", "AB"].find(cur_dev.psu))
@@ -5762,6 +5767,11 @@ func _toggle_cli() -> void:
 		cli_prompt.text = cli_session.prompt() + " "
 		cli_out.clear()
 		cli_out.append_text(cli_session.banner())
+		var cli_away := Game.elsewhere(cur_dev)
+		if cli_away != "":
+			# you are typing at a machine in another building
+			cli_out.append_text("\n[!] this console is on %s, not the floor you are standing on\n"
+				% cli_away)
 		if cur_dev != null and Game.locked_out(cur_dev):
 			# it is running your new configuration and nothing can reach it
 			cli_out.append_text("\n%% no route to %s: console server, a walk to the rack, or a site visit\n"

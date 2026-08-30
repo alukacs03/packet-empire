@@ -4383,6 +4383,16 @@ func site_of_device(d: Net.NDevice) -> int:
 	var r := rack_of(d)
 	return r.site if r != null else 0
 
+func elsewhere(d: Net.NDevice) -> String:
+	## Where this device physically is, when that is not where you are. Acting
+	## on another building's kit by accident is the expensive mistake.
+	if d == null or site_count() < 2:
+		return ""
+	var at := site_of_device(d)
+	if at == current_site:
+		return ""
+	return site_name(at)
+
 func buy_ups() -> String:
 	if ups.has(current_site) and int(ups.get(current_site, 0)) > 0:
 		return "there is already a UPS on this floor"

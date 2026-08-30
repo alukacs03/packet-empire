@@ -2991,6 +2991,22 @@ static func run() -> int:
 	Game.callout_who = ""
 	Game.callout_until = -1
 	Game.night_call_tick()
+	# --- kit that is not on the floor you are standing on ---
+	var el_dev: Net.NDevice = Game.all_devices()[0]
+	var el_sites := Game.sites.duplicate(true)
+	var el_here := Game.current_site
+	check(Game.elsewhere(el_dev) == "",
+		"sites: with one floor there is nothing to warn about")
+	Game.add_site("Debrecen exchange", Vector2i(5, 5), "acquired", "Debrecen")
+	Game.current_site = 1
+	check(Game.elsewhere(el_dev) == Game.site_name(Game.site_of_device(el_dev)),
+		"sites: a device in another building names the building it is in")
+	Game.current_site = Game.site_of_device(el_dev)
+	check(Game.elsewhere(el_dev) == "",
+		"sites: and says nothing when you are standing in front of it")
+	Game.sites = el_sites
+	Game.current_site = el_here
+
 	# --- the slow measures, with a direction ---
 	var tr_hist := Game.history.duplicate(true)
 	Game.history = [{"cycle": Game.cycle - 30, "tidy": 0.2, "drift": 0.1}]
