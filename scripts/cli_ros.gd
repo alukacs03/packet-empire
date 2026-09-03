@@ -257,8 +257,9 @@ func exec(line: String) -> String:
 				var vid := int(p["pvid"])
 				if not dev.vlans.has(vid):
 					Game.add_vlan(dev, vid, "")
-				i.untagged_vlan = vid
-				i.mode = "access"
+				i.untagged_vlan = vid  # on a trunk this is the native VLAN, RouterOS style
+				if i.mode != "trunk":
+					i.mode = "access"
 			if p.has("mode") and p["mode"] in ["access", "trunk"]:
 				if dev.type != "switch":
 					return "mode is for switch ports\n"
@@ -596,6 +597,8 @@ func _export() -> String:
 			out += "/interface set %s pvid=%d\n" % [i.name, i.untagged_vlan]
 		if dev.type == "switch" and i.mode == "trunk":
 			out += "/interface set %s mode=trunk\n" % i.name
+			if i.untagged_vlan != 1:
+				out += "/interface set %s pvid=%d\n" % [i.name, i.untagged_vlan]
 			if not i.tagged_vlans.is_empty():
 				out += "/interface set %s tagged=%s\n" % [i.name,
 					",".join(i.tagged_vlans.map(func(v): return str(v)))]

@@ -281,6 +281,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
+			{"m": ["if"], "p": ["switchport", "trunk", "native", "vlan"], "h": _sw_trunk_native},
 			{"m": ["if"], "p": ["dot1x"], "h": func(_r): return _dot1x(true)},
 			{"m": ["if"], "p": ["no", "dot1x"], "h": func(_r): return _dot1x(false)},
 			{"m": ["config"], "p": ["radius-server", "host"], "h": _cfg_radius},
@@ -899,6 +900,18 @@ class EOS extends Session:
 				i.secure_mac if i.secure_mac else "(none learned)", i.violations,
 				"   [SHUTDOWN]" if not i.enabled else ""]
 		return out if any else "  (no ports secured: 'switchport port-security' under an interface)\n"
+
+	func _sw_trunk_native(r: Array) -> String:
+		## the VLAN this trunk sends and expects untagged; both ends must agree
+		## or two VLANs quietly become one
+		if dev.type != "switch":
+			return "% switchport commands need a switch\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int() or int(r[0]) < 1 or int(r[0]) > 4094:
+			return "usage: switchport trunk native vlan <vid>\n"
+		return _each(func(i: Net.Iface) -> String:
+			i.untagged_vlan = int(r[0])
+			Game.topology_changed.emit()
+			return "")
 
 	func _sw_trunk_vlans(r: Array) -> String:
 		if dev.type != "switch":
@@ -2018,6 +2031,8 @@ class EOS extends Session:
 					wp.get("endpoint", ""), ",".join(PackedStringArray(wp.get("allowed", [])))]
 			if i.mode == "trunk":
 				out += "   switchport mode trunk\n"
+				if i.untagged_vlan != 1:
+					out += "   switchport trunk native vlan %d\n" % i.untagged_vlan
 				if not i.tagged_vlans.is_empty():
 					out += "   switchport trunk allowed vlan %s\n" % ",".join(i.tagged_vlans.map(func(v): return str(v)))
 			elif i.mode == "access" and i.untagged_vlan != 1:

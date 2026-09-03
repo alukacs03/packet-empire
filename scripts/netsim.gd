@@ -1248,7 +1248,7 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 		elif o.mode == "trunk":
 			if not o.tagged_vlans.is_empty() and vlan not in o.tagged_vlans:
 				continue
-			f["vlan"] = vlan
+			f["vlan"] = 0 if vlan == o.untagged_vlan else vlan  # 802.1Q: the native VLAN rides untagged
 		else:
 			continue
 		_depth += 1
@@ -1302,8 +1302,8 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		if frame["vlan"] != 0:
 			return  # tagged frame on access port: drop
 		vlan = in_if.untagged_vlan
-	else:  # trunk: native VLAN 1 for untagged
-		vlan = frame["vlan"] if frame["vlan"] != 0 else 1
+	else:  # trunk: an untagged frame belongs to the port's native VLAN
+		vlan = frame["vlan"] if frame["vlan"] != 0 else in_if.untagged_vlan
 		if not in_if.tagged_vlans.is_empty() and vlan not in in_if.tagged_vlans:
 			return  # VLAN not allowed on this trunk
 	if not dev.vlans.has(vlan):
@@ -1375,7 +1375,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			if o2.mode == "access" and o2.untagged_vlan != vlan:
 				continue
 			var mf := frame.duplicate(true)
-			mf["vlan"] = 0 if o2.mode == "access" else vlan
+			mf["vlan"] = 0 if o2.mode == "access" or vlan == o2.untagged_vlan else vlan
 			_tx(o2, mf)
 		return
 	var was_local: Net.Iface = dev.mac_table[vlan].get(frame["src"])
@@ -1439,7 +1439,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 		elif o.mode == "trunk":
 			if not o.tagged_vlans.is_empty() and vlan not in o.tagged_vlans:
 				continue
-			f["vlan"] = vlan
+			f["vlan"] = 0 if vlan == o.untagged_vlan else vlan  # 802.1Q: the native VLAN rides untagged
 		else:
 			continue
 		_tx(o, f)

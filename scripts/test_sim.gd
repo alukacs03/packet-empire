@@ -9570,6 +9570,62 @@ static func run() -> int:
 			tidy_if.enabled = true
 	Game.hazards = []
 	Game.customer_outage_active = false
+	# --- the native VLAN: agree on it, or two VLANs quietly become one ---
+	var nv_rack := Game.add_rack(Vector2i(8, 8))
+	var nv_a := Game.new_device("sw-8")
+	var nv_b := Game.new_device("sw-8")
+	var nv_h1 := Game.new_device("server")
+	var nv_h2 := Game.new_device("server")
+	for nv_i in 4:
+		nv_rack.slots[nv_i] = [nv_a, nv_b, nv_h1, nv_h2][nv_i]
+	Game.connect_ifaces(nv_a.ifaces[7], nv_b.ifaces[7])
+	Game.connect_ifaces(nv_h1.ifaces[0], nv_a.ifaces[0])
+	Game.connect_ifaces(nv_h2.ifaces[0], nv_b.ifaces[0])
+	Game.add_ip(nv_h1.ifaces[0], "10.67.0.1/24")
+	Game.add_ip(nv_h2.ifaces[0], "10.67.0.2/24")
+	Game.add_vlan(nv_a, 10, "ten")
+	Game.add_vlan(nv_b, 10, "ten")
+	Game.set_access_vlan(nv_a.ifaces[0], 10)  # h1 lives in VLAN 10, h2 in VLAN 1
+	var nva := CLI.new_session(nv_a)
+	var nvb := CLI.new_session(nv_b)
+	for nv_s in [nva, nvb]:
+		nv_s.exec("enable")
+		nv_s.exec("configure terminal")
+		nv_s.exec("interface Ethernet8")
+		nv_s.exec("switchport mode trunk")
+		nv_s.exec("end")
+	check(not Sim.ping(nv_h1, "10.67.0.2")["ok"], "native: different VLANs across a matching trunk stay apart")
+	nva.exec("configure terminal")
+	nva.exec("interface Ethernet8")
+	nva.exec("switchport trunk native vlan 10")
+	nva.exec("end")
+	check(Sim.ping(nv_h1, "10.67.0.2")["ok"],
+		"native: a native VLAN mismatch leaks VLAN 10 on one side into VLAN 1 on the other")
+	check("switchport trunk native vlan 10" in nva.exec("show running-config")
+		and nva.exec("show interfaces trunk").contains("10"),
+		"native: show run and show interfaces trunk say what the native VLAN is")
+	nvb.exec("configure terminal")
+	nvb.exec("interface Ethernet8")
+	nvb.exec("switchport trunk native vlan 10")
+	nvb.exec("end")
+	check(not Sim.ping(nv_h1, "10.67.0.2")["ok"], "native: agreeing on it closes the leak again")
+	Game.set_access_vlan(nv_b.ifaces[0], 10)
+	check(Sim.ping(nv_h1, "10.67.0.2")["ok"], "native: VLAN 10 crosses the trunk untagged when it is native on both ends")
+	var nv_ros := Game.new_device("sw-lite")
+	nv_rack.slots[4] = nv_ros
+	var nvr := CLI.new_session(nv_ros)
+	nvr.exec("/interface set ether5 mode=trunk")
+	nvr.exec("/interface set ether5 pvid=10")
+	check(nv_ros.ifaces[4].mode == "trunk" and nv_ros.ifaces[4].untagged_vlan == 10
+		and "pvid=10" in nvr.exec("export"),
+		"native: RouterOS pvid on a trunk is its native VLAN, and export keeps it")
+	for nv_h in [nv_h1, nv_h2]:
+		Game.disconnect_iface(nv_h.ifaces[0])
+	Game.disconnect_iface(nv_a.ifaces[7])
+	for nv_i in 5:
+		nv_rack.slots[nv_i] = null
+	Game.racks.erase(nv_rack)
+
 	# --- a cut cable is not a shutdown ---
 	var ls_port: Net.Iface = lr_sw1.ifaces[0]
 	Game.link_fault(ls_port, "link fault")
