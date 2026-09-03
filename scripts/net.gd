@@ -44,6 +44,11 @@ class Iface:
 	var tx_frames := 0  # runtime counters
 	var rx_frames := 0
 	var rx_errors := 0  # frames that arrived damaged: the first sign of a grey failure
+	var rx_crc := 0  # of those, the ones with a bad checksum: a cable or optic problem
+	var rx_giants := 0  # frames bigger than this port's MTU: a configuration problem
+	var out_drops := 0  # frames the port could not send: no room on the wire
+	var collisions := 0  # late collisions: the half-duplex side of a mismatch
+	var duplex := "auto"  # auto | full | half; both ends must agree or the counters say so
 	var light_dbm := -6.0  # optical receive level; drifts down as an optic dies
 	var ips: Array = []  # CIDR strings, e.g. "10.0.0.5/24"
 	var note := {}  # player-authored {text, cycle}; never interpreted by the simulation

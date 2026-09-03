@@ -9579,6 +9579,55 @@ static func run() -> int:
 			tidy_if.enabled = true
 	Game.hazards = []
 	Game.customer_outage_active = false
+	# --- counters that tell the cable from the configuration ---
+	var cx_rack := Game.add_rack(Vector2i(10, 10))
+	var cx_sw := Game.new_device("sw-8")
+	var cx_h1 := Game.new_device("server")
+	var cx_h2 := Game.new_device("server")
+	cx_rack.slots[0] = cx_sw
+	cx_rack.slots[1] = cx_h1
+	cx_rack.slots[2] = cx_h2
+	Game.connect_ifaces(cx_h1.ifaces[0], cx_sw.ifaces[0])
+	Game.connect_ifaces(cx_h2.ifaces[0], cx_sw.ifaces[1])
+	Game.add_ip(cx_h1.ifaces[0], "10.69.0.1/24")
+	Game.add_ip(cx_h2.ifaces[0], "10.69.0.2/24")
+	var ces := CLI.new_session(cx_sw)
+	ces.exec("enable")
+	Game.inject_grey_fault(cx_sw.ifaces[0], "dirty_optic")
+	for cx_i in 12:
+		Sim.ping(cx_h1, "10.69.0.2", 64, "", 1400)
+	check(cx_sw.ifaces[0].rx_crc > 0 and "CRC" in ces.exec("show interfaces counters errors"),
+		"counters: a dirty optic shows up as CRC errors on the receiving port")
+	Game.grey_faults.erase(Game.iface_key(cx_sw.ifaces[0]))
+	ces.exec("clear counters")
+	cx_sw.ifaces[1].mtu = 1200
+	Sim.ping(cx_h1, "10.69.0.2", 64, "", 1400)
+	check(cx_sw.ifaces[1].out_drops > 0, "counters: an MTU too small for the frame counts as an output drop on that port")
+	cx_sw.ifaces[1].mtu = 1500
+	ces.exec("clear counters")
+	ces.exec("configure terminal")
+	ces.exec("interface Ethernet1")
+	ces.exec("duplex full")  # forced full against an auto far end: the auto side falls back to half
+	ces.exec("end")
+	var cx_ok := 0
+	for cx_i in 20:
+		if Sim.ping(cx_h1, "10.69.0.2")["ok"]:
+			cx_ok += 1
+	check(cx_h1.ifaces[0].collisions > 0 and cx_sw.ifaces[0].rx_crc > 0 and cx_ok < 20 and cx_ok > 0,
+		"counters: a duplex mismatch drops some traffic, with collisions on the half side and CRCs on the full side (%d/20)" % cx_ok)
+	check("full" in ces.exec("show interfaces status").split("\n")[1] and "duplex full" in ces.exec("show running-config"),
+		"counters: show interfaces status and show run say the duplex")
+	ces.exec("configure terminal")
+	ces.exec("interface Ethernet1")
+	ces.exec("duplex auto")
+	ces.exec("end")
+	check(not Sim.duplex_mismatch(cx_sw.ifaces[0], cx_h1.ifaces[0]), "counters: auto against auto agrees again")
+	Game.disconnect_iface(cx_h1.ifaces[0])
+	Game.disconnect_iface(cx_h2.ifaces[0])
+	for cx_i in 3:
+		cx_rack.slots[cx_i] = null
+	Game.racks.erase(cx_rack)
+
 	# --- the score and the difficulty ---
 	var sc_snap := {"cycle": 100, "earned": 5000, "money": 20000, "difficulty": "Operator"}
 	var sc_base := int(Game.finale_score(sc_snap)["categories"]["financial"])

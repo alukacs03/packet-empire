@@ -1122,6 +1122,18 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if Game.grey_drops(iface, peer, frame_size(frame)):
 		# the link is up and the frame is gone: this is what a grey failure is
 		peer.rx_errors += 1
+		var kind := String(Game.grey_fault(iface).get("kind", Game.grey_fault(peer).get("kind", "")))
+		if kind in ["dirty_optic", "loose_connector"]:
+			peer.rx_crc += 1  # damage on the wire arrives as a bad checksum
+		return
+	if duplex_mismatch(iface, peer) and randf() < 0.35:
+		# the half side hears collisions, the full side sees garbage; both
+		# counters climb and throughput falls, which is exactly the tell
+		var half: Net.Iface = iface if effective_duplex(iface, peer) == "half" else peer
+		var full: Net.Iface = peer if half == iface else iface
+		half.collisions += 1
+		full.rx_errors += 1
+		full.rx_crc += 1
 		return
 	peer.rx_frames += 1
 	rtt_ms += Game.link_latency_ms(l)
@@ -1703,6 +1715,17 @@ static func frame_size(frame: Dictionary) -> int:
 		return 0  # control traffic: small enough that MTU never matters
 	return payload + 28  # IP and ICMP headers
 
+static func effective_duplex(i: Net.Iface, far: Net.Iface) -> String:
+	## what this end actually runs: a forced setting wins; auto against ANY
+	## forced end cannot negotiate and falls back to half, which is why
+	## "one side hard-coded to full" is the classic mismatch; auto with auto is full
+	if i.duplex != "auto":
+		return i.duplex
+	return "half" if far.duplex != "auto" else "full"
+
+static func duplex_mismatch(a: Net.Iface, b: Net.Iface) -> bool:
+	return effective_duplex(a, b) != effective_duplex(b, a)
+
 static func _too_big(iface: Net.Iface, frame: Dictionary) -> bool:
 	## A port silently drops what will not fit, and so does the far end if it
 	## was configured with a smaller MTU. That asymmetry is the classic bug:
@@ -1719,6 +1742,10 @@ static func _too_big(iface: Net.Iface, frame: Dictionary) -> bool:
 		var port: Net.Iface = pair[0]
 		var mtu: int = int(pair[1])
 		if mtu > 0 and size > mtu:
+			if port == iface:
+				port.out_drops += 1  # would not go out: too big for this port
+			else:
+				port.rx_giants += 1  # arrived too big for the far end
 			last_mtu_drop = "dropped: %d bytes will not fit the %d byte MTU on %s %s" % [
 				size, mtu, port.dev.name, port.name]
 			Game.device_log(port.dev, "MTU: dropped a %d byte frame on %s (MTU %d)"

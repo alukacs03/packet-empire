@@ -205,6 +205,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "port-channel"], "h": _show_lag},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
+			{"m": EP, "p": ["show", "interfaces", "counters", "errors"], "h": _show_counter_errors},
+			{"m": ["if"], "p": ["duplex"], "h": _if_duplex, "dyn": func(): return ["auto", "full", "half"]},
 			{"m": ["priv"], "p": ["clear", "counters"], "h": _clear_counters},
 			{"m": EP, "p": ["show", "spanning-tree"], "h": _show_stp},
 			{"m": ["if"], "p": ["ipv6", "nd", "ra"], "h": func(_r): return _ra(true)},
@@ -1821,7 +1823,27 @@ class EOS extends Session:
 			i.tx_frames = 0
 			i.rx_frames = 0
 			i.rx_errors = 0
+			i.rx_crc = 0
+			i.rx_giants = 0
+			i.out_drops = 0
+			i.collisions = 0
 		return ""
+
+	func _show_counter_errors(_r: Array) -> String:
+		## the read that separates the cable from the configuration: CRCs are
+		## the wire, giants are an MTU, drops are a full pipe, collisions a duplex
+		var out := "%-11s %8s %8s %8s %10s %10s\n" % ["Port", "InErrors", "CRC", "Giants", "OutDrops", "Collisions"]
+		for i: Net.Iface in dev.ifaces:
+			out += "%-11s %8d %8d %8d %10d %10d\n" % [EOS._short(i.name), i.rx_errors, i.rx_crc,
+				i.rx_giants, i.out_drops, i.collisions]
+		return out
+
+	func _if_duplex(r: Array) -> String:
+		if r.size() != 1 or String(r[0]) not in ["auto", "full", "half"]:
+			return "usage: duplex auto|full|half\n"
+		return _each(func(i: Net.Iface) -> String:
+			i.duplex = String(r[0])
+			return "")
 
 	func _show_lldp(_r: Array) -> String:
 		var out := "%-11s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]
@@ -1962,13 +1984,14 @@ class EOS extends Session:
 
 	func _show_if_status(_r: Array) -> String:
 		## One line per port, the way you actually scan a switch.
-		var out := "%-11s %-11s %-7s %-9s %s\n" % ["Port", "Status", "Speed", "InErrors", "Neighbour"]
+		var out := "%-11s %-11s %-7s %-7s %-9s %s\n" % ["Port", "Status", "Speed", "Duplex", "InErrors", "Neighbour"]
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.effective_peer(i)
 			var status := Game.iface_status_word(i)
-			out += "%-11s %-11s %-7s %-9d %s\n" % [EOS._short(i.name), status,
+			var duplex_word := "a-%s" % Sim.effective_duplex(i, peer) if peer != null and i.duplex == "auto" else i.duplex
+			out += "%-11s %-11s %-7s %-7s %-9d %s\n" % [EOS._short(i.name), status,
 				("%dG" % (Game.iface_speed(i) / 1000)) if Game.iface_speed(i) >= 1000
-					else "%dM" % Game.iface_speed(i),
+					else "%dM" % Game.iface_speed(i), duplex_word,
 				i.rx_errors, "%s %s" % [peer.dev.name, EOS._short(peer.name)] if peer != null else "-"]
 		return out
 
@@ -2161,6 +2184,8 @@ class EOS extends Session:
 				out += "   storm-control broadcast %d\n" % i.storm_limit
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
+			if i.duplex != "auto":
+				out += "   duplex %s\n" % i.duplex
 			if i.admin_down:
 				out += "   shutdown\n"
 			out += "!\n"

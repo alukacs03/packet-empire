@@ -5218,6 +5218,9 @@ func finale_report() -> Array:
 	]
 	for k: String in scored["categories"]:
 		lines.append("  %-12s %d" % [k, int(scored["categories"][k])])
+	lines.append("Customers at the end %d   ·   faults %d   ·   incidents %d   ·   longest clean streak %d cycles   ·   cash $%d" % [
+		int(finale.get("deals", 0)), int(finale.get("faults", 0)), int(finale.get("incidents", 0)),
+		int(finale.get("best_streak", 0)), int(finale.get("money", 0))])
 	lines.append("Strongest: %s" % callouts["strength"])
 	for loss: String in callouts["losses"]:
 		lines.append("Avoidable: %s" % loss)
@@ -8835,6 +8838,10 @@ func sla_tick() -> void:
 		for l in deal_links.get(deal["id"], []):
 			if link_load[l] > link_capacity(l) and not protected.has(deal["id"]):
 				congested = true
+				# a full pipe shows on the port as output drops, not as errors
+				var over := 1 + int((link_load[l] - link_capacity(l)) / 50.0)
+				l.a.out_drops += over
+				l.b.out_drops += over
 		if congested and not deal.get("degraded", false):
 			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
 				% deal["customer"])
@@ -9721,7 +9728,7 @@ func config_diff(old_cfg: Dictionary, new_cfg: Dictionary) -> Array:
 			out.append("+ interface %s" % name)
 			continue
 		var oi: Dictionary = old_if[name]
-		for field in ["mode", "untagged_vlan", "mtu", "admin_down", "nat", "lag", "mlag", "helper",
+		for field in ["mode", "untagged_vlan", "mtu", "admin_down", "duplex", "nat", "lag", "mlag", "helper",
 				"port_security", "tagged_vlans", "ips"]:
 			var a := JSON.stringify(oi.get(field, null))
 			var b := JSON.stringify(ni.get(field, null))
@@ -9796,6 +9803,7 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		# a saved configuration carries the administrative state; it cannot
 		# mend a cable, and it does not pretend to
 		target.admin_down = bool(si.get("admin_down", not bool(si.get("enabled", true))))
+		target.duplex = String(si.get("duplex", "auto"))
 		target.enabled = not target.admin_down and target.fault == "" and not target.err_disabled
 		target.mtu = int(si["mtu"])
 		target.mode = si["mode"]
@@ -9815,7 +9823,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	var ifs: Array = []
 	for i: Net.Iface in d.ifaces:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
-			"admin_down": i.admin_down, "err_disabled": i.err_disabled, "fault": i.fault,
+			"admin_down": i.admin_down, "err_disabled": i.err_disabled, "fault": i.fault, "duplex": i.duplex,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
 			"mlag": i.mlag, "mlag_peerlink": i.mlag_peerlink, "bfd": i.bfd, "ra": i.ra,
@@ -10057,6 +10065,7 @@ func _apply(data: Dictionary) -> void:
 			i.admin_down = bool(si.get("admin_down", false))
 			i.err_disabled = bool(si.get("err_disabled", false))
 			i.fault = String(si.get("fault", ""))
+			i.duplex = String(si.get("duplex", "auto"))
 			i.mtu = int(si.get("mtu", 1500))
 			i.mode = String(si.get("mode", "access"))
 			i.untagged_vlan = int(si.get("untagged_vlan", 1))
