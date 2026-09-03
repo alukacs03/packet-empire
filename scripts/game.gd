@@ -77,11 +77,14 @@ const TYPE_SPECS := {
 }
 const DIFFICULTIES := [
 	{"name": "Apprentice", "cash": 4000, "aggression": 0.75, "faults": 0.5, "cycle": 60.0,
-		"blurb": "More money, gentler competition, fewer failures, a slower clock."},
+		"prices": 0.9, "score": 0.85,
+		"blurb": "More money, cheaper gear, rivals who bid high, fewer failures, a slower clock. Scores count 85%."},
 	{"name": "Operator", "cash": 2000, "aggression": 1.0, "faults": 1.0, "cycle": 45.0,
+		"prices": 1.0, "score": 1.0,
 		"blurb": "The intended experience."},
 	{"name": "On call", "cash": 1200, "aggression": 1.2, "faults": 1.8, "cycle": 32.0,
-		"blurb": "Thin margins, hungry rivals, and things break often."},
+		"prices": 1.15, "score": 1.2,
+		"blurb": "Thin margins, dearer gear, rivals who undercut, and things break often. Scores count 120%."},
 ]
 const RACK_PRICE := 500
 const SLOTS := 3  # named slots, plus one autosave that lives at index SLOTS
@@ -251,14 +254,14 @@ func check_achievements() -> Array:
 
 const LOAN_TRANCHE := 1000
 const LOAN_MAX := 10000
-const LOAN_RATE := 0.05  # per revenue cycle
+const LOAN_RATE := 0.015  # per revenue cycle: a bridge while invoices land, not a trap
 
 func borrow() -> bool:
 	if debt + LOAN_TRANCHE > LOAN_MAX:
 		return false
 	debt += LOAN_TRANCHE
 	money += LOAN_TRANCHE
-	log_event("BANK: borrowed $%d (debt $%d, %d%% interest per cycle)" % [LOAN_TRANCHE, debt, int(LOAN_RATE * 100)])
+	log_event("BANK: borrowed $%d (debt $%d, %.1f%% interest per cycle)" % [LOAN_TRANCHE, debt, LOAN_RATE * 100.0])
 	money_changed.emit()
 	return true
 
@@ -534,9 +537,14 @@ func site_name(idx: int) -> String:
 	return sites[idx]["name"]
 
 func _scale_rival_aggression() -> void:
+	# a rival's aggression is the multiplier on its bid: lower means it
+	# undercuts you. A harder preset therefore divides, not multiplies.
 	var factor := float(DIFFICULTIES[difficulty]["aggression"])
 	for r in rivals:
-		r["aggression"] = float(r.get("base_aggression", r["aggression"])) * factor
+		r["aggression"] = float(r.get("base_aggression", r["aggression"])) / factor
+
+func price_scale() -> float:
+	return float(DIFFICULTIES[difficulty].get("prices", 1.0))
 
 func apply_difficulty(idx: int) -> void:
 	difficulty = clampi(idx, 0, DIFFICULTIES.size() - 1)
@@ -1262,7 +1270,7 @@ func stockout_tick() -> void:
 
 func order_estimate(model: String, tier: String) -> int:
 	var spec: Dictionary = VENDOR_TIERS.get(tier, VENDOR_TIERS["distributor"])
-	return int(float(MODELS[model]["price"]) * float(spec["price"]) * identity_hardware_multiplier())
+	return int(float(MODELS[model]["price"]) * float(spec["price"]) * identity_hardware_multiplier() * price_scale())
 
 func send_rma(dev: Net.NDevice) -> String:
 	## Ship the dead one back. With cover you get the replacement first.
@@ -4874,9 +4882,8 @@ func accept_buyout() -> String:
 	if buyout_offer.is_empty():
 		return "there is nothing on the table"
 	var price := int(buyout_offer["price"])
-	money += price
+	money += price  # the sale is cash in the bank, and is scored as that, not as trading
 	sold_out = true
-	stats["earned"] = int(stats.get("earned", 0)) + price
 	log_event("SOLD: %s bought the company for $%d. That is the end of it."
 		% [buyout_offer["rival"], price])
 	buyout_offer = {}
@@ -4946,6 +4953,7 @@ func finale_snapshot(ending: String) -> Dictionary:
 		"controls": controls_passing, "tidiness": floor_tidiness(),
 		"drift": drift_factor(), "faults": int(stats.get("faults", 0)),
 		"incidents": int(stats.get("incidents", 0)), "data_risks": data_risks.size(),
+		"destruction_certs": destruction_certs.size(),
 		"cable_debt": cable_debt_score(), "best_streak": best_streak(),
 		"trust_marker": trust_marker,
 		# what was actually practised, not only what was built
@@ -4959,7 +4967,9 @@ func finale_score(snap: Dictionary) -> Dictionary:
 	var cycles := maxf(1.0, float(int(snap.get("cycle", 1))))
 	var per_cycle := float(int(snap.get("earned", 0))) / cycles
 	var categories := {
-		"financial": clampi(int(per_cycle * 2.0), 0, 250),
+		# what the company earned per cycle, plus what it kept: a hoard is
+		# worth something, and a sale is worth exactly what it left in the bank
+		"financial": clampi(int(per_cycle * 2.0) + maxi(0, int(snap.get("money", 0))) / 500, 0, 250),
 		"reliability": clampi(int(snap.get("uptime", 0)) * 2, 0, 200),
 		"trust": clampi(int(snap.get("reputation", 0)) + int(snap.get("references", 0)) * 10
 			+ (20 if bool(snap.get("trust_marker", false)) else 0), 0, 200),
@@ -4972,6 +4982,7 @@ func finale_score(snap: Dictionary) -> Dictionary:
 			+ mini(int(snap.get("failovers_passed", 0)), 3) * 12
 			+ int(snap.get("oncall_covered", 0)) * 10
 			+ mini(int(snap.get("handovers_read", 0)), 10) * 2
+			+ mini(int(snap.get("destruction_certs", 0)), 5) * 4
 			- int(snap.get("open_reviews", 0)) * 10
 			- int(snap.get("data_risks", 0)) * 15 - int(snap.get("cable_debt", 0)) * 2, 0, 200),
 		"growth": clampi(int(snap.get("stage", 0)) * 40 + int(snap.get("sites", 1)) * 20
@@ -4980,7 +4991,12 @@ func finale_score(snap: Dictionary) -> Dictionary:
 	var total := 0
 	for k: String in categories:
 		total += int(categories[k])
-	return {"categories": categories, "total": total}
+	# a harder preset is worth more; Apprentice runs do not top the table
+	var diff_factor := 1.0
+	for d: Dictionary in DIFFICULTIES:
+		if String(d["name"]) == String(snap.get("difficulty", "")):
+			diff_factor = float(d.get("score", 1.0))
+	return {"categories": categories, "total": int(total * diff_factor), "difficulty_factor": diff_factor}
 
 func finale_callouts(snap: Dictionary) -> Dictionary:
 	## What went well, and what it cost to do the things that did not.
@@ -4996,6 +5012,8 @@ func finale_callouts(snap: Dictionary) -> Dictionary:
 		losses.append("%d incident(s) never written up" % int(snap["open_reviews"]))
 	if int(snap.get("data_risks", 0)) > 0:
 		losses.append("%d unit(s) decommissioned without a certificate" % int(snap["data_risks"]))
+	if int(snap.get("destruction_certs", 0)) > 0 and int(snap.get("data_risks", 0)) == 0:
+		losses.append("(every drive that left was wiped first: %d certificate(s) on file)" % int(snap["destruction_certs"]))
 	if int(snap.get("cable_debt", 0)) > 4:
 		losses.append("%d pieces of cable debt nobody went back for" % int(snap["cable_debt"]))
 	if float(snap.get("drift", 0.0)) > 0.4:
@@ -5074,8 +5092,11 @@ func compare_to_best(row: Dictionary) -> Array:
 	var out: Array = []
 	var previous := {}
 	for other: Dictionary in run_history():
-		# strictly earlier runs only: a run does not compete with itself
+		# strictly earlier runs only: a run does not compete with itself, and
+		# only on the same difficulty: Apprentice does not compete with On call
 		if int(other.get("seq", 0)) >= int(row.get("seq", 0)):
+			continue
+		if String(other.get("difficulty", "")) != String(row.get("difficulty", "")):
 			continue
 		if previous.is_empty() or int(other["total"]) > int(previous["total"]):
 			previous = other
@@ -7163,6 +7184,8 @@ func audit_findings() -> Array:
 	var out: Array = []
 	if not data_risks.is_empty():
 		out.append("%d unit(s) left without a certificate of destruction" % data_risks.size())
+	elif not destruction_certs.is_empty():
+		out.append("%d certificate(s) of destruction on file, nothing left without one" % destruction_certs.size())
 	if drift_factor() > 0.4:
 		out.append("documentation that no longer describes the floor (%d fact(s) adrift)" % site_drift())
 	if packaging > 2 or aisle_blocked():
@@ -8957,7 +8980,7 @@ func delivery_credit_for_model(model: String) -> int:
 
 func shop_price(model: String) -> int:
 	## what the instant shop charges: list price under the company's identity
-	return int(float(MODELS[model]["price"]) * identity_hardware_multiplier())
+	return int(float(MODELS[model]["price"]) * identity_hardware_multiplier() * price_scale())
 
 func try_buy_device(model: String) -> bool:
 	if not MODELS.has(model) or stocked_out(model):

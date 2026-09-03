@@ -760,7 +760,7 @@ static func run() -> int:
 	Game.sla_tick()  # service fees are invoiced on the customer's terms, so let a couple land
 	Game.sla_tick()
 	Game.sla_tick()
-	check(Game.last_pl.has("loan interest") and int(Game.last_pl["loan interest"]) == -100,
+	check(Game.last_pl.has("loan interest") and int(Game.last_pl["loan interest"]) == -ceili(2000 * Game.LOAN_RATE),
 		"pl: interest appears as its own line item")
 	check(Game.last_pl.has("service fees"), "pl: service fees are itemised")
 	var pl_sum := 0
@@ -1187,7 +1187,7 @@ static func run() -> int:
 	Game.sla_tick()
 	var delta1 := Game.money - d1_start
 	Game.fixed_tariff = bank_tariff
-	check(delta0 - delta1 == 500, "bank: interest bites exactly debt*rate (got %d)" % (delta0 - delta1))
+	check(delta0 - delta1 == ceili(10000 * Game.LOAN_RATE), "bank: interest bites exactly debt*rate (got %d)" % (delta0 - delta1))
 	Game.debt = 1000
 	check(Game.repay() and Game.debt == 0, "bank: repay clears the tranche")
 
@@ -6003,7 +6003,7 @@ static func run() -> int:
 	var harsh := 0.0
 	for rv4 in Game.rivals:
 		harsh = maxf(harsh, float(rv4["aggression"]))
-	check(harsh > gentle, "difficulty: on-call rivals bid harder")
+	check(harsh < gentle, "difficulty: on-call rivals undercut harder (a lower multiplier is a lower bid)")
 	check(Game.fault_scale() > 1.0, "difficulty: on-call breaks things more often")
 	Game.apply_difficulty(1)
 	Game.money = money_pre
@@ -9579,6 +9579,31 @@ static func run() -> int:
 			tidy_if.enabled = true
 	Game.hazards = []
 	Game.customer_outage_active = false
+	# --- the score and the difficulty ---
+	var sc_snap := {"cycle": 100, "earned": 5000, "money": 20000, "difficulty": "Operator"}
+	var sc_base := int(Game.finale_score(sc_snap)["categories"]["financial"])
+	sc_snap["money"] = 0
+	check(sc_base > int(Game.finale_score(sc_snap)["categories"]["financial"]),
+		"score: cash in the bank at the end is worth something")
+	sc_snap["difficulty"] = "On call"
+	var sc_hard := int(Game.finale_score(sc_snap)["total"])
+	sc_snap["difficulty"] = "Apprentice"
+	check(sc_hard > int(Game.finale_score(sc_snap)["total"]), "score: the same run scores more on a harder preset")
+	var sc_diff := Game.difficulty
+	var sc_rival_base: float = float(Game.rivals[0].get("base_aggression", Game.rivals[0]["aggression"]))
+	Game.apply_difficulty(2)
+	check(float(Game.rivals[0]["aggression"]) < sc_rival_base and Game.price_scale() > 1.0,
+		"difficulty: On call makes rivals undercut and hardware cost more")
+	Game.apply_difficulty(sc_diff)
+	var bo_earned := int(Game.stats.get("earned", 0))
+	var bo_money := Game.money
+	Game.buyout_offer = {"price": 50000, "rival": "Test Kft"}
+	Game.accept_buyout()
+	check(int(Game.stats.get("earned", 0)) == bo_earned and Game.money == bo_money + 50000,
+		"score: selling the company is cash, not trading income")
+	Game.sold_out = false
+	Game.money = bo_money
+
 	# --- static MAC entries, allowed-list editing, and an honest show vlan ---
 	var sm_rack := Game.add_rack(Vector2i(9, 9))
 	var sm_sw := Game.new_device("sw-8")

@@ -2521,8 +2521,8 @@ func _refresh_ops() -> void:
 	if not past_runs.is_empty():
 		ops_box.add_child(_section("RUNS BEFORE THIS ONE"))
 		for row: Dictionary in past_runs.slice(0, 6):
-			var rl := _label("  %-18s %-14s %-11s cycle %-5d score %d" % [row.get("company", ""),
-				row.get("identity", ""), row.get("ending", ""), int(row.get("cycle", 0)),
+			var rl := _label("  %-18s %-14s %-10s %-11s cycle %-5d score %d" % [row.get("company", ""),
+				row.get("identity", ""), row.get("difficulty", ""), row.get("ending", ""), int(row.get("cycle", 0)),
 				int(row.get("total", 0))], 12, Color(0.78, 0.84, 0.9))
 			rl.add_theme_font_override("font", mono)
 			ops_box.add_child(rl)
@@ -2827,6 +2827,17 @@ func _refresh_ops() -> void:
 	ops_box.add_child(_section("AUDIT READINESS"))
 	ops_box.add_child(_wrap("  A teaching abstraction, not any real certification scheme: eight controls the simulation can actually prove.%s"
 		% ("   Trust marker: earned." if Game.trust_marker else ""), 12, MUTED, 780))
+	if not Game.destruction_certs.is_empty() or not Game.data_risks.is_empty():
+		# the paperwork an auditor asks for first: what left the building, and whether it was wiped
+		var cert_line := _label("  Certificates of destruction on file: %d%s" % [Game.destruction_certs.size(),
+			"   (%d unit(s) left without one)" % Game.data_risks.size() if not Game.data_risks.is_empty() else ""],
+			12, Prefs.bad_colour() if not Game.data_risks.is_empty() else Color(0.6, 0.85, 0.7))
+		cert_line.add_theme_font_override("font", mono)
+		var cert_names: Array = []
+		for cert: Dictionary in Game.destruction_certs.slice(-8):
+			cert_names.append("%s (cycle %d)" % [cert.get("device", "?"), int(cert.get("cycle", 0))])
+		cert_line.tooltip_text = ", ".join(PackedStringArray(cert_names)) if not cert_names.is_empty() else "none yet"
+		ops_box.add_child(cert_line)
 	for ctrl: Dictionary in Game.audit_readiness():
 		var ctrl_colour := Color(0.6, 0.85, 0.7)
 		if String(ctrl["status"]) == "failing":
