@@ -3190,6 +3190,32 @@ func _refresh_ops() -> void:
 				Game.bind_remediation(Game.monitors[id], rb_i)
 				_refresh_ops()))
 		rbrow.add_child(rb_bind)
+	# what automation actually did, newest first, and the way back
+	var real_runs: Array = Game.runbook_runs.filter(func(rr): return not bool(rr.get("dry_run", true)))
+	if not real_runs.is_empty():
+		ops_box.add_child(_label("  RECENT RUNS", 11, UIW.colour("muted")))
+	real_runs.reverse()
+	for run_i: Dictionary in real_runs.slice(0, 5):
+		var runrow := HBoxContainer.new()
+		runrow.add_theme_constant_override("separation", 8)
+		ops_box.add_child(runrow)
+		var run_lbl := _label("  cycle %d  %-28s %s" % [int(run_i.get("cycle", 0)), String(run_i.get("runbook", "")),
+			String(run_i["refused"]) if String(run_i.get("refused", "")) != ""
+			else "%d applied, %d skipped" % [run_i.get("applied", []).size(), run_i.get("skipped", []).size()]],
+			12, Color(0.72, 0.78, 0.86))
+		run_lbl.add_theme_font_override("font", mono)
+		run_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		runrow.add_child(run_lbl)
+		if not run_i.get("applied", []).is_empty() and run_i.has("before"):
+			var rb_back := Button.new()
+			rb_back.text = "Roll back"
+			rb_back.tooltip_text = "Put every device it touched back to the configuration it had before"
+			rb_back.pressed.connect(func() -> void:
+				var back_err: String = Game.rollback_runbook(run_i)
+				hud_toast(back_err if back_err != "" else "Rolled back %d device(s)." % run_i["before"].size(),
+					back_err == "")
+				_refresh_ops())
+			runrow.add_child(rb_back)
 	for m_t: Dictionary in Game.monitors:
 		var rem_t: Dictionary = m_t.get("remediation", {})
 		if rem_t.is_empty():

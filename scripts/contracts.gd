@@ -217,7 +217,7 @@ static func _campaign() -> Array:
 			"title": "Connect two offices",
 			"customer": "Gamma Corp",
 			"reward": 1200,
-			"brief": "Gamma runs two offices on different networks: 192.168.1.0/24 and 192.168.2.0/24. Different subnets can only talk through a router. Set up a server in each network (192.168.1.10/24 and 192.168.2.10/24) and install a router with one leg in each subnet. On a PacketTik R4 (RouterOS style): '/ip address add address=192.168.1.1/24 interface=ether1' and the same for ether2 with 192.168.2.1/24. (On Junivista gear it's Cisco-style: 'conf t', 'interface Ethernet1', 'ip address ...'.) Then give each server its default gateway: 'ip route add default via 192.168.1.1'. Both servers must reach each other; try 'traceroute' to see the router hop.",
+			"brief": "Gamma runs two offices on different networks: 192.168.1.0/24 and 192.168.2.0/24. Different subnets can only talk through a router. Set up a server in each network (192.168.1.10/24 and 192.168.2.10/24) and install a router with one leg in each subnet. On a PacketTik R4 (RouterOS style): '/ip address add address=192.168.1.1/24 interface=ether1' and the same for ether2 with 192.168.2.1/24. (On Junivista gear it's Cisco-style: 'enable', 'conf t', 'interface Ethernet1', 'ip address ...'.) Then give each server its default gateway: 'ip route add default via 192.168.1.1'. Both servers must reach each other; try 'traceroute' to see the router hop.",
 			"reqs": [
 				{"d": "Servers own 192.168.1.10 and 192.168.2.10", "t": func() -> bool: return _owner("192.168.1.10") != null and _owner("192.168.2.10") != null},
 				{"d": "A router owns 192.168.1.1 and 192.168.2.1", "t": func() -> bool: return _router_owns(["192.168.1.1", "192.168.2.1"])},
@@ -254,7 +254,7 @@ static func _campaign() -> Array:
 			"title": "Lock it down",
 			"customer": "Epsilon Bank",
 			"reward": 2500,
-			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console: 'acl deny 172.16.1.0/24 172.16.2.20/32': first match wins, everything else is permitted. Verify with 'show acl' and pings both ways.",
+			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console, in config mode ('enable', 'configure terminal'): 'acl deny 172.16.1.0/24 172.16.2.20/32': first match wins, everything else is permitted. Verify with 'show acl' and pings both ways.",
 			"reqs": [
 				{"d": "A firewall with at least one deny rule", "t": func() -> bool: return _fw_with_deny() != null},
 				{"d": "Office 172.16.1.10 reaches app 172.16.2.10", "t": func() -> bool: return _ping("172.16.1.10", "172.16.2.10", true)},
@@ -278,7 +278,7 @@ static func _campaign() -> Array:
 			"title": "Hide the internals",
 			"customer": "Zeta Hosting (again)",
 			"reward": 2200,
-			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista: on the uplink-facing interface, 'ip nat outside'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
+			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista: in config mode, under the uplink-facing interface, 'ip nat outside'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
 			"reqs": [
 				{"d": "A NAT outside interface on a router", "t": func() -> bool: return _nat_router() != null},
 				{"d": "A private (10.x) server reaches 8.8.8.8", "t": func() -> bool: return _private_pings_inet() != null},
@@ -290,7 +290,7 @@ static func _campaign() -> Array:
 			"title": "Static spaghetti",
 			"customer": "Gamma Corp (again)",
 			"reward": 2600,
-			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik: '/routing ospf network add prefix=10.20.0.0/16'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
+			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista, from config mode: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik: '/routing ospf network add prefix=10.20.0.0/16'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
 			"reqs": [
 				{"d": "Servers own 10.20.1.10 and 10.20.2.10", "t": func() -> bool: return _owner("10.20.1.10") != null and _owner("10.20.2.10") != null},
 				{"d": "Two routers share an OSPF adjacency", "t": func() -> bool: return _ospf_adjacency()},
@@ -314,7 +314,7 @@ static func _campaign() -> Array:
 			"title": "No single point of failure",
 			"customer": "Omega Holding (pre-audit)",
 			"reward": 3200,
-			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
+			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: in config mode, 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
 			"reqs": [
 				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
 				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},
@@ -326,7 +326,7 @@ static func _campaign() -> Array:
 			"title": "Double the pipe",
 			"customer": "Alfa Ltd (still growing)",
 			"reward": 1600,
-			"brief": "Your redundant inter-switch link bothers Alfa's consultants: 'one link idle because of spanning tree? Bundle them!' Port-channels aggregate parallel links into one logical pipe: full capacity AND redundancy, no blocked spare. On BOTH switches put both inter-switch ports in the same group: Cisco-style 'channel-group 1' under each interface, PacketTik '/interface bonding add slaves=ether4,ether5'. 'show port-channel' should list the members and 'show spanning-tree' should show nothing discarding between that pair.",
+			"brief": "Your redundant inter-switch link bothers Alfa's consultants: 'one link idle because of spanning tree? Bundle them!' Port-channels aggregate parallel links into one logical pipe: full capacity AND redundancy, no blocked spare. On BOTH switches put both inter-switch ports in the same group: Cisco-style 'channel-group 1' under each interface in config mode, PacketTik '/interface bonding add slaves=ether4,ether5'. 'show port-channel' should list the members and 'show spanning-tree' should show nothing discarding between that pair.",
 			"reqs": [
 				{"d": "A 2+ member bundle between two switches", "t": func() -> bool: return _bundle_exists()},
 				{"d": "No STP-blocked port inside the bundle", "t": func() -> bool: return _bundle_unblocked()},
@@ -337,7 +337,7 @@ static func _campaign() -> Array:
 			"title": "One port, two networks",
 			"customer": "Beta Kft",
 			"reward": 1900,
-			"brief": "Beta needs their two VLANs (60 and 61) routed, and you have exactly one router port left. That is what router-on-a-stick is for: cable the router port to a switch TRUNK, then split it into 802.1Q subinterfaces. On the router: 'interface Ethernet1.60', 'encapsulation dot1q 60', 'ip address 10.90.60.1/24', then the same for .61 with 10.90.61.1/24 (PacketTik: '/interface vlan add name=vlan60 vlan-id=60 interface=ether1', '/ip address add address=10.90.60.1/24 interface=vlan60'). Put a server in each VLAN (10.90.60.10 and 10.90.61.10) pointing at those gateways. Both must reach each other over that single physical link.",
+			"brief": "Beta needs their two VLANs (60 and 61) routed, and you have exactly one router port left. That is what router-on-a-stick is for: cable the router port to a switch TRUNK, then split it into 802.1Q subinterfaces. On the router, in config mode: 'interface Ethernet1.60', 'encapsulation dot1q 60', 'ip address 10.90.60.1/24', then the same for .61 with 10.90.61.1/24 (PacketTik: '/interface vlan add name=vlan60 vlan-id=60 interface=ether1', '/ip address add address=10.90.60.1/24 interface=vlan60'). Put a server in each VLAN (10.90.60.10 and 10.90.61.10) pointing at those gateways. Both must reach each other over that single physical link.",
 			"reqs": [
 				{"d": "A router leg split into two 802.1Q subinterfaces", "t": func() -> bool: return _subiface_pair()},
 				{"d": "Servers own 10.90.60.10 and 10.90.61.10", "t": func() -> bool: return _owner("10.90.60.10") != null and _owner("10.90.61.10") != null},
@@ -349,7 +349,7 @@ static func _campaign() -> Array:
 			"title": "Collapse the core",
 			"customer": "Alfa Ltd",
 			"reward": 2400,
-			"brief": "Alfa's two VLANs each need a router leg, and you are running out of router ports. An Arivista 7024 is an L3 switch: it can route between VLANs itself with SVIs (virtual interfaces bound to a VLAN). Buy one, create VLANs 40 and 50 with a server in each (10.80.40.10/24 and 10.80.50.10/24), then 'interface Vlan40' + 'ip address 10.80.40.1/24' and the same for Vlan50. Point each server's default gateway at its SVI. The two servers must reach each other through the switch alone, no router involved.",
+			"brief": "Alfa's two VLANs each need a router leg, and you are running out of router ports. An Arivista 7024 is an L3 switch: it can route between VLANs itself with SVIs (virtual interfaces bound to a VLAN). Buy one, create VLANs 40 and 50 with a server in each (10.80.40.10/24 and 10.80.50.10/24), then in config mode 'interface Vlan40' + 'ip address 10.80.40.1/24' and the same for Vlan50. Point each server's default gateway at its SVI. The two servers must reach each other through the switch alone, no router involved.",
 			"reqs": [
 				{"d": "An L3 switch with SVIs for two VLANs", "t": func() -> bool: return _l3_switch_svis() >= 2},
 				{"d": "Servers own 10.80.40.10 and 10.80.50.10", "t": func() -> bool: return _owner("10.80.40.10") != null and _owner("10.80.50.10") != null},
@@ -372,7 +372,7 @@ static func _campaign() -> Array:
 			"title": "Guests and staff",
 			"customer": "Balaton Hotel",
 			"reward": 2600,
-			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.31.10/24, and prove the guest cannot reach the staff machine.",
+			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and on its console, in config mode ('enable', 'configure terminal'), map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.31.10/24, and prove the guest cannot reach the staff machine.",
 			"reqs": [
 				{"d": "An access point broadcasting two SSIDs", "t": func() -> bool: return _ap_ssids() >= 2},
 				{"d": "A host associated on each network", "t": func() -> bool: return _wifi_clients() >= 2},
@@ -384,7 +384,7 @@ static func _campaign() -> Array:
 			"title": "Encrypt the back road",
 			"customer": "Astra Legal",
 			"reward": 3600,
-			"brief": "Astra will not send their traffic between offices in the clear, and they will not pay for a second leased line either. Build a WireGuard tunnel over the path you already have: 'interface wg0' on both routers, a small address on each end (10.99.0.1/30 and 10.99.0.2/30), then on each side 'wireguard peer <the other key> endpoint <their public address> allowed <their network>,<their tunnel address>/32' (PacketTik: '/interface wireguard add name=wg0', '/interface wireguard peers add interface=wg0 public-key=<the other key> endpoint-address=<their public address> allowed-address=<their network>,<their tunnel address>/32'; '/interface wireguard print' shows your own key). Route each office's network down the tunnel. Their hosts at 172.20.1.10 and 172.20.2.10 must reach each other, and 'show wireguard' must show a handshake.",
+			"brief": "Astra will not send their traffic between offices in the clear, and they will not pay for a second leased line either. Build a WireGuard tunnel over the path you already have: in config mode, 'interface wg0' on both routers, a small address on each end (10.99.0.1/30 and 10.99.0.2/30), then on each side 'wireguard peer <the other key> endpoint <their public address> allowed <their network>,<their tunnel address>/32' (PacketTik: '/interface wireguard add name=wg0', '/interface wireguard peers add interface=wg0 public-key=<the other key> endpoint-address=<their public address> allowed-address=<their network>,<their tunnel address>/32'; '/interface wireguard print' shows your own key). Route each office's network down the tunnel. Their hosts at 172.20.1.10 and 172.20.2.10 must reach each other, and 'show wireguard' must show a handshake.",
 			"reqs": [
 				{"d": "Two WireGuard interfaces that name each other", "t": func() -> bool: return _wg_pair()},
 				{"d": "The handshake succeeds", "t": func() -> bool: return _wg_handshaken()},
@@ -408,7 +408,7 @@ static func _campaign() -> Array:
 			"title": "Always on",
 			"customer": "Fecske Media",
 			"reward": 3400,
-			"brief": "Fecske's site went down last month because it lived on one server, and they are not doing that again. Put two servers behind an Equipoise LB10: give the load balancer an address on their subnet, stand up 10.190.0.11 and 10.190.0.12, then 'virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12'. A client on the same network must reach 10.190.0.100, and it must keep reaching it with one of the two servers switched off.",
+			"brief": "Fecske's site went down last month because it lived on one server, and they are not doing that again. Put two servers behind an Equipoise LB10: give the load balancer an address on their subnet, stand up 10.190.0.11 and 10.190.0.12, then on the balancer's console in config mode ('enable', 'configure terminal'): 'virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12'. A client on the same network must reach 10.190.0.100, and it must keep reaching it with one of the two servers switched off.",
 			"reqs": [
 				{"d": "A load balancer with a two-member pool", "t": func() -> bool: return _lb_pool() >= 2},
 				{"d": "The virtual address 10.190.0.100 answers", "t": func() -> bool: return _server_pings("10.190.0.100")},
@@ -433,7 +433,7 @@ static func _campaign() -> Array:
 			"title": "The address shortage",
 			"customer": "Hollo Media",
 			"reward": 3000,
-			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (interface config: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>'). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
+			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (in config mode under each interface: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>'). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
 			"reqs": [
 				{"d": "Servers hold 2001:db8:70::10 and 2001:db8:71::10", "t": func() -> bool: return _owner("2001:db8:70::10") != null and _owner("2001:db8:71::10") != null},
 				{"d": "A router has a leg in each v6 prefix", "t": func() -> bool: return _v6_router() != null},
@@ -484,7 +484,7 @@ static func _campaign() -> Array:
 			"title": "The tenant that outgrew the VLAN",
 			"customer": "Turul Mobil (again)",
 			"reward": 5200,
-			"brief": "Turul Mobil have outgrown a stretched VLAN and want their segment on two different leaf switches with a routed network in between: no trunk, no cable between the leaves. Build the underlay first (an SVI on each leaf, a router between them, and each leaf able to ping the other's address), then put the tenant on top with VXLAN: 'vxlan source <this leaf's address>', 'vxlan vlan 70 vni 7000' and 'vxlan peer <the other leaf>' on both. Their hosts are 192.168.70.10 and 192.168.70.11. Put a second tenant in VLAN 71 on one leaf, unmapped, and prove it cannot see any of it. Then turn on 'vxlan evpn' so the leaves tell each other what they have instead of flooding.",
+			"brief": "Turul Mobil have outgrown a stretched VLAN and want their segment on two different leaf switches with a routed network in between: no trunk, no cable between the leaves. Build the underlay first (an SVI on each leaf, a router between them, and each leaf able to ping the other's address), then put the tenant on top with VXLAN, in config mode on each leaf: 'vxlan source <this leaf's address>', 'vxlan vlan 70 vni 7000' and 'vxlan peer <the other leaf>' on both. Their hosts are 192.168.70.10 and 192.168.70.11. Put a second tenant in VLAN 71 on one leaf, unmapped, and prove it cannot see any of it. Then turn on 'vxlan evpn' so the leaves tell each other what they have instead of flooding.",
 			"reqs": [
 				{"d": "The two leaves reach each other over a routed underlay", "t": func() -> bool: return _overlay_underlay()},
 				{"d": "One VNI carries the tenant across both leaves", "t": func() -> bool: return _overlay_mapped(7000) and _ping("192.168.70.10", "192.168.70.11", true)},

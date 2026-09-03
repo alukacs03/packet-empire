@@ -8073,7 +8073,7 @@ func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Diction
 	## Every run is planned first, refused if it is too broad, and logged in
 	## full whether it changed anything or not.
 	var result := {"planned": [], "applied": [], "skipped": [], "refused": "", "log": [],
-		"dry_run": dry_run, "id": runbook_runs.size()}
+		"dry_run": dry_run, "id": runbook_runs.size(), "cycle": cycle, "runbook": String(rb["name"])}
 	var targets := runbook_targets(rb)
 	for d: Net.NDevice in targets:
 		result["planned"].append(d.name)
@@ -9466,6 +9466,7 @@ func _serialize() -> Dictionary:
 		"feeds": feeds, "feed_out_until": feed_out_until, "ups": ups,
 		"carrier_outage": carrier_outage, "hijacks": hijacks,
 		"transit_samples": transit_samples, "ixp": ixp, "playbooks": playbooks, "runbooks": runbooks,
+		"runbook_runs": runbook_runs,
 		"buyout_offer": buyout_offer, "sold_out": sold_out, "references": references,
 		"leads": leads, "timeline": timeline,
 		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
@@ -9788,6 +9789,7 @@ func _apply(data: Dictionary) -> void:
 	ixp = data.get("ixp", {})
 	playbooks = data.get("playbooks", [])
 	runbooks = data.get("runbooks", [])
+	runbook_runs = data.get("runbook_runs", [])
 	ipv4_blocks = int(data.get("ipv4_blocks", 1))
 	buyout_offer = data.get("buyout_offer", {})
 	sold_out = bool(data.get("sold_out", false))

@@ -5434,6 +5434,8 @@ static func run() -> int:
 		"runbooks: where the action is reversible, the run can be put back")
 	check(Game.rollback_runbook(dry) != "",
 		"runbooks: a dry run has nothing to roll back")
+	check(String(Game.runbook_runs[-1]["runbook"]) == "reload the switch" and Game.runbook_runs[-1].has("cycle"),
+		"runbooks: the run history says which runbook ran and when, for the Automation panel")
 	Game.add_ip(rb_srv.ifaces[0], "10.170.0.10/24")
 	var rb_mgmt := Game.new_device("rtr-edge")
 	rb_rack.slots[2] = rb_mgmt
