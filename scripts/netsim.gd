@@ -529,10 +529,84 @@ static func mcast_send(host: Net.NDevice, group: String) -> int:
 	return got
 
 static func flush_learned_state() -> void:
+	## everything learned ages out: the world was rebuilt, or a cycle passed
 	_stp_dirty = true
 	for d in Game.all_devices():
 		d.mac_table.clear()
 		d.arp.clear()
+		d.nat_flows.clear()
+		d.nat64_flows.clear()
+		d.flows.clear()
+
+static func arp_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
+	## the interface whose subnet holds the neighbour: where the entry lives
+	var key := ip.split("@")[0]  # per-VRF keys carry a suffix
+	for i: Net.Iface in dev.ifaces:
+		for cidr in i.ips:
+			var bits := String(cidr).split("/")
+			if Net.is_v6(String(cidr)) != Net.is_v6(key):
+				continue
+			if (Net.is_v6(key) and Net.same_subnet6(key, bits[0], int(bits[1]))) \
+					or (not Net.is_v6(key) and Net.same_subnet(key, bits[0], int(bits[1]))):
+				return i
+	return null
+
+static func topology_change() -> void:
+	## a link came or went: spanning tree tells every bridge to forget what it
+	## learned, exactly so that a moved host is found again by flooding
+	for d in Game.all_devices():
+		d.mac_table.clear()
+	_stp_dirty = true
+
+static func forget_mac(mac: String) -> void:
+	## the host announced itself from somewhere new: every table relearns it
+	for d in Game.all_devices():
+		for vlan in d.mac_table:
+			d.mac_table[vlan].erase(mac)
+
+static func forget_ip(ip: String) -> void:
+	## a gratuitous ARP: whoever cached this address hears the new owner
+	for d in Game.all_devices():
+		for key in d.arp.keys():
+			if String(key).split("@")[0] == ip:
+				d.arp.erase(key)
+
+static func prune_learned_state() -> void:
+	## A configuration changed somewhere. Real gear does not forget the whole
+	## world for that: it drops only what can no longer be true, and the rest
+	## ages out or is relearned when the host next speaks.
+	_stp_dirty = true
+	# who owns which MAC right now: an entry for a MAC whose owner is dead,
+	# or has moved, is what a gratuitous ARP would have corrected
+	var owner := {}
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			owner[i.mac] = i
+	for d in Game.all_devices():
+		for vlan in d.mac_table.keys():
+			for mac in d.mac_table[vlan].keys():
+				var port: Net.Iface = d.mac_table[vlan][mac]
+				var link: Net.Link = Game.link_at(port) if port != null else null
+				var own: Net.Iface = owner.get(mac)
+				var gone: bool = port == null or port.dev != d or not port.enabled \
+					or not d.ifaces.has(port) or link == null \
+					or link.other(port).dev.status != "active" \
+					or own == null or own.dev.status != "active" or not own.enabled \
+					or (port.mode == "access" and port.untagged_vlan != vlan) \
+					or (port.mode == "trunk" and not port.tagged_vlans.is_empty()
+						and vlan not in port.tagged_vlans)
+				if gone:
+					d.mac_table[vlan].erase(mac)
+		for ip in d.arp.keys():
+			var own_a: Net.Iface = owner.get(String(d.arp[ip]))
+			var bare := String(ip).split("@")[0]
+			# no owner at all means the box is gone: nothing will ever answer to it
+			var moved: bool = own_a == null or own_a.dev.status != "active" or not own_a.enabled \
+				or (not own_a.ips.any(func(c): return String(c).split("/")[0] == bare)
+					and String(own_a.vrrp.get("vip", "")) != bare)
+			if arp_iface(d, String(ip)) == null or moved:
+				d.arp.erase(ip)
+		# translation and flow state rides on paths that may just have moved
 		d.nat_flows.clear()
 		d.nat64_flows.clear()
 		d.flows.clear()
@@ -590,12 +664,18 @@ static func _stp_ensure() -> void:
 	if not _stp_dirty:
 		return
 	_stp_dirty = false
+	var before := _stp_blocked_inst.duplicate(true)
 	_stp_blocked = {}
 	_stp_blocked_inst = {}
 	_stp_roots = {}
 	for inst in mst_instances():
 		_stp_blocked_inst[inst] = _stp_tree(int(inst))
 	_stp_blocked = _stp_blocked_inst.get(0, {})
+	if before != _stp_blocked_inst:
+		# the tree moved: a topology change notification flushes every bridge's
+		# table, so hosts are found again over the new path by flooding
+		for d in Game.all_devices():
+			d.mac_table.clear()
 
 static func _stp_tree(instance: int) -> Dictionary:
 	var blocked := {}

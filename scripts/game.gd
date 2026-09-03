@@ -3983,6 +3983,7 @@ func migrate_vm(name: String, target: Net.NDevice) -> String:
 	source.ifaces.erase(nic)
 	nic.dev = target
 	target.ifaces.append(nic)
+	Sim.forget_mac(nic.mac)  # the moved machine announces itself from its new host
 	stats["migrations"] = int(stats.get("migrations", 0)) + 1  # the log is trimmed; this is not
 	log_event("MIGRATION: %s moved from %s to %s, keeping %s."
 		% [name, source.name, target.name,
@@ -5843,7 +5844,7 @@ func _ready() -> void:
 		history_path = "user://run_history_test.json"
 	Legacy.load_file()
 	Pack.load_all()  # authored content, if anybody has written any
-	topology_changed.connect(Sim.flush_learned_state)
+	topology_changed.connect(Sim.prune_learned_state)
 	cycle_timer = Timer.new()
 	cycle_timer.wait_time = SLA_PERIOD
 	cycle_timer.autostart = true
@@ -8883,6 +8884,9 @@ func sla_tick() -> void:
 		maintenance_used = 0  # a new quarter, a fresh allowance
 	if cycle % 5 == 0:
 		save_game()
+	# a cycle is long enough for every MAC and ARP entry to age out; what is
+	# still true is relearned the moment a host speaks
+	Sim.flush_learned_state()
 
 func customer_down_now() -> bool:
 	## Somebody's service is off the air, whatever put it there: the flag the
@@ -9258,6 +9262,7 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 		improvise_part(kind)
 	links.append(Net.Link.new(a, b))
 	Sfx.play("cable")
+	Sim.topology_change()
 	topology_changed.emit()
 	observe_habit("windows", in_maintenance())
 	if in_maintenance():
@@ -9268,7 +9273,8 @@ func disconnect_iface(i: Net.Iface) -> void:
 	var l := link_at(i)
 	if l:
 		links.erase(l)
-		topology_changed.emit()
+		Sim.topology_change()
+	topology_changed.emit()
 
 func free_ifaces(exclude: Net.NDevice) -> Array:
 	var out: Array = []
@@ -9322,6 +9328,8 @@ func add_ip(i: Net.Iface, cidr: String) -> bool:
 	if not Net.valid_cidr(cidr) or cidr in i.ips:
 		return false
 	i.ips.append(cidr)
+	Sim.forget_ip(cidr.split("/")[0])  # the new owner announces itself
+	Sim.forget_mac(i.mac)
 	topology_changed.emit()
 	return true
 

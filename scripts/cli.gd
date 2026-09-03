@@ -105,16 +105,9 @@ static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
 	return out
 
 static func arp_iface_name(dev: Net.NDevice, ip: String) -> String:
-	## the interface whose subnet holds the neighbour: where the entry was learned
-	var key := ip.split("@")[0]  # per-VRF keys carry a suffix
-	for i: Net.Iface in dev.ifaces:
-		for cidr in i.ips:
-			var bits := String(cidr).split("/")
-			if Net.is_v6(String(cidr)) != Net.is_v6(key):
-				continue
-			if (Net.is_v6(key) and Net.same_subnet6(key, bits[0], int(bits[1]))) \
-					or (not Net.is_v6(key) and Net.same_subnet(key, bits[0], int(bits[1]))):
-				return i.name
+	var i := Sim.arp_iface(dev, ip)
+	if i != null:
+		return i.name
 	return dev.ifaces[0].name if not dev.ifaces.is_empty() else "-"
 
 class Session:
@@ -195,6 +188,12 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "mac", "address-table"], "h": _show_mac},
 			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
 			{"m": EP, "p": ["show", "ip", "arp"], "h": _show_arp},
+			{"m": ["priv"], "p": ["clear", "mac", "address-table"], "h": func(_r):
+				dev.mac_table.clear()
+				return ""},
+			{"m": ["priv"], "p": ["clear", "arp-cache"], "h": func(_r):
+				dev.arp.clear()
+				return ""},
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
@@ -2537,6 +2536,9 @@ class Linux extends Session:
 				return ""
 			return "usage: ip link set <if> up|down\n"
 		if String(t[0]).begins_with("n"):  # ip neigh
+			if t.size() >= 2 and String(t[1]) == "flush":
+				dev.arp.clear()
+				return ""
 			if dev.arp.is_empty():
 				return "(empty: no ARP entries yet)\n"
 			var out := ""

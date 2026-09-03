@@ -2934,6 +2934,7 @@ static func run() -> int:
 	lat_rack_home.slots[0] = lat_a
 	lat_rack_far.slots[0] = lat_b
 	Game.money = 300000
+	Game.carrier_outage = {}  # the economy loop above may have left a digger in a duct
 	check(Game.buy_circuit(0, far_site, 1).is_empty(), "geo: a circuit links the two cities")
 	check(Game.connect_ifaces(lat_a.ifaces[0], lat_b.ifaces[0]), "geo: the sites are cabled over it")
 	Game.add_ip(lat_a.ifaces[0], "10.140.0.1/30")
@@ -3111,6 +3112,9 @@ static func run() -> int:
 	Game.hire(Staff.make_candidate(RandomNumberGenerator.new(), Game.habits))
 	Staff.set_shift(Game.staff[0], "day")
 	Game.hazards = []
+	for co_dev in Game.all_devices():  # earlier sections may have left tripped gear behind
+		co_dev.status = "active"
+	Game.customer_outage_active = false
 	check(Game.call_someone_out() != "", "call-out: nothing happening, nobody gets woken")
 	Game.hazards = [{"kind": "smoke", "rack": "R1", "site": 0, "tile": [0, 0], "severity": 1,
 		"started": Game.cycle, "detected": true, "zone": ["R1"]}]
@@ -9520,6 +9524,57 @@ static func run() -> int:
 		"shop: the instant price carries the company identity")
 	Game.identity = ident_keep
 	Game.money = so_money
+	# --- a config change is not amnesia: only what can no longer be true is dropped ---
+	var lr_sw1 := Game.new_device("sw-8")
+	var lr_sw2 := Game.new_device("sw-8")
+	var lr_h1 := Game.new_device("server")
+	var lr_h2 := Game.new_device("server")
+	var lr_rack := Game.add_rack(Vector2i(7, 7))
+	lr_rack.slots[0] = lr_sw1
+	lr_rack.slots[1] = lr_sw2
+	lr_rack.slots[2] = lr_h1
+	lr_rack.slots[3] = lr_h2
+	Game.connect_ifaces(lr_h1.ifaces[0], lr_sw1.ifaces[0])
+	Game.connect_ifaces(lr_h2.ifaces[0], lr_sw1.ifaces[1])
+	Game.add_ip(lr_h1.ifaces[0], "10.66.0.1/24")
+	Game.add_ip(lr_h2.ifaces[0], "10.66.0.2/24")
+	check(Sim.ping(lr_h1, "10.66.0.2")["ok"] and lr_sw1.mac_table[1].size() == 2,
+		"learning: two hosts talk and the switch knows both")
+	Game.add_vlan(lr_sw2, 77, "elsewhere")  # a change on an unrelated switch
+	check(lr_sw1.mac_table.get(1, {}).size() == 2 and lr_h1.arp.has("10.66.0.2"),
+		"learning: configuring another switch does not empty this one's tables")
+	Game.add_vlan(lr_sw1, 77, "here")
+	Game.set_access_vlan(lr_sw1.ifaces[1], 77)
+	check(not lr_sw1.mac_table.get(1, {}).has(lr_h2.ifaces[0].mac),
+		"learning: moving the port to another VLAN drops what was learned on it in the old one")
+	Game.set_access_vlan(lr_sw1.ifaces[1], 1)
+	Game.disconnect_iface(lr_h2.ifaces[0])
+	Game.connect_ifaces(lr_h2.ifaces[0], lr_sw1.ifaces[3])
+	check(Sim.ping(lr_h1, "10.66.0.2")["ok"] and lr_sw1.mac_table[1][lr_h2.ifaces[0].mac] == lr_sw1.ifaces[3],
+		"learning: a host moved to another port is found again on the new one")
+	var lr_ses := CLI.new_session(lr_sw1)
+	lr_ses.exec("enable")
+	check(lr_ses.exec("clear mac address-table dynamic") == "" and lr_sw1.mac_table.get(1, {}).is_empty(),
+		"eos: clear mac address-table empties the learned table")
+	var lr_hs := CLI.new_session(lr_h1)
+	check(lr_hs.exec("ip neigh flush all") == "" and lr_h1.arp.is_empty(),
+		"linux: ip neigh flush all empties the cache")
+	Sim.ping(lr_h1, "10.66.0.2")
+	Game.sla_tick()
+	check(lr_h1.arp.is_empty() and lr_sw1.mac_table.get(1, {}).is_empty(),
+		"learning: a cycle ages everything out, and the next conversation relearns it")
+	check(Sim.ping(lr_h1, "10.66.0.2")["ok"], "learning: and it does")
+	for tidy_dev in Game.all_devices():  # the tick above can fire a random fault; the smoke pass needs a quiet floor
+		tidy_dev.status = "active"
+		for tidy_if: Net.Iface in tidy_dev.ifaces:
+			tidy_if.enabled = true
+	Game.hazards = []
+	Game.customer_outage_active = false
+	Game.disconnect_iface(lr_h1.ifaces[0])
+	Game.disconnect_iface(lr_h2.ifaces[0])
+	for k in 4:
+		lr_rack.slots[k] = null
+	Game.racks.erase(lr_rack)
 	for k in 6:
 		eos_rack.slots[k] = null
 	Game.racks.erase(eos_rack)
