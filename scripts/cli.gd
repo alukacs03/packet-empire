@@ -329,8 +329,16 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "vrrp"], "h": func(_r): ctx_if.vrrp = {}; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
-			{"m": ["if"], "p": ["shutdown"], "h": func(_r): return _each(func(i): i.enabled = false; return "")},
-			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): return _each(func(i): i.enabled = true; return "")},
+			{"m": ["if"], "p": ["shutdown"], "h": func(_r): return _each(func(i):
+				i.admin_down = true
+				i.enabled = false
+				return "")},
+			{"m": ["if"], "p": ["no", "shutdown"], "h": func(_r): return _each(func(i):
+				# clears an administrative shutdown and an err-disable; a cut cable stays cut
+				i.admin_down = false
+				i.err_disabled = false
+				i.enabled = i.fault == ""
+				return "")},
 			{"m": ["if"], "p": ["mtu"], "h": _if_mtu},
 			{"m": ["if"], "p": ["qos", "priority-queueing"], "h": func(_r): return _qos(true)},
 			{"m": ["if"], "p": ["no", "qos", "priority-queueing"], "h": func(_r): return _qos(false)},
@@ -1450,7 +1458,9 @@ class EOS extends Session:
 		var out := "%-11s %-6s %-7s %-8s %-18s %s\n" % ["Interface", "Status", "Speed", "Mode", "Addresses", "Peer"]
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.peer_label(i)
-			var status := "disabled" if not i.enabled else ("up" if peer != "" else "notconnect")
+			var status := Game.iface_status_word(i)
+			if status == "connected":
+				status = "up"
 			var mode_s := i.mode
 			if i.mode == "access":
 				mode_s = "access(%d)" % i.untagged_vlan
@@ -1847,9 +1857,7 @@ class EOS extends Session:
 		var out := "%-11s %-11s %-7s %-9s %s\n" % ["Port", "Status", "Speed", "InErrors", "Neighbour"]
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.effective_peer(i)
-			var status := "disabled"
-			if i.enabled:
-				status = "connected" if peer != null else "notconnect"
+			var status := Game.iface_status_word(i)
 			out += "%-11s %-11s %-7s %-9d %s\n" % [EOS._short(i.name), status,
 				("%dG" % (Game.iface_speed(i) / 1000)) if Game.iface_speed(i) >= 1000
 					else "%dM" % Game.iface_speed(i),
@@ -2038,7 +2046,7 @@ class EOS extends Session:
 				out += "   storm-control broadcast %d\n" % i.storm_limit
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
-			if not i.enabled:
+			if i.admin_down:
 				out += "   shutdown\n"
 			out += "!\n"
 		return out

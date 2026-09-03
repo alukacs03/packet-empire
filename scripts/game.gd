@@ -1546,7 +1546,7 @@ func remote_hands_tick() -> void:
 		match String(job["action"]):
 			"reseat":
 				if target_iface != null:
-					target_iface.enabled = true
+					link_restore(target_iface)
 					device_log(target_dev, "%s reseated by remote hands" % target_iface.name)
 			"power_cycle":
 				target_dev.status = "active"
@@ -2441,7 +2441,7 @@ func firmware_tick() -> void:
 			continue
 		for i: Net.Iface in dev.ifaces:
 			if i.enabled and link_at(i) != null and not i.name.begins_with("Management"):
-				i.enabled = false
+				link_fault(i, "firmware")
 				device_log(dev, "%s changed state to down (no reason logged)" % i.name)
 				topology_changed.emit()
 				break
@@ -2803,7 +2803,7 @@ func access_incident_tick() -> void:
 			continue
 		for i: Net.Iface in d.ifaces:
 			if link_at(i) != null and not i.name.begins_with("Management"):
-				i.enabled = false
+				link_fault(i, "unplugged")
 				access_note(who, "unplugged %s %s" % [d.name, i.name], false)
 				device_log(d, "%s changed state to down (no change logged)" % i.name)
 				record_incident("access", "a cable was pulled in %s and nobody was badged" % r.name)
@@ -6697,6 +6697,7 @@ func _maybe_start_guided_outage() -> void:
 	arc["beat"] = "complication"
 	arc["outage_cycle"] = cycle
 	customer_arcs["kiskacsa"] = arc
+	chosen.admin_down = true  # the story is an administrative mistake, and show run says so
 	chosen.enabled = false
 	_guided_outage_note("cycle %d · service monitor raised an availability alert" % cycle)
 	log_event(Loc.t("event.outage.raised", {"customer": "Kiskacsa"}))
@@ -6852,7 +6853,8 @@ func give_up_guided_outage() -> String:
 	var iface := guided_outage_iface()
 	if iface == null:
 		return "the guided restore point cannot find its port"
-	iface.enabled = true
+	iface.admin_down = false
+	link_restore(iface)
 	guided_outage["assisted"] = true
 	guided_outage["state"] = "repairing"
 	_guided_outage_note("cycle %d · assisted restore re-enabled the known-safe access port" % cycle)
@@ -7815,7 +7817,7 @@ func _break_deal_path(deal: Dictionary) -> bool:
 	for l: Net.Link in _deal_path_links(deal):
 		for i: Net.Iface in [l.a, l.b]:
 			if i.enabled and not i.name.begins_with("Management"):
-				i.enabled = false
+				link_fault(i, "link fault")
 				device_log(i.dev, "%s changed state to down (link fault)" % i.name)
 				return true
 	return false
@@ -8119,8 +8121,8 @@ func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Diction
 					if pick == null:
 						pick = i
 				if pick != null:
-					pick.enabled = false
-					pick.enabled = true
+					pick.err_disabled = false  # shut / no shut clears an err-disable
+					pick.enabled = pick.fault == "" and not pick.admin_down
 					result["log"].append("%s: bounced %s" % [d.name, pick.name])
 			"reload_config":
 				apply_device_config(d, d.startup)
@@ -8432,7 +8434,7 @@ func _field_fault() -> void:
 				Skills.fumble("saved_configs")
 			return
 	var victim: Net.Iface = candidates[randi() % candidates.size()]
-	victim.enabled = false
+	link_fault(victim, "link fault")
 	device_log(victim.dev, "%s changed state to down (link fault)" % victim.name)
 	stats["faults"] += 1
 	log_event("FIELD: link fault on %s %s: port went down. Find it (Map, lldp, counters) and re-enable it!"
@@ -9151,6 +9153,27 @@ func rename_device(dev: Net.NDevice, new_name: String) -> bool:
 
 # ---------- cables ----------
 
+func link_fault(i: Net.Iface, reason: String) -> void:
+	## the port went down for a physical reason: down/down, not admin down
+	i.fault = reason
+	i.enabled = false
+
+func link_restore(i: Net.Iface) -> void:
+	## the physical problem is gone; an administrative shutdown still holds
+	i.fault = ""
+	i.err_disabled = false
+	i.enabled = not i.admin_down
+
+func iface_status_word(i: Net.Iface) -> String:
+	## the word real gear prints in show interfaces status
+	if i.admin_down:
+		return "disabled"
+	if i.err_disabled:
+		return "err-disabled"
+	if not i.enabled or effective_peer(i) == null:
+		return "notconnect"
+	return "connected"
+
 func link_at(i: Net.Iface) -> Net.Link:
 	for l in links:
 		if l.a == i or l.b == i:
@@ -9653,12 +9676,13 @@ func config_diff(old_cfg: Dictionary, new_cfg: Dictionary) -> Array:
 			out.append("+ interface %s" % name)
 			continue
 		var oi: Dictionary = old_if[name]
-		for field in ["mode", "untagged_vlan", "mtu", "enabled", "nat", "lag", "mlag", "helper",
+		for field in ["mode", "untagged_vlan", "mtu", "admin_down", "nat", "lag", "mlag", "helper",
 				"port_security", "tagged_vlans", "ips"]:
 			var a := JSON.stringify(oi.get(field, null))
 			var b := JSON.stringify(ni.get(field, null))
 			if a != b:
-				out.append("~ interface %s: %s %s -> %s" % [name, field, a, b])
+				out.append("~ interface %s: %s %s -> %s" % [name,
+					"shutdown" if field == "admin_down" else field, a, b])
 	for name in old_if:
 		var still := false
 		for ni in new_cfg.get("ifaces", []):
@@ -9687,7 +9711,8 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 			i.vrrp = {}
 			i.lag = 0
 			i.helper = ""
-			i.enabled = true
+			i.admin_down = false
+			link_restore(i)
 		topology_changed.emit()
 		return
 	d.vlans = {}
@@ -9720,7 +9745,10 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 			target.dot1q = int(si.get("dot1q", 0))
 			d.ifaces.append(target)
 		target.ips = si["ips"].duplicate()
-		target.enabled = si["enabled"]
+		# a saved configuration carries the administrative state; it cannot
+		# mend a cable, and it does not pretend to
+		target.admin_down = bool(si.get("admin_down", not bool(si.get("enabled", true))))
+		target.enabled = not target.admin_down and target.fault == "" and not target.err_disabled
 		target.mtu = int(si["mtu"])
 		target.mode = si["mode"]
 		target.untagged_vlan = int(si["untagged_vlan"])
@@ -9739,6 +9767,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 	var ifs: Array = []
 	for i: Net.Iface in d.ifaces:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
+			"admin_down": i.admin_down, "err_disabled": i.err_disabled, "fault": i.fault,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
 			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
 			"mlag": i.mlag, "mlag_peerlink": i.mlag_peerlink, "bfd": i.bfd, "ra": i.ra,
@@ -9975,6 +10004,9 @@ func _apply(data: Dictionary) -> void:
 		for si in sd.get("ifaces", []):
 			var i := Net.Iface.new(d, String(si["name"]), String(si.get("mac", _new_mac())))
 			i.enabled = bool(si.get("enabled", true))
+			i.admin_down = bool(si.get("admin_down", false))
+			i.err_disabled = bool(si.get("err_disabled", false))
+			i.fault = String(si.get("fault", ""))
 			i.mtu = int(si.get("mtu", 1500))
 			i.mode = String(si.get("mode", "access"))
 			i.untagged_vlan = int(si.get("untagged_vlan", 1))

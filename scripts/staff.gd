@@ -209,11 +209,11 @@ static func work_cycle() -> void:
 		if attempts <= 0:
 			break
 		for ifc in [l.a, l.b]:
-			if ifc.enabled or ifc.name.begins_with("Management"):
-				continue
+			if ifc.enabled or ifc.admin_down or ifc.name.begins_with("Management"):
+				continue  # a shutdown somebody typed is not theirs to undo
 			if rng.randf() > 0.35 + 0.13 * skill:
 				continue  # not everything gets fixed in one cycle
-			ifc.enabled = true
+			Game.link_restore(ifc)
 			attempts -= 1
 			var who: Dictionary = Game.staff[rng.randi() % Game.staff.size()]
 			Game.log_event("STAFF: %s restored %s %s." % [who["name"], ifc.dev.name, ifc.name])

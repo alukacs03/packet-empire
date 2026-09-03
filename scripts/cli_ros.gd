@@ -228,7 +228,7 @@ func exec(line: String) -> String:
 			var out := "Flags: X - disabled, R - running\n # NAME       MTU  MAC\n"
 			var n := 0
 			for i: Net.Iface in dev.ifaces:
-				var flag := "X" if not i.enabled else ("R" if Game.link_at(i) else " ")
+				var flag := "X" if i.admin_down else ("R" if i.enabled and Game.link_at(i) else " ")
 				out += "%2d %s %-10s %-5d %s\n" % [n, flag, i.name, i.mtu, i.mac]
 				n += 1
 			return out
@@ -237,7 +237,12 @@ func exec(line: String) -> String:
 				return "usage: /interface set <name> disabled=yes|no mtu=N pvid=N mode=access|trunk tagged=10,20|all bfd=yes|no\n"
 			var i := _iface(args[0])
 			if p.has("disabled"):
-				i.enabled = p["disabled"] != "yes"
+				i.admin_down = p["disabled"] == "yes"
+				if i.admin_down:
+					i.enabled = false
+				else:
+					i.err_disabled = false
+					i.enabled = i.fault == ""
 			if p.has("mtu") and String(p["mtu"]).is_valid_int():
 				i.mtu = clampi(int(p["mtu"]), 576, 9216)
 			if p.has("ra"):
@@ -380,7 +385,7 @@ func exec(line: String) -> String:
 				return "no bridge on this device\n"
 			var out := " INTERFACE  PVID  MODE    STP-STATE\n"
 			for i: Net.Iface in dev.ifaces:
-				var st := "disabled"
+				var st := "disabled" if i.admin_down else ("down" if not i.enabled else "")
 				if i.enabled:
 					st = "discarding" if Sim.stp_blocked(i) else "forwarding"
 				out += " %-10s %-5d %-7s %s\n" % [i.name, i.untagged_vlan, i.mode, st]

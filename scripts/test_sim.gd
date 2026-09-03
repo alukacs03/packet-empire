@@ -6295,7 +6295,7 @@ static func run() -> int:
 	var diff_out: String = vs.exec("show config diff")
 	check(diff_out.contains("+ vlan 62"), "cfgver: the diff names the new VLAN")
 	check(diff_out.contains("untagged_vlan"), "cfgver: the diff names the changed port")
-	check(diff_out.contains("enabled"), "cfgver: the diff notices the shutdown")
+	check(diff_out.contains("shutdown"), "cfgver: the diff notices the shutdown")
 	check(vs.exec("show config versions").contains("VER"), "cfgver: versions are listed")
 	check(vs.exec("rollback 1").contains("Rolled back"), "cfgver: rollback runs")
 	check(not ver_sw.vlans.has(62) and ver_sw.ifaces[0].enabled,
@@ -9570,6 +9570,39 @@ static func run() -> int:
 			tidy_if.enabled = true
 	Game.hazards = []
 	Game.customer_outage_active = false
+	# --- a cut cable is not a shutdown ---
+	var ls_port: Net.Iface = lr_sw1.ifaces[0]
+	Game.link_fault(ls_port, "link fault")
+	var ls_ses := CLI.new_session(lr_sw1)
+	ls_ses.exec("enable")
+	check("shutdown" not in ls_ses.exec("show running-config").split("interface Ethernet1\n")[1].split("!")[0]
+		and "notconnect" in ls_ses.exec("show interfaces status").split("\n")[1],
+		"link state: a faulted port is down/down, not administratively down")
+	ls_ses.exec("configure terminal")
+	ls_ses.exec("interface Ethernet1")
+	ls_ses.exec("no shutdown")
+	check(not ls_port.enabled and ls_port.fault != "", "link state: no shutdown cannot mend a cable")
+	Game.link_restore(ls_port)
+	check(ls_port.enabled, "link state: fixing the cable brings it back")
+	ls_ses.exec("shutdown")
+	Game.link_restore(ls_port)
+	check(not ls_port.enabled and ls_port.admin_down
+		and "shutdown" in ls_ses.exec("show running-config"),
+		"link state: a reseat does not undo a shutdown somebody typed")
+	ls_ses.exec("no shutdown")
+	check(ls_port.enabled, "link state: and no shutdown does")
+	ls_ses.exec("switchport port-security")
+	Sim.ping(lr_h1, "10.66.0.2")
+	var ls_saved_mac: String = ls_port.secure_mac
+	lr_h1.ifaces[0].mac = "02:aa:bb:cc:dd:ee"
+	Sim.ping(lr_h1, "10.66.0.2")
+	check(ls_port.err_disabled and "err-disabled" in ls_ses.exec("show interfaces status"),
+		"link state: a port-security violation shows as err-disabled (%s)" % ls_saved_mac)
+	ls_ses.exec("shutdown")
+	ls_ses.exec("no shutdown")
+	check(not ls_port.err_disabled and ls_port.enabled, "link state: shut / no shut clears the err-disable")
+	ls_ses.exec("no switchport port-security")
+	ls_ses.exec("end")
 	Game.disconnect_iface(lr_h1.ifaces[0])
 	Game.disconnect_iface(lr_h2.ifaces[0])
 	for k in 4:

@@ -1717,8 +1717,16 @@ func _refresh_iface() -> void:
 		("%d Gbit" % (spd / 1000)) if spd >= 1000 else ("%d Mbit" % spd), cur_if.rx_frames, cur_if.tx_frames]
 	for c in if_state_box.get_children():
 		c.queue_free()
-	if_state_box.add_child(_iface_state_line("LINK STATE",
-		"UP / ENABLED" if cur_if.enabled else "ADMINISTRATIVELY DISABLED",
+	var link_word := "UP / ENABLED"
+	if cur_if.admin_down:
+		link_word = "ADMINISTRATIVELY DISABLED"
+	elif cur_if.err_disabled:
+		link_word = "ERR-DISABLED / PORT SECURITY"
+	elif cur_if.fault != "":
+		link_word = "DOWN / %s" % cur_if.fault.to_upper()
+	elif not cur_if.enabled:
+		link_word = "DOWN"
+	if_state_box.add_child(_iface_state_line("LINK STATE", link_word,
 		"success" if cur_if.enabled else "danger"))
 	if_state_box.add_child(_iface_state_line("FRAME SIZE", "MTU %d" % cur_if.mtu, "info"))
 	if cur_if.dev.type == "switch":

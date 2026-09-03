@@ -7,7 +7,10 @@ class Iface:
 	var dev: NDevice
 	var name: String
 	var mac: String
-	var enabled := true
+	var enabled := true  # operational: passes frames right now
+	var admin_down := false  # somebody typed shutdown
+	var err_disabled := false  # the switch shut it (port security); shut/no shut clears it
+	var fault := ""  # the physical reason it is down, if any; no shutdown cannot fix this
 	var mtu := 1500
 	var mode := "access"  # access | trunk | routed
 	var untagged_vlan := 1
