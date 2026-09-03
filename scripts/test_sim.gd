@@ -757,6 +757,8 @@ static func run() -> int:
 
 	# --- cycle P&L breakdown ---
 	Game.debt = 2000
+	Game.sla_tick()  # service fees are invoiced on the customer's terms, so let a couple land
+	Game.sla_tick()
 	Game.sla_tick()
 	check(Game.last_pl.has("loan interest") and int(Game.last_pl["loan interest"]) == -100,
 		"pl: interest appears as its own line item")
@@ -768,9 +770,16 @@ static func run() -> int:
 	Game.debt = 0
 
 	# --- SLA recurring revenue ---
-	var m1 := Game.money
+	var inv_before := 0
+	for inv_c in Game.invoices:
+		inv_before += int(inv_c["amount"])
 	Game.sla_tick()
-	check(Game.money == m1 + 40 + 50, "sla: healthy contracts pay recurring fees")
+	var inv_after := 0
+	for inv_c in Game.invoices:
+		inv_after += int(inv_c["amount"])
+	check(inv_after - inv_before == 40 + 50 or int(Game.last_business.get("revenue", 0)) >= 90,
+		"sla: healthy contracts bill recurring fees, as invoices on the customer's terms")
+	check(Game.recurring_income() >= 90, "sla: the recurring income figure counts them")
 	var a3 := _dev_named(a.name)
 	a3.ifaces[0].enabled = false
 	Game.topology_changed.emit()

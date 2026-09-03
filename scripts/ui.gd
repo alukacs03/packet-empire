@@ -4847,7 +4847,10 @@ func _build_business_tab() -> void:
 		srow.add_child(fire_btn)
 	Game.refresh_candidates()
 	var hire_btn := Button.new()
-	hire_btn.text = "Hire someone…   (payroll $%d/cycle)" % Staff.payroll()
+	var income_now := Game.recurring_income()
+	hire_btn.text = "Hire someone…   (payroll $%d/cycle against $%d/cycle coming in)" % [Staff.payroll(), income_now]
+	hire_btn.tooltip_text = "A junior asks $230 to $580 a cycle. The floor bills $%d a cycle right now%s" % [income_now,
+		": it cannot carry anybody yet" if income_now < 230 else ""]
 	hire_btn.pressed.connect(func() -> void:
 		var opts: Array = []
 		for c: Dictionary in Game.candidates:

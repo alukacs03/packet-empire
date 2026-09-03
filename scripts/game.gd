@@ -4120,6 +4120,9 @@ func collect_invoices() -> int:
 		var amount := int(inv["amount"])
 		collected += amount
 		last_business["collected"] = int(last_business.get("collected", 0)) + amount
+		if String(inv["deal"]).begins_with("contract:"):
+			# campaign service fees keep their own line when the cash lands
+			last_pl["service fees"] = int(last_pl.get("service fees", 0)) + amount
 		if not deal.is_empty() and bool(deal.get("guided", false)) \
 				and not deal.has("first_cash_cycle"):
 			deal["first_cash_cycle"] = cycle
@@ -4134,8 +4137,9 @@ func collect_invoices() -> int:
 			invoices.erase(inv2)
 			reputation = maxi(0, reputation - 2)
 			log_event("WRITTEN OFF: $%d from %s is never arriving." % [int(inv2["amount"]), inv2["customer"]])
-	if collected > 0:
-		last_pl["cash collected"] = int(last_pl.get("cash collected", 0)) + collected
+	var deal_cash := collected - int(last_pl.get("service fees", 0))
+	if deal_cash > 0:
+		last_pl["cash collected"] = int(last_pl.get("cash collected", 0)) + deal_cash
 	return collected
 
 # ---------- the working day ----------
@@ -8598,10 +8602,11 @@ func sla_tick() -> void:
 		if not ok:
 			customer_outage_now = true
 		if ok:
+			# earned this cycle, owed on the customer's terms: a campaign
+			# customer is still a customer, and the cash arrives when it arrives
 			var fee: int = int(c["reward"]) / 10
-			last_pl["service fees"] = int(last_pl.get("service fees", 0)) + fee
-			last_business["revenue"] = int(last_business.get("revenue", 0)) + fee
-			earned += fee
+			raise_invoice({"customer": String(c["customer"]), "id": "contract:%s" % c["id"],
+				"ctype": "startup" if String(c["customer"]) == "Internal ops" else "enterprise"}, fee)
 	for d in all_devices():  # transit invoices
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
@@ -8679,6 +8684,7 @@ func sla_tick() -> void:
 		_fault_watch = cycle
 	var link_load := {}
 	var deal_links := {}
+	var delivered_this_cycle := false
 	for deal in deals:
 		var was_healthy := bool(deal.get("healthy", false))
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
@@ -8816,9 +8822,13 @@ func sla_tick() -> void:
 		# the work is done and the money is owed, which is not the same as
 		# having it: it goes out as an invoice on the customer's terms
 		raise_invoice(deal, paid)
-		reputation = mini(100, reputation + 1)
+		delivered_this_cycle = true
 		if bool(deal.get("guided", false)):
 			advance_kiskacsa_arc(deal)
+	if delivered_this_cycle and not customer_outage_now:
+		# a company that delivered to everybody today is thought a little better
+		# of, once: six happy customers do not outrun one who is down
+		reputation = mini(100, reputation + 1)
 	for deal_peak in deals:
 		peak_tick(deal_peak)  # the night they warned you about, judged on live delivery
 	for pl_key: String in last_pl:
@@ -9152,6 +9162,18 @@ func rename_device(dev: Net.NDevice, new_name: String) -> bool:
 	return true
 
 # ---------- cables ----------
+
+func recurring_income() -> int:
+	## what a working floor bills per cycle right now: campaign service fees
+	## plus live customer fees, before anything is spent
+	var total := 0
+	for c in Contracts.all():
+		if c["id"] in contracts_done and not Contracts.retired(c["id"]) and bool(sla_status.get(c["id"], true)):
+			total += int(c["reward"]) / 10
+	for deal in deals:
+		if bool(deal.get("healthy", true)) and not deal.has("renewal"):
+			total += int(deal["fee"]) / (2 if bool(deal.get("degraded", false)) else 1)
+	return total
 
 func link_fault(i: Net.Iface, reason: String) -> void:
 	## the port went down for a physical reason: down/down, not admin down
