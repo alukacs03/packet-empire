@@ -62,6 +62,7 @@ const DIALECT_HINTS := {
 			"/interface set ether4 disabled=no",
 		],
 		"eos": [
+			"enable",
 			"show spanning-tree",
 			"configure terminal",
 			"interface Ethernet4",
@@ -168,7 +169,7 @@ static func _campaign() -> Array:
 			"title": "First light",
 			"customer": "Internal ops",
 			"reward": 500,
-			"brief": "Make your two servers talk. Both need an IP address in the same subnet: 10.0.0.1/24 on one and 10.0.0.2/24 on the other. Use each server's console: 'ip addr add 10.0.0.1/24 dev eth0': or the port editor. Then verify with 'ping 10.0.0.2'. Same subnet = no router needed: this is switching.",
+			"brief": "Make your two servers talk. Both need an IP address in the same subnet: 10.0.0.1/24 on one and 10.0.0.2/24 on the other. Use each server's console: 'ip addr add 10.0.0.1/24 dev eth0'. Then verify with 'ping 10.0.0.2'. Same subnet = no router needed: this is switching.",
 			"reqs": [
 				{"d": "A server owns 10.0.0.1/24", "t": func() -> bool: return _owner("10.0.0.1") != null},
 				{"d": "A server owns 10.0.0.2/24", "t": func() -> bool: return _owner("10.0.0.2") != null},
@@ -269,7 +270,7 @@ static func _campaign() -> Array:
 			"title": "Join the Internet",
 			"customer": "Zeta Hosting",
 			"reward": 3000,
-			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4: '/routing bgp set as=65001', '/routing bgp peer add address=100.64.0.1 as=64500'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: network add prefix=<your-server-subnet>/24 (or 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
+			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4: '/routing bgp set as=65001', '/routing bgp peer add address=100.64.0.1 as=64500'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/routing bgp network add prefix=<your-server-subnet>/24' (Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
 			"reqs": [
 				{"d": "ISP handoff cabled to a router", "t": func() -> bool: return _uplink_cabled()},
 				{"d": "eBGP session Established", "t": func() -> bool: return _bgp_up() != null},
@@ -317,7 +318,7 @@ static func _campaign() -> Array:
 			"title": "No single point of failure",
 			"customer": "Omega Holding (pre-audit)",
 			"reward": 3200,
-			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master). A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
+			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
 			"reqs": [
 				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
 				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},
@@ -340,7 +341,7 @@ static func _campaign() -> Array:
 			"title": "One port, two networks",
 			"customer": "Beta Kft",
 			"reward": 1900,
-			"brief": "Beta needs their two VLANs (60 and 61) routed, and you have exactly one router port left. That is what router-on-a-stick is for: cable the router port to a switch TRUNK, then split it into 802.1Q subinterfaces. On the router: 'interface Ethernet1.60', 'encapsulation dot1q 60', 'ip address 10.90.60.1/24', then the same for .61 with 10.90.61.1/24. Put a server in each VLAN (10.90.60.10 and 10.90.61.10) pointing at those gateways. Both must reach each other over that single physical link.",
+			"brief": "Beta needs their two VLANs (60 and 61) routed, and you have exactly one router port left. That is what router-on-a-stick is for: cable the router port to a switch TRUNK, then split it into 802.1Q subinterfaces. On the router: 'interface Ethernet1.60', 'encapsulation dot1q 60', 'ip address 10.90.60.1/24', then the same for .61 with 10.90.61.1/24 (PacketTik: '/interface vlan add name=vlan60 vlan-id=60 interface=ether1', '/ip address add address=10.90.60.1/24 interface=vlan60'). Put a server in each VLAN (10.90.60.10 and 10.90.61.10) pointing at those gateways. Both must reach each other over that single physical link.",
 			"reqs": [
 				{"d": "A router leg split into two 802.1Q subinterfaces", "t": func() -> bool: return _subiface_pair()},
 				{"d": "Servers own 10.90.60.10 and 10.90.61.10", "t": func() -> bool: return _owner("10.90.60.10") != null and _owner("10.90.61.10") != null},
@@ -375,7 +376,7 @@ static func _campaign() -> Array:
 			"title": "Guests and staff",
 			"customer": "Balaton Hotel",
 			"reward": 2600,
-			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'), address them in 10.110.30.0/24 and 10.110.31.0/24, and prove the guest side cannot reach the staff side.",
+			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.31.10/24, and prove the guest cannot reach the staff machine.",
 			"reqs": [
 				{"d": "An access point broadcasting two SSIDs", "t": func() -> bool: return _ap_ssids() >= 2},
 				{"d": "A host associated on each network", "t": func() -> bool: return _wifi_clients() >= 2},
@@ -387,7 +388,7 @@ static func _campaign() -> Array:
 			"title": "Encrypt the back road",
 			"customer": "Astra Legal",
 			"reward": 3600,
-			"brief": "Astra will not send their traffic between offices in the clear, and they will not pay for a second leased line either. Build a WireGuard tunnel over the path you already have: 'interface wg0' on both routers, a small address on each end (10.99.0.1/30 and 10.99.0.2/30), then on each side 'wireguard peer <the other key> endpoint <their public address> allowed <their network>,<their tunnel address>/32'. Route each office's network down the tunnel. Their hosts at 172.20.1.10 and 172.20.2.10 must reach each other, and 'show wireguard' must show a handshake.",
+			"brief": "Astra will not send their traffic between offices in the clear, and they will not pay for a second leased line either. Build a WireGuard tunnel over the path you already have: 'interface wg0' on both routers, a small address on each end (10.99.0.1/30 and 10.99.0.2/30), then on each side 'wireguard peer <the other key> endpoint <their public address> allowed <their network>,<their tunnel address>/32' (PacketTik: '/interface wireguard add name=wg0', '/interface wireguard peers add interface=wg0 public-key=<the other key> endpoint-address=<their public address> allowed-address=<their network>,<their tunnel address>/32'; '/interface wireguard print' shows your own key). Route each office's network down the tunnel. Their hosts at 172.20.1.10 and 172.20.2.10 must reach each other, and 'show wireguard' must show a handshake.",
 			"reqs": [
 				{"d": "Two WireGuard interfaces that name each other", "t": func() -> bool: return _wg_pair()},
 				{"d": "The handshake succeeds", "t": func() -> bool: return _wg_handshaken()},
@@ -436,7 +437,7 @@ static func _campaign() -> Array:
 			"title": "The address shortage",
 			"customer": "Hollo Media",
 			"reward": 3000,
-			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (interface config: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>' or the port editor). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
+			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (interface config: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>'). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
 			"reqs": [
 				{"d": "Servers hold 2001:db8:70::10 and 2001:db8:71::10", "t": func() -> bool: return _owner("2001:db8:70::10") != null and _owner("2001:db8:71::10") != null},
 				{"d": "A router has a leg in each v6 prefix", "t": func() -> bool: return _v6_router() != null},
@@ -448,7 +449,7 @@ static func _campaign() -> Array:
 			"title": "The tenant with no IPv4",
 			"customer": "Turul Mobil",
 			"reward": 4000,
-			"brief": "Turul Mobil's platform is IPv6 only and they will not take an IPv4 address, not even one. Give their host 2001:db8:64::10/64 and make it reach two things: your own native IPv6 service at 2001:db8:64::20, and a legacy IPv4-only service at 10.164.0.10 that is never getting an IPv6 address. The second one needs both halves of the transition: DNS64 on their resolver to synthesize an AAAA from the A record ('dns64 64:ff9b::'), and NAT64 on the router to translate the flow ('nat64 prefix 64:ff9b:: pool <your v4 address>', or '/ipv6 nat64 set prefix=64:ff9b:: pool=<v4>' on PacketTik). Native IPv6 must not go anywhere near the translator.",
+			"brief": "Turul Mobil's platform is IPv6 only and they will not take an IPv4 address, not even one. Give their host 2001:db8:64::10/64 and make it reach two things: your own native IPv6 service at 2001:db8:64::20, and a legacy IPv4-only service at 10.164.0.10 that is never getting an IPv6 address. The second one needs both halves of the transition: DNS64 on their resolver to synthesize an AAAA from the A record (the resolver needs that A record first: 'dns add legacy.pkt 10.164.0.10', then 'dns64 64:ff9b::'), and NAT64 on the router to translate the flow ('nat64 prefix 64:ff9b:: pool <your v4 address>', or '/ipv6 nat64 set prefix=64:ff9b:: pool=<v4>' on PacketTik). Native IPv6 must not go anywhere near the translator.",
 			"reqs": [
 				{"d": "An IPv6-only tenant host at 2001:db8:64::10 with no IPv4", "t": func() -> bool:
 					var host := _owner("2001:db8:64::10")

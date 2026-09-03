@@ -186,6 +186,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
 			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
+			{"m": EP, "p": ["show", "interfaces", "trunk"], "h": _show_int_trunk},
 			{"m": EP, "p": ["show", "port-channel"], "h": _show_lag},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
@@ -1413,6 +1414,25 @@ class EOS extends Session:
 	func _show_version(_r: Array) -> String:
 		return "PacketOS EOS 0.3\nHardware: %s (%s), %d interfaces\n" % [dev.name, dev.type, dev.ifaces.size()]
 
+	func _show_int_trunk(_r: Array) -> String:
+		## the two things a trunk mismatch is diagnosed from: which ports are
+		## trunking, and which VLANs each of them will actually carry
+		var trunks: Array = []
+		for i: Net.Iface in dev.ifaces:
+			if i.mode == "trunk":
+				trunks.append(i)
+		if trunks.is_empty():
+			return "(no trunking interfaces: 'switchport mode trunk' makes one)\n"
+		var out := "%-11s %-8s %-13s %-12s %s\n" % ["Port", "Mode", "Encapsulation", "Status", "Native vlan"]
+		for i: Net.Iface in trunks:
+			var status := "not-trunking" if not i.enabled or Game.peer_label(i) == "" else "trunking"
+			out += "%-11s %-8s %-13s %-12s %d\n" % [i.name, "on", "802.1q", status, i.untagged_vlan]
+		out += "\n%-11s %s\n" % ["Port", "Vlans allowed on trunk"]
+		for i: Net.Iface in trunks:
+			out += "%-11s %s\n" % [i.name, "1-4094" if i.tagged_vlans.is_empty()
+				else ",".join(i.tagged_vlans.map(func(v): return str(v)))]
+		return out
+
 	func _show_interfaces(_r: Array) -> String:
 		var out := "%-11s %-6s %-7s %-8s %-18s %s\n" % ["Interface", "Status", "Speed", "Mode", "Addresses", "Peer"]
 		for i: Net.Iface in dev.ifaces:
@@ -2045,7 +2065,13 @@ class Linux extends Session:
 			"ip":
 				var args6 := t.slice(1)
 				if not args6.is_empty() and String(args6[0]) in ["-6", "-4"]:
-					args6 = args6.slice(1)  # family flags are accepted and ignored
+					var v6 := String(args6[0]) == "-6"
+					args6 = args6.slice(1)
+					# 'ip -6 route add default' means ::/0, not 0.0.0.0/0
+					if v6:
+						for k in args6.size():
+							if String(args6[k]) == "default":
+								args6[k] = "::/0"
 				return _ip(args6)
 			"dhclient":
 				if t.size() != 2:

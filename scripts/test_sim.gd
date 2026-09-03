@@ -9441,5 +9441,55 @@ static func run() -> int:
 	DirAccess.remove_absolute("%s/classroom_test.json" % Pack.USER_DIR)
 	Pack.load_all()
 
+	# --- every quoted EOS hint must be accepted by an EOS device too ---
+	var eos_rack := Game.add_rack(Vector2i(6, 6))
+	var eos_devs := {"switch": Game.new_device("sw-8"), "router": Game.new_device("rtr-edge")}
+	eos_rack.slots[0] = eos_devs["switch"]
+	eos_rack.slots[1] = eos_devs["router"]
+	for eos_id in Contracts.DIALECT_HINTS:
+		var eos_dt := String(Contracts.DIALECT_HINTS[eos_id]["device_type"])
+		var eos_ses := CLI.new_session(eos_devs[eos_dt])
+		for eos_cmd in Contracts.hint_commands(String(eos_id), "eos"):
+			var eos_out := eos_ses.exec(eos_cmd)
+			check(not eos_out.begins_with("%") and not eos_out.begins_with("usage:"),
+				"eos hints: %s accepts '%s' (%s)" % [eos_id, eos_cmd, eos_out.strip_edges()])
+	var trunk_view := CLI.new_session(eos_devs["switch"])
+	trunk_view.exec("enable")
+	check("Ethernet8" in trunk_view.exec("show interfaces trunk")
+		and "Ethernet1 " not in trunk_view.exec("show interfaces trunk"),
+		"eos: show interfaces trunk lists the trunk and not the access ports")
+	# --- PacketTik gear can do the jobs the briefs quote EOS for ---
+	var pt := Game.new_device("rtr-lite")
+	var pt2 := Game.new_device("rtr-lite")
+	eos_rack.slots[2] = pt
+	eos_rack.slots[3] = pt2
+	var pts := CLI.new_session(pt)
+	check(pts.exec("/interface vlan add name=vlan60 vlan-id=60 interface=ether1") == ""
+		and pt.ifaces.any(func(i): return i.parent == "ether1" and i.dot1q == 60),
+		"ros: /interface vlan add makes an 802.1Q subinterface")
+	check(pts.exec("/ip address add address=10.90.60.1/24 interface=vlan60") == ""
+		and pts.exec("/ip address print").contains("ether1.60"),
+		"ros: the RouterOS vlan name addresses the subinterface")
+	check(pts.exec("/interface vrrp add interface=ether2 vrid=1 priority=120") == ""
+		and pts.exec("/ip address add address=10.40.0.1/32 interface=vrrp1") == ""
+		and pt.ifaces[1].vrrp.get("vip", "") == "10.40.0.1" and int(pt.ifaces[1].vrrp["priority"]) == 120,
+		"ros: vrrp add plus an address on vrrp1 sets the virtual gateway")
+	check(pts.exec("/interface wireguard add name=wg0") == ""
+		and pts.exec("/interface wireguard peers add interface=wg0 public-key=peer-key endpoint-address=10.99.9.2 allowed-address=172.20.2.0/24,10.99.0.2/32") == ""
+		and pt.ifaces.any(func(i): return i.name == "wg0" and i.wg_peers.size() == 1),
+		"ros: wireguard interface and peer from the RouterOS paths")
+	check("vrrp1" in pts.exec("export") and "vlan-id=60" in pts.exec("export") and "wg0" in pts.exec("export"),
+		"ros: export reads back the vlan, vrrp and wireguard configuration")
+	var v6_srv := Game.new_device("server")
+	eos_rack.slots[4] = v6_srv
+	Game.add_ip(v6_srv.ifaces[0], "2001:db8:70::10/64")
+	var v6s := CLI.new_session(v6_srv)
+	check(v6s.exec("ip -6 route add default via 2001:db8:70::1") == ""
+		and v6_srv.static_routes.any(func(rt): return String(rt["via"]) == "2001:db8:70::1" and int(rt["plen"]) == 0),
+		"linux: ip -6 route add default means ::/0")
+	for k in 5:
+		eos_rack.slots[k] = null
+	Game.racks.erase(eos_rack)
+
 	print("---- %d failures" % fails)
 	return fails

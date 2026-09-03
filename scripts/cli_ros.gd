@@ -21,6 +21,27 @@ func _iface(name: String) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
 		if i.name == name:
 			return i
+	# RouterOS names a VLAN interface itself (vlan60); the model names it
+	# after its parent (ether1.60). Accept the RouterOS name when it is unique.
+	if name.begins_with("vlan") and name.trim_prefix("vlan").is_valid_int():
+		var vid := int(name.trim_prefix("vlan"))
+		var found: Net.Iface = null
+		for i: Net.Iface in dev.ifaces:
+			if i.parent != "" and i.dot1q == vid:
+				if found != null:
+					return null
+				found = i
+		return found
+	return null
+
+func _vrrp_iface(name: String) -> Net.Iface:
+	## vrrp1 is the interface carrying VRRP group 1
+	if not (name.begins_with("vrrp") and name.trim_prefix("vrrp").is_valid_int()):
+		return null
+	var group := int(name.trim_prefix("vrrp"))
+	for i: Net.Iface in dev.ifaces:
+		if int(i.vrrp.get("group", -1)) == group:
+			return i
 	return null
 
 func exec(line: String) -> String:
@@ -115,6 +136,89 @@ func exec(line: String) -> String:
 			return "rebooting... %s\n" % ("restored from backup" if had else "NO backup: configuration lost")
 		"system identity print":
 			return "name: %s\n" % dev.name
+		"interface vlan add":
+			if not dev.ip_forwarding:
+				return "failure: vlan interfaces need a router\n"
+			var parent := _iface(String(p.get("interface", "")))
+			if parent == null or not String(p.get("vlan-id", "")).is_valid_int():
+				return "usage: /interface vlan add name=vlan60 vlan-id=60 interface=ether1\n"
+			var vsub := Game.add_subiface(dev, parent.name, int(p["vlan-id"]))
+			if vsub == null:
+				return "failure: could not create the vlan interface\n"
+			return ""
+		"interface vlan print":
+			var out := " NAME         VLAN-ID  INTERFACE\n"
+			var any_v := false
+			for i: Net.Iface in dev.ifaces:
+				if i.parent != "":
+					any_v = true
+					out += " %-12s %-8d %s\n" % [i.name, i.dot1q, i.parent]
+			return out if any_v else "no vlan interfaces\n"
+		"interface vrrp add":
+			if not dev.ip_forwarding:
+				return "failure: vrrp needs a router\n"
+			var on := _iface(String(p.get("interface", "")))
+			if on == null:
+				return "usage: /interface vrrp add interface=ether1 vrid=1 priority=100\n"
+			var vrid := int(p.get("vrid", "1")) if String(p.get("vrid", "1")).is_valid_int() else 1
+			var prio := int(p.get("priority", "100")) if String(p.get("priority", "100")).is_valid_int() else 100
+			on.vrrp = {"group": vrid, "vip": String(on.vrrp.get("vip", "")), "priority": clampi(prio, 1, 254)}
+			Game.topology_changed.emit()
+			return ""
+		"interface vrrp print":
+			var out := " NAME    INTERFACE  VRID  PRIORITY  ADDRESS          STATE\n"
+			var any_r := false
+			for i: Net.Iface in dev.ifaces:
+				if i.vrrp.is_empty():
+					continue
+				any_r = true
+				var vip := String(i.vrrp.get("vip", ""))
+				out += " vrrp%-3d %-10s %-5d %-9d %-16s %s\n" % [int(i.vrrp["group"]), i.name,
+					int(i.vrrp["group"]), int(i.vrrp.get("priority", 100)),
+					vip if vip != "" else "-", ("master" if Sim.vrrp_master(vip, int(i.vrrp["group"])) == dev else "backup") if vip != "" else "no address"]
+			return out if any_r else "no vrrp interfaces\n"
+		"interface wireguard add":
+			var wname := String(p.get("name", "wg0"))
+			if not (wname.begins_with("wg") and wname.trim_prefix("wg").is_valid_int()):
+				return "usage: /interface wireguard add name=wg0\n"
+			if Game.add_wireguard(dev, int(wname.trim_prefix("wg"))) == null:
+				return "failure: wireguard needs a router\n"
+			return ""
+		"interface wireguard print":
+			var out := " NAME   PUBLIC-KEY\n"
+			var any_w := false
+			for i: Net.Iface in dev.ifaces:
+				if i.name.begins_with("wg"):
+					any_w = true
+					out += " %-6s %s\n" % [i.name, i.wg_key]
+			return out if any_w else "no wireguard interfaces\n"
+		"interface wireguard peers add":
+			var wi := _iface(String(p.get("interface", "")))
+			if wi == null or not wi.name.begins_with("wg") or not p.has("public-key") \
+					or not p.has("endpoint-address") or not p.has("allowed-address"):
+				return "usage: /interface wireguard peers add interface=wg0 public-key=<key> endpoint-address=<ip> allowed-address=<cidr>,<cidr>\n"
+			var allowed: Array = []
+			for c in String(p["allowed-address"]).split(",", false):
+				if not Net.valid_cidr(String(c).strip_edges()):
+					return "failure: '%s' is not a prefix\n" % c
+				allowed.append(String(c).strip_edges())
+			for existing in wi.wg_peers.duplicate():
+				if String(existing.get("key", "")) == String(p["public-key"]):
+					wi.wg_peers.erase(existing)
+			wi.wg_peers.append({"key": String(p["public-key"]), "endpoint": String(p["endpoint-address"]),
+				"allowed": allowed})
+			Game.topology_changed.emit()
+			return ""
+		"interface wireguard peers print":
+			var out := " INTERFACE  PUBLIC-KEY          ENDPOINT         ALLOWED-ADDRESS          HANDSHAKE\n"
+			var any_p := false
+			for i: Net.Iface in dev.ifaces:
+				for pr in i.wg_peers:
+					any_p = true
+					out += " %-10s %-19s %-16s %-24s %s\n" % [i.name, pr.get("key", ""), pr.get("endpoint", ""),
+						",".join(PackedStringArray(pr.get("allowed", []))),
+						"ok" if Sim.wg_handshake(i, pr) else "none"]
+			return out if any_p else "no peers\n"
 		"interface print stats":
 			var out := " NAME       RX-PACKET  TX-PACKET\n"
 			for i: Net.Iface in dev.ifaces:
@@ -238,6 +342,15 @@ func exec(line: String) -> String:
 		"ip address add":
 			if dev.type == "switch":
 				return "failure: this switch has no L3 support\n"
+			if p.has("address") and _vrrp_iface(String(p.get("interface", ""))) != null:
+				# the virtual address lives on the vrrp interface, RouterOS style
+				var vi := _vrrp_iface(String(p["interface"]))
+				var vip := String(p["address"]).split("/")[0]
+				if not Net.valid_cidr(vip + "/32"):
+					return "failure: invalid address\n"
+				vi.vrrp["vip"] = vip
+				Game.topology_changed.emit()
+				return ""
 			if p.has("address") and p.has("interface") and _iface(p["interface"]):
 				if Game.add_ip(_iface(p["interface"]), p["address"]):
 					return ""
@@ -439,6 +552,9 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"system identity set", "system identity print",
 	"snmp set", "snmp print", "ip traffic-flow print", "routing bfd print",
 	"interface print", "interface print stats", "interface set",
+	"interface vlan add", "interface vlan print", "interface vrrp add", "interface vrrp print",
+	"interface wireguard add", "interface wireguard print",
+	"interface wireguard peers add", "interface wireguard peers print",
 	"interface bonding add", "interface bonding print",
 	"interface bridge vlan add", "interface bridge vlan remove", "interface bridge vlan print",
 	"ip address add", "ip address remove", "ip address print",
@@ -480,8 +596,20 @@ func _export() -> String:
 					",".join(i.tagged_vlans.map(func(v): return str(v)))]
 		if not i.enabled:
 			out += "/interface set %s disabled=yes\n" % i.name
+		if i.parent != "":
+			out += "/interface vlan add name=vlan%d vlan-id=%d interface=%s\n" % [i.dot1q, i.dot1q, i.parent]
+		if i.name.begins_with("wg"):
+			out += "/interface wireguard add name=%s\n" % i.name
+			for pr in i.wg_peers:
+				out += "/interface wireguard peers add interface=%s public-key=%s endpoint-address=%s allowed-address=%s\n" % [
+					i.name, pr.get("key", ""), pr.get("endpoint", ""), ",".join(PackedStringArray(pr.get("allowed", [])))]
 		for cidr in i.ips:
 			out += "/ip address add address=%s interface=%s\n" % [cidr, i.name]
+		if not i.vrrp.is_empty():
+			out += "/interface vrrp add interface=%s vrid=%d priority=%d\n" % [i.name, int(i.vrrp["group"]),
+				int(i.vrrp.get("priority", 100))]
+			if String(i.vrrp.get("vip", "")) != "":
+				out += "/ip address add address=%s/32 interface=vrrp%d\n" % [i.vrrp["vip"], int(i.vrrp["group"])]
 	for r in dev.static_routes:
 		out += "/ip route add dst-address=%s/%d gateway=%s\n" % [r["prefix"], int(r["plen"]), r["via"]]
 	if not dev.bgp.is_empty():
