@@ -484,6 +484,9 @@ func _refresh_money() -> void:
 			var nr := Game.next_rank()
 			objective_lbl.text = "★ %s" % Game.rank() if nr.is_empty() \
 				else "★ %s  ·  $%d to %s" % [Game.rank(), int(nr[1]), nr[0]]
+			var qgoal := Game.next_quarter_goal()
+			if qgoal != "":
+				objective_lbl.text = "TARGET  ·  %s" % qgoal
 		var quiet_line := Game.housekeeping_suggestion()
 		if quiet_line != "":
 			objective_lbl.text = "QUIET  ·  %s" % quiet_line
@@ -2066,7 +2069,7 @@ const OPS_TABS := [
 	["Automation", ["PLAYBOOKS", "CERTIFICATES", "RUNBOOKS AND AUTOMATION", "STANDING DUTIES"]],
 	["Records", ["DOCUMENTATION", "AUDIT READINESS", "RENEWALS CALENDAR", "UNREACHABLE",
 		"WHAT YOU WROTE ABOUT THESE"]],
-	["Company", ["HOW THE PLACE IS TRENDING", "WHAT KIND OF COMPANY THIS IS", "DECISIONS",
+	["Company", ["THIS QUARTER'S TARGETS", "HOW THE PLACE IS TRENDING", "WHAT KIND OF COMPANY THIS IS", "DECISIONS",
 		"A VISIT IS BOOKED",
 		"HOW THIS RUN ENDED", "RUNS BEFORE THIS ONE"]],
 ]
@@ -2533,6 +2536,18 @@ func _refresh_ops() -> void:
 			Game.forget_all_runs()
 			_refresh_ops())
 		ops_box.add_child(forget)
+	if Game.quarter_goals.is_empty() and Game.cycle > 0:
+		Game.roll_quarter_goals()  # an older save, or a company that has not seen a quarter close yet
+	if not Game.quarter_goals.is_empty():
+		ops_box.add_child(_section("THIS QUARTER'S TARGETS"))
+		ops_box.add_child(_wrap("  The board asks for three things a quarter and pays for the ones it gets. %d cycle(s) left in this one." % (12 - Game.cycle % 12),
+			12, MUTED, 780))
+		for qg: Dictionary in Game.quarter_goals:
+			var qp: Dictionary = Game.quarter_goal_progress(qg)
+			var ql := _label("  %s %-58s %-16s $%d" % ["✓" if bool(qp["met"]) else "○", qg["label"], qp["text"], int(qg["reward"])],
+				12, Color(0.6, 0.85, 0.7) if bool(qp["met"]) else Color(0.78, 0.84, 0.9))
+			ql.add_theme_font_override("font", mono)
+			ops_box.add_child(ql)
 	ops_box.add_child(_section("HOW THE PLACE IS TRENDING"))
 	for trend_line in Game.trend_read():
 		ops_box.add_child(_wrap("  %s" % String(trend_line), 13,
@@ -5986,7 +6001,7 @@ func _refresh_contracts() -> void:
 		cv.add_child(btn)
 	if not found_active:
 		contracts_box.add_child(_label("The demo arc is finished. The full game carries on from here."
-			if Demo.active() else "All contracts complete! More arrive with future updates -\nsee the GitHub roadmap.",
+			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter:\nOperations, Company tab. The floor, the customers and the rivals carry on.",
 			14, Color(0.7, 0.85, 0.75)))
 
 # ---------- refresh / CLI ----------

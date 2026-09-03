@@ -553,6 +553,7 @@ static func run() -> int:
 	seed(20260823)
 	fails = 0
 	Game.money = 1000000
+	Game.board_targets = false  # quarterly bonuses would move the money the sections below measure
 
 	# --- topology: two servers on one switch ---
 	var r := Game.add_rack(Vector2i(0, 0))
@@ -9627,6 +9628,31 @@ static func run() -> int:
 	for cx_i in 3:
 		cx_rack.slots[cx_i] = null
 	Game.racks.erase(cx_rack)
+
+	# --- the board asks for three things a quarter, forever ---
+	var qg_money := Game.money
+	var qg_cycle := Game.cycle
+	Game.board_targets = true
+	Game.quarter_goals = []
+	Game.roll_quarter_goals()
+	check(Game.quarter_goals.size() == 3, "quarter goals: three targets are set")
+	var qg_ids: Array = []
+	for qg in Game.quarter_goals:
+		qg_ids.append(String(qg["id"]))
+		check(String(qg["label"]) != "" and not "%d" in String(qg["label"]), "quarter goals: '%s' reads as a sentence" % qg["label"])
+		check(Game.quarter_goal_progress(qg).has("met"), "quarter goals: '%s' can be measured live" % qg["id"])
+	Game.quarter_goals = [{"id": "saved", "reward": 350, "done": false, "target": 0, "base": 0, "label": "Close the quarter with every configuration saved"}]
+	for qd in Game.all_devices():
+		qd.startup = Game.device_config(qd)
+	check(bool(Game.quarter_goal_progress(Game.quarter_goals[0])["met"]), "quarter goals: saving everything meets the saved-config target")
+	Game.settle_quarter_goals()
+	check(Game.money == qg_money + 350 and Game.quarter_goals.size() == 3 and not Game.quarter_goals[0].has("paid"),
+		"quarter goals: the board pays for a met target and asks for three more")
+	check(Game.next_quarter_goal() != "" or Game.quarter_goals.all(func(g): return bool(Game.quarter_goal_progress(g)["met"])),
+		"quarter goals: the status line has a target to show")
+	Game.money = qg_money
+	Game.cycle = qg_cycle
+	Game.board_targets = false
 
 	# --- the score and the difficulty ---
 	var sc_snap := {"cycle": 100, "earned": 5000, "money": 20000, "difficulty": "Operator"}

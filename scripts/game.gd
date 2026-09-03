@@ -358,6 +358,131 @@ const SCRUB_FEE := 220
 var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
 var history: Array = []  # per-cycle snapshot for the graphs
 var reports: Array = []  # quarterly summaries
+var quarter_goals: Array = []  # what the board asked for this quarter: [{id, label, target, reward, base, done}]
+var board_targets := true  # the suite switches the board off where it measures money exactly
+
+# ---------- quarterly targets: a goal source that never runs out ----------
+## The campaign ends; the board does not. Every quarter it picks three
+## measurable things from this pool, scaled to the company, and pays for them.
+const QUARTER_GOAL_POOL := [
+	{"id": "uptime", "label": "Deliver at least %d%% of customer-cycles this quarter", "reward": 600},
+	{"id": "new_customers", "label": "Sign %d new customer(s)", "reward": 500},
+	{"id": "reviews", "label": "Close the quarter with every incident written up", "reward": 400},
+	{"id": "failover", "label": "Pass a booked failover test", "reward": 700},
+	{"id": "tidy", "label": "Have the floor at least %d%% kept at quarter end", "reward": 300},
+	{"id": "docs", "label": "Keep documentation drift under %d%% at quarter end", "reward": 300},
+	{"id": "streak", "label": "Reach a clean streak of %d cycles", "reward": 500},
+	{"id": "handover", "label": "Read %d shift handover(s)", "reward": 250},
+	{"id": "saved", "label": "Close the quarter with every configuration saved", "reward": 350},
+]
+
+func roll_quarter_goals() -> void:
+	## three targets, picked with a roll of their own seeded from the quarter,
+	## so a save replays the same and nothing else's randomness moves
+	var pool := QUARTER_GOAL_POOL.duplicate()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("%s-%d" % [company_name, cycle / 12])
+	quarter_goals = []
+	while quarter_goals.size() < 3 and not pool.is_empty():
+		var pick: Dictionary = pool[rng.randi() % pool.size()]
+		pool.erase(pick)
+		if String(pick["id"]) == "failover" and site_count() < 2 and staff.is_empty():
+			continue  # nothing to prove yet
+		var g := {"id": pick["id"], "reward": int(pick["reward"]), "done": false, "target": 0, "base": 0}
+		match String(pick["id"]):
+			"uptime":
+				g["target"] = 97 if deals.size() < 4 else 99
+			"new_customers":
+				g["target"] = 1 if deals.size() < 4 else 2
+				g["base"] = int(stats.get("deals", 0))
+			"tidy":
+				g["target"] = 70
+			"docs":
+				g["target"] = 30
+			"streak":
+				g["target"] = 12 if best_streak() < 12 else 24
+			"handover":
+				g["target"] = 2
+				g["base"] = int(stats.get("handovers_read", 0))
+			"failover":
+				g["base"] = int(stats.get("failovers_passed", 0))
+		g["label"] = String(pick["label"]) % int(g["target"]) if "%d" in String(pick["label"]) else String(pick["label"])
+		quarter_goals.append(g)
+
+func quarter_goal_progress(g: Dictionary) -> Dictionary:
+	## -> {met: bool, text: String}: measured live, so the panel can be watched
+	match String(g["id"]):
+		"uptime":
+			var window: Array = history.slice(maxi(0, history.size() - (cycle % 12 if cycle % 12 > 0 else 12)))
+			var up := 0
+			var dc := 0
+			for h in window:
+				up += int(h.get("up", 0))
+				dc += int(h.get("deals", 0))
+			var pct := int(100.0 * float(up) / maxf(1.0, float(dc))) if dc > 0 else 100
+			return {"met": pct >= int(g["target"]), "text": "%d%% so far" % pct}
+		"new_customers":
+			var n := int(stats.get("deals", 0)) - int(g["base"])
+			return {"met": n >= int(g["target"]), "text": "%d of %d" % [n, int(g["target"])]}
+		"reviews":
+			var open_n := 0
+			for inc: Dictionary in incidents:
+				if not bool(inc.get("reviewed", false)):
+					open_n += 1
+			return {"met": open_n == 0, "text": "%d open" % open_n}
+		"failover":
+			var n := int(stats.get("failovers_passed", 0)) - int(g["base"])
+			return {"met": n >= 1, "text": "passed" if n >= 1 else "not yet"}
+		"tidy":
+			var pct := int(floor_tidiness() * 100.0)
+			return {"met": pct >= int(g["target"]), "text": "%d%% now" % pct}
+		"docs":
+			var pct := int(drift_factor() * 100.0)
+			return {"met": pct < int(g["target"]), "text": "%d%% drift now" % pct}
+		"streak":
+			var s := cycles_since_customer_outage()
+			return {"met": s >= int(g["target"]), "text": "%d cycles" % s}
+		"handover":
+			var n := int(stats.get("handovers_read", 0)) - int(g["base"])
+			return {"met": n >= int(g["target"]), "text": "%d of %d" % [n, int(g["target"])]}
+		"saved":
+			var dirty := 0
+			for d in all_devices():
+				if config_dirty(d):
+					dirty += 1
+			return {"met": dirty == 0, "text": "%d unsaved" % dirty}
+	return {"met": false, "text": ""}
+
+func settle_quarter_goals() -> void:
+	## the board reads the numbers at quarter end, pays, and asks again
+	var met_n := 0
+	var paid := 0
+	for g: Dictionary in quarter_goals:
+		var p := quarter_goal_progress(g)
+		g["done"] = bool(p["met"])
+		if g["done"]:
+			met_n += 1
+			paid += int(g["reward"])
+	if not quarter_goals.is_empty():
+		money += paid
+		reputation = clampi(reputation + met_n * 2 - (quarter_goals.size() - met_n), 0, 100)
+		stats["quarter_goals_met"] = int(stats.get("quarter_goals_met", 0)) + met_n
+		log_event("BOARD: %d of %d quarterly targets met%s." % [met_n, quarter_goals.size(),
+			", $%d in bonuses" % paid if paid > 0 else ""])
+		money_changed.emit()
+	roll_quarter_goals()
+	if not quarter_goals.is_empty():
+		var names: Array = []
+		for g2: Dictionary in quarter_goals:
+			names.append(String(g2["label"]))
+		log_event("BOARD: this quarter's targets: %s." % "; ".join(PackedStringArray(names)))
+
+func next_quarter_goal() -> String:
+	## the first target still open, for the status line once the campaign is done
+	for g: Dictionary in quarter_goals:
+		if not bool(quarter_goal_progress(g)["met"]):
+			return String(g["label"])
+	return ""
 var staff: Array = []  # people on the payroll
 var candidates: Array = []  # the current hiring market
 var acquisitions: Array = []  # integration jobs from companies you bought
@@ -8923,6 +9048,8 @@ func sla_tick() -> void:
 		var rep_now := make_report()
 		press_tick(rep_now)
 		settle_quarter()
+		if board_targets and not sandbox and not drill_active:
+			settle_quarter_goals()
 		maintenance_used = 0  # a new quarter, a fresh allowance
 	if cycle % 5 == 0:
 		save_game()
@@ -9574,7 +9701,7 @@ func _serialize() -> Dictionary:
 		"contract_debriefs": contract_debriefs, "mastered_contracts": mastered_contracts,
 		"active_contract_debrief": active_contract_debrief,
 		"incidents": incidents, "blame_fear": blame_fear,
-		"destruction_certs": destruction_certs, "data_risks": data_risks,
+		"destruction_certs": destruction_certs, "data_risks": data_risks, "quarter_goals": quarter_goals,
 		"facility": facility, "facility_auto": facility_auto, "tour": tour, "renewals": renewals, "audit": audit, "decisions": decisions, "consequences": consequences, "hazards": hazards,
 		"protection": protection, "access_policy": access_policy, "identity": identity, "finale": finale, "pl_totals": pl_totals, "rank_seen": rank_seen, "season_seen": _season_seen, "cameras": cameras,
 		"access_log": access_log, "visitors": visitors,
@@ -9970,6 +10097,7 @@ func _apply(data: Dictionary) -> void:
 	facility_auto = data.get("facility_auto", {})
 	heat_wave_until = int(data.get("heat_wave_until", -1))
 	destruction_certs = data.get("destruction_certs", [])
+	quarter_goals = data.get("quarter_goals", [])
 	data_risks = data.get("data_risks", [])
 	upstream = data.get("upstream", {})
 	skill_log = data.get("skill_log", {})
