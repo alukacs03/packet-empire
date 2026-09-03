@@ -178,7 +178,6 @@ static func _campaign() -> Array:
 		},
 		{
 			"id": "two_tenants",
-			"hint": "On the switch console: enable, then configure terminal, then vlan 10, vlan 20. Then interface Ethernet1, switchport access vlan 10, then interface Ethernet2, switchport access vlan 20. 'show vlan' tells you where each port ended up. The ping failing afterwards is the point, not a fault.",
 			"title": "Two tenants, one switch",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 800,
@@ -191,7 +190,6 @@ static func _campaign() -> Array:
 		},
 		{
 			"id": "stretch_vlans",
-			"hint": "Cable the two switches together, then on BOTH ends: interface EthernetN, switchport mode trunk. Create VLAN 10 on the second switch too, put the new server's port in it, and give the server 10.0.0.3/24. 'show interfaces trunk' on each switch confirms both ends agree.",
 			"title": "Growing pains",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 1000,
@@ -204,7 +202,6 @@ static func _campaign() -> Array:
 		},
 		{
 			"id": "redundant_core",
-			"hint": "Run a second cable between the same two switches. Then 'show spanning-tree' on each: one port must say discarding. That is the loop being prevented. Disable the forwarding port and ping again to see the blocked one take over.",
 			"title": "One cable from disaster",
 			"customer": "Alfa Ltd (again)",
 			"reward": 1100,
@@ -217,7 +214,6 @@ static func _campaign() -> Array:
 		},
 		{
 			"id": "two_offices",
-			"hint": "Put a router in the rack and cable it to the switch twice, or to two switches. Give it 192.168.1.1/24 on one leg and 192.168.2.1/24 on the other. Each server needs 'ip route add default via <its gateway>'. If a ping fails, run traceroute: it stops at the last hop that worked.",
 			"title": "Connect two offices",
 			"customer": "Gamma Corp",
 			"reward": 1200,

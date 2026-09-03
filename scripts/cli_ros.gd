@@ -340,8 +340,8 @@ func exec(line: String) -> String:
 						out += " %-30s %s\n" % [cidr, i.name]
 			return out
 		"ip address add":
-			if dev.type == "switch":
-				return "failure: this switch has no L3 support\n"
+			if dev.type == "switch" and not String(p.get("interface", "")).begins_with("Management"):
+				return "failure: this switch has no L3 support (only the Management port takes an address)\n"
 			if p.has("address") and _vrrp_iface(String(p.get("interface", ""))) != null:
 				# the virtual address lives on the vrrp interface, RouterOS style
 				var vi := _vrrp_iface(String(p["interface"]))

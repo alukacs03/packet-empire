@@ -3496,9 +3496,9 @@ func verify_audit() -> String:
 	money_changed.emit()
 	reputation = mini(100, reputation + 6)
 	leads.append(Market.audit_lead(String(audit["customer"])))
-	audit["history"] = audit.get("history", []) + [{"cycle": cycle, "scope": audit["scope"]}]
 	log_event("AUDIT PASSED: $%d, a visible trust marker, and the kind of customer who asks for this now has your number."
 		% int(audit["reward"]))
+	audit = {}  # the next auditor can now be offered; the marker is what stays
 	return ""
 
 func audit_tick() -> void:
@@ -8939,10 +8939,14 @@ func delivery_credit_for_model(model: String) -> int:
 		return mini(int(MODELS[model]["price"]), int(deal.get("delivery_credit", 0)))
 	return 0
 
+func shop_price(model: String) -> int:
+	## what the instant shop charges: list price under the company's identity
+	return int(float(MODELS[model]["price"]) * identity_hardware_multiplier())
+
 func try_buy_device(model: String) -> bool:
-	if not MODELS.has(model):
-		return false
-	var price := int(MODELS[model]["price"])
+	if not MODELS.has(model) or stocked_out(model):
+		return false  # on back order: the dock is the only way to get one
+	var price := shop_price(model)
 	var credit := delivery_credit_for_model(model)
 	if money + credit < price:
 		return false

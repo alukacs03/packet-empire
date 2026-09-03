@@ -1241,9 +1241,13 @@ func _pick_new_device(slot: int, at: Control) -> void:
 				Game.model_height(keys[id])])
 			return
 		if not Game.try_buy_device(String(keys[id])):
+			if Game.stocked_out(String(keys[id])):
+				hud_toast("%s is on back order until around cycle %d. Order one for the dock, or pick a substitute." % [
+					mod2["label"], int(Game.stockouts[String(keys[id])])])
+				return
 			var available := Game.money + Game.delivery_credit_for_model(String(keys[id]))
 			hud_toast("Not enough available for a %s ($%d, cash and protected delivery funds total $%d)." % [
-				mod2["label"], int(mod2["price"]), available])
+				mod2["label"], Game.shop_price(String(keys[id])), available])
 			return
 		Game.install_device(cur_rack, slot, Game.new_device(keys[id]))
 		cur_rack.visual.queue_redraw()

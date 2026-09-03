@@ -104,6 +104,19 @@ static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
 		n += 1
 	return out
 
+static func arp_iface_name(dev: Net.NDevice, ip: String) -> String:
+	## the interface whose subnet holds the neighbour: where the entry was learned
+	var key := ip.split("@")[0]  # per-VRF keys carry a suffix
+	for i: Net.Iface in dev.ifaces:
+		for cidr in i.ips:
+			var bits := String(cidr).split("/")
+			if Net.is_v6(String(cidr)) != Net.is_v6(key):
+				continue
+			if (Net.is_v6(key) and Net.same_subnet6(key, bits[0], int(bits[1]))) \
+					or (not Net.is_v6(key) and Net.same_subnet(key, bits[0], int(bits[1]))):
+				return i.name
+	return dev.ifaces[0].name if not dev.ifaces.is_empty() else "-"
+
 class Session:
 	var dev: Net.NDevice
 	var pending_ssh: Net.NDevice = null
@@ -181,6 +194,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "vlan"], "h": _show_vlan},
 			{"m": EP, "p": ["show", "mac", "address-table"], "h": _show_mac},
 			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
+			{"m": EP, "p": ["show", "ip", "arp"], "h": _show_arp},
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
@@ -1706,9 +1720,9 @@ class EOS extends Session:
 	func _show_arp(_r: Array) -> String:
 		if dev.arp.is_empty():
 			return "  (empty)\n"
-		var out := "%-16s %s\n" % ["Address", "Hardware Addr"]
+		var out := "%-16s %-18s %-6s %s\n" % ["Address", "Hardware Addr", "Type", "Interface"]
 		for ip in dev.arp:
-			out += "%-16s %s\n" % [ip, dev.arp[ip]]
+			out += "%-16s %-18s %-6s %s\n" % [ip, dev.arp[ip], "ARPA", CLI.arp_iface_name(dev, String(ip))]
 		return out
 
 	func _show_ip_route(_r: Array) -> String:
@@ -2527,7 +2541,7 @@ class Linux extends Session:
 				return "(empty: no ARP entries yet)\n"
 			var out := ""
 			for ip in dev.arp:
-				out += "%s dev %s lladdr %s REACHABLE\n" % [ip, dev.ifaces[0].name, dev.arp[ip]]
+				out += "%s dev %s lladdr %s REACHABLE\n" % [ip, CLI.arp_iface_name(dev, String(ip)), dev.arp[ip]]
 			return out
 		if String(t[0]).begins_with("r"):  # ip route
 			if t.size() == 1:

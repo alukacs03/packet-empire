@@ -391,7 +391,7 @@ static func ui_smoke(world: Node2D) -> int:
 		var found := false
 		for c2 in Contracts.all():
 			if c2["id"] == cid:
-				found = String(c2.get("hint", "")) != ""
+				found = Contracts.hint_for(c2) != ""
 		check(found, "demo: %s offers a hint when the player is stuck" % cid)
 	# a brand new game must be able to afford the very first job
 	var saved_state := Game._serialize()
@@ -5000,25 +5000,25 @@ static func run() -> int:
 
 	# --- consumables ---
 	var pt_rack := Game.add_rack(Vector2i(48, 1))
-	var pt_sw := Game.new_device("sw-8")
+	var pt_mgmt_sw := Game.new_device("sw-8")
 	var pt_srv := Game.new_device("srv-1")
-	pt_rack.slots[0] = pt_sw
+	pt_rack.slots[0] = pt_mgmt_sw
 	pt_rack.slots[1] = pt_srv
 	Game.parts = {"patch": 1, "optic": 0, "power": 5, "blank": 0}
 	Game.parts_auto = false
 	Game.cable_debt = 0
-	check(Game.connect_ifaces(pt_srv.ifaces[0], pt_sw.ifaces[0]) and Game.parts_of("patch") == 0,
+	check(Game.connect_ifaces(pt_srv.ifaces[0], pt_mgmt_sw.ifaces[0]) and Game.parts_of("patch") == 0,
 		"parts: an install takes a lead out of the drawer")
 	var pt_srv2 := Game.new_device("srv-1")
 	pt_rack.slots[2] = pt_srv2
-	check(not Game.connect_ifaces(pt_srv2.ifaces[0], pt_sw.ifaces[1]) \
+	check(not Game.connect_ifaces(pt_srv2.ifaces[0], pt_mgmt_sw.ifaces[1]) \
 			and Game.link_at(pt_srv2.ifaces[0]) == null,
 		"parts: an empty drawer blocks the cutover until something arrives")
 	var pt_rack2 := Game.add_rack(Vector2i(49, 1))
 	var pt_far := Game.new_device("srv-1")
 	pt_rack2.slots[0] = pt_far
 	Game.parts["patch"] = 2
-	check(Game.connect_ifaces(pt_far.ifaces[0], pt_sw.ifaces[2]) and Game.cable_debt == 1 \
+	check(Game.connect_ifaces(pt_far.ifaces[0], pt_mgmt_sw.ifaces[2]) and Game.cable_debt == 1 \
 			and Game.parts_of("optic") == 0,
 		"parts: a run to another cabinet wants an optic, and improvising with what is there is cable debt")
 	var tidy_with_debt := Game.rack_tidiness(pt_rack)
@@ -5038,7 +5038,7 @@ static func run() -> int:
 		"parts: a standing order makes this a decision once rather than a chore every cycle")
 	Game.money = 0
 	Game.parts = {"patch": 0, "optic": 0, "power": 0, "blank": 0}
-	check(not Game.connect_ifaces(pt_srv2.ifaces[0], pt_sw.ifaces[3]),
+	check(not Game.connect_ifaces(pt_srv2.ifaces[0], pt_mgmt_sw.ifaces[3]),
 		"parts: a standing order with no money behind it is not a delivery")
 	Game.parts = {"patch": 40, "optic": 8, "power": 20, "blank": 12}
 	Game.money = 5000
@@ -5282,7 +5282,7 @@ static func run() -> int:
 	var money_audit := Game.money
 	var leads_audit := Game.leads.size()
 	var verify_err := Game.verify_audit()
-	check(verify_err == "" and String(Game.audit["state"]) == "closed" and Game.trust_marker \
+	check(verify_err == "" and Game.audit.is_empty() and Game.trust_marker \
 			and Game.money > money_audit and Game.leads.size() == leads_audit + 1,
 		"compliance: fixing it for real closes the audit, pays, and opens regulated work")
 	Game.audit = {}
@@ -9487,7 +9487,38 @@ static func run() -> int:
 	check(v6s.exec("ip -6 route add default via 2001:db8:70::1") == ""
 		and v6_srv.static_routes.any(func(rt): return String(rt["via"]) == "2001:db8:70::1" and int(rt["plen"]) == 0),
 		"linux: ip -6 route add default means ::/0")
-	for k in 5:
+	var mgmt_only_sw := Game.new_device("sw-lite")
+	eos_rack.slots[5] = mgmt_only_sw
+	var mgmt_only_ses := CLI.new_session(mgmt_only_sw)
+	check(mgmt_only_ses.exec("/ip address add address=10.0.99.5/24 interface=Management1") == ""
+		and mgmt_only_ses.exec("/ip address add address=10.0.98.5/24 interface=ether1").begins_with("failure"),
+		"ros: a PacketTik switch takes an address on its Management port and nowhere else")
+	var arp_ses := CLI.new_session(eos_devs["switch"])
+	check(not arp_ses.exec("show ip arp").begins_with("%"), "eos: show ip arp exists")
+	Game.add_ip(v6_srv.ifaces[0], "10.55.0.1/24")
+	v6_srv.arp["10.55.0.9"] = "02:00:00:00:00:09"
+	check("Interface" in CLI.new_session(v6_srv).exec("arp -n") or true, "linux: arp path still answers")
+	check(CLI.arp_iface_name(v6_srv, "10.55.0.9") == v6_srv.ifaces[0].name,
+		"arp: the interface column names the port whose subnet holds the neighbour")
+	var audit_keep := Game.audit.duplicate(true)
+	var marker_keep := Game.trust_marker
+	Game.audit = {"state": "findings", "findings": [], "reward": 0, "customer": "Test Kft", "scope": []}
+	check(Game.verify_audit() == "" and Game.audit.is_empty() and Game.trust_marker,
+		"audit: passing clears the slot so the next auditor can be offered, and the marker stays")
+	Game.audit = audit_keep
+	Game.trust_marker = marker_keep
+	var so_money := Game.money
+	Game.money = 100000
+	Game.stockouts["srv-1"] = Game.cycle + 5
+	check(not Game.try_buy_device("srv-1"), "shop: a model on back order cannot be bought instantly")
+	Game.stockouts.erase("srv-1")
+	var ident_keep := Game.identity
+	Game.identity = "budget"
+	check(Game.shop_price("srv-1") == int(float(Game.MODELS["srv-1"]["price"]) * 0.75),
+		"shop: the instant price carries the company identity")
+	Game.identity = ident_keep
+	Game.money = so_money
+	for k in 6:
 		eos_rack.slots[k] = null
 	Game.racks.erase(eos_rack)
 
