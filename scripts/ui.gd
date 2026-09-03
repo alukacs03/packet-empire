@@ -468,6 +468,9 @@ func _refresh_speed() -> void:
 func _refresh_money() -> void:
 	_refresh_speed()
 	_refresh_attention()
+	# the banner belongs to the drill, not to whoever happened to end it
+	if drill_panel and drill_panel.visible and not Game.drill_active:
+		drill_panel.visible = false
 	if objective_lbl:
 		var next_c := ""
 		for c in Contracts.all():
@@ -484,6 +487,9 @@ func _refresh_money() -> void:
 		var quiet_line := Game.housekeeping_suggestion()
 		if quiet_line != "":
 			objective_lbl.text = "QUIET  ·  %s" % quiet_line
+		# the alert chip sits right after this label and eats its tail; say
+		# so with an ellipsis and keep the whole line on hover
+		objective_lbl.tooltip_text = objective_lbl.text
 	if clock_lbl:
 		var f := Game.day_factor()
 		var shift_icon := "☀" if Game.day_slot() in [2, 3, 4, 5] else "☾"
@@ -931,7 +937,7 @@ func _build_toolbar() -> void:
 	objective_lbl = _label("", 12, Color(0.65, 0.8, 0.9))
 	objective_lbl.custom_minimum_size = Vector2(260, 0)
 	objective_lbl.clip_text = true
-	objective_lbl.tooltip_text = "Current campaign objective: details in Contracts"
+	objective_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	h.add_child(objective_lbl)
 	hud_alert_btn = Button.new()
 	hud_alert_btn.visible = false
