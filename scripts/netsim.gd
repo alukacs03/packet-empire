@@ -528,6 +528,16 @@ static func mcast_send(host: Net.NDevice, group: String) -> int:
 			got += 1
 	return got
 
+static func static_port(dev: Net.NDevice, vlan: int, mac: String) -> Net.Iface:
+	## a pinned entry wins over anything learned
+	var name := String(dev.mac_static.get(vlan, {}).get(mac.to_upper(), ""))
+	if name == "":
+		return null
+	for i: Net.Iface in dev.ifaces:
+		if i.name == name:
+			return i
+	return null
+
 static func flush_learned_state() -> void:
 	## everything learned ages out: the world was rebuilt, or a cycle passed
 	_stp_dirty = true
@@ -1228,7 +1238,9 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 	## send a frame from an SVI into its VLAN: to the learned port, else flood
 	var vlan := int(svi.name.trim_prefix("Vlan"))
 	var table: Dictionary = dev.mac_table.get(vlan, {})
-	var known: Net.Iface = table.get(frame["dst"])
+	var known: Net.Iface = static_port(dev, vlan, String(frame["dst"]))
+	if known == null:
+		known = table.get(frame["dst"])
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
 	var lags_done := {}
 	for o: Net.Iface in outs:
@@ -1405,7 +1417,9 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			_host_rx(dev, svi, frame)  # e.g. ARP for the gateway; still flooded below
 	# VXLAN: this VLAN may extend over the routed network to other switches
 	_vxlan_tx(dev, in_if, vlan, frame)
-	var known: Net.Iface = dev.mac_table[vlan].get(frame["dst"])
+	var known: Net.Iface = static_port(dev, vlan, String(frame["dst"]))
+	if known == null:
+		known = dev.mac_table[vlan].get(frame["dst"])
 	if known != null and known.mlag > 0 and not _mlag_live(known):
 		known = mlag_peerlink(dev)  # our leg of the bundle is gone: go via the peer
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
@@ -1815,7 +1829,8 @@ static func _vxlan_tx(dev: Net.NDevice, in_if: Net.Iface, vlan: int, frame: Dict
 	var targets: Array = []
 	if dst_mac != BCAST and known_remote != "":
 		targets.append(known_remote)  # the control plane knows exactly where it is
-	elif dst_mac == BCAST or not dev.mac_table.get(vlan, {}).has(dst_mac):
+	elif dst_mac == BCAST or (not dev.mac_table.get(vlan, {}).has(dst_mac)
+			and static_port(dev, vlan, dst_mac) == null):
 		targets = dev.vtep.get("peers", []).duplicate()  # flood to the peers we know
 	for peer: String in targets:
 		if peer == String(dev.vtep["src"]):

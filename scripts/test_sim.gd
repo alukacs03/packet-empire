@@ -9570,6 +9570,64 @@ static func run() -> int:
 			tidy_if.enabled = true
 	Game.hazards = []
 	Game.customer_outage_active = false
+	# --- static MAC entries, allowed-list editing, and an honest show vlan ---
+	var sm_rack := Game.add_rack(Vector2i(9, 9))
+	var sm_sw := Game.new_device("sw-8")
+	var sm_h1 := Game.new_device("server")
+	var sm_h2 := Game.new_device("server")
+	sm_rack.slots[0] = sm_sw
+	sm_rack.slots[1] = sm_h1
+	sm_rack.slots[2] = sm_h2
+	Game.connect_ifaces(sm_h1.ifaces[0], sm_sw.ifaces[0])
+	Game.connect_ifaces(sm_h2.ifaces[0], sm_sw.ifaces[1])
+	Game.add_ip(sm_h1.ifaces[0], "10.68.0.1/24")
+	Game.add_ip(sm_h2.ifaces[0], "10.68.0.2/24")
+	var sms := CLI.new_session(sm_sw)
+	sms.exec("enable")
+	sms.exec("configure terminal")
+	check(sms.exec("mac address-table static %s vlan 1 interface Ethernet5" % sm_h2.ifaces[0].mac) == ""
+		and sm_sw.mac_static[1].has(sm_h2.ifaces[0].mac.to_upper()),
+		"static mac: an entry can be pinned to a port")
+	sms.exec("end")
+	check(not Sim.ping(sm_h1, "10.68.0.2")["ok"],
+		"static mac: frames follow the pinned entry even when the host is elsewhere")
+	check("STATIC" in sms.exec("show mac address-table") and "Type" in sms.exec("show mac address-table")
+		and "mac address-table static" in sms.exec("show running-config"),
+		"static mac: show mac address-table has a Type column and show run keeps the entry")
+	sms.exec("configure terminal")
+	sms.exec("no mac address-table static %s vlan 1" % sm_h2.ifaces[0].mac)
+	check(Sim.ping(sm_h1, "10.68.0.2")["ok"], "static mac: removing it lets learning take over again")
+	for sm_v in [10, 20, 30, 31, 32]:
+		Game.add_vlan(sm_sw, sm_v, "v%d" % sm_v)
+	sms.exec("interface Ethernet8")
+	sms.exec("switchport mode trunk")
+	sms.exec("switchport trunk allowed vlan 10,30-32")
+	check(sm_sw.ifaces[7].tagged_vlans == [10, 30, 31, 32], "trunk: allowed lists take ranges")
+	sms.exec("switchport trunk allowed vlan add 20")
+	check(sm_sw.ifaces[7].tagged_vlans == [10, 20, 30, 31, 32], "trunk: add extends the list")
+	sms.exec("switchport trunk allowed vlan remove 30-31")
+	check(sm_sw.ifaces[7].tagged_vlans == [10, 20, 32], "trunk: remove takes a range off it")
+	sms.exec("switchport trunk allowed vlan except 20")
+	check(20 not in sm_sw.ifaces[7].tagged_vlans and 10 in sm_sw.ifaces[7].tagged_vlans and 1 in sm_sw.ifaces[7].tagged_vlans,
+		"trunk: except allows everything in the database but that")
+	sms.exec("switchport trunk allowed vlan 10")
+	sms.exec("end")
+	var sm_vlan_out := sms.exec("show vlan")
+	var sm_line20 := ""
+	var sm_line10 := ""
+	for sm_l in sm_vlan_out.split("\n"):
+		if sm_l.begins_with("20 "):
+			sm_line20 = sm_l
+		if sm_l.begins_with("10 "):
+			sm_line10 = sm_l
+	check("Et8" in sm_line10 and "Et8" not in sm_line20,
+		"show vlan: a trunk is listed only under the VLANs it actually carries")
+	Game.disconnect_iface(sm_h1.ifaces[0])
+	Game.disconnect_iface(sm_h2.ifaces[0])
+	for sm_i in 3:
+		sm_rack.slots[sm_i] = null
+	Game.racks.erase(sm_rack)
+
 	# --- the native VLAN: agree on it, or two VLANs quietly become one ---
 	var nv_rack := Game.add_rack(Vector2i(8, 8))
 	var nv_a := Game.new_device("sw-8")

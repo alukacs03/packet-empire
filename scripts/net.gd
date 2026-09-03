@@ -102,7 +102,8 @@ class NDevice:
 	var resolver := ""  # DNS server ip for this host
 	var nat_flows := {}  # runtime: l4 id -> original private src ip
 	# runtime state (not saved): learned tables
-	var mac_table := {}  # vlan -> {mac -> Iface}
+	var mac_table := {}  # vlan -> {mac -> Iface}: learned, and it ages out
+	var mac_static := {}  # vlan -> {mac -> port name}: pinned by an engineer, never ages
 	var arp := {}  # ip -> mac
 	var capture: Array = []  # last frames seen (tcpdump-lite)
 	func _init(t: String, n: String) -> void:

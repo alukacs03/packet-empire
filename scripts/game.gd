@@ -9718,6 +9718,9 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	d.vlans = {}
 	for vid in cfg.get("vlans", {}):
 		d.vlans[int(vid)] = cfg["vlans"][vid]
+	d.mac_static = {}
+	for vid in cfg.get("mac_static", {}):
+		d.mac_static[int(vid)] = Dictionary(cfg["mac_static"][vid]).duplicate()
 	d.static_routes = cfg.get("static_routes", []).duplicate(true)
 	d.acls = cfg.get("acls", []).duplicate(true)
 	d.stateful = cfg.get("stateful", false)
@@ -9779,7 +9782,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
 			"ips": i.ips, "note": i.note})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
-		"note": d.note,
+		"mac_static": d.mac_static, "note": d.note,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
 		"ospf": d.ospf, "vrfs": d.vrfs, "snooping": d.snooping, "dai": d.dai,
@@ -10001,6 +10004,8 @@ func _apply(data: Dictionary) -> void:
 		d.resolver = sd.get("resolver", "")
 		for vid in sd.get("vlans", {}):
 			d.vlans[int(vid)] = sd["vlans"][vid]
+		for vid in sd.get("mac_static", {}):
+			d.mac_static[int(vid)] = Dictionary(sd["mac_static"][vid]).duplicate()
 		for si in sd.get("ifaces", []):
 			var i := Net.Iface.new(d, String(si["name"]), String(si.get("mac", _new_mac())))
 			i.enabled = bool(si.get("enabled", true))

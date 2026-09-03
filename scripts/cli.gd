@@ -188,6 +188,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "mac", "address-table"], "h": _show_mac},
 			{"m": EP, "p": ["show", "arp"], "h": _show_arp},
 			{"m": EP, "p": ["show", "ip", "arp"], "h": _show_arp},
+			{"m": ["config"], "p": ["mac", "address-table", "static"], "h": _mac_static},
+			{"m": ["config"], "p": ["no", "mac", "address-table", "static"], "h": _no_mac_static},
 			{"m": ["priv"], "p": ["clear", "mac", "address-table"], "h": func(_r):
 				dev.mac_table.clear()
 				return ""},
@@ -913,21 +915,72 @@ class EOS extends Session:
 			Game.topology_changed.emit()
 			return "")
 
+	static func parse_vlan_list(text: String) -> Array:
+		## 10,20,30-35 -> [10, 20, 30, 31, 32, 33, 34, 35]; [] when malformed
+		var vids: Array = []
+		for part in text.split(",", false):
+			var p := String(part).strip_edges()
+			if "-" in p:
+				var ends := p.split("-")
+				if ends.size() != 2 or not ends[0].is_valid_int() or not ends[1].is_valid_int():
+					return []
+				var lo := int(ends[0])
+				var hi := int(ends[1])
+				if lo < 1 or hi > 4094 or lo > hi:
+					return []
+				for v in range(lo, hi + 1):
+					vids.append(v)
+			elif p.is_valid_int() and int(p) >= 1 and int(p) <= 4094:
+				vids.append(int(p))
+			else:
+				return []
+		return vids
+
 	func _sw_trunk_vlans(r: Array) -> String:
+		## switchport trunk allowed vlan <list>|all|add <list>|remove <list>|except <list>
 		if dev.type != "switch":
 			return "% switchport commands need a switch\n"
-		if r.size() != 1:
-			return "usage: switchport trunk allowed vlan <v1,v2,...>|all\n"
-		if r[0] == "all":
+		var usage := "usage: switchport trunk allowed vlan <10,20,30-35>|all|add <list>|remove <list>|except <list>\n"
+		if r.size() == 1 and r[0] == "all":
 			ctx_if.tagged_vlans = []
 			Game.topology_changed.emit()
 			return ""
-		var vids: Array = []
-		for part in String(r[0]).split(",", false):
-			if not part.is_valid_int() or int(part) < 1 or int(part) > 4094:
-				return "% bad VLAN list: e.g. 10,20,30 or 'all'\n"
-			vids.append(int(part))
-		ctx_if.tagged_vlans = vids
+		if r.size() == 1:
+			var vids := EOS.parse_vlan_list(String(r[0]))
+			if vids.is_empty():
+				return usage
+			ctx_if.tagged_vlans = vids
+			Game.topology_changed.emit()
+			return ""
+		if r.size() != 2 or String(r[0]) not in ["add", "remove", "except"]:
+			return usage
+		var change := EOS.parse_vlan_list(String(r[1]))
+		if change.is_empty():
+			return usage
+		match String(r[0]):
+			"add":
+				# 'all' is the empty list; adding to everything changes nothing
+				if not ctx_if.tagged_vlans.is_empty():
+					for v in change:
+						if v not in ctx_if.tagged_vlans:
+							ctx_if.tagged_vlans.append(v)
+					ctx_if.tagged_vlans.sort()
+			"remove":
+				if ctx_if.tagged_vlans.is_empty():
+					var everything: Array = dev.vlans.keys()
+					everything.sort()
+					ctx_if.tagged_vlans = everything
+				for v in change:
+					ctx_if.tagged_vlans.erase(v)
+			"except":
+				var keep: Array = []
+				for v in dev.vlans.keys():
+					if int(v) not in change:
+						keep.append(int(v))
+				keep.sort()
+				ctx_if.tagged_vlans = keep
+		Game.topology_changed.emit()
+		return ""
 		Game.topology_changed.emit()
 		return ""
 
@@ -1492,19 +1545,61 @@ class EOS extends Session:
 		for vid in vids:
 			var ports: Array = []
 			for i: Net.Iface in dev.ifaces:
-				if i.mode == "trunk" or (i.mode == "access" and i.untagged_vlan == vid):
+				# a trunk belongs to a VLAN only if its allowed list carries it
+				var carries: bool = i.mode == "trunk" and (i.tagged_vlans.is_empty() or vid in i.tagged_vlans)
+				if carries or (i.mode == "access" and i.untagged_vlan == vid):
 					ports.append(EOS._short(i.name))
 			out += "%-6d %-16s %s\n" % [vid, dev.vlans[vid], Net.compress_ports(ports)]
 		return out
 
 	func _show_mac(_r: Array) -> String:
-		var out := "%-6s %-18s %s\n" % ["Vlan", "Mac Address", "Port"]
-		var vlans := dev.mac_table.keys()
-		vlans.sort()
-		for vlan in vlans:
-			for mac in dev.mac_table[vlan]:
-				out += "%-6d %-18s %s\n" % [vlan, mac, EOS._short(dev.mac_table[vlan][mac].name)]
-		return out if vlans else "  (empty: send some traffic first)\n"
+		var out := "%-6s %-18s %-8s %s\n" % ["Vlan", "Mac Address", "Type", "Port"]
+		var vlans := {}
+		for v in dev.mac_table:
+			vlans[v] = true
+		for v in dev.mac_static:
+			vlans[v] = true
+		var vids := vlans.keys()
+		vids.sort()
+		var rows := 0
+		for vlan in vids:
+			for mac in dev.mac_static.get(vlan, {}):
+				rows += 1
+				out += "%-6d %-18s %-8s %s\n" % [vlan, mac, "STATIC", EOS._short(String(dev.mac_static[vlan][mac]))]
+			for mac in dev.mac_table.get(vlan, {}):
+				if dev.mac_static.get(vlan, {}).has(mac):
+					continue
+				rows += 1
+				out += "%-6d %-18s %-8s %s\n" % [vlan, mac, "DYNAMIC", EOS._short(dev.mac_table[vlan][mac].name)]
+		return out if rows > 0 else "  (empty: send some traffic first)\n"
+
+	func _mac_static(r: Array) -> String:
+		## mac address-table static <mac> vlan <vid> interface <port>
+		if dev.type != "switch":
+			return "% static MAC entries need a switch\n"
+		if r.size() != 5 or String(r[1]) != "vlan" or String(r[3]) != "interface" \
+				or not String(r[2]).is_valid_int():
+			return "usage: mac address-table static <mac> vlan <vid> interface <port>\n"
+		var port := _find_iface(String(r[4]))
+		if port == null:
+			return "% no such interface\n"
+		var vid := int(r[2])
+		if not dev.mac_static.has(vid):
+			dev.mac_static[vid] = {}
+		dev.mac_static[vid][String(r[0]).to_upper()] = port.name  # the simulation spells MACs upper-case
+		Game.topology_changed.emit()
+		return ""
+
+	func _no_mac_static(r: Array) -> String:
+		if r.size() < 3 or String(r[1]) != "vlan" or not String(r[2]).is_valid_int():
+			return "usage: no mac address-table static <mac> vlan <vid>\n"
+		var vid := int(r[2])
+		if dev.mac_static.has(vid):
+			dev.mac_static[vid].erase(String(r[0]).to_upper())
+			if dev.mac_static[vid].is_empty():
+				dev.mac_static.erase(vid)
+		Game.topology_changed.emit()
+		return ""
 
 	func _show_capture(_r: Array) -> String:
 		if dev.capture.is_empty():
@@ -2000,6 +2095,11 @@ class EOS extends Session:
 			if vid == 1:
 				continue
 			out += "vlan %d\n   name %s\n!\n" % [vid, dev.vlans[vid]]
+		var static_vids := dev.mac_static.keys()
+		static_vids.sort()
+		for svid in static_vids:
+			for smac in dev.mac_static[svid]:
+				out += "mac address-table static %s vlan %d interface %s\n" % [smac, svid, dev.mac_static[svid][smac]]
 		for r in dev.static_routes:
 			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
 		if dev.stateful:
