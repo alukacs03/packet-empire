@@ -71,10 +71,14 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 			if r["id"] != my_id:
 				continue
 			if r["type"] == "reply":
-				result = {"ok": true, "from": r["from"], "detail": ""}
+				result = {"ok": true, "from": r["from"], "detail": "", "ttl": int(r.get("ttl", 64))}
 				break
 			if r["type"] == "ttl-exceeded":
 				result = {"ok": false, "from": r["from"], "detail": "ttl-exceeded"}
+				break
+			if r["type"] == "unreachable":
+				# a router said why, the way real ones do: net, host or admin
+				result = {"ok": false, "from": r["from"], "detail": "unreachable-%s" % r.get("code", "net")}
 				break
 	result["rtt"] = rtt_ms
 	_echo_results = outer_results
@@ -91,9 +95,15 @@ static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Arra
 		if r["ok"]:
 			hops.append(r["from"])
 			break
+		if r["detail"] != "ttl-exceeded":
+			# unreachable: the router that complained is usually the last hop
+			# already listed, so do not print it twice
+			if r["from"] != "" and (hops.is_empty() or hops.back() != r["from"]):
+				hops.append(r["from"])
+			elif r["from"] == "":
+				hops.append("*")
+			break
 		hops.append(r["from"] if r["from"] != "" else "*")
-		if r["detail"] != "ttl-exceeded" and r["from"] == "":
-			break  # unreachable: no point probing further
 	return hops
 
 static func dhcp_request(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
@@ -804,27 +814,37 @@ static func _route_lookup(dev: Net.NDevice, dst_ip: String, flow_key := "", vrf 
 	return paths[hash(flow_key) % paths.size()]
 
 static func _route_paths(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
-	var cands := _all_routes(dev, dst_ip, vrf)
+	return _best_of(_all_routes(dev, dst_ip, vrf))
+
+static func _best_of(cands: Array) -> Array:
+	## Longest prefix, then the most believable source (administrative
+	## distance: connected 0, static 1, eBGP 20, OSPF 110), then the protocol's
+	## own preference and metric. Ties are equal-cost paths.
 	var best_len := -1
 	for c in cands:
 		best_len = maxi(best_len, int(c["plen"]))
 	if best_len < 0:
 		return []
+	var best_ad := 1 << 30
+	for c in cands:
+		if int(c["plen"]) == best_len:
+			best_ad = mini(best_ad, int(c.get("ad", 1)))
 	# BGP decides on local preference before it looks at path length, which is
 	# the whole reason local-pref exists: it is how you pick your own upstream
 	var best_pref := -(1 << 30)
 	for c in cands:
-		if int(c["plen"]) == best_len:
+		if int(c["plen"]) == best_len and int(c.get("ad", 1)) == best_ad:
 			best_pref = maxi(best_pref, int(c.get("pref", 100)))
 	var best_cost := 1 << 30
 	for c in cands:
-		if int(c["plen"]) == best_len and int(c.get("pref", 100)) == best_pref:
+		if int(c["plen"]) == best_len and int(c.get("ad", 1)) == best_ad \
+				and int(c.get("pref", 100)) == best_pref:
 			best_cost = mini(best_cost, int(c.get("cost", 1)))
 	var out: Array = []
 	var seen := {}
 	for cand in cands:
-		if int(cand["plen"]) != best_len or int(cand.get("pref", 100)) != best_pref \
-				or int(cand.get("cost", 1)) != best_cost:
+		if int(cand["plen"]) != best_len or int(cand.get("ad", 1)) != best_ad \
+				or int(cand.get("pref", 100)) != best_pref or int(cand.get("cost", 1)) != best_cost:
 			continue
 		var key := "%s|%s" % [str(cand["next_hop"]), str(cand["iface"])]
 		if seen.has(key):
@@ -955,28 +975,73 @@ static func _all_routes(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 	## every candidate path in one routing table, with the prefix length used
 	var out: Array = []
 	var want_v6 := Net.is_v6(dst_ip)
+	for e in _route_entries(dev, vrf):
+		if Net.is_v6(String(e["prefix"])) != want_v6:
+			continue
+		if not Net.same_net(dst_ip, e["prefix"], int(e["plen"])):
+			continue
+		var c: Dictionary = e.duplicate()
+		if e["src"] == "C":
+			c["next_hop"] = dst_ip
+		out.append(c)
+	return out
+
+static func _route_entries(dev: Net.NDevice, vrf := "") -> Array:
+	## Every route this device could install in one table, usable or not
+	## filtered out: shut interfaces, next hops nothing is connected to.
+	## src is the show-ip-route code (C/S/B/O), ad the administrative distance.
+	var out: Array = []
 	for i: Net.Iface in dev.ifaces:
 		if not i.enabled or i.vrf != vrf or bfd_down(i):
 			continue
 		for cidr: String in i.ips:
-			if Net.is_v6(cidr) != want_v6:
+			var netw := Net.network_of(cidr) if not Net.is_v6(cidr) else {"prefix": cidr.split("/")[0], "plen": int(cidr.split("/")[1])}
+			out.append({"src": "C", "ad": 0, "iface": i, "next_hop": "", "prefix": netw["prefix"],
+				"plen": int(netw["plen"]), "cost": 0, "vrf": vrf})
+	var sources := [["S", dev.static_routes], ["B", _bgp_learned(dev)], ["O", _ospf_learned(dev)]]
+	for pair in sources:
+		var code: String = pair[0]
+		for r in pair[1]:
+			if String(r.get("vrf", "")) != vrf:
 				continue
-			var parts := cidr.split("/")
-			if Net.same_net(dst_ip, parts[0], int(parts[1])):
-				out.append({"iface": i, "next_hop": dst_ip, "plen": int(parts[1]), "cost": 0})
-	for r in dev.static_routes + _bgp_learned(dev) + _ospf_learned(dev):
-		if Net.is_v6(String(r["prefix"])) != want_v6 or String(r.get("vrf", "")) != vrf:
-			continue
-		if not Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
-			continue
-		if String(r["via"]) == "null0":
-			out.append({"iface": null, "next_hop": "null0", "plen": int(r["plen"]), "cost": 1})
-			continue
-		var via_if := _connected_iface(dev, String(r["via"]), vrf)
-		if via_if:
-			out.append({"iface": via_if, "next_hop": r["via"], "plen": int(r["plen"]),
-				"cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100))})
+			var ad := 1 if code == "S" else (20 if code == "B" else 110)
+			ad = int(r.get("ad", ad))
+			if String(r["via"]) == "null0":
+				out.append({"src": code, "ad": ad, "iface": null, "next_hop": "null0", "prefix": r["prefix"],
+					"plen": int(r["plen"]), "cost": 1, "vrf": vrf})
+				continue
+			var via_if := _connected_iface(dev, String(r["via"]), vrf)
+			if via_if:
+				out.append({"src": code, "ad": ad, "iface": via_if, "next_hop": r["via"], "prefix": r["prefix"],
+					"plen": int(r["plen"]), "cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100)),
+					"vrf": vrf})
 	return out
+
+static func rib(dev: Net.NDevice) -> Array:
+	## The installed table: per prefix, only the route(s) that won. What
+	## show ip route prints, across every VRF.
+	var names: Array = [""]
+	for v in dev.vrfs:
+		names.append(String(v))
+	var out: Array = []
+	for vrf in names:
+		var by_prefix := {}
+		for e in _route_entries(dev, vrf):
+			var key := "%s/%d" % [e["prefix"], int(e["plen"])]
+			if not by_prefix.has(key):
+				by_prefix[key] = []
+			by_prefix[key].append(e)
+		var keys: Array = by_prefix.keys()
+		keys.sort_custom(func(a, b): return _prefix_sort_key(a) < _prefix_sort_key(b))
+		for key in keys:
+			out.append_array(_best_of(by_prefix[key]))
+	return out
+
+static func _prefix_sort_key(cidr: String) -> Array:
+	var parts := cidr.split("/")
+	if Net.is_v6(parts[0]):
+		return [1, parts[0], int(parts[1])]
+	return [0, Net.ip_to_int(parts[0]), int(parts[1])]
 
 static func _route_lookup_single(dev: Net.NDevice, dst_ip: String) -> Dictionary:
 	var best := {}
@@ -1594,8 +1659,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				"echo":
 					_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "reply", "id": l4["id"]},
 						iface.vrf)
-				"reply", "ttl-exceeded":
-					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"]})
+				"reply", "ttl-exceeded", "unreachable":
+					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"],
+						"ttl": int(p.get("ttl", 64)), "code": l4.get("code", "")})
 		elif l4["proto"] == "dns":
 			var svc_dns: Dictionary = dev.services.get("dns", {})
 			var recs: Dictionary = svc_dns.get("records", {})
@@ -1660,7 +1726,8 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		var flow_key := "%s|%s|%s" % [str(p["l4"].get("id", 0)), p["dst_ip"], p["src_ip"]]
 		var is_return: bool = dev.stateful and dev.flows.has(flow_key)
 		if not is_return and not _acl_permits(dev, p["src_ip"], p["dst_ip"]):
-			return  # filtered by firewall policy
+			_icmp_unreachable(dev, p, "admin", iface.vrf)  # filtered by firewall policy
+			return
 		if dev.stateful:
 			dev.flows["%s|%s|%s" % [str(p["l4"].get("id", 0)), p["src_ip"], p["dst_ip"]]] = true
 		if p["ttl"] <= 1:
@@ -1687,11 +1754,15 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				p["dst_ip"] = embedded
 		var rt := _route_lookup(dev, p["dst_ip"],
 			"%s|%s|%s" % [p["src_ip"], p["dst_ip"], str(p["l4"].get("id", 0))], iface.vrf)
-		if rt.is_empty() or rt.get("next_hop", "") == "null0":
-			return  # no route, or deliberately discarded
+		if rt.is_empty():
+			_icmp_unreachable(dev, p, "net", iface.vrf)
+			return
+		if rt.get("next_hop", "") == "null0":
+			return  # deliberately discarded: a blackhole is silent
 		var out: Net.Iface = rt["iface"]
 		var mac := _arp_resolve(dev, out, rt["next_hop"])
 		if mac == "":
+			_icmp_unreachable(dev, p, "host", iface.vrf)
 			return
 		# netflow-style accounting: who is actually pushing traffic through here
 		var talk_key := "%s>%s" % [p["src_ip"], p["dst_ip"]]
@@ -1801,6 +1872,15 @@ static func _vrrp_owns(dev: Net.NDevice, iface: Net.Iface, ip: String) -> bool:
 	if iface.vrrp.is_empty() or iface.vrrp.get("vip", "") != ip:
 		return false
 	return vrrp_master(ip, int(iface.vrrp.get("group", -1))) == dev
+
+static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf: String) -> void:
+	## Destination Unreachable back to the sender. Never about another ICMP
+	## error (RFC 1122), or two routers could bounce complaints forever.
+	var l4: Dictionary = p.get("l4", {})
+	if l4.get("proto", "") == "icmp" and l4.get("type", "") in ["ttl-exceeded", "unreachable"]:
+		return
+	_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "unreachable", "code": code,
+		"id": l4.get("id", 0)}, vrf)
 
 static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:

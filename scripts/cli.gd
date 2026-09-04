@@ -34,14 +34,44 @@ static func fmt_ping(dev: Net.NDevice, target: String, size := 64) -> String:
 	if r["ok"]:
 		var base: float = maxf(0.04, float(r.get("rtt", 0.1)))
 		for seq in [1, 2, 3]:
-			out += "%d bytes from %s: icmp_seq=%d ttl=64 time=%.2f ms\n" % [size, r["from"], seq,
-				base * (1.0 + 0.04 * seq)]
+			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n" % [size, r["from"], seq,
+				int(r.get("ttl", 64)), base * (1.0 + 0.04 * seq)]
 		return out + "3 packets transmitted, 3 received, 0% packet loss\n"
 	if r["detail"] == "ttl-exceeded":
 		return out + "From %s: icmp_seq=1 Time to live exceeded\n" % r["from"]
+	if String(r["detail"]).begins_with("unreachable-"):
+		return out + "From %s icmp_seq=1 %s\n3 packets transmitted, 0 received, +3 errors, 100%% packet loss\n" % [
+			r["from"], unreachable_text(String(r["detail"]))]
 	if r["detail"] == "timeout":
 		return out + "3 packets transmitted, 0 received, 100% packet loss\n"
 	return out + "ping: %s\n" % r["detail"]
+
+static func fold_mask(r: Array) -> Array:
+	## IOS spells a prefix as "10.0.0.0 255.255.255.0"; turn that into 10.0.0.0/24
+	## so the rest of the parser only ever sees CIDR.
+	if r.size() >= 2 and String(r[0]).is_valid_ip_address() and not String(r[0]).contains(":") \
+			and String(r[1]).is_valid_ip_address() and not String(r[1]).contains(":"):
+		var plen := mask_to_plen(String(r[1]))
+		if plen >= 0:
+			var folded: Array = ["%s/%d" % [r[0], plen]]
+			folded.append_array(r.slice(2))
+			return folded
+	return r
+
+static func mask_to_plen(mask: String) -> int:
+	## 255.255.255.0 -> 24; -1 for anything that is not a contiguous mask
+	var v := Net.ip_to_int(mask)
+	var plen := 0
+	while plen < 32 and (v & (1 << (31 - plen))) != 0:
+		plen += 1
+	return plen if v == ((0xFFFFFFFF << (32 - plen)) & 0xFFFFFFFF if plen > 0 else 0) else -1
+
+static func unreachable_text(detail: String) -> String:
+	## the words a Linux ping prints for each ICMP unreachable code
+	match detail.trim_prefix("unreachable-"):
+		"host": return "Destination Host Unreachable"
+		"admin": return "Packet filtered"
+	return "Destination Net Unreachable"
 
 static func filter_output(text: String, needle: String) -> String:
 	## Keeps the lines that match, and says so when none do, rather than
@@ -75,11 +105,14 @@ static func fmt_ping_repeat(dev: Net.NDevice, target: String, count: int, size :
 			best = minf(best, rtt)
 			worst = maxf(worst, rtt)
 			total += rtt
-			out += "%d bytes from %s: icmp_seq=%d ttl=64 time=%.2f ms\n" % [size, r["from"],
-				seq + 1, rtt]
+			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n" % [size, r["from"],
+				seq + 1, int(r.get("ttl", 64)), rtt]
 		else:
 			last_detail = String(r.get("detail", "timeout"))
-			out += "icmp_seq=%d %s\n" % [seq + 1, last_detail]
+			if last_detail.begins_with("unreachable-"):
+				out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, unreachable_text(last_detail)]
+			else:
+				out += "icmp_seq=%d %s\n" % [seq + 1, last_detail]
 	var lost := count - received
 	out += "%d packets transmitted, %d received, %d%% packet loss\n" % [count, received,
 		int(round(100.0 * float(lost) / float(count)))]
@@ -991,9 +1024,10 @@ class EOS extends Session:
 			return _range_only("an address")
 		if dev.type == "switch" and not ctx_if.name.begins_with("Management") \
 				and not ctx_if.name.begins_with("Vlan"):
-			return "% SVIs are not supported yet: use the Management1 port or a router\n"
+			return "% a switchport carries no address: put it on an SVI (interface Vlan<n>) or the Management1 port\n"
+		r = CLI.fold_mask(r)
 		if r.size() != 1:
-			return "usage: ip address <a.b.c.d/len>\n"
+			return "usage: ip address <a.b.c.d/len | a.b.c.d mask>\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
 
 	func _if_helper(r: Array) -> String:
@@ -1480,18 +1514,24 @@ class EOS extends Session:
 	func _cfg_ip_route(r: Array) -> String:
 		if not dev.ip_forwarding:
 			return "% static routing needs a router\n"
-		# ip route <prefix/len> <next-hop> [vrf <name>]
+		# ip route <prefix/len | prefix mask> <next-hop> [<distance>] [vrf <name>]
 		var vrf := ""
-		if r.size() == 4 and String(r[2]) == "vrf":
-			vrf = String(r[3])
+		if r.size() >= 2 and String(r[r.size() - 2]) == "vrf":
+			vrf = String(r[r.size() - 1])
+			r = r.slice(0, r.size() - 2)
+		r = CLI.fold_mask(r)
+		var ad := 1
+		if r.size() == 3 and String(r[2]).is_valid_int():
+			ad = clampi(int(r[2]), 1, 255)
 			r = [r[0], r[1]]
 		if r.size() == 2 and Net.valid_cidr(r[0]):
 			var parts := String(r[0]).split("/")
-			if Game.add_static_route(dev, parts[0], int(parts[1]), r[1], vrf):
+			if Game.add_static_route(dev, parts[0], int(parts[1]), r[1], vrf, ad):
 				return ""
-		return "usage: ip route <prefix/len> <next-hop> [vrf <name>]\n"
+		return "usage: ip route <prefix/len | prefix mask> <next-hop> [distance] [vrf <name>]\n"
 
 	func _cfg_no_ip_route(r: Array) -> String:
+		r = CLI.fold_mask(r)
 		if r.size() >= 1 and Net.valid_cidr(r[0]):
 			var parts := String(r[0]).split("/")
 			Game.remove_static_route(dev, parts[0], int(parts[1]))
@@ -1865,20 +1905,22 @@ class EOS extends Session:
 		return out
 
 	func _show_ip_route(_r: Array) -> String:
-		var out := ""
-		for i: Net.Iface in dev.ifaces:
-			for cidr: String in i.ips:
-				var parts := cidr.split("/")
-				out += "C  %s/%s is directly connected, %s%s\n" % [parts[0], parts[1],
-					EOS._short(i.name), "" if i.vrf == "" else "   [vrf %s]" % i.vrf]
-		for r in dev.static_routes:
-			out += "S  %s/%d [1/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
-		for r in Sim._bgp_learned(dev):
-			out += "B  %s/%d [20/0] via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
-		for r in Sim._ospf_learned(dev):
-			out += "O  %s/%d [110/%d] via %s\n" % [r["prefix"], int(r["plen"]),
-				int(r.get("cost", 10)), r["via"]]
-		return out if out else "  (no routes: configure ip addresses)\n"
+		## Only installed routes: one winner per prefix (or several of equal
+		## cost), chosen by longest prefix then administrative distance.
+		var out := "Codes: C - connected, S - static, O - OSPF, B - BGP\n"
+		var any := false
+		for e in Sim.rib(dev):
+			any = true
+			var tag: String = "" if String(e["vrf"]) == "" else "   [vrf %s]" % e["vrf"]
+			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
+			if e["src"] == "C":
+				out += "C  %s is directly connected, %s%s\n" % [pfx, EOS._short(e["iface"].name), tag]
+			elif String(e["next_hop"]) == "null0":
+				out += "%s  %s [%d/0] is a discard route, Null0%s\n" % [e["src"], pfx, int(e["ad"]), tag]
+			else:
+				out += "%s  %s [%d/%d] via %s, %s%s\n" % [e["src"], pfx, int(e["ad"]),
+					int(e["cost"]) if e["src"] == "O" else 0, e["next_hop"], EOS._short(e["iface"].name), tag]
+		return out if any else "  (no routes: configure ip addresses)\n"
 
 	func _show_v6_brief(_r: Array) -> String:
 		var out := "%-11s %-30s %-8s\n" % ["Interface", "IPv6 Address", "Status"]
@@ -1958,29 +2000,23 @@ class EOS extends Session:
 		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
 			return "usage: show ip route for <address>\n"
 		var dst := String(r[0])
-		var best := {}
-		var best_len := -1
-		for i: Net.Iface in dev.ifaces:
-			for cidr: String in i.ips:
-				var parts := String(cidr).split("/")
-				if parts.size() != 2 or Net.is_v6(String(parts[0])) != Net.is_v6(dst):
-					continue
-				var plen := int(parts[1])
-				if Net.same_subnet(dst, String(parts[0]), plen) and plen > best_len:
-					best_len = plen
-					best = {"how": "connected", "via": i.name, "prefix": "%s/%d" % [parts[0], plen]}
-		for route in dev.static_routes:
-			var plen2 := int(route["plen"])
-			if Net.is_v6(String(route["prefix"])) != Net.is_v6(dst):
-				continue
-			if Net.same_subnet(dst, String(route["prefix"]), plen2) and plen2 > best_len:
-				best_len = plen2
-				best = {"how": "static", "via": String(route["via"]),
-					"prefix": "%s/%d" % [route["prefix"], plen2]}
-		if best.is_empty():
+		var cands := Sim._all_routes(dev, dst)
+		var winners := Sim._best_of(cands)
+		if winners.is_empty():
 			return "no route to %s: nothing this device knows covers that address\n" % dst
-		return "%s is reached by the %s route %s (%s), chosen because /%d is the longest match\n" \
-			% [dst, best["how"], best["prefix"], best["via"], best_len]
+		var best: Dictionary = winners[0]
+		var names := {"C": "connected", "S": "static", "O": "ospf", "B": "bgp"}
+		var via: String = best["iface"].name if best["src"] == "C" else String(best["next_hop"])
+		var out := "%s is reached by the %s route %s/%d (%s) [%d/%d], chosen because /%d is the longest match\n" \
+			% [dst, names[best["src"]], best["prefix"], int(best["plen"]), via, int(best["ad"]),
+			int(best["cost"]), int(best["plen"])]
+		# a same-length rival lost on administrative distance: say so, that is
+		# the part of the lookup people get wrong
+		for c in cands:
+			if int(c["plen"]) == int(best["plen"]) and int(c["ad"]) > int(best["ad"]):
+				out += "  over the %s route via %s, because distance %d beats %d\n" % [names[c["src"]],
+					c["next_hop"], int(best["ad"]), int(c["ad"])]
+		return out
 
 	func _show_if_status(_r: Array) -> String:
 		## One line per port, the way you actually scan a switch.
@@ -2124,7 +2160,8 @@ class EOS extends Session:
 			for smac in dev.mac_static[svid]:
 				out += "mac address-table static %s vlan %d interface %s\n" % [smac, svid, dev.mac_static[svid][smac]]
 		for r in dev.static_routes:
-			out += "ip route %s/%d %s\n!\n" % [r["prefix"], int(r["plen"]), r["via"]]
+			out += "ip route %s/%d %s%s\n!\n" % [r["prefix"], int(r["plen"]), r["via"],
+				"" if int(r.get("ad", 1)) == 1 else " %d" % int(r["ad"])]
 		if dev.stateful:
 			out += "firewall stateful\n!\n"
 		for rule in dev.acls:

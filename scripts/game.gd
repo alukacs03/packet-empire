@@ -9555,7 +9555,7 @@ func set_iface_vrf(i: Net.Iface, name: String) -> bool:
 	topology_changed.emit()
 	return true
 
-func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String, vrf := "") -> bool:
+func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String, vrf := "", ad := 1) -> bool:
 	var v6 := Net.is_v6(prefix)
 	var max_len := 128 if v6 else 32
 	var blackhole := via.to_lower() in ["null0", "blackhole", "discard"]
@@ -9573,8 +9573,13 @@ func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String, 
 		return false
 	if blackhole:
 		via = "null0"
-	remove_static_route(dev, prefix, plen, vrf)
-	dev.static_routes.append({"prefix": prefix, "plen": plen, "via": via, "vrf": vrf})
+	# a second static to the same prefix with a different distance is a
+	# floating static: it waits in the wings until the better one goes
+	for r in dev.static_routes.duplicate():
+		if r["prefix"] == prefix and int(r["plen"]) == plen and String(r.get("vrf", "")) == vrf \
+				and (int(r.get("ad", 1)) == ad or r["via"] == via):
+			dev.static_routes.erase(r)
+	dev.static_routes.append({"prefix": prefix, "plen": plen, "via": via, "vrf": vrf, "ad": ad})
 	topology_changed.emit()
 	return true
 

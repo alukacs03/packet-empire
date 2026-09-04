@@ -608,6 +608,16 @@ static func run() -> int:
 	check(tr == ["10.0.0.254", "10.1.0.2"], "L3: traceroute shows router hop then destination (got %s)" % str(tr))
 	var ttl1 := Sim.ping(a, "10.1.0.2", 1)
 	check(ttl1["detail"] == "ttl-exceeded" and ttl1["from"] == "10.0.0.254", "L3: ttl=1 dies at the router")
+	check(int(Sim.ping(a, "10.1.0.2").get("ttl", 0)) == 63, "L3: the reply's TTL lost one at the router")
+	check("ttl=63" in CLI.fmt_ping(a, "10.1.0.2"), "L3: ping prints the TTL the reply carried")
+	var unr_net := Sim.ping(a, "10.9.0.1")
+	check(unr_net["detail"] == "unreachable-net" and unr_net["from"] == "10.0.0.254",
+		"L3: a router with no route says Destination Net Unreachable")
+	var unr_host := Sim.ping(a, "10.1.0.99")
+	check(unr_host["detail"] == "unreachable-host" and unr_host["from"] == "10.0.0.254",
+		"L3: the last-hop router says Destination Host Unreachable when ARP fails")
+	check("Destination Net Unreachable" in CLI.fmt_ping(a, "10.9.0.1"), "L3: ping prints the unreachable reason")
+	check(Sim.traceroute(a, "10.9.0.1") == ["10.0.0.254"], "L3: traceroute stops at the router that complained")
 	Game.remove_static_route(a, "0.0.0.0", 0)
 	check(not Sim.ping(a, "10.1.0.2")["ok"], "L3: no default route, no reply (return path intact)")
 	Game.add_static_route(a, "0.0.0.0", 0, "10.0.0.254")
@@ -834,7 +844,9 @@ static func run() -> int:
 	fs.exec("en")
 	fs.exec("conf t")
 	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
-	check(not Sim.ping(office, "172.16.2.20")["ok"], "fw: deny rule blocks office->vault")
+	var fw_deny := Sim.ping(office, "172.16.2.20")
+	check(not fw_deny["ok"] and fw_deny["detail"] == "unreachable-admin" and fw_deny["from"] == "172.16.1.1",
+		"fw: deny rule blocks office->vault and the firewall says so (Packet filtered)")
 	check(not Sim.ping(vault, "172.16.1.10")["ok"],
 		"fw: stateless: vault->office echo passes but its reply is filtered (the classic lesson)")
 	check(fs.exec("end") == "" and fs.exec("show acl").contains("deny"), "fw: show acl lists the rule")
@@ -9073,6 +9085,35 @@ static func run() -> int:
 		"console: and prefers the connected route when it is the longer match")
 	check(rtr_cli.exec("show ip route for 203.0.113.1").contains("no route"),
 		"console: with no route it says so rather than inventing one")
+	# --- administrative distance: the route table shows winners, not candidates ---
+	rtr_cli.exec("en")
+	rtr_cli.exec("conf t")
+	check(rtr_cli.exec("ip route 10.199.0.0 255.255.255.0 10.198.0.12 250") == "",
+		"routes: IOS mask form and a trailing distance are accepted")
+	check(rtr_cli.exec("ip route 10.197.0.0 255.255.255.0 10.198.0.12 250") == "", "routes: (floating static setup)")
+	rtr_cli.exec("end")
+	var rib_out := rtr_cli.exec("show ip route")
+	check(rib_out.contains("S  10.199.0.0/24 [1/0] via 10.198.0.11") and not rib_out.contains("10.199.0.0/24 [250/0]"),
+		"routes: the floating static (distance 250) stays out of the table while the primary is installed")
+	check(rib_out.contains("S  10.197.0.0/24 [250/0]"), "routes: a floating static with no rival is installed")
+	check(rib_out.count("10.198.0.0/24") == 1 and rib_out.contains("C  10.198.0.0/24 is directly connected"),
+		"routes: one line per prefix, the connected route wins its own subnet")
+	check(rtr_cli.exec("show ip route for 10.199.0.5").contains("distance 1 beats 250"),
+		"routes: the lookup explains that distance decided, not just prefix length")
+	rtr_cli.exec("conf t")
+	rtr_cli.exec("no ip route 10.199.0.0 255.255.255.0")
+	rtr_cli.exec("end")
+	check(rtr_cli.exec("show run").contains("ip route 10.197.0.0/24 10.198.0.12 250"),
+		"routes: show run keeps the distance so the config survives a reload")
+	Game.add_ip(dx_rtr.ifaces[1], "10.196.0.1/24")
+	dx_rtr.ifaces[1].enabled = false
+	check(not rtr_cli.exec("show ip route").contains("10.196.0.0/24"),
+		"routes: a shut interface takes its connected route out of the table")
+	dx_rtr.ifaces[1].enabled = true
+	Game.remove_ip(dx_rtr.ifaces[1], "10.196.0.1/24")
+	rtr_cli.exec("conf t")
+	rtr_cli.exec("no ip route 10.197.0.0/24")
+	rtr_cli.exec("end")
 	var ros_dev2 := Game.new_device("sw-lite")
 	dx_rack2.slots[3] = ros_dev2
 	var ros_cli2 := CLI.new_session(ros_dev2)
