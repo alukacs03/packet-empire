@@ -5072,7 +5072,8 @@ func finale_snapshot(ending: String) -> Dictionary:
 		"earned": int(stats.get("earned", 0)), "money": money, "reputation": reputation,
 		"references": references.size(), "deals": deals.size(),
 		"contracts": int(stats.get("contracts", 0)), "sites": site_count(),
-		"racks": racks.size(), "staff": staff.size(), "stage": stage,
+		"racks": racks.filter(func(r): return r.slots.any(func(d): return d != null)).size(),  # empty cabinets are not growth
+		"staff": staff.size(), "stage": stage,
 		"uptime": int(100.0 * float(up) / maxf(1.0, float(deal_cycles))),
 		"techs": techs.keys(), "open_reviews": open_reviews,
 		"controls": controls_passing, "tidiness": floor_tidiness(),

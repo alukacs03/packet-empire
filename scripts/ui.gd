@@ -2231,6 +2231,18 @@ func _refresh_ops() -> void:
 		UIW.colour("warm") if Game.stage >= 1 else UIW.colour("muted"), 780)
 	meter_label.add_theme_font_override("font", mono)
 	meter.add_child(meter_label)
+	if Game.quarter_goals.is_empty() and Game.cycle > 0:
+		Game.roll_quarter_goals()  # an older save, or a company that has not seen a quarter close yet
+	if not Game.quarter_goals.is_empty():
+		ops_box.add_child(_section("THIS QUARTER'S TARGETS"))
+		ops_box.add_child(_wrap("  The board asks for three things a quarter and pays for the ones it gets. %d cycle(s) left in this one." % (12 - Game.cycle % 12),
+			12, MUTED, 780))
+		for qg: Dictionary in Game.quarter_goals:
+			var qp: Dictionary = Game.quarter_goal_progress(qg)
+			var ql := _label("  %s %-58s %-16s $%d" % ["✓" if bool(qp["met"]) else "○", qg["label"], qp["text"], int(qg["reward"])],
+				12, Color(0.6, 0.85, 0.7) if bool(qp["met"]) else Color(0.78, 0.84, 0.9))
+			ql.add_theme_font_override("font", mono)
+			ops_box.add_child(ql)
 	if not Game.tour.is_empty():
 		ops_box.add_child(_section("A VISIT IS BOOKED"))
 		var kind: String = String(Game.tour["kind"])
@@ -2536,18 +2548,6 @@ func _refresh_ops() -> void:
 			Game.forget_all_runs()
 			_refresh_ops())
 		ops_box.add_child(forget)
-	if Game.quarter_goals.is_empty() and Game.cycle > 0:
-		Game.roll_quarter_goals()  # an older save, or a company that has not seen a quarter close yet
-	if not Game.quarter_goals.is_empty():
-		ops_box.add_child(_section("THIS QUARTER'S TARGETS"))
-		ops_box.add_child(_wrap("  The board asks for three things a quarter and pays for the ones it gets. %d cycle(s) left in this one." % (12 - Game.cycle % 12),
-			12, MUTED, 780))
-		for qg: Dictionary in Game.quarter_goals:
-			var qp: Dictionary = Game.quarter_goal_progress(qg)
-			var ql := _label("  %s %-58s %-16s $%d" % ["✓" if bool(qp["met"]) else "○", qg["label"], qp["text"], int(qg["reward"])],
-				12, Color(0.6, 0.85, 0.7) if bool(qp["met"]) else Color(0.78, 0.84, 0.9))
-			ql.add_theme_font_override("font", mono)
-			ops_box.add_child(ql)
 	ops_box.add_child(_section("HOW THE PLACE IS TRENDING"))
 	for trend_line in Game.trend_read():
 		ops_box.add_child(_wrap("  %s" % String(trend_line), 13,
