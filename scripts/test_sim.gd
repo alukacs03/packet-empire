@@ -9655,12 +9655,12 @@ static func run() -> int:
 	Game.board_targets = false
 
 	# --- the score and the difficulty ---
-	var ex_racks := Game.racks.size()
-	var ex_before := int(Game.finale_snapshot("retired")["racks"])
-	var ex_rack := Game.add_rack(Vector2i(11, 11))
-	check(int(Game.finale_snapshot("retired")["racks"]) == ex_before, "score: an empty cabinet bought before the end is not growth")
-	Game.racks.erase(ex_rack)
-	check(Game.racks.size() == ex_racks, "score: (test cleanup)")
+	var sc_racks := Game.racks.size()
+	var sc_before := int(Game.finale_snapshot("retired")["racks"])
+	var sc_rack := Game.add_rack(Vector2i(11, 11))
+	check(int(Game.finale_snapshot("retired")["racks"]) == sc_before, "score: an empty cabinet bought before the end is not growth")
+	Game.racks.erase(sc_rack)
+	check(Game.racks.size() == sc_racks, "score: (test cleanup)")
 	var sc_snap := {"cycle": 100, "earned": 5000, "money": 20000, "difficulty": "Operator"}
 	var sc_base := int(Game.finale_score(sc_snap)["categories"]["financial"])
 	sc_snap["money"] = 0
