@@ -13,6 +13,9 @@ const CATALOG := {
 	"title.tagline": {
 		"en": "Build the network. Win the contract. Survive the traffic.",
 		"hu": "Építsd meg a hálózatot. Nyerd el a szerződést. Bírd a forgalmat."},
+	"title.footer": {
+		"en": "Real switches, real routing, real consequences.",
+		"hu": "Valódi switchek, valódi routing, valódi következmények."},
 	"title.eyebrow": {
 		"en": "NETWORK OPERATIONS TYCOON",
 		"hu": "HÁLÓZATÜZEMELTETŐ TYCOON"},

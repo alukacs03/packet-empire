@@ -290,7 +290,10 @@ func _shoot_all() -> void:
 			func() -> void:
 				Prefs.language = "en"
 				Loc.language = "en"],
-		["title_back_to_english", func() -> void: title._build_menu()],
+		["title_back_to_english", func() -> void:
+			# what the language button does: rebuild the menu AND the open pane
+			title._build_menu()
+			title.show_settings()],
 		["floor", func() -> void:
 			title.visible = false
 			ui.visible = true],

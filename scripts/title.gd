@@ -14,6 +14,7 @@ const MUTED: Color = UIW.COLORS["muted"]
 var eyebrow_lbl: Label
 var tagline_lbl: Label
 var esc_lbl: Label
+var footer_lbl: Label
 var root: Control
 var menu_box: VBoxContainer
 var panel_box: VBoxContainer  # the right-hand pane: slots, new game, credits
@@ -67,8 +68,8 @@ func _ready() -> void:
 	var spacer_bot := Control.new()
 	spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(spacer_bot)
-	left.add_child(_lbl("Real switches, real routing, real consequences.", 12,
-		UIW.colour("muted")))
+	footer_lbl = _lbl(Loc.t("title.footer"), 12, UIW.colour("muted"))
+	left.add_child(footer_lbl)
 
 	var right := UIW.CommandPanel.new().setup("overlay", "warm", 28)
 	right.custom_minimum_size = Vector2(390, 520)
@@ -128,6 +129,8 @@ func _relabel() -> void:
 		tagline_lbl.text = Loc.t("title.tagline")
 	if esc_lbl:
 		esc_lbl.text = Loc.t("title.esc")
+	if footer_lbl:
+		footer_lbl.text = Loc.t("title.footer")
 
 func _build_menu() -> void:
 	# queue_free is deferred, so the old buttons are still children while the

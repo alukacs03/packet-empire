@@ -487,9 +487,22 @@ func _refresh_money() -> void:
 			var qgoal := Game.next_quarter_goal()
 			if qgoal != "":
 				objective_lbl.text = "TARGET  ·  %s" % qgoal
-		var quiet_line := Game.housekeeping_suggestion()
-		if quiet_line != "":
-			objective_lbl.text = "QUIET  ·  %s" % quiet_line
+		# an outage or a hazard outranks everything else on this line: the
+		# wall sign, the brief and the HUD must never disagree about it
+		if Game.customer_outage_active or not Game.hazards.is_empty():
+			var down := 0
+			for deal in Game.deals:
+				if not bool(deal.get("healthy", false)):
+					down += 1
+			if not Game.hazards.is_empty():
+				var h: Dictionary = Game.hazards[0]
+				objective_lbl.text = "HAZARD  ·  %s in %s" % [Game.HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
+			else:
+				objective_lbl.text = "OUTAGE  ·  %d customer%s off the air" % [down, "" if down == 1 else "s"]
+		else:
+			var quiet_line := Game.housekeeping_suggestion()
+			if quiet_line != "":
+				objective_lbl.text = "QUIET  ·  %s" % quiet_line
 		# the alert chip sits right after this label and eats its tail; say
 		# so with an ellipsis and keep the whole line on hover
 		objective_lbl.tooltip_text = objective_lbl.text
