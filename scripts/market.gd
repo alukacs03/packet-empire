@@ -52,7 +52,27 @@ const KINDS := {
 	"secure_host": {"load": 250, "base": 130, "spread": 110,
 		"brief": "Compliance demands it: our server at %s must sit behind a firewall that explicitly blocks outside access to it.",
 		"costs": "A firewall ($800) + a server. The expensive tier: quote accordingly."},
+	# the second round: what the late campaign taught, sold again and again
+	"site_vpn": {"load": 300, "base": 200, "spread": 150,
+		"brief": "Our machine at %s must only be reached through an encrypted tunnel: a WireGuard link with a live handshake, and the address answering through it.",
+		"costs": "Two routers with WireGuard interfaces and a route down the tunnel. No new hardware if both ends exist."},
+	"balanced": {"load": 500, "base": 260, "spread": 180,
+		"brief": "Put our service behind a load balancer at %s with at least two members. We will switch one off during the audit and expect not to notice.",
+		"costs": "An Equipoise LB10 ($1200) and two servers. Premium tier."},
+	"overlay_segment": {"load": 400, "base": 240, "spread": 160,
+		"brief": "Carry our segment as VNI %s across two of your leaf switches over a routed underlay: no stretched VLAN, no cable between the leaves.",
+		"costs": "Two L3 leaves with VXLAN and a router between them. Expensive to build, and it sells twice."},
+	"v6_only": {"load": 300, "base": 170, "spread": 130,
+		"brief": "Our estate is IPv6 only. Make the legacy IPv4 service at %s reachable for us: DNS64 on the resolver, NAT64 on a translator, and an IPv6-only host of ours that proves it.",
+		"costs": "A translator (Junivista router or firewall), a resolver with DNS64, and a v6-only host. Mostly configuration."},
+	"guest_wifi": {"load": 200, "base": 120, "spread": 100,
+		"brief": "We run events. Give our guests a wireless network called %s on its own VLAN, walled off from everything of the staff's.",
+		"costs": "An AirTurul AP3 ($700) trunked to a switch, and an SSID per VLAN. Cheap once the AP exists."},
 }
+
+## kinds that only come up once the campaign has taught the skill
+const SECOND_ROUND := {"site_vpn": "wireguard_link", "balanced": "always_on",
+	"overlay_segment": "overlay_tenant", "v6_only": "v6_only_tenant", "guest_wifi": "guest_wifi"}
 
 const KIND_LABELS := {
 	"hosting": "Server hosting",
@@ -65,6 +85,11 @@ const KIND_LABELS := {
 	"v6_host": "IPv6 hosting",
 	"two_rooms": "Served from two rooms",
 	"bonded_uplink": "Bundled uplink",
+	"site_vpn": "Encrypted site link",
+	"balanced": "Load-balanced service",
+	"overlay_segment": "Overlay segment",
+	"v6_only": "IPv6-only access to legacy",
+	"guest_wifi": "Guest wireless",
 }
 
 ## What each customer is actually doing with the service. The player is not
@@ -135,14 +160,26 @@ static func gen_offer() -> Dictionary:
 	if Game.stage < 1:
 		kinds.erase("redundant_gw")  # colo customers aren't that fancy
 		kinds.erase("bonded_uplink")  # and they are not paying for two of anything
+	for kind2 in SECOND_ROUND:
+		if String(SECOND_ROUND[kind2]) not in Game.contracts_done:
+			kinds.erase(kind2)  # nobody asks for what you have not yet shown you can do
 	var kind: String = kinds[randi() % kinds.size()]
 	var spec: Dictionary = KINDS[kind]
 	var params := {}
 	var subject := ""
 	match kind:
-		"hosting", "secure_host", "public_hosting", "bonded_uplink", "two_rooms":
+		"hosting", "secure_host", "public_hosting", "bonded_uplink", "two_rooms", "site_vpn", "v6_only":
 			params["ip"] = "10.%d.%d.10" % [randi() % 180 + 20, randi() % 250]
 			subject = params["ip"]
+		"balanced":
+			params["vip"] = "10.%d.%d.100" % [randi() % 180 + 20, randi() % 250]
+			subject = params["vip"]
+		"overlay_segment":
+			params["vni"] = 10000 + randi() % 9000
+			subject = str(params["vni"])
+		"guest_wifi":
+			params["ssid"] = "guest-%d" % (randi() % 900 + 100)
+			subject = params["ssid"]
 		"v6_host":
 			params["ip"] = "fd%02x:%x::10" % [randi() % 256, randi() % 65535]
 			subject = params["ip"]
@@ -418,6 +455,15 @@ static func cost_to_serve(lead: Dictionary) -> Dictionary:
 		"secure_host":
 			setup = 1200
 			watts = 220
+		"site_vpn", "v6_only":
+			setup = 600
+			watts = 180
+		"balanced", "overlay_segment":
+			setup = 1600
+			watts = 300
+		"guest_wifi":
+			setup = 900
+			watts = 120
 		"public_hosting":
 			setup = 1400
 			watts = 260
@@ -594,7 +640,51 @@ static func check(kind: String, params: Dictionary) -> bool:
 								and int(rule["dplen"]) == 32:
 							return true
 			return false
+		"site_vpn":
+			# the address must answer, and the path there must be a tunnel that
+			# has actually completed a handshake
+			return _hosted_and_reachable(String(params.get("ip", ""))) and Contracts._wg_handshaken()
+		"balanced":
+			var vip := String(params.get("vip", ""))
+			for d in Game.all_devices():
+				var svc: Dictionary = d.services.get("lb", {})
+				if not svc.is_empty() and String(svc.get("vip", "")) == vip and svc.get("members", []).size() >= 2:
+					return Contracts._server_pings(vip)
+			return false
+		"overlay_segment":
+			return Contracts._overlay_underlay() and Contracts._overlay_mapped(int(params.get("vni", 0)))
+		"v6_only":
+			var legacy := String(params.get("ip", ""))
+			if Contracts._owner(legacy) == null:
+				return false
+			for d in Game.all_devices():
+				var n64 := Sim.nat64_of(d)
+				if n64.is_empty():
+					continue
+				var synth := Sim.synth64(String(n64.get("prefix", "")), legacy)
+				for h in Game.all_devices():
+					if h.type == "server" and _v6_only(h) and Sim.ping(h, synth)["ok"]:
+						return true
+			return false
+		"guest_wifi":
+			var ssid := String(params.get("ssid", ""))
+			for d in Game.all_devices():
+				if d.type == "ap" and d.ssids.has(ssid):
+					for other in d.ssids:
+						if String(other) != ssid and int(d.ssids[other]) != int(d.ssids[ssid]):
+							return true  # a second network, on a different VLAN
+			return false
 	return false
+
+static func _v6_only(h: Net.NDevice) -> bool:
+	var v6 := false
+	for i: Net.Iface in h.ifaces:
+		for cidr in i.ips:
+			if Net.is_v6(cidr):
+				v6 = true
+			else:
+				return false
+	return v6
 
 static func delivery_checks(deal: Dictionary) -> Array:
 	## Turn the words in a sold promise into observable work. The guided first

@@ -3001,6 +3001,8 @@ static func run() -> int:
 		"wifi: joining a network nobody broadcasts fails")
 	Game.wifi_join(guest, "guest-wifi")
 	check(Game.try_complete_contract(_contract("guest_wifi")), "wifi: the hotel contract verifies")
+	check(Market.check("guest_wifi", {"ssid": "guest-wifi"}) and not Market.check("guest_wifi", {"ssid": "nope"}),
+		"market: the guest wireless kind needs that SSID and a second one on another VLAN")
 
 	# --- sandbox mode and rack blueprints ---
 	Game.sandbox = true
@@ -3219,6 +3221,7 @@ static func run() -> int:
 	Game.topology_changed.emit()
 	check(Sim.ping(wg_a, "172.20.2.10")["ok"], "wg: it comes back with the path")
 	check(Game.try_complete_contract(_contract("wireguard_link")), "wg: the contract verifies")
+	check(Market.check("site_vpn", {"ip": "172.20.2.10"}), "market: the encrypted-link kind sells the tunnel again")
 
 	# --- geography and latency ---
 	check(Game.site_city(0) != "", "geo: every site sits in a city")
@@ -6200,6 +6203,16 @@ static func run() -> int:
 	Game.lb_health_check()
 	check(Sim.ping(lb_client, "10.190.0.100")["ok"], "lb: the pool recovers when servers come back")
 	check(Game.try_complete_contract(_contract("always_on")), "lb: the always-on contract verifies")
+	check(Market.check("balanced", {"vip": "10.190.0.100"}) and not Market.check("balanced", {"vip": "10.190.0.101"}),
+		"market: the load-balanced kind needs that virtual address with a two-member pool")
+	var done_before_mk := Game.contracts_done.duplicate()
+	Game.contracts_done = []
+	var second_round_seen := false
+	for _k in 40:
+		if String(Market.gen_offer().get("kind", "")) in Market.SECOND_ROUND:
+			second_round_seen = true
+	check(not second_round_seen, "market: second-round kinds are not offered before the campaign taught them")
+	Game.contracts_done = done_before_mk
 
 	# --- VRFs: two tenants on the same addresses ---
 	var vrf_rack := Game.add_rack(Vector2i(17, 1))
@@ -7938,6 +7951,8 @@ static func run() -> int:
 	v6c_rcli.exec("nat64 prefix 64:ff9b:: pool 10.164.0.1")
 	check(Game.try_complete_contract(v6c),
 		"v6 tenant: DNS64 names it and NAT64 carries it, and the tenant never gets an IPv4 address")
+	check(Market.check("v6_only", {"ip": "10.164.0.10"}) and not Market.check("v6_only", {"ip": "10.164.0.99"}),
+		"market: the v6-only kind sells the NAT64 path again, for a legacy address that exists")
 
 	# --- carrier outages and diversity ---
 	Game.circuits = []
@@ -8503,6 +8518,8 @@ static func run() -> int:
 	Sim.ping(ov_a, "192.168.70.11")
 	check(Game.try_complete_contract(ov),
 		"overlay lab: underlay, one VNI across two leaves, an unmapped neighbour and EVPN learning")
+	check(Market.check("overlay_segment", {"vni": 7000}) and not Market.check("overlay_segment", {"vni": 7001}),
+		"market: the overlay kind is verified by the VNI actually carried on two leaves")
 
 	# --- cabling from the topology map ---
 	Game.parts = {"patch": 20, "optic": 20, "power": 10, "blank": 10}
