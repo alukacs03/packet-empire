@@ -2540,6 +2540,18 @@ func _refresh_ops() -> void:
 			DisplayServer.clipboard_set("\n".join(PackedStringArray(Game.finale_report())))
 			hud_toast("The report is on your clipboard.", true))
 		ops_box.add_child(fin_copy)
+		# the world keeps ticking after the report, but there is nothing left
+		# to score: the honest next move is a second company, one notch harder
+		var next_diff := mini(Game.difficulty + 1, Game.DIFFICULTIES.size() - 1)
+		var again := Button.new()
+		again.text = "Start the second company  (%s)" % Game.DIFFICULTIES[next_diff]["name"]
+		again.tooltip_text = "A new run in this save slot, one difficulty up, with what this company leaves behind on offer."
+		_accent(again)
+		again.pressed.connect(func() -> void:
+			var world := get_parent()
+			if world != null and world.has_method("_start_new"):
+				world._start_new(Game.current_slot, "%s II" % Game.company_name, next_diff, false))
+		ops_box.add_child(again)
 	elif Game.rank() == Game.RANKS[Game.RANKS.size() - 1][0]:
 		var retire := Button.new()
 		retire.text = "Retire at the top"

@@ -428,6 +428,11 @@ const QUARTER_GOAL_POOL := [
 	{"id": "streak", "label": "Reach a clean streak of %d cycles", "reward": 500},
 	{"id": "handover", "label": "Read %d shift handover(s)", "reward": 250},
 	{"id": "saved", "label": "Close the quarter with every configuration saved", "reward": 350},
+	# engineering targets: the board has read the trade press
+	{"id": "bundled_trunks", "label": "Have every switch-to-switch link in a bundle at quarter end", "reward": 600},
+	{"id": "bfd_links", "label": "Run BFD on every routed link at quarter end", "reward": 500},
+	{"id": "guarded_ports", "label": "Guard every customer port (port security or a protected port)", "reward": 450},
+	{"id": "strict", "label": "Sign %d customer(s) on the strict service tier", "reward": 650},
 ]
 
 func roll_quarter_goals() -> void:
@@ -460,6 +465,18 @@ func roll_quarter_goals() -> void:
 				g["base"] = int(stats.get("handovers_read", 0))
 			"failover":
 				g["base"] = int(stats.get("failovers_passed", 0))
+			"bundled_trunks":
+				if _switch_links().is_empty():
+					continue  # nothing to bundle yet
+			"bfd_links":
+				if _routed_links().is_empty():
+					continue
+			"guarded_ports":
+				if _customer_ports().is_empty():
+					continue
+			"strict":
+				g["target"] = 1
+				g["base"] = _strict_deals()
 		g["label"] = String(pick["label"]) % int(g["target"]) if "%d" in String(pick["label"]) else String(pick["label"])
 		quarter_goals.append(g)
 
@@ -505,7 +522,67 @@ func quarter_goal_progress(g: Dictionary) -> Dictionary:
 				if config_dirty(d):
 					dirty += 1
 			return {"met": dirty == 0, "text": "%d unsaved" % dirty}
+		"bundled_trunks":
+			var sw_links := _switch_links()
+			var bundled := 0
+			for l in sw_links:
+				if lag_members(l).size() >= 2:
+					bundled += 1
+			return {"met": not sw_links.is_empty() and bundled == sw_links.size(),
+				"text": "%d of %d bundled" % [bundled, sw_links.size()]}
+		"bfd_links":
+			var routed := _routed_links()
+			var watched := 0
+			for l in routed:
+				if l.a.bfd and l.b.bfd:
+					watched += 1
+			return {"met": not routed.is_empty() and watched == routed.size(),
+				"text": "%d of %d watched" % [watched, routed.size()]}
+		"guarded_ports":
+			var ports := _customer_ports()
+			var guarded := 0
+			for i: Net.Iface in ports:
+				if i.port_security or i.pvlan != "" or i.dot1x:
+					guarded += 1
+			return {"met": not ports.is_empty() and guarded == ports.size(),
+				"text": "%d of %d guarded" % [guarded, ports.size()]}
+		"strict":
+			var n := _strict_deals() - int(g["base"])
+			return {"met": n >= int(g["target"]), "text": "%d of %d" % [n, int(g["target"])]}
 	return {"met": false, "text": ""}
+
+func _switch_links() -> Array:
+	var out: Array = []
+	for l in links:
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.dev != l.b.dev \
+				and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management"):
+			out.append(l)
+	return out
+
+func _routed_links() -> Array:
+	var out: Array = []
+	for l in links:
+		if l.a.dev.ip_forwarding and l.b.dev.ip_forwarding and l.a.dev.type != "switch" \
+				and l.b.dev.type != "switch" and l.a.dev.type != "uplink" and l.b.dev.type != "uplink":
+			out.append(l)
+	return out
+
+func _customer_ports() -> Array:
+	## access ports with a customer's server on the other end
+	var out: Array = []
+	for l in links:
+		for port: Net.Iface in [l.a, l.b]:
+			var far: Net.Iface = l.other(port)
+			if port.dev.type == "switch" and port.mode == "access" and far.dev.type == "server":
+				out.append(port)
+	return out
+
+func _strict_deals() -> int:
+	var n := 0
+	for deal in deals:
+		if int(deal.get("sla", 0)) >= 2:
+			n += 1
+	return n
 
 func settle_quarter_goals() -> void:
 	## the board reads the numbers at quarter end, pays, and asks again
@@ -5119,11 +5196,37 @@ func finale_snapshot(ending: String) -> Dictionary:
 			techs["vxlan"] = true
 		if d.type == "firewall":
 			techs["firewall"] = true
+		if not d.ospf.is_empty():
+			techs["ospf"] = true
+		if not d.vrfs.is_empty():
+			techs["vrf"] = true
+		if not d.services.get("lb", {}).is_empty():
+			techs["loadbalancer"] = true
+		if not Sim.nat64_of(d).is_empty():
+			techs["nat64"] = true
+		if not Sim.nat_rules(d).is_empty():
+			techs["nat"] = true
+		if d.type == "ap" and d.ssids.size() >= 2:
+			techs["wireless"] = true
 		for i: Net.Iface in d.ifaces:
 			if i.mlag > 0:
 				techs["mlag"] = true
 			if i.vrrp.get("vip", "") != "":
 				techs["vrrp"] = true
+			if i.name.begins_with("wg") and not i.wg_peers.is_empty():
+				techs["wireguard"] = true
+			if i.lag > 0:
+				techs["lacp"] = true
+			if i.bfd:
+				techs["bfd"] = true
+			if i.dot1x:
+				techs["dot1x"] = true
+			if i.qos:
+				techs["qos"] = true
+			if i.vm != "":
+				techs["vm"] = true
+			if i.tunnel_dst != "" and not i.name.begins_with("wg"):
+				techs["tunnel"] = true
 			for cidr in i.ips:
 				if Net.is_v6(String(cidr)):
 					techs["ipv6"] = true
@@ -5167,8 +5270,9 @@ func finale_score(snap: Dictionary) -> Dictionary:
 		"reliability": clampi(int(snap.get("uptime", 0)) * 2, 0, 200),
 		"trust": clampi(int(snap.get("reputation", 0)) + int(snap.get("references", 0)) * 10
 			+ (20 if bool(snap.get("trust_marker", false)) else 0), 0, 200),
-		"ambition": clampi(int(snap.get("techs", []).size()) * 25
-			+ int(snap.get("contracts", 0)) * 5, 0, 200),
+		# breadth: the cap of 200 needs most of the twenty technologies, not six
+		"ambition": clampi(int(snap.get("techs", []).size()) * 10
+			+ int(snap.get("contracts", 0)) * 4, 0, 200),
 		"discipline": clampi(int(float(snap.get("tidiness", 0.0)) * 80.0)
 			+ int((1.0 - float(snap.get("drift", 0.0))) * 60.0)
 			+ int(snap.get("controls", 0)) * 8

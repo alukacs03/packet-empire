@@ -34,39 +34,20 @@ static func replay(path: String) -> void:
 
 static func probe() -> void:
 	## scratch space: whatever needs a fast, isolated look right now
-	seed(20260823)
 	Game.money = 100000
-	Game.board_targets = false
-	Game.deals = []
-	var qos_rack := Game.add_rack(Vector2i(19, 1))
-	var qos_sw := Game.new_device("sw-8")
-	var qos_a := Game.new_device("srv-1")
-	var qos_b := Game.new_device("srv-1")
-	qos_rack.slots[0] = qos_sw
-	qos_rack.slots[1] = qos_a
-	qos_rack.slots[2] = qos_b
-	Game.connect_ifaces(qos_a.ifaces[0], qos_sw.ifaces[0])
-	Game.connect_ifaces(qos_b.ifaces[0], qos_sw.ifaces[1])
-	Game.add_ip(qos_a.ifaces[0], "10.180.0.10/24")
-	Game.add_ip(qos_b.ifaces[0], "10.180.0.11/24")
-	Game.add_static_route(qos_a, "0.0.0.0", 0, "10.180.0.11")
-	Game.add_static_route(qos_b, "0.0.0.0", 0, "10.180.0.10")
-	var premium := {"id": "q1", "customer": "Strict Kft", "kind": "hosting", "sla": 2,
-		"params": {"ip": "10.180.0.10"}, "fee": 200, "load": 900, "brief": "",
-		"cycles": 0, "up_cycles": 0, "healthy": true}
-	var cheap := {"id": "q2", "customer": "Cheap Bt", "kind": "hosting", "sla": 0,
-		"params": {"ip": "10.180.0.11"}, "fee": 80, "load": 900, "brief": "",
-		"cycles": 0, "up_cycles": 0, "healthy": true}
-	Game.deals = [premium, cheap]
-	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3
-	Game.sla_tick()
-	print("tick1 premium: ", premium.get("degraded"), " healthy ", premium.get("healthy"), " cheap: ", cheap.get("degraded"), " healthy ", cheap.get("healthy"))
-	for i: Net.Iface in qos_sw.ifaces:
-		i.qos = true
-	Game.sla_tick()
-	print("tick2 premium: ", premium.get("degraded"), " healthy ", premium.get("healthy"), " cheap: ", cheap.get("degraded"), " healthy ", cheap.get("healthy"))
-	print("ping a->b ", Sim.ping(qos_a, "10.180.0.11"), " b->a ", Sim.ping(qos_b, "10.180.0.10"))
-	print("deals now: ", Game.deals.size(), " events: ", Game.events.slice(maxi(0, Game.events.size() - 5)))
+	Game.parts = {"patch": 400, "optic": 100, "power": 60, "blank": 60}
+	for sd in range(1, 13):
+		Drill.start(3, sd)
+		var name := Drill.scenario
+		Drill.cheat_fix()
+		var ok := Drill.solved()
+		var probe_ping := ""
+		if not ok:
+			for pair in Drill.targets:
+				var src := Sim._ip_owner(String(pair[0]))
+				probe_ping += " %s->%s:%s" % [pair[0], pair[1], str(Sim.ping(src, String(pair[1]))) if src else "no-src"]
+		Drill.finish(false)
+		print("seed %d: %s solved=%s%s" % [sd, name.substr(0, 40), ok, probe_ping])
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
@@ -3857,7 +3838,7 @@ static func run() -> int:
 	for pv_c: Dictionary in Contracts.all():
 		if String(pv_c["id"]) == "prove_it":
 			pv_contract = pv_c
-	check(not pv_contract.is_empty() and pv_contract["reqs"].size() == 2,
+	check(not pv_contract.is_empty() and pv_contract["reqs"].size() == 1,
 		"campaign: there is a job that asks for the failover to be proved")
 	Game.customer_outage_active = true
 	Game.stats["failovers_passed"] = 1
@@ -10000,6 +9981,11 @@ static func run() -> int:
 		"quarter goals: the board pays for a met target and asks for three more")
 	check(Game.next_quarter_goal() != "" or Game.quarter_goals.all(func(g): return bool(Game.quarter_goal_progress(g)["met"])),
 		"quarter goals: the status line has a target to show")
+	for eng_id in ["bundled_trunks", "bfd_links", "guarded_ports", "strict"]:
+		var eng := Game.quarter_goal_progress({"id": eng_id, "target": 1, "base": 0})
+		check(String(eng["text"]) != "", "quarter goals: the %s target reads its progress off the live network" % eng_id)
+	check(not bool(Game.quarter_goal_progress({"id": "bundled_trunks", "target": 0, "base": 0})["met"]),
+		"quarter goals: with unbundled switch links on the floor the bundle target is not met")
 	Game.money = qg_money
 	Game.cycle = qg_cycle
 	Game.board_targets = false

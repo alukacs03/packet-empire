@@ -857,11 +857,10 @@ static func _campaign() -> Array:
 			"reward": 4600,
 			"brief": "Tisza Bank has read your last outage report and would like the exercise run rather than described. Book a failover test (Operations, Facility), let it take your upstream out of service on the cycle you chose, and have every customer still served when it comes back. They want the result either way: a test you fail and act on is worth more to them than one you never ran.",
 			"reqs": [
-				{"d": "A failover test has been passed", "t": func() -> bool: return int(Game.stats.get("failovers_passed", 0)) >= 1},
-				# an exercise is a thing you did, not a service you run: the
-				# second requirement is about the day of the test, so once it is
-				# signed off it must not re-breach on every later outage
-				{"d": "Nobody was off the air when it ran", "t": func() -> bool: return int(Game.stats.get("failovers_passed", 0)) >= 1},
+				# an exercise is a thing you did, not a service you run: a pass
+				# already means nobody was off the air, so once it is signed off
+				# it must not re-breach on every later outage
+				{"d": "A booked failover test has been passed with every customer still served", "t": func() -> bool: return int(Game.stats.get("failovers_passed", 0)) >= 1},
 			],
 		},
 		{
