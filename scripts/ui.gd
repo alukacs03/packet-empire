@@ -6203,6 +6203,9 @@ func _cli_key(e: InputEvent) -> void:
 		return
 	if e is InputEventKey and e.pressed and e.unicode == 63:  # '?'
 		cli_in.accept_event()
+		if cli_session.has_method("describe"):
+			cli_out.append_text("%s %s?\n%s" % [cli_session.prompt(), cli_in.text, cli_session.describe(cli_in.text)])
+			return
 		var cands0 := cli_session.complete(cli_in.text)
 		if cands0.is_empty():
 			cli_out.append_text("%s %s?\n  <no completions here>\n" % [cli_session.prompt(), cli_in.text])

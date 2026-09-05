@@ -235,11 +235,11 @@ class EOS extends Session:
 			"config":
 				return dev.name + "(config)#"
 			"if":
-				return "%s(config-if-%s)#" % [dev.name, _short(ctx_if.name)]
+				return "%s(config-if-%s)#" % [dev.name, _range_label()]
 			"vlan":
 				return "%s(config-vlan-%d)#" % [dev.name, ctx_vlan]
 			"router":
-				return dev.name + "(config-router)#"
+				return dev.name + "(config-router-bgp)#"
 			"ospf":
 				return dev.name + "(config-router-ospf)#"
 			"dhcp":
@@ -247,7 +247,33 @@ class EOS extends Session:
 		return dev.name + ">"
 
 	static func _short(ifname: String) -> String:
-		return ifname.replace("Ethernet", "Et")
+		for pair in [["Ethernet", "Et"], ["Management", "Ma"], ["Port-Channel", "Po"], ["Loopback", "Lo"],
+				["Tunnel", "Tu"], ["Vlan", "Vl"], ["Vxlan", "Vx"]]:
+			if ifname.begins_with(pair[0]):
+				return pair[1] + ifname.trim_prefix(pair[0])
+		return ifname
+
+	func _range_label() -> String:
+		## Et1-3 or Et1,3,5-6: the way the prompt names a range
+		if ctx_ifs.size() <= 1:
+			return _short(ctx_if.name)
+		var prefix := ctx_if.name.rstrip("0123456789")
+		var nums: Array = []
+		for i: Net.Iface in ctx_ifs:
+			if i.name.rstrip("0123456789") == prefix and i.name.substr(prefix.length()).is_valid_int():
+				nums.append(int(i.name.substr(prefix.length())))
+		if nums.size() != ctx_ifs.size():
+			return _short(ctx_if.name) + ",..."
+		nums.sort()
+		var parts: Array = []
+		var k := 0
+		while k < nums.size():
+			var j := k
+			while j + 1 < nums.size() and int(nums[j + 1]) == int(nums[j]) + 1:
+				j += 1
+			parts.append(str(nums[k]) if j == k else "%d-%d" % [nums[k], nums[j]])
+			k = j + 1
+		return _short(prefix) + ",".join(PackedStringArray(parts))
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
@@ -256,6 +282,13 @@ class EOS extends Session:
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
 			{"m": ["priv"], "p": ["write", "memory"], "h": _write_mem},
+			{"m": ["priv"], "p": ["write"], "h": _write_mem},
+			{"m": ["priv"], "p": ["configure"], "h": func(_r): mode = "config"; return ""},
+			{"m": ["if"], "p": ["description"], "h": _if_description},
+			{"m": ["if"], "p": ["no", "description"], "h": func(_r): return _each(func(i): Game.set_note(i, ""); return "")},
+			{"m": EP, "p": ["show", "interfaces", "description"], "h": _show_if_description},
+			{"m": ["config"], "p": ["ip", "routing"], "h": func(_r): return "" if dev.ip_forwarding else "% IP routing is not supported on this platform\n"},
+			{"m": EP, "p": ["show", "hostname"], "h": func(_r): return "Hostname: %s\nFQDN:     %s\n" % [dev.name, dev.name]},
 			{"m": ["priv"], "p": ["copy", "running-config", "startup-config"], "h": _write_mem},
 			{"m": ["priv"], "p": ["reload"], "h": _reload},
 			{"m": ["priv"], "p": ["copy", "running-config", "template"], "h": _save_template},
@@ -277,7 +310,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "arp"], "h": _show_arp},
 			{"m": ["config"], "p": ["mac", "address-table", "static"], "h": _mac_static},
 			{"m": ["config"], "p": ["no", "mac", "address-table", "static"], "h": _no_mac_static},
-			{"m": ["priv"], "p": ["clear", "mac", "address-table"], "h": func(_r):
+			{"m": ["priv"], "p": ["clear", "mac", "address-table", "dynamic"], "h": func(_r):
 				dev.mac_table.clear()
 				return ""},
 			{"m": ["priv"], "p": ["clear", "arp-cache"], "h": func(_r):
@@ -327,7 +360,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "route", "for"], "h": _show_route_for},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
-			{"m": ["priv", "config", "if", "vlan"], "p": ["show", "running-config"], "h": _show_run},
+			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["show", "running-config"], "h": _show_run},
 			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
 			{"m": ["config"], "p": ["logging", "host"], "h": _cfg_logging},
 			{"m": ["config"], "p": ["no", "logging", "host"], "h": _no_logging},
@@ -522,6 +555,8 @@ class EOS extends Session:
 		var modes: Array = [mode]
 		if mode in ["if", "vlan", "router", "ospf", "dhcp"]:
 			modes.append("config")
+		if mode != "exec":
+			modes.append("priv")  # EOS runs exec-level commands from any configuration mode
 		var full: Array = []
 		for c in _cmds:
 			if toks.size() < c["p"].size() or not modes.any(func(m): return m in c["m"]):
@@ -544,6 +579,17 @@ class EOS extends Session:
 						break
 				if okc:
 					return "% Incomplete command\n"
+			if mode == "exec":
+				for c in _cmds:
+					if not ("priv" in c["m"] or "config" in c["m"]) or toks.size() < c["p"].size():
+						continue
+					var okp := true
+					for k in c["p"].size():
+						if not String(c["p"][k]).begins_with(toks[k]):
+							okp = false
+							break
+					if okp:
+						return "% Invalid input (privileged mode required)\n"
 			return "% Invalid input\n"
 		# the sub-mode's own commands win over a global one that happens to
 		# start the same way ("ip address" on an interface, not "ip access-list")
@@ -647,7 +693,7 @@ class EOS extends Session:
 
 	func _hostname(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: hostname <name>\n"
+			return "% Incomplete command\n"
 		return "" if Game.rename_device(dev, r[0]) else "% invalid or duplicate name\n"
 
 	func _ping(r: Array) -> String:
@@ -663,22 +709,22 @@ class EOS extends Session:
 				"repeat":
 					repeat = int(String(r[idx + 1]))
 				_:
-					return "usage: ping <ip> [size <bytes>] [repeat <n>]\n"
+					return "% Invalid input\n"
 			idx += 2
 		if target == "" or idx != r.size():
-			return "usage: ping <ip> [size <bytes>] [repeat <n>]\n"
+			return "% Invalid input\n"
 		if repeat > 0:
 			return CLI.fmt_ping_repeat(dev, target, repeat, size)
 		return CLI.fmt_ping(dev, target, size)
 
 	func _traceroute(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: traceroute <ip>\n"
+			return "% Incomplete command\n"
 		return CLI.fmt_traceroute(dev, r[0])
 
 	func _ssh(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: ssh <ip>\n"
+			return "% Incomplete command\n"
 		return CLI.try_ssh(self, r[0])
 
 	func _vlan_ids() -> Array:
@@ -697,7 +743,7 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% VLANs are configured on switches\n"
 		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "usage: vlan <1-4094>\n"
+			return "% Incomplete command\n"
 		var vid := int(r[0])
 		if vid < 1 or vid > 4094:
 			return "% invalid VLAN id\n"
@@ -709,12 +755,12 @@ class EOS extends Session:
 
 	func _cfg_no_vlan(r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "usage: no vlan <vid>\n"
+			return "% Incomplete command\n"
 		return "" if Game.remove_vlan(dev, int(r[0])) else "% cannot remove (unknown vid, or vlan 1)\n"
 
 	func _vlan_name(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: name <word>\n"
+			return "% Incomplete command\n"
 		dev.vlans[ctx_vlan] = r[0]
 		Game.topology_changed.emit()
 		return ""
@@ -738,24 +784,30 @@ class EOS extends Session:
 	func _cfg_if_range(r: Array) -> String:
 		## interface range Ethernet1-8  (or et1-8, or a comma list)
 		if r.size() != 1:
-			return "usage: interface range <first>-<last>[,<more>]\n"
+			return "% Incomplete command\n"
 		var picked: Array = []
+		var last_pfx := "ethernet"  # Ethernet1,3,5-6: a bare number keeps the last prefix
 		for part in String(r[0]).split(",", false):
 			var bits := String(part).split("-")
+			var head := String(bits[0])
+			if head.rstrip("0123456789") == "":
+				head = last_pfx + head
+			else:
+				last_pfx = head.rstrip("0123456789")
 			if bits.size() == 2:
-				var pfx := String(bits[0]).rstrip("0123456789")
-				var lo := int(String(bits[0]).substr(pfx.length()))
+				var pfx := head.rstrip("0123456789")
+				var lo := int(head.substr(pfx.length()))
 				var hi := int(bits[1])
 				for n in range(lo, hi + 1):
 					var found := _find_iface("%s%d" % [pfx, n])
 					if found:
 						picked.append(found)
 			else:
-				var one := _find_iface(String(part))
+				var one := _find_iface(head)
 				if one:
 					picked.append(one)
 		if picked.is_empty():
-			return "% no interfaces matched that range\n"
+			return "% Invalid input\n"
 		_select_ifaces(picked)
 		return ""
 
@@ -770,9 +822,13 @@ class EOS extends Session:
 		return null
 
 	func _cfg_interface(r: Array) -> String:
+		if r.size() == 2 and String(r[1]).is_valid_int():
+			r = [String(r[0]) + String(r[1])]  # interface ethernet 1
 		if r.size() != 1:
-			return "usage: interface <name>\n"
+			return "% Incomplete command\n"
 		var want := String(r[0]).to_lower()
+		if "-" in want or "," in want:
+			return _cfg_if_range([want])  # Ethernet1-3, Ethernet1,3,5-6: no 'range' keyword on EOS
 		if want.begins_with("wg") and want.trim_prefix("wg").is_valid_int():
 			var wif := Game.add_wireguard(dev, int(want.trim_prefix("wg")))
 			if wif == null:
@@ -829,6 +885,24 @@ class EOS extends Session:
 				return ""
 		return "% no such interface\n"
 
+	func _if_description(r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var text := " ".join(PackedStringArray(r))
+		return _each(func(i: Net.Iface) -> String:
+			Game.set_note(i, text)
+			return "")
+
+	func _show_if_description(_r: Array) -> String:
+		var out := "%-30s %-14s %-18s %s\n" % ["Interface", "Status", "Protocol", "Description"]
+		for i: Net.Iface in dev.ifaces:
+			if i.name == "lo":
+				continue
+			var up := i.enabled and Game.link_at(i) != null
+			out += "%-30s %-14s %-18s %s\n" % [_short(i.name), "admin down" if i.admin_down else ("up" if up else "down"),
+				"up" if up else "down", String(i.note.get("text", "")) if i.note is Dictionary else ""]
+		return out
+
 	func _no_switchport(_r: Array) -> String:
 		## a routed port: the L3 switch treats it as a router interface
 		if dev.type != "switch":
@@ -864,19 +938,21 @@ class EOS extends Session:
 				return _each(func(i: Net.Iface) -> String:
 					i.mode = m
 					return "")
-		return "usage: switchport mode access|trunk\n"
+		return "% Invalid input\n"
 
 	func _sw_access_vlan(r: Array) -> String:
 		if dev.type != "switch":
 			return "% switchport commands need a switch\n"
 		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "usage: switchport access vlan <vid>\n"
+			return "% Incomplete command\n"
 		var vid := int(r[0])
-		if not dev.vlans.has(vid):
-			if not Game.add_vlan(dev, vid, ""):  # IOS auto-creates the VLAN
-				return "% invalid VLAN id\n"
+		if vid < 1 or vid > 4094:
+			return "% Invalid input\n"
+		# EOS does not create the VLAN for you: the port remembers the number
+		# and sits inactive until 'vlan N' exists (show vlan will not list it)
 		return _each(func(i: Net.Iface) -> String:
-			Game.set_access_vlan(i, vid)
+			if not Game.set_access_vlan(i, vid):
+				i.untagged_vlan = vid
 			return "")
 
 	func _dot1x(on: bool) -> String:
@@ -890,7 +966,7 @@ class EOS extends Session:
 
 	func _cfg_radius(r: Array) -> String:
 		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
-			return "usage: radius-server host <ip>\n"
+			return "% Incomplete command\n"
 		dev.radius = r[0]
 		Game.topology_changed.emit()
 		return ""
@@ -918,7 +994,7 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% storm control is a switch feature\n"
 		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "usage: storm-control broadcast <frames>\n"
+			return "% Incomplete command\n"
 		return _each(func(i: Net.Iface) -> String:
 			i.storm_limit = maxi(0, int(r[0]))
 			return "")
@@ -1086,7 +1162,7 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% switchport commands need a switch\n"
 		if r.size() != 1 or not String(r[0]).is_valid_int() or int(r[0]) < 1 or int(r[0]) > 4094:
-			return "usage: switchport trunk native vlan <vid>\n"
+			return "% Incomplete command\n"
 		return _each(func(i: Net.Iface) -> String:
 			i.untagged_vlan = int(r[0])
 			Game.topology_changed.emit()
@@ -1117,7 +1193,7 @@ class EOS extends Session:
 		## switchport trunk allowed vlan <list>|all|add <list>|remove <list>|except <list>
 		if dev.type != "switch":
 			return "% switchport commands need a switch\n"
-		var usage := "usage: switchport trunk allowed vlan <10,20,30-35>|all|add <list>|remove <list>|except <list>\n"
+		var usage := "% Invalid input\n"
 		if r.size() == 1 and r[0] == "all":
 			ctx_if.tagged_vlans = []
 			Game.topology_changed.emit()
@@ -1169,7 +1245,7 @@ class EOS extends Session:
 			return "% a switchport carries no address: put it on an SVI (interface Vlan<n>), the Management1 port, or make this a routed port with 'no switchport'\n"
 		r = CLI.fold_mask(r)
 		if r.size() != 1:
-			return "usage: ip address <a.b.c.d/len | a.b.c.d mask>\n"
+			return "% Incomplete command\n"
 		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
 
 	func _if_helper(r: Array) -> String:
@@ -1179,12 +1255,14 @@ class EOS extends Session:
 			ctx_if.helper = r[0]
 			Game.topology_changed.emit()
 			return ""
-		return "usage: ip helper-address <dhcp-server-ip>\n"
+		return "% Invalid input\n"
 
 	func _if_lag(r: Array) -> String:
 		if dev.type != "switch":
 			return "% port-channels need a switch\n"
 		var mode := "on"
+		if r.size() == 1 and String(r[0]).is_valid_int():
+			return "% Incomplete command\n"  # EOS wants the mode said out loud
 		if r.size() == 3 and String(r[1]) == "mode" and String(r[2]) in ["active", "passive", "on"]:
 			mode = String(r[2])
 			r = [r[0]]
@@ -1193,7 +1271,7 @@ class EOS extends Session:
 				i.lag = int(r[0])
 				i.lag_mode = mode
 				return "")
-		return "usage: channel-group <1-64> mode active|passive|on\n"
+		return "% Invalid input\n"
 
 	func _show_lag(_r: Array) -> String:
 		var groups := {}
@@ -1231,26 +1309,26 @@ class EOS extends Session:
 			return _range_only("a VRRP group")
 		if not dev.ip_forwarding:
 			return "% VRRP needs a router or firewall\n"
-		# vrrp <group> ip <vip>   |   vrrp <group> priority <n>
+		# vrrp <group> ipv4 <vip>   |   vrrp <group> priority-level <n>   (ip / priority accepted as aliases)
 		if r.size() == 3 and String(r[0]).is_valid_int():
-			if "ip".begins_with(r[1]) and String(r[2]).is_valid_ip_address():
+			if ("ipv4".begins_with(r[1]) or "ip" == String(r[1])) and String(r[2]).is_valid_ip_address():
 				ctx_if.vrrp = {"group": int(r[0]), "vip": r[2],
 					"priority": int(ctx_if.vrrp.get("priority", 100))}
 				Game.topology_changed.emit()
 				return ""
-			if "priority".begins_with(r[1]) and String(r[2]).is_valid_int():
+			if ("priority-level".begins_with(r[1]) or "priority".begins_with(r[1])) and String(r[2]).is_valid_int():
 				if ctx_if.vrrp.is_empty():
-					return "% set the virtual IP first: vrrp <group> ip <vip>\n"
+					return "% set the virtual IP first: vrrp <group> ipv4 <vip>\n"
 				ctx_if.vrrp["priority"] = int(r[2])
 				Game.topology_changed.emit()
 				return ""
 		if r.size() == 2 and String(r[0]).is_valid_int() and "preempt".begins_with(r[1]):
 			if ctx_if.vrrp.is_empty():
-				return "% set the virtual IP first: vrrp <group> ip <vip>\n"
+				return "% set the virtual IP first: vrrp <group> ipv4 <vip>\n"
 			ctx_if.vrrp["preempt"] = true
 			Game.topology_changed.emit()
 			return ""
-		return "usage: vrrp <group> ip <vip>  |  vrrp <group> priority <1-254>  |  [no] vrrp <group> preempt\n"
+		return "% Invalid input\n"
 
 	func _if_no_vrrp(r: Array) -> String:
 		if r.size() == 2 and "preempt".begins_with(r[1]):
@@ -1309,7 +1387,7 @@ class EOS extends Session:
 				ctx_if.nat = m
 				Game.topology_changed.emit()
 				return ""
-		return "usage: ip nat inside|outside\n"
+		return "% Invalid input\n"
 
 	func _nat_cfg() -> Dictionary:
 		if not dev.services.has("nat"):
@@ -1321,7 +1399,7 @@ class EOS extends Session:
 		## ip nat inside source static <inside> <outside>
 		if dev.type == "switch":
 			return "% NAT needs a router or firewall\n"
-		var usage := "usage: ip nat inside source list <acl> interface <if> overload  |  ip nat inside source static <inside-ip> <outside-ip>\n"
+		var usage := "% Invalid input\n"
 		var cfg := _nat_cfg()
 		if r.size() == 3 and String(r[0]) == "static" and String(r[1]).is_valid_ip_address() and String(r[2]).is_valid_ip_address():
 			cfg["rules"].append({"kind": "static", "inside": String(r[1]), "outside": String(r[2])})
@@ -1350,7 +1428,7 @@ class EOS extends Session:
 
 	func _cfg_std_acl(r: Array) -> String:
 		## access-list <n> permit|deny <net> <wildcard> | host <ip> | any
-		var usage := "usage: access-list <1-99> permit|deny <network> <wildcard-mask> | host <ip> | any\n"
+		var usage := "% Invalid input\n"
 		if r.size() < 3 or not String(r[0]).is_valid_int() or String(r[1]) not in ["permit", "deny"]:
 			return usage
 		var entry := {"action": String(r[1]), "net": "0.0.0.0", "plen": 0}
@@ -1423,7 +1501,7 @@ class EOS extends Session:
 		if not ctx_if.name.begins_with("wg"):
 			return "% that is not a wireguard interface\n"
 		if r.size() != 5 or String(r[1]) != "endpoint" or String(r[3]) != "allowed":
-			return "usage: wireguard peer <key> endpoint <ip> allowed <cidr>[,<cidr>]\n"
+			return "% Incomplete command\n"
 		var allowed: Array = []
 		for c in String(r[4]).split(",", false):
 			if not Net.valid_cidr(String(c).strip_edges()):
@@ -1438,7 +1516,7 @@ class EOS extends Session:
 
 	func _wg_no_peer(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: no wireguard peer <key>\n"
+			return "% Incomplete command\n"
 		for existing in ctx_if.wg_peers.duplicate():
 			if String(existing.get("key", "")) == String(r[0]):
 				ctx_if.wg_peers.erase(existing)
@@ -1463,7 +1541,7 @@ class EOS extends Session:
 		if not ctx_if.name.begins_with("Tunnel"):
 			return "% that is not a tunnel interface\n"
 		if r.size() != 1:
-			return "usage: tunnel source <local-ip>\n"
+			return "% Incomplete command\n"
 		ctx_if.tunnel_src = r[0]
 		Game.topology_changed.emit()
 		return ""
@@ -1472,7 +1550,7 @@ class EOS extends Session:
 		if not ctx_if.name.begins_with("Tunnel"):
 			return "% that is not a tunnel interface\n"
 		if r.size() != 1:
-			return "usage: tunnel destination <remote-ip>\n"
+			return "% Incomplete command\n"
 		ctx_if.tunnel_dst = r[0]
 		Game.topology_changed.emit()
 		return ""
@@ -1491,11 +1569,13 @@ class EOS extends Session:
 	func _if_encap(r: Array) -> String:
 		if ctx_if.parent == "":
 			return "% encapsulation applies to subinterfaces (interface Et1.10)\n"
+		if r.size() == 2 and String(r[0]) == "vlan":
+			r = [r[1]]  # EOS: encapsulation dot1q vlan 60
 		if r.size() == 1 and String(r[0]).is_valid_int():
 			if int(r[0]) != ctx_if.dot1q:
 				return "%% this subinterface carries VLAN %d (it is named for it)\n" % ctx_if.dot1q
 			return ""
-		return "usage: encapsulation dot1q <vlan-id>\n"
+		return "% Invalid input\n"
 
 	func _qos(on: bool) -> String:
 		return _each(func(i: Net.Iface) -> String:
@@ -1512,11 +1592,11 @@ class EOS extends Session:
 		return out
 
 	func _if_mtu(r: Array) -> String:
-		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 576 and int(r[0]) <= 9216:
+		if r.size() == 1 and String(r[0]).is_valid_int() and int(r[0]) >= 68 and int(r[0]) <= 9214:
 			return _each(func(i: Net.Iface) -> String:
 				i.mtu = int(r[0])
 				return "")
-		return "usage: mtu <576-9216>\n"
+		return "% Invalid input\n"
 
 	func _set_stateful(on: bool) -> String:
 		if dev.type != "firewall":
@@ -1528,7 +1608,7 @@ class EOS extends Session:
 	func _cfg_acl(r: Array, action: String) -> String:
 		if dev.type != "firewall":
 			return "% ACLs need a firewall\n"
-		var usage := "usage: acl %s [ip|tcp|udp|icmp] <src-cidr|any|host a.b.c.d> <dst-cidr|any|host a.b.c.d> [eq <port>] [established]\n" % action
+		var usage := "% Invalid input\n"
 		var proto := "ip"
 		if not r.is_empty() and String(r[0]) in ["ip", "tcp", "udp", "icmp"]:
 			proto = String(r.pop_front())
@@ -1576,7 +1656,7 @@ class EOS extends Session:
 			dev.acls.remove_at(int(r[0]) - 1)
 			Game.topology_changed.emit()
 			return ""
-		return "usage: no acl <rule-number>   (see 'show acl')\n"
+		return "% Invalid input\n"
 
 	func _show_acl(_r: Array) -> String:
 		if dev.acls.is_empty():
@@ -1598,7 +1678,7 @@ class EOS extends Session:
 		if not dev.ip_forwarding:
 			return "% a DHCP pool lives on a router; a server runs dhcpd\n"
 		if r.size() != 1:
-			return "usage: ip dhcp pool <name>\n"
+			return "% Incomplete command\n"
 		var svc := _dhcp_svc()
 		svc["name"] = String(r[0])
 		mode = "dhcp"
@@ -1608,7 +1688,7 @@ class EOS extends Session:
 		## network <addr>/<len>  |  network <addr> <mask>
 		r = CLI.fold_mask(r)
 		if r.size() != 1 or not Net.valid_cidr(r[0]):
-			return "usage: network <address> <mask>   (or <address>/<len>)\n"
+			return "% Incomplete command\n"
 		var netw := Net.network_of(String(r[0]))
 		var plen := int(netw["plen"])
 		if plen > 30:
@@ -1623,7 +1703,7 @@ class EOS extends Session:
 
 	func _dhcp_opt(key: String, r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
-			return "usage: %s <ip>\n" % ("default-router" if key == "gw" else "dns-server")
+			return "% Incomplete command\n"
 		_dhcp_svc()[key] = String(r[0])
 		Game.topology_changed.emit()
 		return ""
@@ -1631,7 +1711,7 @@ class EOS extends Session:
 	func _cfg_dhcp_excluded(r: Array) -> String:
 		## ip dhcp excluded-address <low> [<high>]
 		if r.is_empty() or not String(r[0]).is_valid_ip_address() or (r.size() == 2 and not String(r[1]).is_valid_ip_address()) or r.size() > 2:
-			return "usage: ip dhcp excluded-address <low> [<high>]\n"
+			return "% Invalid input\n"
 		var svc := _dhcp_svc()
 		var lo := Net.ip_to_int(String(r[0]))
 		var hi := Net.ip_to_int(String(r[r.size() - 1]))
@@ -1680,8 +1760,8 @@ class EOS extends Session:
 	func _cfg_router_ospf(r: Array) -> String:
 		if not dev.ip_forwarding or dev.type == "uplink":
 			return "% OSPF runs on routers and firewalls\n"
-		if r.size() > 1:
-			return "usage: router ospf [process-id]\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
 		if dev.ospf.is_empty():
 			dev.ospf = {"networks": []}
 		mode = "ospf"
@@ -1689,7 +1769,7 @@ class EOS extends Session:
 
 	func _ospf_network(r: Array) -> String:
 		# network <p/len> area <n>   |   network <addr> <wildcard> area <n>
-		var usage := "usage: network <prefix/len> area <n>   (or network <address> <wildcard> area <n>)\n"
+		var usage := "% Invalid input\n"
 		if r.size() >= 3 and String(r[0]).is_valid_ip_address() and String(r[1]).is_valid_ip_address():
 			var plen := CLI.mask_to_plen(Net.int_to_ip((~Net.ip_to_int(String(r[1]))) & 0xFFFFFFFF))
 			if plen < 0:
@@ -1713,7 +1793,7 @@ class EOS extends Session:
 			dev.ospf["networks"].erase(r[0])
 			Game.topology_changed.emit()
 			return ""
-		return "usage: no network <prefix/len>\n"
+		return "% Invalid input\n"
 
 	func _show_ospf(_r: Array) -> String:
 		if dev.ospf.is_empty():
@@ -1768,14 +1848,14 @@ class EOS extends Session:
 
 	func _ospf_router_id(r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
-			return "usage: router-id <a.b.c.d>\n"
+			return "% Incomplete command\n"
 		dev.ospf["router_id"] = String(r[0])
 		Game.topology_changed.emit()
 		return ""
 
 	func _ospf_passive(r: Array, on: bool) -> String:
 		if r.size() != 1:
-			return "usage: [no] passive-interface <interface>\n"
+			return "% Incomplete command\n"
 		var target: Net.Iface = null
 		for i: Net.Iface in dev.ifaces:
 			if i.name.to_lower() == String(r[0]).to_lower() or EOS._short(i.name).to_lower() == String(r[0]).to_lower():
@@ -1793,7 +1873,7 @@ class EOS extends Session:
 
 	func _ospf_ref_bw(r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_int() or int(r[0]) < 1:
-			return "usage: auto-cost reference-bandwidth <Mbps>   (100 by default: 1G and 10G both cost 1 until you raise it)\n"
+			return "% Incomplete command\n"
 		dev.ospf["ref_bw"] = int(r[0])
 		Game.topology_changed.emit()
 		return ""
@@ -1802,7 +1882,7 @@ class EOS extends Session:
 		if dev.ospf.is_empty():
 			return "% OSPF not running: 'router ospf' in config mode\n"
 		if r.size() != 1 or not String(r[0]).is_valid_int() or int(r[0]) < lo or int(r[0]) > hi:
-			return "usage: ip ospf %s <%d-%d>\n" % ["cost" if table == "costs" else "priority", lo, hi]
+			return "% Incomplete command\n"
 		if not dev.ospf.has(table):
 			dev.ospf[table] = {}
 		for i: Net.Iface in ctx_ifs:
@@ -1814,7 +1894,7 @@ class EOS extends Session:
 		if dev.type != "router":
 			return "% BGP runs on routers\n"
 		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "usage: router bgp <asn>\n"
+			return "% Incomplete command\n"
 		if dev.bgp.is_empty():
 			dev.bgp = {"asn": int(r[0]), "neighbors": [], "networks": []}
 		elif int(dev.bgp["asn"]) != int(r[0]):
@@ -1832,7 +1912,7 @@ class EOS extends Session:
 			return ""
 		var nb := _find_nb(String(r[0]) if r.size() > 0 else "")
 		if nb.is_empty():
-			return "usage: neighbor <ip> remote-as <asn> | local-preference <n> | prepend <n> | prefix-list in|out <cidr>[,...]\n"
+			return "% Incomplete command\n"
 		if r.size() == 3 and "local-preference".begins_with(r[1]) and String(r[2]).is_valid_int():
 			nb["local_pref"] = int(r[2])  # higher wins: which upstream WE use
 			Game.topology_changed.emit()
@@ -1858,13 +1938,13 @@ class EOS extends Session:
 			nb["prefix_%s" % r[2]] = list
 			Game.topology_changed.emit()
 			return ""
-		return "usage: neighbor <ip> remote-as <asn> | local-preference <n> | prepend <n> | prefix-list in|out <cidr>[,...]\n"
+		return "% Invalid input\n"
 
 	func _bgp_roa(r: Array) -> String:
 		## roa <cidr>: sign a prefix as ours, so an upstream can reject anyone
 		## else announcing it
 		if r.size() != 1 or not String(r[0]).contains("/"):
-			return "usage: roa <prefix/len>\n"
+			return "% Incomplete command\n"
 		if String(r[0]) not in dev.bgp.get("networks", []):
 			return "%% announce %s first; signing a prefix you do not originate is meaningless\n" % r[0]
 		if not dev.bgp.has("roa"):
@@ -1882,7 +1962,7 @@ class EOS extends Session:
 
 	func _bgp_no_neighbor(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: no neighbor <ip>\n"
+			return "% Incomplete command\n"
 		for nb in dev.bgp["neighbors"].duplicate():
 			if nb["ip"] == r[0]:
 				dev.bgp["neighbors"].erase(nb)
@@ -1895,14 +1975,14 @@ class EOS extends Session:
 				dev.bgp["networks"].append(r[0])
 			Game.topology_changed.emit()
 			return ""
-		return "usage: network <prefix/len>   (announce your prefix upstream)\n"
+		return "% Invalid input\n"
 
 	func _bgp_no_network(r: Array) -> String:
 		if r.size() == 1:
 			dev.bgp["networks"].erase(r[0])
 			Game.topology_changed.emit()
 			return ""
-		return "usage: no network <prefix/len>\n"
+		return "% Invalid input\n"
 
 	func _show_bgp_table(_r: Array) -> String:
 		## the table itself: every path, and which one the router picked
@@ -1978,7 +2058,7 @@ class EOS extends Session:
 	func _cfg_ssid(r: Array) -> String:
 		## ssid <name> vlan <id>
 		if r.size() != 3 or String(r[1]) != "vlan" or not String(r[2]).is_valid_int():
-			return "usage: ssid <name> vlan <id>\n"
+			return "% Incomplete command\n"
 		var err := Game.set_ssid(dev, String(r[0]), int(r[2]))
 		return "" if err == "" else "%% %s\n" % err
 
@@ -2005,7 +2085,7 @@ class EOS extends Session:
 		if dev.type != "loadbalancer":
 			return "% virtual servers live on a load balancer\n"
 		if r.size() != 3 or String(r[1]) != "members":
-			return "usage: virtual-server <vip> members <ip>,<ip>\n"
+			return "% Incomplete command\n"
 		var members: Array = []
 		for m in String(r[2]).split(",", false):
 			members.append(String(m).strip_edges())
@@ -2032,7 +2112,7 @@ class EOS extends Session:
 
 	func _cfg_vrf(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: ip vrf <name>\n"
+			return "% Incomplete command\n"
 		if Game.add_vrf(dev, r[0]):
 			return ""
 		return "% could not create that table (routers only, and names are unique)\n"
@@ -2041,7 +2121,7 @@ class EOS extends Session:
 		if ctx_ifs.size() > 1:
 			return _range_only("a routing table")
 		if r.size() != 1:
-			return "usage: ip vrf forwarding <name>\n"
+			return "% Incomplete command\n"
 		if Game.set_iface_vrf(ctx_if, r[0]):
 			return "Interface moved to table '%s'. Its addresses were cleared.\n" % r[0]
 		return "%% no table called '%s'\n" % r[0]
@@ -2075,7 +2155,7 @@ class EOS extends Session:
 			var parts := String(r[0]).split("/")
 			if Game.add_static_route(dev, parts[0], int(parts[1]), r[1], vrf, ad):
 				return ""
-		return "usage: ip route <prefix/len | prefix mask> <next-hop> [distance] [vrf <name>]\n"
+		return "% Invalid input\n"
 
 	func _cfg_no_ip_route(r: Array) -> String:
 		r = CLI.fold_mask(r)
@@ -2083,7 +2163,7 @@ class EOS extends Session:
 			var parts := String(r[0]).split("/")
 			Game.remove_static_route(dev, parts[0], int(parts[1]))
 			return ""
-		return "usage: no ip route <prefix/len>\n"
+		return "% Invalid input\n"
 
 	# ---- show ----
 
@@ -2113,9 +2193,11 @@ class EOS extends Session:
 		## the block form real gear prints: the "is up, line protocol is up"
 		## line CCNA people are quizzed on, then hardware, address, duplex,
 		## speed and the counters that tell a grey failure from a good link
+		if r.size() >= 2 and String(r[1]).is_valid_int():
+			r = [String(r[0]) + String(r[1])] + r.slice(2)  # show interfaces ethernet 1
 		var only: Net.Iface = _find_iface(String(r[0])) if r.size() >= 1 else null
 		if r.size() >= 1 and only == null:
-			return "% no interface %s\n" % r[0]
+			return "% Invalid input\n"
 		var out := ""
 		for i: Net.Iface in dev.ifaces:
 			if only != null and i != only:
@@ -2185,7 +2267,7 @@ class EOS extends Session:
 			return "% static MAC entries need a switch\n"
 		if r.size() != 5 or String(r[1]) != "vlan" or String(r[3]) != "interface" \
 				or not String(r[2]).is_valid_int():
-			return "usage: mac address-table static <mac> vlan <vid> interface <port>\n"
+			return "% Invalid input\n"
 		var port := _find_iface(String(r[4]))
 		if port == null:
 			return "% no such interface\n"
@@ -2198,7 +2280,7 @@ class EOS extends Session:
 
 	func _no_mac_static(r: Array) -> String:
 		if r.size() < 3 or String(r[1]) != "vlan" or not String(r[2]).is_valid_int():
-			return "usage: no mac address-table static <mac> vlan <vid>\n"
+			return "% Incomplete command\n"
 		var vid := int(r[2])
 		if dev.mac_static.has(vid):
 			dev.mac_static[vid].erase(String(r[0]).to_upper())
@@ -2227,7 +2309,7 @@ class EOS extends Session:
 				"local": r.size() > 4 and String(r[4]) == "local"}
 			Game.topology_changed.emit()
 			return ""
-		return "usage: aaa authentication login radius <ip> key <secret> [local]\n       aaa authentication login local\n"
+		return "% Invalid input\n"
 
 	func _show_aaa(_r: Array) -> String:
 		if dev.aaa.is_empty():
@@ -2282,7 +2364,7 @@ class EOS extends Session:
 			return "% spanning tree runs on switches\n"
 		var want: String = String(r[0]).to_lower() if r.size() > 0 else ""
 		if want not in ["stp", "rstp", "mst"]:
-			return "usage: spanning-tree mode stp|rstp|mst\n"
+			return "% Invalid input\n"
 		dev.stp_mode = want
 		Sim.flush_learned_state()
 		Game.topology_changed.emit()
@@ -2292,7 +2374,7 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% spanning tree runs on switches\n"
 		if r.size() < 1 or not String(r[0]).is_valid_int():
-			return "usage: spanning-tree priority <0-61440>\n"
+			return "% Incomplete command\n"
 		if int(r[0]) < 0 or int(r[0]) > 61440 or int(r[0]) % 4096 != 0:
 			return "% Bridge Priority must be in increments of 4096 (0, 4096, 8192 ... 61440)\n"
 		dev.stp_priority = int(r[0])
@@ -2305,7 +2387,7 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% spanning tree runs on switches\n"
 		if r.size() < 4 or r[0] != "instance" or r[2] != "vlan":
-			return "usage: spanning-tree mst instance <n> vlan <ids>\n"
+			return "% Incomplete command\n"
 		var vids: Array = []
 		for part in String(r[3]).split(","):
 			if part.is_valid_int():
@@ -2356,7 +2438,7 @@ class EOS extends Session:
 
 	func _cfg_vxlan_source(r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
-			return "% usage: vxlan source <this switch's own address>\n"
+			return "% Incomplete command\n"
 		_vtep()["src"] = String(r[0])
 		Game.topology_changed.emit()
 		return ""
@@ -2365,7 +2447,7 @@ class EOS extends Session:
 		# vxlan vlan <id> vni <id>
 		if r.size() != 3 or String(r[1]) != "vni" or not String(r[0]).is_valid_int() \
 				or not String(r[2]).is_valid_int():
-			return "% usage: vxlan vlan <vlan-id> vni <vni>\n"
+			return "% Invalid input\n"
 		if not dev.vlans.has(int(r[0])):
 			return "%% vlan %s is not on this switch\n" % r[0]
 		_vtep()["map"][int(r[0])] = int(r[2])
@@ -2374,7 +2456,7 @@ class EOS extends Session:
 
 	func _cfg_vxlan_peer(r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
-			return "% usage: vxlan peer <remote vtep address>\n"
+			return "% Incomplete command\n"
 		var peers: Array = _vtep()["peers"]
 		if String(r[0]) not in peers:
 			peers.append(String(r[0]))
@@ -2408,7 +2490,7 @@ class EOS extends Session:
 		if not dev.ip_forwarding:
 			return "% nat64 runs on a router or firewall\n"
 		if r.size() < 3 or String(r[1]) != "pool":
-			return "% usage: nat64 prefix <ipv6-prefix::> pool <ipv4-address>\n"
+			return "% Incomplete command\n"
 		var prefix := String(r[0])
 		var pool := String(r[2])
 		if not prefix.ends_with("::") or not (prefix + "1").is_valid_ip_address():
@@ -2460,7 +2542,7 @@ class EOS extends Session:
 
 	func _if_duplex(r: Array) -> String:
 		if r.size() != 1 or String(r[0]) not in ["auto", "full", "half"]:
-			return "usage: duplex auto|full|half\n"
+			return "% Incomplete command\n"
 		return _each(func(i: Net.Iface) -> String:
 			i.duplex = String(r[0])
 			return "")
@@ -2538,18 +2620,18 @@ class EOS extends Session:
 
 	func _write_mem(_r: Array) -> String:
 		dev.startup = Game.device_config(dev)
-		var n := Game.save_config_version(dev)
-		return "Copy completed successfully. (saved as version %d)\n" % n
+		Game.save_config_version(dev)
+		return "Copy completed successfully.\n"
 
 	func _save_template(r: Array) -> String:
 		if r.size() != 1:
-			return "usage: copy running-config template <name>\n"
+			return "% Incomplete command\n"
 		var err := Game.save_template(dev, r[0])
 		return "Saved as template '%s'.\n" % r[0] if err == "" else "%% %s\n" % err
 
 	func _apply_template(r: Array) -> String:
 		if r.is_empty():
-			return "usage: copy template <name> [running-config]\n"
+			return "% Incomplete command\n"
 		var name := String(r[0])
 		for t in Game.templates:
 			if t["name"] == name:
@@ -2572,21 +2654,21 @@ class EOS extends Session:
 
 	func _cfg_logging(r: Array) -> String:
 		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
-			return "usage: logging host <ip>\n"
+			return "% Incomplete command\n"
 		dev.log_host = r[0]
 		Game.device_log(dev, "logging destination set to %s" % r[0])
 		return ""
 
 	func _cfg_ntp(r: Array) -> String:
 		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
-			return "usage: ntp server <ip>\n"
+			return "% Incomplete command\n"
 		dev.ntp_server = r[0]
 		return ""
 
 	func _show_route_for(r: Array) -> String:
 		## Longest prefix wins, and this says which one won and by how much.
 		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
-			return "usage: show ip route for <address>\n"
+			return "% Incomplete command\n"
 		var dst := String(r[0])
 		var cands := Sim._all_routes(dev, dst)
 		var winners := Sim._best_of(cands)
@@ -2712,7 +2794,7 @@ class EOS extends Session:
 
 	func _rollback(r: Array) -> String:
 		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "usage: rollback <version>   (see 'show config versions')\n"
+			return "% Incomplete command\n"
 		var idx := int(r[0]) - 1
 		if idx < 0 or idx >= dev.versions.size():
 			return "% no such version\n"
@@ -2723,35 +2805,132 @@ class EOS extends Session:
 		return "Rolled back to version %d.\n" % (idx + 1)
 
 	func _reload(_r: Array) -> String:
-		var had := not dev.startup.is_empty()
+		## EOS asks twice; this console cannot wait for an answer, so it shows
+		## the questions with the answers a hurried operator gives, then goes
+		var out := ""
+		if Game.config_dirty(dev):
+			out += "System configuration has been modified. Save? [yes/no/cancel/diff]:no\n"
+		out += "Proceed with reload? [confirm]\n\nBroadcast message from root@%s\n\nThe system is going down for reboot NOW!\n" % dev.name
 		Game.apply_device_config(dev, dev.startup)
 		mode = "exec"
 		ctx_if = null
-		if had:
-			return "%s reloading... restored from startup-config.\n" % dev.name
-		return "%s reloading... NO startup-config: it came back blank. ('write memory' next time.)\n" % dev.name
+		return out
 
 	func _show_startup(_r: Array) -> String:
+		## the saved configuration, rendered by the same code as show run:
+		## the startup config is applied to the device for the length of one
+		## call and the live state put back, so the text is exactly what a
+		## reload would produce (ponytail: a snapshot renderer would avoid the swap)
 		if dev.startup.is_empty():
-			return "% no saved configuration ('write memory' to save the running config)\n"
+			return "! Command: show startup-config\n! No startup-config was found.\n"
 		var live := Game.device_config(dev)
-		var same: bool = JSON.stringify(live) == JSON.stringify(dev.startup)
-		return "startup-config saved.%s\n" % ("" if same else "  WARNING: running-config differs (unsaved changes)")
+		Game.apply_device_config(dev, dev.startup)
+		var text := _show_run([]).replace("! Command: show running-config", "! Command: show startup-config")
+		Game.apply_device_config(dev, live)
+		return text
+
+	const IF_ORDER := ["Port-Channel", "Ethernet", "Loopback", "Management", "Vlan", "Tunnel", "Vxlan", "wg"]
+
+	func _if_rank(name: String) -> int:
+		for k in IF_ORDER.size():
+			if name.begins_with(IF_ORDER[k]):
+				return k
+		return IF_ORDER.size()
 
 	func _show_run(_r: Array) -> String:
+		## the sections in the order EOS prints them: identity, spanning tree,
+		## VLANs, interfaces, then routing and the services
 		var out := "! Command: show running-config\n! device: %s (%s, PacketOS EOS 0.3)\n!\nhostname %s\n!\n" % [
 			dev.name, Game.MODELS[dev.model]["label"], dev.name]
+		if dev.type == "switch":
+			out += "spanning-tree mode %s\n!\n" % ("mstp" if dev.stp_mode == "mst" else "rstp")
+			if dev.stp_priority != 32768:
+				out += "spanning-tree priority %d\n!\n" % dev.stp_priority
 		var vids := dev.vlans.keys()
 		vids.sort()
 		for vid in vids:
 			if vid == 1:
 				continue
-			out += "vlan %d\n   name %s\n!\n" % [vid, dev.vlans[vid]]
+			out += "vlan %d\n" % vid
+			if String(dev.vlans[vid]) != "VLAN%04d" % vid:
+				out += "   name %s\n" % dev.vlans[vid]
+			out += "!\n"
+		var ordered: Array = dev.ifaces.filter(func(i): return i.name != "lo")
+		ordered.sort_custom(func(a, b): return _if_rank(a.name) < _if_rank(b.name) if _if_rank(a.name) != _if_rank(b.name) else dev.ifaces.find(a) < dev.ifaces.find(b))
+		for i: Net.Iface in ordered:
+			out += "interface %s\n" % i.name
+			if i.note is Dictionary and String(i.note.get("text", "")) != "":
+				out += "   description %s\n" % i.note["text"]
+			if i.admin_down:
+				out += "   shutdown\n"
+			if i.mtu != 1500:
+				out += "   mtu %d\n" % i.mtu
+			if i.parent != "":
+				out += "   encapsulation dot1q vlan %d\n" % i.dot1q
+			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
+				out += "   no switchport\n"  # first: the address below depends on it
+			if i.mode == "trunk":
+				if i.untagged_vlan != 1:
+					out += "   switchport trunk native vlan %d\n" % i.untagged_vlan
+				if not i.tagged_vlans.is_empty():
+					out += "   switchport trunk allowed vlan %s\n" % ",".join(i.tagged_vlans.map(func(v): return str(v)))
+				out += "   switchport mode trunk\n"
+			elif i.mode == "access" and i.untagged_vlan != 1:
+				out += "   switchport access vlan %d\n" % i.untagged_vlan
+			if i.port_security:
+				out += "   switchport port-security\n"
+			if i.pvlan == "isolated":
+				out += "   switchport protected\n"
+			if i.lag > 0:
+				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
+			for cidr in i.ips:
+				out += "   %s address %s\n" % ["ipv6" if Net.is_v6(cidr) else "ip", cidr]
+			if i.nat != "":
+				out += "   ip nat %s\n" % i.nat
+			if dev.ospf.get("costs", {}).has(i.name):
+				out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
+			if dev.ospf.get("priorities", {}).has(i.name):
+				out += "   ip ospf priority %d\n" % int(dev.ospf["priorities"][i.name])
+			if i.helper != "":
+				out += "   ip helper-address %s\n" % i.helper
+			if i.tunnel_src != "":
+				out += "   tunnel source %s\n   tunnel destination %s\n" % [i.tunnel_src, i.tunnel_dst]
+			for wp in i.wg_peers:
+				out += "   wireguard peer %s endpoint %s allowed %s\n" % [wp.get("key", ""),
+					wp.get("endpoint", ""), ",".join(PackedStringArray(wp.get("allowed", [])))]
+			if not i.vrrp.is_empty():
+				if int(i.vrrp.get("priority", 100)) != 100:
+					out += "   vrrp %d priority-level %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
+				out += "   vrrp %d ipv4 %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
+				if not bool(i.vrrp.get("preempt", true)):
+					out += "   no vrrp %d preempt\n" % int(i.vrrp["group"])
+			if i.portfast:
+				out += "   spanning-tree portfast\n"
+			if i.bpduguard:
+				out += "   spanning-tree bpduguard enable\n"
+			if i.dhcp_trusted:
+				out += "   ip dhcp snooping trust\n"
+			if i.dot1x:
+				out += "   dot1x\n"
+			if i.storm_limit > 0:
+				out += "   storm-control broadcast %d\n" % i.storm_limit
+			if i.duplex != "auto":
+				out += "   duplex %s\n" % i.duplex
+			out += "!\n"
 		var static_vids := dev.mac_static.keys()
 		static_vids.sort()
 		for svid in static_vids:
 			for smac in dev.mac_static[svid]:
 				out += "mac address-table static %s vlan %d interface %s\n" % [Net.mac_dotted(smac), svid, dev.mac_static[svid][smac]]
+		if not static_vids.is_empty():
+			out += "!\n"
+		if dev.ip_forwarding:
+			out += "ip routing\n!\n"
+		for r in dev.static_routes:
+			out += "ip route %s/%d %s%s\n" % [r["prefix"], int(r["plen"]), r["via"],
+				"" if int(r.get("ad", 1)) == 1 else " %d" % int(r["ad"])]
+		if not dev.static_routes.is_empty():
+			out += "!\n"
 		var pool: Dictionary = dev.services.get("dhcp", {})
 		if not pool.is_empty() and String(pool.get("iface", "")) == "" and String(pool.get("start", "")) != "":
 			for ex in pool.get("excluded", []):
@@ -2763,9 +2942,6 @@ class EOS extends Session:
 			if String(pool.get("dns", "")) != "":
 				out += "   dns-server %s\n" % pool["dns"]
 			out += "!\n"
-		for r in dev.static_routes:
-			out += "ip route %s/%d %s%s\n!\n" % [r["prefix"], int(r["plen"]), r["via"],
-				"" if int(r.get("ad", 1)) == 1 else " %d" % int(r["ad"])]
 		if dev.stateful:
 			out += "firewall stateful\n!\n"
 		for rule in dev.acls:
@@ -2783,6 +2959,13 @@ class EOS extends Session:
 				out += "ip nat inside source list %s interface %s overload\n" % [rule["list"], rule["iface"]]
 			elif String(rule.get("kind", "")) == "static":
 				out += "ip nat inside source static %s %s\n" % [rule["inside"], rule["outside"]]
+		if not dev.bgp.is_empty() and dev.type == "router":
+			out += "router bgp %d\n" % int(dev.bgp["asn"])
+			for nb in dev.bgp["neighbors"]:
+				out += "   neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
+			for net in dev.bgp["networks"]:
+				out += "   network %s\n" % net
+			out += "!\n"
 		if not dev.ospf.is_empty():
 			out += "router ospf 1\n"
 			if String(dev.ospf.get("router_id", "")) != "":
@@ -2794,74 +2977,78 @@ class EOS extends Session:
 			for net in dev.ospf["networks"]:
 				out += "   network %s area %s\n" % [net, Sim.ospf_area(dev)]
 			out += "!\n"
-		if not dev.bgp.is_empty() and dev.type == "router":
-			out += "router bgp %d\n" % int(dev.bgp["asn"])
-			for nb in dev.bgp["neighbors"]:
-				out += "   neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
-			for net in dev.bgp["networks"]:
-				out += "   network %s\n" % net
-			out += "!\n"
-		for i: Net.Iface in dev.ifaces:
-			if i.name == "lo":
-				continue
-			out += "interface %s\n" % i.name
-			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
-				out += "   no switchport\n"  # first: the address below depends on it
-			if i.parent != "":
-				out += "   encapsulation dot1q %d\n" % i.dot1q
-			if i.tunnel_src != "":
-				out += "   tunnel source %s\n   tunnel destination %s\n" % [i.tunnel_src, i.tunnel_dst]
-			for wp in i.wg_peers:
-				out += "   wireguard peer %s endpoint %s allowed %s\n" % [wp.get("key", ""),
-					wp.get("endpoint", ""), ",".join(PackedStringArray(wp.get("allowed", [])))]
-			if i.mode == "trunk":
-				out += "   switchport mode trunk\n"
-				if i.untagged_vlan != 1:
-					out += "   switchport trunk native vlan %d\n" % i.untagged_vlan
-				if not i.tagged_vlans.is_empty():
-					out += "   switchport trunk allowed vlan %s\n" % ",".join(i.tagged_vlans.map(func(v): return str(v)))
-			elif i.mode == "access" and i.untagged_vlan != 1:
-				out += "   switchport access vlan %d\n" % i.untagged_vlan
-			for cidr in i.ips:
-				out += "   ip address %s\n" % cidr
-			if i.nat != "":
-				out += "   ip nat %s\n" % i.nat
-			if dev.ospf.get("costs", {}).has(i.name):
-				out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
-			if dev.ospf.get("priorities", {}).has(i.name):
-				out += "   ip ospf priority %d\n" % int(dev.ospf["priorities"][i.name])
-			if i.helper != "":
-				out += "   ip helper-address %s\n" % i.helper
-			if not i.vrrp.is_empty():
-				out += "   vrrp %d ip %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
-				if not bool(i.vrrp.get("preempt", true)):
-					out += "   no vrrp %d preempt\n" % int(i.vrrp["group"])
-				if int(i.vrrp.get("priority", 100)) != 100:
-					out += "   vrrp %d priority %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
-			if i.lag > 0:
-				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
-			if i.port_security:
-				out += "   switchport port-security\n"
-			if i.portfast:
-				out += "   spanning-tree portfast\n"
-			if i.bpduguard:
-				out += "   spanning-tree bpduguard enable\n"
-			if i.dhcp_trusted:
-				out += "   ip dhcp snooping trust\n"
-			if i.pvlan == "isolated":
-				out += "   switchport protected\n"
-			if i.dot1x:
-				out += "   dot1x\n"
-			if i.storm_limit > 0:
-				out += "   storm-control broadcast %d\n" % i.storm_limit
-			if i.mtu != 1500:
-				out += "   mtu %d\n" % i.mtu
-			if i.duplex != "auto":
-				out += "   duplex %s\n" % i.duplex
-			if i.admin_down:
-				out += "   shutdown\n"
-			out += "!\n"
 		out += "end\n"
 		return out
 
+	## What '?' says next to each word, the way EOS explains itself
+	const DESC := {
+		"enable": "Turn on privileged commands", "disable": "Turn off privileged commands",
+		"configure": "Enter configuration mode", "terminal": "Configure from the terminal",
+		"show": "Display details of switch operation", "interfaces": "Interface status and configuration",
+		"ip": "IP information", "ipv6": "IPv6 information", "route": "IP routing table", "arp": "ARP table",
+		"vlan": "VLAN status and configuration", "mac": "MAC address information", "address-table": "MAC address table",
+		"spanning-tree": "Spanning tree", "lldp": "LLDP information", "port-channel": "Port-Channel information",
+		"running-config": "Current operating configuration", "startup-config": "Contents of startup configuration",
+		"version": "System hardware and software status", "clock": "System clock", "logging": "System logging (syslog)",
+		"write": "Write running configuration to memory", "memory": "Write to NV memory", "copy": "Copy from one file to another",
+		"reload": "Halt and perform a cold restart", "ping": "Send echo messages", "traceroute": "Trace route to destination",
+		"ssh": "Open a Secure Shell client connection", "exit": "Exit from the current mode", "end": "Return to exec mode",
+		"hostname": "Set system's network name", "interface": "Select an interface to configure",
+		"switchport": "Set switching mode characteristics", "mode": "Set the trunking mode", "access": "Set access mode characteristics",
+		"trunk": "Set trunking characteristics", "allowed": "Set allowed VLAN list", "native": "Set native VLAN",
+		"shutdown": "Shutdown the selected interface", "no": "Negate a command or set its defaults",
+		"description": "Interface specific description", "mtu": "Set the interface Maximum Transmission Unit (MTU)",
+		"channel-group": "Configure port channel", "router": "Enable a routing process", "ospf": "Open Shortest Path First (OSPF)",
+		"bgp": "Border Gateway Protocol (BGP)", "neighbor": "Specify a neighbor router", "network": "Specify a network to announce",
+		"name": "Assign a name to the VLAN", "vrrp": "Virtual Router Redundancy Protocol", "helper-address": "Specify a destination address for UDP broadcasts",
+		"nat": "Network Address Translation", "dhcp": "Dynamic Host Configuration Protocol", "snooping": "DHCP snooping",
+		"clear": "Reset functions", "counters": "Interface counters", "brief": "Brief summary", "status": "Interface line status",
+		"summary": "Summary of neighbor status", "detail": "Detailed information", "do": "Run an exec command from configuration mode",
+		"priority": "Bridge priority", "portfast": "Move directly to forwarding on link up", "bpduguard": "BPDU guard",
+		"cost": "Interface cost", "area": "OSPF area ID", "remote-as": "Neighbor AS number", "router-id": "Router ID",
+		"passive-interface": "Suppress routing updates on an interface", "host": "Specify a host", "server": "Specify a server",
+		"community": "Set community string", "snmp-server": "Modify SNMP engine parameters", "ntp": "Configure NTP",
+		"radius-server": "RADIUS server configuration", "aaa": "Authentication, authorization and accounting", "mlag": "Multi-chassis link aggregation",
+		"vxlan": "VXLAN configuration", "vrf": "VRF configuration", "tunnel": "Tunnel configuration", "wireguard": "WireGuard configuration",
+		"encapsulation": "Set encapsulation type", "dot1q": "IEEE 802.1Q VLAN", "duplex": "Configure duplex operation",
+		"qos": "Quality of service", "storm-control": "Storm control", "port-security": "Port security", "dot1x": "IEEE 802.1X port authentication",
+		"protected": "Protected port", "static": "Static entry", "inspection": "ARP inspection", "igmp": "IGMP snooping",
+		"proxy-arp": "Proxy ARP", "capture": "Packet capture", "flows": "Forwarded conversations", "tech-support": "Show system information for tech support",
+		"transceiver": "Transceiver diagnostics", "errors": "Error counters", "tunnels": "Tunnel status", "templates": "Saved configuration templates",
+		"template": "Configuration template", "rollback": "Roll back to a saved configuration version", "versions": "Saved configuration versions",
+		"diff": "Difference against the saved configuration", "config": "Configuration", "acl": "Access control list", "access-lists": "Access lists",
+		"firewall": "Firewall behaviour", "stateful": "Stateful inspection", "permit": "Specify packets to forward", "deny": "Specify packets to reject",
+		"routing": "Enable IP routing", "neighbors": "Neighbor table", "database": "Database summary", "bfd": "Bidirectional Forwarding Detection",
+		"address": "IP address", "help": "Description of the interactive help system", "excluded-address": "Prevent DHCP from assigning certain addresses",
+		"pool": "Configure DHCP address pools", "default-router": "Default routers", "dns-server": "DNS servers", "reference-bandwidth": "Reference bandwidth",
+		"auto-cost": "Calculate OSPF interface cost according to bandwidth", "forwarding": "VRF forwarding",
+		"nd": "Neighbor discovery", "ra": "Router advertisement", "mst": "Multiple spanning tree", "peer": "Peer configuration",
+		"peer-link": "Peer link", "source": "Source address", "destination": "Destination address", "prefix": "Prefix",
+		"roa": "Route origin authorisation", "virtual-server": "Virtual server", "ssid": "Wireless SSID", "nat64": "NAT64 translation",
+		"trust": "Trusted port", "broadcast": "Broadcast storm control", "priority-queueing": "Priority queueing"}
+
+	func describe(line: String) -> String:
+		## the '?' help: one candidate per line with its description, and <cr>
+		## when what is typed already runs
+		var toks := Array(line.strip_edges().split(" ", false))
+		var cands := complete(line)
+		var out := ""
+		var typed_complete := false
+		if not line.ends_with(" ") and not toks.is_empty():
+			toks.pop_back()
+		for c in _cmds:
+			if mode not in c["m"] or toks.size() < c["p"].size():
+				continue
+			var okc := true
+			for k in c["p"].size():
+				if not String(c["p"][k]).begins_with(toks[k]):
+					okc = false
+					break
+			if okc:
+				typed_complete = true
+		for w in cands:
+			out += "  %-24s %s\n" % [w, DESC.get(String(w), "")]
+		if typed_complete and line.ends_with(" "):
+			out += "  <cr>\n"
+		return out if out != "" else "% Unrecognized command\n"
 # ============================================================ Linux ==

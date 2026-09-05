@@ -209,8 +209,8 @@ const DIALECT_HINTS := {
 			"enable",
 			"configure terminal",
 			"interface Ethernet1",
-			"vrrp 1 ip 10.40.0.1",
-			"vrrp 1 priority 120",
+			"vrrp 1 ipv4 10.40.0.1",
+			"vrrp 1 priority-level 120",
 			"end",
 			"show vrrp",
 		],
@@ -787,7 +787,7 @@ static func _campaign() -> Array:
 			"title": "Static spaghetti",
 			"customer": "Gamma Corp (again)",
 			"reward": 2600,
-			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista, from config mode: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik (RouterOS 7, three steps): '/routing ospf instance add name=default router-id=<one of its addresses>', '/routing ospf area add name=backbone area-id=0.0.0.0 instance=default', '/routing ospf interface-template add networks=10.20.0.0/16 area=backbone'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
+			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista, from config mode: 'router ospf 1', 'network 10.20.0.0/16 area 0'. PacketTik (RouterOS 7, three steps): '/routing ospf instance add name=default router-id=<one of its addresses>', '/routing ospf area add name=backbone area-id=0.0.0.0 instance=default', '/routing ospf interface-template add networks=10.20.0.0/16 area=backbone'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
 			"reqs": [
 				{"d": "Servers own 10.20.1.10 and 10.20.2.10", "t": func() -> bool: return _owner("10.20.1.10") != null and _owner("10.20.2.10") != null},
 				{"d": "Two routers share an OSPF adjacency", "t": func() -> bool: return _ospf_adjacency()},
@@ -811,7 +811,7 @@ static func _campaign() -> Array:
 			"title": "No single point of failure",
 			"customer": "Omega Holding (pre-audit)",
 			"reward": 3200,
-			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: in config mode, 'interface EthernetN' → 'vrrp 1 ip 10.40.0.1' (set 'vrrp 1 priority 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
+			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: in config mode, 'interface EthernetN' → 'vrrp 1 ipv4 10.40.0.1' (set 'vrrp 1 priority-level 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
 			"reqs": [
 				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
 				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},

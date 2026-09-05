@@ -37,41 +37,23 @@ static func probe() -> void:
 	Game.money = 100000
 	Game.parts = {"patch": 400, "fiber": 100, "sfp": 100, "psu": 20}
 	var rk := Game.add_rack(Vector2i(2, 2))
-	var r1 := Game.new_device("rtr-lite")
-	var s1 := Game.new_device("srv-2")
-	var s2 := Game.new_device("srv-2")
-	rk.slots[0] = r1
-	rk.slots[1] = s1
-	rk.slots[2] = s2
-	Game.connect_ifaces(r1.ifaces[0], s1.ifaces[0])
-	Game.connect_ifaces(r1.ifaces[1], s2.ifaces[0])
-	var a := CLI.new_session(r1)
-	a.exec("/ip address add address=10.0.0.1/24 interface=ether1")
-	a.exec("/ip address add address=10.1.0.1/24 interface=ether2")
-	var x := CLI.new_session(s1)
-	var y := CLI.new_session(s2)
-	y.exec("ip addr add 10.1.0.10/24 dev eth0")
-	y.exec("ip route add default via 10.1.0.1")
-	y.exec("subnet 10.1.0.0 netmask 255.255.255.0 { range 10.1.0.50 10.1.0.99; option routers 10.1.0.1; option domain-name-servers 10.1.0.10; }")
-	y.exec("dns add www.example.hu 10.1.0.10")
-	for line in ["ip", "ip addr", "ip -br addr", "ip addr add 10.0.0.10/24 dev eth0", "ip addr add 10.0.0.10/24 dev eth0", "ip addr add 10.0.0.300/24 dev eth0",
-			"ip addr add 10.0.0.11/24", "ip route", "ip route add default via 10.9.9.9", "ip route add default via 10.0.0.1 dev eth0", "ip route add default via 10.0.0.1",
-			"ip route show", "ip r s", "ip route get 10.1.0.10", "ip -6 route", "ip -6 addr", "ip link set dev eth0 mtu 1400", "ip link", "ip -s link show eth0",
-			"ping -c 2 10.1.0.10", "ping 10.1.0.99 -c 1", "ping -c 1 10.7.0.1", "ip route del default", "ping -c 1 10.1.0.10", "ip route add default via 10.0.0.1",
-			"ping -s 1400 -c 1 10.1.0.10", "ping -M do -s 1400 -c 1 10.1.0.10", "ip link set dev eth0 mtu 1500",
-			"ip neigh", "ip neigh flush", "ip neigh flush all", "traceroute -n 10.1.0.10", "tracepath 10.1.0.10",
-			"tcpdump -i eth0 -n icmp -c 3", "tcpdump -i eth0 -n arp", "tcpdump -i any -c 2", "tcpdump -i eth9",
-			"cat /etc/resolv.conf", "echo nameserver 10.1.0.10 > /etc/resolv.conf", "cat /etc/resolv.conf", "nslookup www.example.hu", "dig www.example.hu", "dig +short www.example.hu", "host www.example.hu", "host nope.example.hu",
-			"resolvectl status", "ss -tlnp", "sysctl net.ipv4.ip_forward", "systemctl status ssh", "uname -a", "ifconfig", "foo", "sudo ip route get 10.1.0.10",
-			"curl http://www.example.hu", "curl -I http://www.example.hu", "nc -zv 10.1.0.10 22", "nc -zv 10.1.0.10 80", "telnet 10.1.0.10 22",
-			"wg genkey | tee privatekey | wg pubkey > publickey", "ls", "cat publickey", "ip link add wg0 type wireguard", "ip addr add 10.99.0.1/24 dev wg0",
-			"wg set wg0 listen-port 51820 private-key ./privatekey peer abc= endpoint 10.1.0.10:51820 allowed-ips 10.99.0.0/24", "ip link set wg0 up", "wg show", "cat /etc/wireguard/wg0.conf",
-			"lldpcli show neighbors", "dhclient -v eth1", "dhclient eth1", "ip addr show eth1", "ip route", "dhclient -r eth1", "ip addr show eth1", "help"]:
-		print("%s %s\n%s" % [x.prompt(), line, x.exec(line)])
-	for line in ["cat /etc/dhcp/dhcpd.conf", "systemctl status isc-dhcp-server", "dhcpd eth0", "ss -ulnp", "cat /etc/dnsmasq.conf"]:
-		print("%s %s\n%s" % [y.prompt(), line, y.exec(line)])
-	Game.connect_ifaces(r1.ifaces[2], s1.ifaces[1]) if s1.ifaces.size() > 1 else null
-	print("srv1 ifaces: ", s1.ifaces.map(func(i): return i.name))
+	var sw := Game.new_device("sw-24")
+	var rt := Game.new_device("rtr-edge")
+	rk.slots[0] = sw
+	rk.slots[1] = rt
+	Game.connect_ifaces(sw.ifaces[0], rt.ifaces[0])
+	var s := CLI.new_session(sw)
+	for line in ["show running-config", "configure terminal", "enable", "conf", "interface Ethernet1-3", "description uplinks to core", "switchport mode trunk", "exit",
+			"interface Ethernet5,7", "shutdown", "exit", "interface ethernet 2", "switchport access vlan 30", "exit", "vlan 30", "name servers", "exit",
+			"vlan 40", "exit", "interface Vlan40", "ip address 10.40.0.1/24", "exit", "interface Ethernet9", "channel-group 1", "channel-group 1 mode active", "mtu 9000", "mtu 9214",
+			"show running-config", "show interfaces description", "show interfaces ethernet 1", "show vlan", "write", "show startup-config", "end", "clear mac address-table", "clear mac address-table dynamic",
+			"reload", "show interfaces status", "hostname sw-x", "router ospf"]:
+		print("%s %s\n%s" % [s.prompt(), line, s.exec(line)])
+	print(s.describe("show ip "))
+	print(s.describe("show interfaces "))
+	var r := CLI.new_session(rt)
+	for line in ["enable", "configure terminal", "interface Ethernet1", "ip address 10.0.0.1/24", "vrrp 1 ipv4 10.0.0.254", "vrrp 1 priority-level 120", "exit", "router ospf", "router ospf 1", "network 10.0.0.0/24 area 0", "exit", "router bgp 65000", "show running-config", "end"]:
+		print("%s %s\n%s" % [r.prompt(), line, r.exec(line)])
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
@@ -758,7 +740,10 @@ static func run() -> int:
 	s.exec("int et4")
 	check(s.prompt().contains("config-if-Et4"), "EOS: interface context prompt")
 	s.exec("switchport access vlan 30")
-	check(sw.vlans.has(30) and sw.ifaces[3].untagged_vlan == 30, "EOS: access vlan auto-creates vlan 30")
+	check(not sw.vlans.has(30) and sw.ifaces[3].untagged_vlan == 30,
+		"EOS: access vlan does not create the VLAN; the port waits for 'vlan 30'")
+	s.exec("vlan 30")
+	check(sw.vlans.has(30), "EOS: vlan 30 creates it, from any config sub-mode")
 	s.exec("end")
 	var vlan_out: String = s.exec("sh vlan")
 	check(vlan_out.contains("30"), "EOS: 'sh vlan' lists vlan 30 (got: %s)" % vlan_out.replace("\n", " | "))
@@ -1461,7 +1446,7 @@ static func run() -> int:
 	var os1 := CLI.new_session(o_r1)
 	os1.exec("en")
 	os1.exec("conf t")
-	os1.exec("router ospf")
+	os1.exec("router ospf 1")
 	os1.exec("network 10.20.0.0/16 area 0")
 	os1.exec("end")
 	var os2 := CLI.new_session(o_r2)
@@ -1476,7 +1461,7 @@ static func run() -> int:
 	check(os1.exec("show ip ospf neighbor").contains("10.20.9.2") and os1.exec("show ip ospf neighbor").contains("FULL/  -"),
 		"ospf: adjacency comes up (EOS side), point-to-point so no DR")
 	check(os1.exec("show ip ospf neighbor").contains("Neighbor ID") and os1.exec("show ip ospf neighbor").contains("Et3"),
-		"ospf: the neighbour table has the IOS columns")
+		"ospf: the neighbour table has the Neighbor ID column")
 	os1.exec("conf t")
 	os1.exec("router ospf 1")
 	check(os1.exec("router-id 1.1.1.1") == "", "ospf: router-id is accepted")
@@ -1499,12 +1484,12 @@ static func run() -> int:
 	check(os1.exec("sh ip route").contains("O      10.20.2.0/24"), "ospf: O route in show ip route")
 	check(Game.try_complete_contract(_contract("dynamic_routing")), "ospf: contract verifies")
 	os1.exec("conf t")
-	os1.exec("router ospf")
+	os1.exec("router ospf 1")
 	os1.exec("no network 10.20.0.0/16")
 	os1.exec("end")
 	check(not Sim.ping(t1, "10.20.2.10")["ok"], "ospf: withdrawing networks drops the adjacency and the routes")
 	os1.exec("conf t")
-	os1.exec("router ospf")
+	os1.exec("router ospf 1")
 	os1.exec("network 10.20.0.0/16 area 0")
 	os1.exec("end")
 
@@ -1540,7 +1525,7 @@ static func run() -> int:
 	ms.exec("en")
 	ms.exec("conf t")
 	ms.exec("int man1")
-	check(ms.prompt().contains("Management1"), "mgmt: interface Management1 reachable by abbreviation")
+	check(ms.prompt().contains("config-if-Ma1"), "mgmt: interface Management1 reachable by abbreviation, prompt says Ma1")
 	ms.exec("ip address 10.0.0.99/24")
 	ms.exec("end")
 	check(Sim.ping(a2, "10.0.0.99")["ok"], "mgmt: switch answers ping on its mgmt address")
@@ -1626,14 +1611,14 @@ static func run() -> int:
 	v1.exec("en")
 	v1.exec("conf t")
 	v1.exec("int et1")
-	v1.exec("vrrp 1 ip 10.40.0.1")
-	v1.exec("vrrp 1 priority 120")
+	v1.exec("vrrp 1 ipv4 10.40.0.1")
+	v1.exec("vrrp 1 priority-level 120")
 	v1.exec("end")
 	var v2 := CLI.new_session(vr2)
 	v2.exec("en")
 	v2.exec("conf t")
 	v2.exec("int et1")
-	v2.exec("vrrp 1 ip 10.40.0.1")
+	v2.exec("vrrp 1 ipv4 10.40.0.1")
 	v2.exec("end")
 	check(Sim.vrrp_master("10.40.0.1", 1) == vr1, "vrrp: higher priority wins mastership")
 	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: client pings the virtual gateway")
@@ -1976,17 +1961,17 @@ static func run() -> int:
 	lag_s.exec("en")
 	lag_s.exec("conf t")
 	lag_s.exec("int et2")
-	lag_s.exec("channel-group 1")
+	lag_s.exec("channel-group 1 mode on")
 	lag_s.exec("int et3")
-	lag_s.exec("channel-group 1")
+	lag_s.exec("channel-group 1 mode on")
 	lag_s.exec("end")
 	var lag_s2 := CLI.new_session(lsw2)
 	lag_s2.exec("en")
 	lag_s2.exec("conf t")
 	lag_s2.exec("int et2")
-	lag_s2.exec("channel-group 1")
+	lag_s2.exec("channel-group 1 mode on")
 	lag_s2.exec("int et3")
-	lag_s2.exec("channel-group 1")
+	lag_s2.exec("channel-group 1 mode on")
 	lag_s2.exec("end")
 	var post_blocked := Sim.stp_blocked(lsw1.ifaces[1]) or Sim.stp_blocked(lsw1.ifaces[2]) \
 		or Sim.stp_blocked(lsw2.ifaces[1]) or Sim.stp_blocked(lsw2.ifaces[2])
@@ -2140,13 +2125,14 @@ static func run() -> int:
 	cs.exec("conf t")
 	cs.exec("vlan 77")
 	cs.exec("end")
-	check(cs.exec("show startup-config").contains("no saved"), "cfg: nothing saved yet")
+	check(cs.exec("show startup-config").contains("No startup-config was found"), "cfg: nothing saved yet")
 	check(cs.exec("write memory").contains("Copy completed"), "cfg: write memory saves")
 	cs.exec("conf t")
 	cs.exec("vlan 88")
 	cs.exec("end")
-	check(cs.exec("show startup-config").contains("unsaved changes"), "cfg: unsaved drift is reported")
-	check(cs.exec("reload").contains("restored"), "cfg: reload restores the startup config")
+	check("vlan 88" in cs.exec("show running-config") and "vlan 88" not in cs.exec("show startup-config"),
+		"cfg: show startup-config prints what was saved, so the drift is visible by comparing")
+	check(cs.exec("reload").contains("Proceed with reload? [confirm]"), "cfg: reload asks, then restores the startup config")
 	check(cfg_sw.vlans.has(77) and not cfg_sw.vlans.has(88),
 		"cfg: saved VLAN survived the reload, the unsaved one did not")
 	var blank_sw := Game.new_device("sw-8")
@@ -2156,7 +2142,7 @@ static func run() -> int:
 	bs.exec("conf t")
 	bs.exec("vlan 99")
 	bs.exec("end")
-	check(bs.exec("reload").contains("NO startup-config"), "cfg: reloading without a save warns")
+	check(bs.exec("reload").contains("Proceed with reload? [confirm]"), "cfg: reload asks the way EOS does")
 	check(not blank_sw.vlans.has(99), "cfg: unsaved config is genuinely lost on reload")
 
 	# --- router on a stick: 802.1Q subinterfaces ---
@@ -2194,7 +2180,7 @@ static func run() -> int:
 	check(Sim.ping(h60, "10.90.60.1")["ok"], "stick: host reaches its tagged gateway")
 	check(Sim.ping(h60, "10.90.61.10")["ok"] and Sim.ping(h61, "10.90.60.10")["ok"],
 		"stick: one physical port routes both VLANs")
-	check(st.exec("sh run").contains("encapsulation dot1q 60"), "stick: rendered in running-config")
+	check(st.exec("sh run").contains("encapsulation dot1q vlan 60"), "stick: rendered in running-config")
 	check(Game.try_complete_contract(_contract("router_on_a_stick")), "stick: contract verifies")
 
 	# --- DHCP relay ---
@@ -3064,7 +3050,7 @@ static func run() -> int:
 		"scenario: the router in area 1 hears nobody in the backbone")
 	fab_b_cli.exec("network 10.63.0.0/16 area 0")
 	fab_b_cli.exec("interface Ethernet1")
-	fab_b_cli.exec("vrrp 1 priority 90")
+	fab_b_cli.exec("vrrp 1 priority-level 90")
 	fab_b_cli.exec("end")
 	check(fab_b_cli.exec("show run").contains("network 10.63.0.0/16 area 0.0.0.0"), "scenario: show run prints the area the router is in")
 	check(Scenarios.solved(), "scenario: the fabric is solved by configuration alone")
@@ -6868,7 +6854,8 @@ static func run() -> int:
 	vs.exec("conf t")
 	vs.exec("vlan 61")
 	vs.exec("end")
-	check(vs.exec("write memory").contains("version 1"), "cfgver: write memory keeps a version")
+	check(vs.exec("write memory").contains("Copy completed successfully.") and "1" in vs.exec("show config versions"),
+		"cfgver: write memory prints only what EOS prints, and still keeps a version")
 	check(vs.exec("show config diff").contains("matches"), "cfgver: no drift right after saving")
 	vs.exec("conf t")
 	vs.exec("vlan 62")

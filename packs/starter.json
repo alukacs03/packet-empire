@@ -137,7 +137,7 @@
       "customer": "Gamma Logistics",
       "reward": 1400,
       "brief": "Serve 10.91.0.10 to a client at 10.92.0.10 across two routers that both carry the path, so that switching either router off leaves the client served. Two routers on the client's subnet sharing a virtual gateway is the usual answer; two separate paths with routing is another.",
-      "hint": "VRRP on both routers for the client's gateway ('vrrp 1 ip 10.92.0.1' under the client-facing interface on each), or OSPF over two transit links. The check switches each router off in turn.",
+      "hint": "VRRP on both routers for the client's gateway ('vrrp 1 ipv4 10.92.0.1' under the client-facing interface on each), or OSPF over two transit links. The check switches each router off in turn.",
       "requirements": [
         {
           "kind": "reachable",

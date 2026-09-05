@@ -9844,7 +9844,7 @@ func free_ifaces(exclude: Net.NDevice) -> Array:
 func add_vlan(dev: Net.NDevice, vid: int, name: String) -> bool:
 	name = name.strip_edges()
 	if name == "":
-		name = "vlan%d" % vid
+		name = "VLAN%04d" % vid  # the name EOS gives a VLAN nobody named
 	if dev.type != "switch" or vid < 1 or vid > 4094 or dev.vlans.has(vid):
 		return false
 	dev.vlans[vid] = name
