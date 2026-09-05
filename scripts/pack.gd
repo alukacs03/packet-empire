@@ -434,7 +434,7 @@ static func workshop_rows() -> Array:
 	for pack: Dictionary in loaded:
 		var scenarios: Array = []
 		for scenario in pack["scenarios"]:
-			scenarios.append("%s — %s" % [scenario["title"],
+			scenarios.append("%s: %s" % [scenario["title"],
 				"%d requirement(s)" % scenario.get("requirements", []).size()])
 		rows.append({"id": pack["id"], "name": pack["name"], "ok": true,
 			"author": pack.get("author", "unknown"), "source": pack.get("source", ""),

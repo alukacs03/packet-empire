@@ -166,7 +166,7 @@ const UNLOCK_INTROS := {
 	"expand": {
 		"kicker": "NEW OPTION  /  FACILITY",
 		"title": "The tape measure is out.",
-		"body": "This corner has proved itself. The next room brings more floor—and puts power and cooling on your books.",
+		"body": "This corner has proved itself. The next room brings more floor, and puts power and cooling on your books.",
 		"where": "EXPAND  ·  TOP TOOLBAR", "action": "Point it out", "colour": "warm"},
 }
 
@@ -542,7 +542,7 @@ func _refresh_money() -> void:
 	money_lbl.add_theme_color_override("font_color",
 		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
 	if site_btn:
-		site_btn.text = Game.site_name(Game.current_site)
+		site_btn.text = "AT  %s  ▾" % Game.site_name(Game.current_site).to_upper()
 		site_btn.visible = Game.site_count() > 1
 		# the same colour the floor itself is cast in, so the button and the
 		# room agree about which building you are in
@@ -1071,7 +1071,7 @@ func _rack_metric(caption: String, key: String, semantic: String) -> PanelContai
 	panel.add_child(box)
 	var cap := _section(caption)
 	box.add_child(cap)
-	var value := _label("—", 13, UIW.colour(semantic))
+	var value := _label("…", 13, UIW.colour(semantic))
 	value.add_theme_font_override("font", mono)
 	box.add_child(value)
 	rack_metric_values[key] = value
@@ -2138,7 +2138,7 @@ func _ops_metric(caption: String, key: String, semantic: String) -> PanelContain
 	panel.add_child(box)
 	var cap := _section(caption)
 	box.add_child(cap)
-	var value := _label("—", 22, UIW.colour(semantic))
+	var value := _label("…", 22, UIW.colour(semantic))
 	value.add_theme_font_override("font", mono)
 	box.add_child(value)
 	var note := _label("", 11, UIW.colour("muted"))
@@ -2851,7 +2851,7 @@ func _refresh_ops() -> void:
 			var spec: Dictionary = Game.decision_by_id(String(dec["id"]))
 			if spec.is_empty():
 				continue
-			ops_box.add_child(_wrap("  %s  —  %s" % [spec["title"], spec["text"]], 13,
+			ops_box.add_child(_wrap("  %s  ·  %s" % [spec["title"], spec["text"]], 13,
 				Color(1.0, 0.85, 0.5), 780))
 			for fact: String in spec["facts"]:
 				ops_box.add_child(_label("      · %s" % fact, 12, Color(0.72, 0.8, 0.88)))
@@ -4341,7 +4341,7 @@ func _build_demo_end() -> void:
 	var status := _section("OPENING ARC  /  NETWORK ONLINE  /  HANDOVER READY")
 	status.add_theme_color_override("font_color", UIW.colour("success"))
 	v.add_child(status)
-	var body := _wrap("You walked into an empty cage. You leave behind a routed, redundant tenant network—and every packet reached its destination for a real reason.",
+	var body := _wrap("You walked into an empty cage. You leave behind a routed, redundant tenant network, and every packet reached its destination for a real reason.",
 		17, UIW.colour("text_strong"), 700)
 	v.add_child(body)
 	var achieved := HBoxContainer.new()
@@ -5109,7 +5109,7 @@ func _build_market_tab() -> void:
 			"Budget confidential. Reputation and references let you charge above the cheapest bid.", "warm"))
 		if lead.has("coach"):
 			var coaching := UIW.style_panel(PanelContainer.new(), "warning", "sm")
-			var coaching_text := _wrap("PROPOSAL REVIEW  /  %s. Revise and send it again—this first customer will wait."
+			var coaching_text := _wrap("PROPOSAL REVIEW  /  %s. Revise and send it again: this first customer will wait."
 				% Game.sentence(String(lead["coach"])), 12, UIW.colour("text_strong"), 600)
 			coaching.add_child(coaching_text)
 			lv.add_child(coaching)
@@ -5120,7 +5120,7 @@ func _build_market_tab() -> void:
 		prow.add_child(_label("Your price:  $", 14))
 		var pprice := _mono_edit(90)
 		pprice.placeholder_text = str(int(serve["floor"]) + 18)
-		pprice.tooltip_text = "A starting point above estimated break-even—not the customer's hidden budget."
+		pprice.tooltip_text = "A starting point above estimated break-even, not the customer's hidden budget."
 		prow.add_child(pprice)
 		prow.add_child(_label("/cycle   commit to ", 14))
 		var sla_opt := OptionButton.new()
@@ -5842,7 +5842,7 @@ func _workshop_menu(at: Control) -> void:
 		var summary: String = String(row["detail"])
 		if bool(row["ok"]):
 			summary = "%d scenario(s), by %s" % [row["scenarios"].size(), row["author"]]
-		opts.append("%s %s — %s" % ["✓" if bool(row["ok"]) else "✗", row["name"], summary])
+		opts.append("%s %s: %s" % ["✓" if bool(row["ok"]) else "✗", row["name"], summary])
 	opts.append("Reload packs from disk")
 	opts.append("Import a pack from the clipboard")
 	opts.append("Copy a diagnostic report")

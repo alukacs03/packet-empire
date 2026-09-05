@@ -1493,13 +1493,25 @@ class EOS extends Session:
 		return ""
 
 	func _ospf_network(r: Array) -> String:
-		# accept: network <p/len> [area 0]
-		if r.size() >= 1 and Net.valid_cidr(r[0]):
-			if r[0] not in dev.ospf["networks"]:
-				dev.ospf["networks"].append(r[0])
-			Game.topology_changed.emit()
-			return ""
-		return "usage: network <prefix/len> area 0\n"
+		# network <p/len> area <n>   |   network <addr> <wildcard> area <n>
+		var usage := "usage: network <prefix/len> area <n>   (or network <address> <wildcard> area <n>)\n"
+		if r.size() >= 3 and String(r[0]).is_valid_ip_address() and String(r[1]).is_valid_ip_address():
+			var plen := CLI.mask_to_plen(Net.int_to_ip((~Net.ip_to_int(String(r[1]))) & 0xFFFFFFFF))
+			if plen < 0:
+				return "% that is not a contiguous wildcard mask\n"
+			r = ["%s/%d" % [r[0], plen]] + r.slice(2)
+		if r.size() != 3 or String(r[1]) != "area" or not Net.valid_cidr(r[0]):
+			return usage
+		var area := String(r[2])
+		if area.is_valid_int():
+			area = Net.int_to_ip(int(area))  # area 0 is 0.0.0.0, area 1 is 0.0.0.1
+		elif not area.is_valid_ip_address():
+			return usage
+		if r[0] not in dev.ospf["networks"]:
+			dev.ospf["networks"].append(r[0])
+		dev.ospf["areas"] = {"area": area}  # one area per router in this model
+		Game.topology_changed.emit()
+		return ""
 
 	func _ospf_no_network(r: Array) -> String:
 		if r.size() >= 1:
@@ -2447,7 +2459,7 @@ class EOS extends Session:
 		if not dev.ospf.is_empty():
 			out += "router ospf 1\n"
 			for net in dev.ospf["networks"]:
-				out += "   network %s area 0\n" % net
+				out += "   network %s area %s\n" % [net, Sim.ospf_area(dev)]
 			out += "!\n"
 		if not dev.bgp.is_empty() and dev.type == "router":
 			out += "router bgp %d\n" % int(dev.bgp["asn"])

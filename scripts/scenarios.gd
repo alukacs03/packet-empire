@@ -57,6 +57,28 @@ static func all() -> Array:
 					"t": func() -> bool: return _resolves6("fd00:6::10", "legacy.pkt")},
 			],
 		},
+		{
+			"id": "inherited_fabric",
+			"name": "The inherited fabric",
+			"blurb": "Two offices, two routers, OSPF between them and a redundant gateway for the near office. The engineer who built it left a network statement short, a router in the wrong area and a backup that thinks it is master. Nothing is cabled wrong. Everything is configured wrong.",
+			"build": func() -> void: _build_fabric(),
+			"goals": [
+				{"d": "The two routers are OSPF neighbours", "t": func() -> bool: return _ospf_neighbours("10.63.9.1")},
+				{"d": "10.63.1.10 reaches 10.63.2.10 with no static routes on the routers", "t": func() -> bool: return _ping("10.63.1.10", "10.63.2.10") and _no_statics_on_routers()},
+				{"d": "The preferred router (priority 120) is the VRRP master for 10.63.1.1", "t": func() -> bool: return _vrrp_master_is("10.63.1.1", "10.63.1.2")},
+			],
+		},
+		{
+			"id": "bad_friday",
+			"name": "The webshop's bad Friday",
+			"blurb": "A webshop behind a load balancer, half its pool dead, and a router that stopped translating the shop's private address on the way out. Sale night starts in an hour. Get the pool back to two live members and the shop back on the internet.",
+			"build": func() -> void: _build_friday(),
+			"goals": [
+				{"d": "The virtual address 10.64.0.100 answers", "t": func() -> bool: return _ping("10.64.0.20", "10.64.0.100")},
+				{"d": "Both pool members are in service", "t": func() -> bool: return _lb_healthy_at("10.64.0.100") >= 2},
+				{"d": "The shop at 10.64.0.11 reaches 8.8.8.8 through NAT", "t": func() -> bool: return _ping("10.64.0.11", "8.8.8.8")},
+			],
+		},
 	]
 
 # ---------------- lifecycle ----------------
@@ -149,6 +171,119 @@ static func _all_saved() -> bool:
 	return any
 
 # ---------------- worlds ----------------
+
+static func _ospf_neighbours(via_ip: String) -> bool:
+	var rtr := Sim._ip_owner(via_ip)
+	if rtr == null:
+		return false
+	return not Sim.ospf_neighbors(rtr).is_empty()
+
+static func _no_statics_on_routers() -> bool:
+	for d in Game.all_devices():
+		if d.type == "router" and not d.static_routes.is_empty():
+			return false
+	return true
+
+static func _vrrp_master_is(vip: String, master_ip: String) -> bool:
+	var master := Sim.vrrp_master(vip, 1)
+	return master != null and master == Sim._ip_owner(master_ip)
+
+static func _lb_healthy_at(vip: String) -> int:
+	for d in Game.all_devices():
+		var svc: Dictionary = d.services.get("lb", {})
+		if String(svc.get("vip", "")) == vip:
+			Game.lb_health_check()
+			return svc.get("healthy", []).size()
+	return 0
+
+static func _build_fabric() -> void:
+	Game.add_site("Inherited fabric", Vector2i(6, 6), "scenario", "Szeged")
+	var rack := Game.add_rack(Vector2i(1, 1), 0)
+	var rack2 := Game.add_rack(Vector2i(3, 1), 0)
+	var r1 := Game.new_device("rtr-edge")
+	var r1b := Game.new_device("rtr-edge")
+	var r2 := Game.new_device("rtr-edge")
+	var sw1 := Game.new_device("sw-8")
+	var a := Game.new_device("srv-1")
+	var b := Game.new_device("srv-1")
+	rack.slots[0] = r1
+	rack.slots[2] = r1b
+	rack.slots[4] = sw1
+	rack.slots[5] = a
+	rack2.slots[0] = r2
+	rack2.slots[2] = b
+	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
+	Game.connect_ifaces(r1.ifaces[0], sw1.ifaces[1])
+	Game.connect_ifaces(r1b.ifaces[0], sw1.ifaces[2])
+	Game.connect_ifaces(r1.ifaces[1], r2.ifaces[1])
+	Game.connect_ifaces(r1b.ifaces[1], r2.ifaces[2])
+	Game.connect_ifaces(b.ifaces[0], r2.ifaces[0])
+	Game.add_ip(a.ifaces[0], "10.63.1.10/24")
+	Game.add_ip(r1.ifaces[0], "10.63.1.2/24")
+	Game.add_ip(r1b.ifaces[0], "10.63.1.3/24")
+	Game.add_ip(r1.ifaces[1], "10.63.9.1/30")
+	Game.add_ip(r2.ifaces[1], "10.63.9.2/30")
+	Game.add_ip(r1b.ifaces[1], "10.63.9.5/30")
+	Game.add_ip(r2.ifaces[2], "10.63.9.6/30")
+	Game.add_ip(r2.ifaces[0], "10.63.2.1/24")
+	Game.add_ip(b.ifaces[0], "10.63.2.10/24")
+	Game.add_static_route(a, "0.0.0.0", 0, "10.63.1.1")
+	Game.add_static_route(b, "0.0.0.0", 0, "10.63.2.1")
+	# what the previous engineer left: a network statement that misses the
+	# transit link, a router in the wrong area, and a backup with a higher
+	# priority than the router everybody was told is the master
+	r1.ospf = {"networks": ["10.63.1.0/24"]}
+	r1b.ospf = {"networks": ["10.63.0.0/16"], "areas": {"backbone": "0.0.0.1"}}
+	r2.ospf = {"networks": ["10.63.0.0/16"]}
+	r1.ifaces[0].vrrp = {"group": 1, "vip": "10.63.1.1", "priority": 120}
+	r1b.ifaces[0].vrrp = {"group": 1, "vip": "10.63.1.1", "priority": 150}
+	for d in [r1, r1b, r2, sw1]:
+		d.startup = Game.device_config(d)
+
+static func _build_friday() -> void:
+	Game.add_site("Webshop cage", Vector2i(6, 6), "scenario", "Budapest")
+	var rack := Game.add_rack(Vector2i(1, 1), 0)
+	var rack2 := Game.add_rack(Vector2i(3, 1), 0)
+	var rtr := Game.new_device("rtr-edge")
+	var upl := Game.new_device("isp-uplink")
+	var sw := Game.new_device("sw-8")
+	var lb := Game.new_device("lb-1")
+	var web1 := Game.new_device("srv-1")
+	var web2 := Game.new_device("srv-1")
+	var client := Game.new_device("srv-1")
+	rack.slots[0] = upl
+	rack.slots[1] = rtr
+	rack.slots[3] = sw
+	rack.slots[4] = lb
+	rack2.slots[0] = web1
+	rack2.slots[1] = web2
+	rack2.slots[2] = client
+	Game.connect_ifaces(upl.ifaces[0], rtr.ifaces[0])
+	Game.connect_ifaces(rtr.ifaces[1], sw.ifaces[0])
+	Game.connect_ifaces(lb.ifaces[0], sw.ifaces[1])
+	Game.connect_ifaces(web1.ifaces[0], sw.ifaces[2])
+	Game.connect_ifaces(web2.ifaces[0], sw.ifaces[3])
+	Game.connect_ifaces(client.ifaces[0], sw.ifaces[4])
+	Game.add_ip(rtr.ifaces[0], "100.64.0.2/30")
+	Game.add_ip(rtr.ifaces[1], "10.64.0.1/24")
+	Game.add_ip(lb.ifaces[0], "10.64.0.5/24")
+	Game.add_ip(web1.ifaces[0], "10.64.0.11/24")
+	Game.add_ip(web2.ifaces[0], "10.64.0.12/24")
+	Game.add_ip(client.ifaces[0], "10.64.0.20/24")
+	for h in [web1, web2, client, lb]:
+		Game.add_static_route(h, "0.0.0.0", 0, "10.64.0.1")
+	Game.add_static_route(rtr, "0.0.0.0", 0, "100.64.0.1")
+	lb.services["lb"] = {"vip": "10.64.0.100", "members": ["10.64.0.11", "10.64.0.12"], "healthy": []}
+	# Friday: one member's port was shut, and NAT was moved to the inside leg
+	web2.ifaces[0].admin_down = true
+	web2.ifaces[0].enabled = false
+	rtr.ifaces[1].nat = "outside"
+	rtr.ifaces[0].nat = "inside"
+	rtr.services["nat"] = {"rules": [{"kind": "overload", "list": "1", "iface": rtr.ifaces[1].name}],
+		"acls": {"1": [{"action": "permit", "net": "10.64.0.0", "plen": 24}]}}
+	Game.lb_health_check()
+	for d in [rtr, sw, lb]:
+		d.startup = Game.device_config(d)
 
 static func _build_broken_isp() -> void:
 	Game.add_site("Inherited exchange", Vector2i(6, 6), "scenario", "Debrecen")

@@ -375,12 +375,20 @@ static func ospf_covered_ifaces(dev: Net.NDevice) -> Array:
 					out.append(i)
 	return out
 
+static func ospf_area(dev: Net.NDevice) -> String:
+	## single-area model: the router's area id, backbone unless configured
+	for a in dev.ospf.get("areas", {}):
+		return String(dev.ospf["areas"][a])
+	return "0.0.0.0"
+
 static func ospf_neighbors(dev: Net.NDevice) -> Array:
 	## -> [{dev, via_ip}] adjacent OSPF routers (shared covered subnet)
 	var out: Array = []
 	for other in Game.all_devices():
 		if other == dev or other.ospf.is_empty() or not other.ip_forwarding 				or other.status != "active":
 			continue
+		if ospf_area(other) != ospf_area(dev):
+			continue  # hellos carry the area id, and a mismatch is dropped on the floor
 		for ia: Net.Iface in ospf_covered_ifaces(dev):
 			for cidr_a: String in ia.ips:
 				var pa := cidr_a.split("/")

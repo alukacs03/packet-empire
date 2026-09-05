@@ -558,10 +558,11 @@ class TopoMap extends Control:
 			draw_rect(box, UIW.colour("border_strong"), false, 1.0)
 			draw_line(origin + Vector2(18, 42), origin + Vector2(CARD_W - 18, 42),
 				Color(UIW.colour("accent"), 0.42), 1.0)
-			var site_tag: String = "" if Game.site_count() <= 1 else "  ·  " + Game.site_name(r.site)
-			# clipped before the node count: the site tag made the title long
-			# enough to run straight through it
-			draw_string(_mono, origin + Vector2(18, 27), "RACK  /  " + r.name + site_tag,
+			# with several floors the site name replaces the RACK prefix, so the
+			# title still fits beside the node count instead of clipping mid-word
+			var title: String = ("RACK  /  " + r.name) if Game.site_count() <= 1 \
+				else "%s  ·  %s" % [r.name, Game.site_name(r.site)]
+			draw_string(_mono, origin + Vector2(18, 27), title,
 				HORIZONTAL_ALIGNMENT_LEFT, CARD_W - 104, 13,
 				UIW.colour("text_strong") if Game.site_count() <= 1 else site_col)
 			draw_string(_mono, origin + Vector2(CARD_W - 78, 27), "%02d NODES" % filled.size(),
@@ -633,7 +634,7 @@ class TopoMap extends Control:
 			Color(UIW.colour("border"), 0.75), 1.0)
 		var ly := size.y - 24
 		draw_string(_mono, Vector2(30, ly),
-			"— HOST LINK     — TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE",
+			"─ HOST LINK     ━ TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
 		draw_string(_mono, Vector2(30, ly - 16),
 			"SHIFT-DRAG BETWEEN TWO DEVICES TO RUN A CABLE",
@@ -787,11 +788,11 @@ class RackSlot extends Control:
 				var local_link := link and Game.rack_of(link.other(hovered_port).dev) == Game.rack_of(dev)
 				mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if link == null or local_link \
 					else Control.CURSOR_HELP
-				var action := "FREE — DRAG TO PATCH"
+				var action := "FREE  ·  DRAG TO PATCH"
 				if local_link:
-					action = "PATCHED — GRAB TO REPATCH OR UNPLUG"
+					action = "PATCHED  ·  GRAB TO REPATCH OR UNPLUG"
 				elif link:
-					action = "REMOTE LINK — CLICK TO INSPECT"
+					action = "REMOTE LINK  ·  CLICK TO INSPECT"
 				tooltip_text = "%s  /  %s  ·  %s" % [dev.name, hovered_port.name, action]
 			else:
 				mouse_default_cursor_shape = Control.CURSOR_ARROW

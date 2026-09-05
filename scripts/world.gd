@@ -455,7 +455,7 @@ func _shoot_all() -> void:
 		["rack_note", func() -> void:
 			Game.set_note(r, "Temporary uplink. Remove after the tenant migration.")
 			Game.set_note(sw, "Port 1 is the temporary tenant uplink.")
-			Game.set_note(sw.ifaces[0], "Tenant handoff — remove after migration.")
+			Game.set_note(sw.ifaces[0], "Tenant handoff: remove after migration.")
 			ui._refresh_note_card(ui.rack_note_ui, r, ui.rack_note_btn)
 			ui._refresh_slots()],
 		["device", func() -> void: ui.open_dev(sw)],

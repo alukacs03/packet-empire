@@ -4491,7 +4491,7 @@ func _first_light(deal: Dictionary) -> void:
 		log_event("FIRST LIGHT: %s is live. %s Somebody's %s is working because of a cable you ran and a configuration you wrote."
 			% [deal["customer"], String(biz["live"]),
 				String(biz["what"]).trim_prefix("a ").trim_prefix("an ")])
-		log_event("FIRST LIGHT: “%s” — and it is worth $%d every cycle it stays that way."
+		log_event("FIRST LIGHT: “%s”, and it is worth $%d every cycle it stays that way."
 			% [_first_light_words(deal), int(deal["fee"])])
 		Sfx.play("money")
 	else:
@@ -5457,7 +5457,7 @@ func topology_mermaid(site := -1) -> String:
 func topology_text(site := -1) -> String:
 	## The same thing as plain text, for a report or somebody's notes.
 	var target := current_site if site < 0 else site
-	var lines: Array = ["%s — %s, cycle %d" % [company_name, site_name(target), cycle]]
+	var lines: Array = ["%s, %s, cycle %d" % [company_name, site_name(target), cycle]]
 	for r: Net.Rack in racks_on(target):
 		lines.append("%s:" % r.name)
 		for idx in Net.Rack.SLOTS:
@@ -6777,7 +6777,7 @@ func _digest_line(at: int) -> String:
 	var preview: Array = []
 	for line: String in lines.slice(0, 2):
 		preview.append(String(line).substr(0, 48))
-	return "cycle %d: %s: %d routine thing(s) handled — %s" % [at, DIGEST_PREFIX, lines.size(),
+	return "cycle %d: %s: %d routine thing(s) handled: %s" % [at, DIGEST_PREFIX, lines.size(),
 		"; ".join(PackedStringArray(preview))]
 
 func log_event(text: String) -> void:
@@ -7179,7 +7179,7 @@ func advance_kiskacsa_arc(deal: Dictionary) -> void:
 				break
 		if not already_referred:
 			leads.append(Market.kiskacsa_referral_lead())
-		log_event("RELATIONSHIP: Kiskacsa remembers the honest outage response and five quiet cycles. They will be your reference—and sent Madaras Játék's firewalled hosting job.")
+		log_event("RELATIONSHIP: Kiskacsa remembers the honest outage response and five quiet cycles. They will be your reference, and sent Madaras Játék's firewalled hosting job.")
 	else:
 		arc["outcome"] = "cautious"
 		deal["fee"] = maxi(1, int(round(float(int(deal["fee"])) * 0.9)))
