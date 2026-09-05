@@ -688,30 +688,24 @@ func _overlay() -> Control:
 
 var _card_scrolls: Array = []  # ScrollContainers to fit to the viewport
 
+const CARD_TOP := 72.0  # every card hangs from the same edge, just under the HUD
+
 func _card(parent: Control, min_w: float) -> VBoxContainer:
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	parent.add_child(center)
+	var hang := MarginContainer.new()
+	hang.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hang.add_theme_constant_override("margin_top", int(CARD_TOP))
+	parent.add_child(hang)
+	var center := HBoxContainer.new()
+	center.alignment = BoxContainer.ALIGNMENT_CENTER
+	hang.add_child(center)
 	var panel := UIW.CommandPanel.new().setup("overlay", "accent", UIW.space("lg"))
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	center.add_child(panel)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(min_w, 0)
 	scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("md"))
-	# a card that clips a button must look scrollable: a bar you can see,
-	# and a "more below" hint that sits over the bottom edge until the end
-	scroll.get_v_scroll_bar().custom_minimum_size.x = 10
 	panel.add_child(scroll)
-	var more := _label("▾  more below", 11, UIW.colour("accent"))
-	more.size_flags_vertical = Control.SIZE_SHRINK_END
-	more.size_flags_horizontal = Control.SIZE_SHRINK_END
-	more.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	more.visible = false
-	panel.add_child(more)
-	var bar := scroll.get_v_scroll_bar()
-	var update_more := func() -> void:
-		more.visible = bar.max_value - bar.page > 1.0 and bar.value + bar.page < bar.max_value - 1.0
-	bar.value_changed.connect(func(_v: float) -> void: update_more.call())
-	bar.changed.connect(update_more)
+	panel.add_child(_more_hint(scroll))
 	_card_scrolls.append(scroll)
 	var content_margin := MarginContainer.new()
 	content_margin.add_theme_constant_override("margin_right", UIW.space("lg"))
@@ -723,6 +717,23 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content_margin.add_child(v)
 	return v
+
+func _more_hint(scroll: ScrollContainer) -> Label:
+	## A scroll that clips a button must look scrollable: a bar you can see,
+	## and a "more below" hint over the bottom edge until the end is reached.
+	## Add the label as a sibling drawn after the scroll.
+	var bar := scroll.get_v_scroll_bar()
+	bar.custom_minimum_size.x = 10
+	var more := _label("▾  more below", 11, UIW.colour("accent"))
+	more.size_flags_vertical = Control.SIZE_SHRINK_END
+	more.size_flags_horizontal = Control.SIZE_SHRINK_END
+	more.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	more.visible = false
+	var update_more := func() -> void:
+		more.visible = bar.max_value - bar.page > 1.0 and bar.value + bar.page < bar.max_value - 1.0
+	bar.value_changed.connect(func(_v: float) -> void: update_more.call())
+	bar.changed.connect(update_more)
+	return more
 
 func _scroll_to_bottom() -> void:
 	_fit_cards()
@@ -757,7 +768,7 @@ func _fit_cards() -> void:
 		need_y = maxf(need_y, _laid_out_height(content))
 		scroll.custom_minimum_size = Vector2(
 			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 160.0),
-			minf(need_y, vp.y - 190.0))
+			minf(need_y, vp.y - CARD_TOP - 60.0))
 
 func _laid_out_height(content: Control) -> float:
 	## The real height of what is in a card, after layout, including text that
@@ -1785,6 +1796,7 @@ func _refresh_iface() -> void:
 	if cur_if.port_security: policies.append("PORT SECURITY")
 	if_state_box.add_child(_iface_state_line("POLICY",
 		" / ".join(PackedStringArray(policies)) if not policies.is_empty() else "NONE", "warm"))
+	if_vrrp_lbl.visible = not cur_if.vrrp.is_empty()
 	if cur_if.vrrp.is_empty():
 		if_vrrp_lbl.text = ""
 	else:
@@ -2585,6 +2597,10 @@ func _refresh_ops() -> void:
 	var past_runs: Array = Game.run_history()
 	if not past_runs.is_empty():
 		ops_box.add_child(_section("RUNS BEFORE THIS ONE"))
+		var head_row := _label("  %-18s %-14s %-10s %-11s %-11s %s" % ["COMPANY", "IDENTITY",
+			"DIFFICULTY", "ENDING", "LASTED", "SCORE"], 11, UIW.colour("muted"))
+		head_row.add_theme_font_override("font", mono)
+		ops_box.add_child(head_row)
 		for row: Dictionary in past_runs.slice(0, 6):
 			var rl := _label("  %-18s %-14s %-10s %-11s cycle %-5d score %d" % [row.get("company", ""),
 				row.get("identity", ""), row.get("difficulty", ""), row.get("ending", ""), int(row.get("cycle", 0)),
@@ -4480,8 +4496,10 @@ func _build_contracts_overlay() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(600, 480)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.get_v_scroll_bar().custom_minimum_size.x = 10  # the same visible bar as every other card
-	v.add_child(scroll)
+	var holder := MarginContainer.new()  # scroll and hint share one box so the hint overlays
+	holder.add_child(scroll)
+	holder.add_child(_more_hint(scroll))
+	v.add_child(holder)
 	contracts_box = VBoxContainer.new()
 	contracts_box.add_theme_constant_override("separation", 10)
 	contracts_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -5531,7 +5549,9 @@ func _build_jobs_tab() -> void:
 		var nb := VBoxContainer.new()
 		nb.add_theme_constant_override("separation", UIW.space("sm"))
 		np.add_child(nb)
-		nb.add_child(_label("THE PHONE  /  OUT OF HOURS", 12, UIW.colour("warm")))
+		nb.add_child(_label("THE PHONE  /  RANG %s  /  OUT OF HOURS" % String(Game.DAY_NAMES[
+			int(Game.night_call.get("cycle", Game.cycle)) % Game.DAY_CYCLES]).to_upper(),
+			12, UIW.colour("warm")))
 		nb.add_child(_wrap("“%s.”" % Game.sentence(String(Game.night_call["reason"])), 14,
 			UIW.colour("text_strong"), 620))
 		var nrow := HBoxContainer.new()

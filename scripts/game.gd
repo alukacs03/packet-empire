@@ -5246,6 +5246,7 @@ func finale_snapshot(ending: String) -> Dictionary:
 		"racks": racks.filter(func(r): return r.slots.any(func(d): return d != null)).size(),  # empty cabinets are not growth
 		"staff": staff.size(), "stage": stage,
 		"uptime": int(100.0 * float(up) / maxf(1.0, float(deal_cycles))),
+		"streak": best_streak(),
 		"techs": techs.keys(), "open_reviews": open_reviews,
 		"controls": controls_passing, "tidiness": floor_tidiness(),
 		"drift": drift_factor(), "faults": int(stats.get("faults", 0)),
@@ -5267,7 +5268,9 @@ func finale_score(snap: Dictionary) -> Dictionary:
 		# what the company earned per cycle, plus what it kept: a hoard is
 		# worth something, and a sale is worth exactly what it left in the bank
 		"financial": clampi(int(per_cycle * 2.0) + maxi(0, int(snap.get("money", 0))) / 500, 0, 250),
-		"reliability": clampi(int(snap.get("uptime", 0)) * 2, 0, 200),
+		# uptime is per customer-cycle; the floor sign's streak counts too, so a
+		# long clean run scores above zero even when no customer was ever billed
+		"reliability": clampi(int(snap.get("uptime", 0)) * 2 + mini(int(snap.get("streak", 0)) / 4, 50), 0, 200),
 		"trust": clampi(int(snap.get("reputation", 0)) + int(snap.get("references", 0)) * 10
 			+ (20 if bool(snap.get("trust_marker", false)) else 0), 0, 200),
 		# breadth: the cap of 200 needs most of the twenty technologies, not six

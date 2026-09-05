@@ -220,7 +220,7 @@ func show_intro() -> void:
 	for tip in ["F1 opens help at any time.", "Escape steps back out of anything.",
 			"The encyclopedia explains every concept the game uses.",
 			"Nothing you do to a device is permanent until you save its configuration."]:
-		tips.add_child(_lbl("  " + tip, 13, MUTED))
+		tips.add_child(_lbl("  •  " + tip, 13, MUTED))
 
 func _para(text: String) -> Control:
 	var l := _lbl(text, 14, Color(0.78, 0.83, 0.9))
