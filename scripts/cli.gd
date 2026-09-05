@@ -252,6 +252,10 @@ class EOS extends Session:
 				return dev.name + "(config-dhcp-server)#"
 			"dhcpsub":
 				return "%s(config-dhcp-server-subnet-%s)#" % [dev.name, ctx_subnet]
+			"mlag":
+				return dev.name + "(config-mlag)#"
+			"vxlan":
+				return dev.name + "(config-if-Vx1)#"
 		return dev.name + ">"
 
 	static func _short(ifname: String) -> String:
@@ -285,7 +289,7 @@ class EOS extends Session:
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
-		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"]  # show/ping work everywhere via 'do'-free shortcut
+		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
@@ -368,7 +372,10 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "route", "for"], "h": _show_route_for},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
-			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["show", "running-config"], "h": _show_run},
+			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["show", "running-config"], "h": _show_run},
+			{"m": EP, "p": ["show", "running-config", "interfaces"], "h": _show_run_interfaces},
+			{"m": EP, "p": ["show", "running-config", "section"], "h": _show_run_section},
+			{"m": EP, "p": ["show", "running-config", "diffs"], "h": func(_r): return _show_diff([])},
 			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
 			{"m": ["config"], "p": ["logging", "host"], "h": _cfg_logging},
 			{"m": ["config"], "p": ["no", "logging", "host"], "h": _no_logging},
@@ -380,8 +387,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["interface", "range"], "h": _cfg_if_range},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
 			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source},
@@ -504,6 +511,84 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
+			{"m": ["config"], "p": ["mlag", "configuration"], "h": func(_r):
+				if dev.type != "switch":
+					return "% Invalid input\n"
+				mode = "mlag"
+				return ""},
+			{"m": ["mlag"], "p": ["domain-id"], "h": func(r): return _mlag_set("domain", r)},
+			{"m": ["mlag"], "p": ["local-interface"], "h": func(r): return _mlag_set("local_if", r)},
+			{"m": ["mlag"], "p": ["peer-address"], "h": _mlag_peer_address},
+			{"m": ["mlag"], "p": ["peer-link"], "h": _mlag_peer_link_cfg},
+			{"m": ["mlag"], "p": ["reload-delay"], "h": func(_r): return ""},
+			{"m": ["mlag"], "p": ["heartbeat-interval"], "h": func(_r): return ""},
+			{"m": EP, "p": ["show", "mlag", "interfaces"], "h": _show_mlag_interfaces},
+			{"m": ["vxlan"], "p": ["vxlan", "source-interface"], "h": _vxlan_source_if},
+			{"m": ["vxlan"], "p": ["vxlan", "vlan"], "h": _cfg_vxlan_vlan},
+			{"m": ["vxlan"], "p": ["vxlan", "flood", "vtep"], "h": _vxlan_flood},
+			{"m": ["vxlan"], "p": ["no", "vxlan", "flood", "vtep"], "h": _vxlan_no_flood},
+			{"m": ["vxlan"], "p": ["vxlan", "udp-port"], "h": func(_r): return ""},
+			{"m": ["vxlan"], "p": ["vxlan", "evpn"], "h": _cfg_vxlan_evpn},
+			{"m": EP, "p": ["show", "vxlan", "vtep"], "h": _show_vxlan_vtep},
+			{"m": EP, "p": ["show", "vxlan", "vni"], "h": _show_vxlan_vni},
+			{"m": EP, "p": ["show", "vxlan", "address-table"], "h": _show_vxlan_addr},
+			{"m": ["config"], "p": ["ip", "prefix-list"], "h": _cfg_prefix_list},
+			{"m": ["config"], "p": ["no", "ip", "prefix-list"], "h": func(r):
+				var lists: Dictionary = dev.services.get("prefix_lists", {})
+				if r.size() >= 1:
+					lists.erase(String(r[0]))
+				return ""},
+			{"m": EP, "p": ["show", "ip", "prefix-list"], "h": _show_prefix_lists},
+			{"m": EP, "p": ["show", "ip", "bgp", "neighbors"], "h": _show_bgp_neighbors},
+			{"m": ["priv"], "p": ["configure", "checkpoint", "save"], "h": _checkpoint_save},
+			{"m": ["priv"], "p": ["configure", "checkpoint", "restore"], "h": _checkpoint_restore},
+			{"m": EP, "p": ["show", "configuration", "checkpoints"], "h": _show_checkpoints},
+			{"m": ["config"], "p": ["dot1x", "system-auth-control"], "h": func(_r): return ""},
+			{"m": ["if"], "p": ["dot1x", "pae", "authenticator"], "h": func(_r): return _dot1x(true)},
+			{"m": ["if"], "p": ["dot1x", "port-control"], "h": func(r): return _dot1x(r.is_empty() or String(r[0]) != "force-authorized")},
+			{"m": ["if"], "p": ["no", "dot1x", "pae"], "h": func(_r): return _dot1x(false)},
+			{"m": ["if"], "p": ["no", "dot1x", "port-control"], "h": func(_r): return _dot1x(false)},
+			{"m": ["config"], "p": ["aaa", "authentication", "login", "default"], "h": _aaa_login_default},
+			{"m": ["if"], "p": ["storm-control", "broadcast", "level"], "h": _storm_level},
+			{"m": ["if"], "p": ["ip", "proxy-arp"], "h": func(_r): return _if_proxy_arp(true)},
+			{"m": ["if"], "p": ["no", "ip", "proxy-arp"], "h": func(_r): return _if_proxy_arp(false)},
+			{"m": ["config"], "p": ["ip", "arp", "inspection", "vlan"], "h": func(_r): return _dai(true)},
+			{"m": ["config"], "p": ["no", "ip", "arp", "inspection", "vlan"], "h": func(_r): return _dai(false)},
+			{"m": ["if"], "p": ["ipv6", "nd", "ra", "disabled"], "h": func(_r): return _ra(false)},
+			{"m": ["if"], "p": ["no", "ipv6", "nd", "ra", "disabled"], "h": func(_r): return _ra(true)},
+			{"m": EP, "p": ["show", "inventory"], "h": _show_inventory},
+			{"m": EP, "p": ["show", "environment"], "h": _show_environment},
+			{"m": EP, "p": ["show", "environment", "temperature"], "h": _show_environment},
+			{"m": EP, "p": ["show", "environment", "power"], "h": _show_environment},
+			{"m": EP, "p": ["show", "users"], "h": func(_r): return "    Line     User     Roles       TTY   State  Session  Idle  Location\n*   1        admin    network-admin  vty1  E      00:%02d:%02d  00:00  10.0.0.9\n" % [(Game.cycle * 3) % 60, (Game.cycle * 7) % 60]},
+			{"m": EP, "p": ["show", "ntp", "status"], "h": func(_r): return ("synchronised to NTP server (%s) at stratum 3\n   time correct to within 12 ms\n   polling server every 64 s\n" % dev.ntp_server) if dev.ntp_server != "" else "unsynchronised\n  time server re-starting\n   polling server every 8 s\n"},
+			{"m": EP, "p": ["show", "ntp", "associations"], "h": func(_r): return "     remote           refid      st t when poll reach   delay   offset  jitter\n==============================================================================\n" + (("*%-16s 10.0.0.1         2 u   12   64  377    0.312    0.045   0.021\n" % dev.ntp_server) if dev.ntp_server != "" else "")},
+			{"m": EP, "p": ["show", "hosts"], "h": func(_r): return "Default domain is not set\nName/address lookup uses domain service\nName servers are: %s\n\nStatic hostname to address mappings:\n" % (dev.resolver if dev.resolver != "" else "not set")},
+			{"m": ["config"], "p": ["ip", "name-server"], "h": func(r):
+				var ips: Array = r.filter(func(w): return String(w).is_valid_ip_address())
+				if ips.is_empty():
+					return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+				dev.resolver = String(ips[0])
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["config"], "p": ["username"], "h": _cfg_username},
+			{"m": ["config"], "p": ["enable", "secret"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
+			{"m": ["config"], "p": ["enable", "password"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
+			{"m": ["config"], "p": ["banner", "motd"], "h": func(r):
+				dev.services["motd"] = " ".join(PackedStringArray(r))
+				return ""},
+			{"m": ["config"], "p": ["lldp", "run"], "h": func(_r): dev.services.erase("lldp_off"); return ""},
+			{"m": ["config"], "p": ["no", "lldp", "run"], "h": func(_r): dev.services["lldp_off"] = true; return ""},
+			{"m": EP, "p": ["show", "lldp", "neighbors", "detail"], "h": _show_lldp_detail},
+			{"m": EP, "p": ["show", "ip", "helper-address"], "h": func(_r):
+				var out := "Interface      Helper-Address\n-------------- --------------\n"
+				for i: Net.Iface in dev.ifaces:
+					if i.helper != "":
+						out += "%-14s %s\n" % [i.name, i.helper]
+				return out},
+			{"m": EP, "p": ["show", "boot-config"], "h": func(_r): return "Software image: flash:/EOS-4.28.3M.swi\nConsole speed: (not set)\nAboot password (encrypted): (not set)\nMemory test iterations: (not set)\n"},
+			{"m": EP, "p": ["terminal", "length"], "h": func(_r): return ""},
+			{"m": EP, "p": ["show", "ip", "route", "vrf"], "h": _show_ip_route_vrf},
 			{"m": ["config"], "p": ["mlag", "peer"], "h": func(r): return _mlag_peer(r[0] if r.size() > 0 else "")},
 			{"m": ["config"], "p": ["no", "mlag"], "h": func(_r): return _mlag_peer("")},
 			{"m": ["if"], "p": ["mlag", "peer-link"], "h": func(_r): return _mlag_if(-1)},
@@ -572,7 +657,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
 			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
 			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
 		]
@@ -596,7 +681,7 @@ class EOS extends Session:
 			toks.pop_front()  # IOS needs 'do' for a show inside config; EOS tolerates it
 			line = " ".join(PackedStringArray(toks))
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
-		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"]:
+		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
 		if mode == "acl" and toks.size() >= 2 and String(toks[0]).is_valid_int():
 			_acl_seq = int(toks[0])  # 10 permit ip any any: the sequence number leads
@@ -609,7 +694,7 @@ class EOS extends Session:
 		# A global configuration command typed inside a sub-mode (interface,
 		# router) is accepted and switches mode, exactly as IOS does.
 		var modes: Array = [mode]
-		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"]:
+		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"]:
 			modes.append("config")
 		if mode != "exec":
 			modes.append("priv")  # EOS runs exec-level commands from any configuration mode
@@ -694,7 +779,10 @@ class EOS extends Session:
 			for k in mini(toks.size(), cmd["p"].size()):
 				if String(c["p"][k]) != String(cmd["p"][k]):
 					return "% Ambiguous command\n"
-		return cmd["h"].call(toks.slice(cmd["p"].size()))
+		var result: String = cmd["h"].call(toks.slice(cmd["p"].size()))
+		if dev.services.has("mlag") and dev.mlag_peer == "":
+			_mlag_resolve()  # the peer may only now have its address
+		return result
 
 	func complete(line: String) -> Array:
 		var ends_space := line.ends_with(" ")
@@ -727,7 +815,7 @@ class EOS extends Session:
 
 	func _exit(_r: Array) -> String:
 		match mode:
-			"if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv":
+			"if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "mlag", "vxlan":
 				mode = "config"
 			"dhcpsub":
 				mode = "dhcpsrv"
@@ -887,6 +975,26 @@ class EOS extends Session:
 		var want := String(r[0]).to_lower()
 		if "-" in want or "," in want:
 			return _cfg_if_range([want])  # Ethernet1-3, Ethernet1,3,5-6: no 'range' keyword on EOS
+		if want.begins_with("vx") and want.lstrip("abcdefghijklmnopqrstuvwxyz") == "1":
+			if dev.type != "switch":
+				return "% Invalid input\n"
+			_vtep()
+			mode = "vxlan"
+			return ""
+		if want.begins_with("lo") and want.lstrip("abcdefghijklmnopqrstuvwxyz").is_valid_int() and not want.begins_with("lo."):
+			if not dev.ip_forwarding:
+				return "% Invalid input\n"
+			var lo_name := "Loopback%d" % int(want.lstrip("abcdefghijklmnopqrstuvwxyz"))
+			for i: Net.Iface in dev.ifaces:
+				if i.name == lo_name:
+					_select_ifaces([i])
+					return ""
+			var lo := Net.Iface.new(dev, lo_name, Game._new_mac())
+			lo.mode = "routed"
+			dev.ifaces.append(lo)
+			Game.topology_changed.emit()
+			_select_ifaces([lo])
+			return ""
 		if want.begins_with("wg") and want.trim_prefix("wg").is_valid_int():
 			var wif := Game.add_wireguard(dev, int(want.trim_prefix("wg")))
 			if wif == null:
@@ -961,6 +1069,305 @@ class EOS extends Session:
 				"up" if up else "down", String(i.note.get("text", "")) if i.note is Dictionary else ""]
 		return out
 
+	# ---- MLAG the EOS way ----
+	func _mlag_cfg() -> Dictionary:
+		if not dev.services.has("mlag"):
+			dev.services["mlag"] = {"domain": "", "local_if": "", "peer_addr": "", "peer_link": ""}
+		return dev.services["mlag"]
+
+	func _mlag_set(key: String, r: Array) -> String:
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		_mlag_cfg()[key] = String(r[0])
+		return ""
+
+	func _mlag_peer_address(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
+			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+		_mlag_cfg()["peer_addr"] = String(r[0])
+		_mlag_resolve()
+		return ""
+
+	func _mlag_resolve() -> void:
+		## the peer is whoever answers at peer-address; it may not exist yet
+		var addr := String(dev.services.get("mlag", {}).get("peer_addr", ""))
+		if addr == "" or dev.mlag_peer != "":
+			return
+		var owner := Sim._ip_owner(addr)
+		if owner != null and owner != dev and owner.type == "switch":
+			_mlag_peer(owner.name)
+
+	func _mlag_peer_link_cfg(r: Array) -> String:
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		var want := String(r[0])
+		_mlag_cfg()["peer_link"] = want
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			var is_it := false
+			if want.begins_with("Port-Channel") or want.begins_with("Po"):
+				is_it = i.lag == int(want.lstrip("Port-Chanel"))
+			else:
+				is_it = _find_iface(want) == i
+			if is_it:
+				any = true
+				i.mlag_peerlink = true
+		if not any:
+			return "% Invalid input\n"
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_mlag_interfaces(_r: Array) -> String:
+		var peer := Sim.mlag_peer_of(dev)
+		var out := "                                                                 local/remote\n   mlag       desc          state       local       remote          status\n---------- ---------- ----------------- ----------- ------------ ------------\n"
+		for i: Net.Iface in dev.ifaces:
+			if i.mlag <= 0:
+				continue
+			var far := Sim.mlag_port(peer, i.mlag) if peer != null else null
+			var l_up := Game.link_at(i) != null and i.enabled
+			var r_up := far != null and Game.link_at(far) != null and far.enabled
+			out += "%10d %10s %17s %11s %12s %12s\n" % [i.mlag, "", "active-full" if l_up and r_up else ("active-partial" if l_up or r_up else "inactive"),
+				EOS._short(i.name), EOS._short(far.name) if far != null else "-", "%s/%s" % ["up" if l_up else "down", "up" if r_up else "down"]]
+		return out
+
+	# ---- VXLAN under interface Vxlan1 ----
+	func _vxlan_source_if(r: Array) -> String:
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		var src := _find_iface(String(r[0]))
+		if src == null:
+			return "% Invalid input\n"
+		_vtep()["src_if"] = src.name
+		_vtep()["src"] = String(src.ips[0]).split("/")[0] if not src.ips.is_empty() else ""
+		Game.topology_changed.emit()
+		return ""
+
+	func _vxlan_flood(r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var peers: Array = _vtep()["peers"]
+		for a in r:
+			if not String(a).is_valid_ip_address():
+				return "% Invalid input\n"
+			if String(a) not in peers:
+				peers.append(String(a))
+		Game.topology_changed.emit()
+		return ""
+
+	func _vxlan_no_flood(r: Array) -> String:
+		var peers: Array = _vtep()["peers"]
+		if r.is_empty():
+			peers.clear()
+		for a in r:
+			peers.erase(String(a))
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_vxlan_vtep(_r: Array) -> String:
+		var peers: Array = dev.vtep.get("peers", [])
+		var out := "Remote VTEPS for Vxlan1:\n\n"
+		for pe in peers:
+			out += "%s\n" % pe
+		return out + "\nTotal number of remote VTEPS:  %d\n" % peers.size()
+
+	func _show_vxlan_vni(_r: Array) -> String:
+		var out := "VNI to VLAN Mapping for Vxlan1\nVNI         VLAN       Source       Interface       802.1Q Tag\n----------- ---------- ------------ --------------- ----------\n"
+		var map: Dictionary = dev.vtep.get("map", {})
+		for v in map:
+			out += "%-11d %-10d %-12s %-15s %d\n" % [int(map[v]), int(v), "static", "Vxlan1", int(v)]
+		return out
+
+	func _show_vxlan_addr(_r: Array) -> String:
+		var out := "          Vxlan Mac Address Table\n----------------------------------------------------------------------\n\nVLAN  Mac Address     Type     Prt  VTEP             Moves   Last Move\n----  -----------     ----     ---  ----             -----   ---------\n"
+		for v2: int in dev.remote_macs:
+			for mac: String in dev.remote_macs[v2]:
+				out += "%4d  %-15s EVPN     Vx1  %-16s 1       0:00:%02d ago\n" % [v2, Net.mac_dotted(mac), dev.remote_macs[v2][mac], (Game.cycle * 3) % 60]
+		return out + "Total Remote Mac Addresses for this criterion: %d\n" % dev.remote_macs.values().reduce(func(a, m): return a + m.size(), 0)
+
+	# ---- BGP policy objects and views ----
+	func _cfg_prefix_list(r: Array) -> String:
+		## ip prefix-list NAME [seq N] permit|deny P/len [ge N] [le N]
+		if r.size() < 3:
+			return "% Incomplete command\n"
+		var name := String(r[0])
+		var k := 1
+		if String(r[k]) == "seq":
+			k += 2
+		if k + 1 >= r.size() or String(r[k]) not in ["permit", "deny"] or not Net.valid_cidr(String(r[k + 1])):
+			return "% Invalid input\n"
+		var lists: Dictionary = dev.services.get("prefix_lists", {})
+		if not lists.has(name):
+			lists[name] = []
+		if String(r[k]) == "permit" and String(r[k + 1]) not in lists[name]:
+			lists[name].append(String(r[k + 1]))
+		dev.services["prefix_lists"] = lists
+		return ""
+
+	func _show_prefix_lists(_r: Array) -> String:
+		var out := ""
+		var lists: Dictionary = dev.services.get("prefix_lists", {})
+		for name in lists:
+			out += "ip prefix-list %s\n" % name
+			var seq := 10
+			for pfx in lists[name]:
+				out += "   seq %d permit %s\n" % [seq, pfx]
+				seq += 10
+		return out
+
+	func _show_bgp_neighbors(_r: Array) -> String:
+		if dev.bgp.is_empty():
+			return ""
+		var out := ""
+		for nb in dev.bgp["neighbors"]:
+			var up := Sim.bgp_established(dev, nb)
+			out += "BGP neighbor is %s, remote AS %d, external link\n  BGP version 4, remote router ID %s, VRF default\n  BGP state is %s%s\n  Last state was %s\n" % [
+				nb["ip"], int(nb["remote_as"]), nb["ip"] if up else "0.0.0.0", "Established" if up else "Active",
+				(", up for 00:%02d:%02d" % [(Game.cycle * 3) % 60, (Game.cycle * 7) % 60]) if up else "", "OpenConfirm" if up else "Connect"]
+			if not nb.get("prefix_in", []).is_empty():
+				out += "  Inbound prefix list: %s\n" % ", ".join(PackedStringArray(nb["prefix_in"]))
+			if not nb.get("prefix_out", []).is_empty():
+				out += "  Outbound prefix list: %s\n" % ", ".join(PackedStringArray(nb["prefix_out"]))
+			if int(nb.get("local_pref", 100)) != 100:
+				out += "  Local preference applied inbound: %d\n" % int(nb["local_pref"])
+			if int(nb.get("prepend", 0)) > 0:
+				out += "  Outbound AS path prepend: %d\n" % int(nb["prepend"])
+			if bool(nb.get("rpki", false)):
+				out += "  RPKI origin validation: enabled\n"
+			out += "  Hold time is 180, keepalive interval is 60 seconds\n\n"
+		return out
+
+	func _checkpoint_save(r: Array) -> String:
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		Game.save_config_version(dev)
+		dev.versions[dev.versions.size() - 1]["name"] = String(r[0])
+		return ""
+
+	func _checkpoint_restore(r: Array) -> String:
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		for k in dev.versions.size():
+			if String(dev.versions[k].get("name", "")) == String(r[0]):
+				return _rollback([str(k + 1)]).replace("Rolled back to version %d." % (k + 1), "")
+		return "% Invalid input\n"
+
+	func _show_checkpoints(_r: Array) -> String:
+		var out := "Maximum number of checkpoints: 20\n\n Name                         Time\n ---------------------------- ------------------------\n"
+		for v in dev.versions:
+			if v.has("name"):
+				out += " %-28s cycle %d\n" % [v["name"], int(v["cycle"])]
+		return out
+
+	# ---- the EOS spellings of a few things IOS spells differently ----
+	func _aaa_login_default(r: Array) -> String:
+		## aaa authentication login default group radius [local]  |  ... default local
+		if r.size() >= 1 and String(r[0]) == "local":
+			dev.aaa = {}
+			Game.topology_changed.emit()
+			return ""
+		if r.size() >= 2 and String(r[0]) == "group" and String(r[1]) in ["radius", "tacacs+"]:
+			if dev.radius == "":
+				return "% Invalid input\n"
+			dev.aaa = {"server": dev.radius, "key": String(dev.services.get("radius_key", "")), "local": "local" in r}
+			Game.topology_changed.emit()
+			return ""
+		return "% Invalid input\n"
+
+	func _storm_level(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_float():
+			return "% Incomplete command\n"
+		return _storm([str(int(float(r[0]) * 10.0))])  # a percentage of the port, in this world's frames
+
+	func _if_proxy_arp(on: bool) -> String:
+		if not dev.ip_forwarding:
+			return "% Invalid input\n"
+		var proxied: Array = dev.services.get("proxy_arp_ifaces", [])
+		for i: Net.Iface in ctx_ifs:
+			proxied.erase(i.name)
+			if on:
+				proxied.append(i.name)
+		dev.services["proxy_arp_ifaces"] = proxied
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_username(r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var users: Dictionary = dev.services.get("users", {})
+		users[String(r[0])] = {"privilege": 15 if "privilege" in r else 1}
+		dev.services["users"] = users
+		return ""
+
+	func _show_inventory(_r: Array) -> String:
+		var label := String(Game.MODELS[dev.model]["label"])
+		return "System information\n  Model                     Description\n  ------------------------- ----------------------------------------------\n  %-25s %s\n\n  HW Version  Serial Number  Mfg Date\n  ----------- -------------- ----------\n  01.02       JPE%08d    2024-03-01\n\nSystem has %d power supply slots\n  Slot Model            Serial Number\n  ---- ---------------- ---------------\n  1    PWR-460AC-F      %s\n" % [
+			label, label, dev.name.hash() % 100000000, 1, "K%d" % (dev.name.hash() % 1000000)]
+
+	func _show_environment(_r: Array) -> String:
+		var watts := int(Game.MODELS[dev.model].get("watts", 100))
+		return "System temperature status is: Ok\n\n  Sensor  Description            Temperature  Alert  Critical  Max Temp\n  ------- ---------------------- ------------ ------ --------- --------\n  1       Board sensor           %.1fC        %dC    %dC       %.1fC\n\nPower                              Input   Output  Output\nSupply  Model            Capacity Current Current Power   Status\n------- ---------------- -------- ------- ------- ------- --------\n1       PWR-460AC-F      460W     %.2fA   %.2fA   %dW     Ok\n" % [
+			38.0 + (Game.cycle % 5), 55, 60, 45.0, watts / 230.0, watts / 12.0, watts]
+
+	func _show_lldp_detail(_r: Array) -> String:
+		var out := ""
+		for i: Net.Iface in dev.ifaces:
+			var peer := Game.effective_peer(i)
+			if peer == null or dev.services.has("lldp_off"):
+				continue
+			out += "Interface %s detected 1 LLDP neighbors:\n\n  Neighbor \"%s\"/%s, age %d seconds\n  Discovered %d:%02d:%02d ago; Last changed %d:%02d:%02d ago\n  - Chassis ID type: MAC address (4)\n    Chassis ID     : %s\n  - Port ID type: Interface name (5)\n    Port ID        : \"%s\"\n  - Time To Live: 120 seconds\n  - System Name: \"%s\"\n  - System Description: \"%s\"\n\n" % [
+				i.name, Net.mac_dotted(peer.dev.ifaces[0].mac), peer.name, (Game.cycle * 7) % 30, 0, (Game.cycle * 3) % 60, (Game.cycle * 17) % 60, 0, 0, (Game.cycle * 11) % 60,
+				Net.mac_dotted(peer.dev.ifaces[0].mac), peer.name, peer.dev.name, String(Game.MODELS.get(peer.dev.model, {}).get("label", peer.dev.model))]
+		return out
+
+	func _show_ip_route_vrf(r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var vrf := String(r[0])
+		if vrf not in dev.vrfs:
+			return "% Invalid input\n"
+		var out := "VRF: %s\nCodes: C - connected, S - static, O - OSPF, B - BGP\n\nGateway of last resort is not set\n\n" % vrf
+		for e in Sim.rib(dev):
+			if String(e["vrf"]) != vrf:
+				continue
+			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
+			if e["src"] == "C":
+				out += "%-7s%s is directly connected, %s\n" % [e["src"], pfx, EOS._short(e["iface"].name)]
+			else:
+				out += "%-7s%s [%d/%d] via %s, %s\n" % [e["src"], pfx, int(e["ad"]), 0, e["next_hop"], EOS._short(e["iface"].name)]
+		return out
+
+	func _show_run_interfaces(r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var want := _find_iface(String(r[0]) + (String(r[1]) if r.size() > 1 and String(r[1]).is_valid_int() else ""))
+		if want == null:
+			return "% Invalid input\n"
+		var out := ""
+		var keep := false
+		for line in _show_run([]).split("\n"):
+			if line.begins_with("interface "):
+				keep = line == "interface %s" % want.name
+			elif line.begins_with("!") or not line.begins_with(" "):
+				if keep:
+					out += "!\n"
+				keep = false
+			if keep:
+				out += line + "\n"
+		return out
+
+	func _show_run_section(r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var needle := " ".join(PackedStringArray(r))
+		var out := ""
+		var keep := false
+		for line in _show_run([]).split("\n"):
+			if not line.begins_with(" ") and not line.begins_with("!"):
+				keep = needle in line
+			if keep and line != "":
+				out += line + "\n"
+		return out
+
 	func _no_switchport(_r: Array) -> String:
 		## a routed port: the L3 switch treats it as a router interface
 		if dev.type != "switch":
@@ -1023,8 +1430,11 @@ class EOS extends Session:
 			return "")
 
 	func _cfg_radius(r: Array) -> String:
-		if r.size() != 1 or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
-			return "% Incomplete command\n"
+		## radius-server host <ip> [key <secret>]
+		if r.is_empty() or not (r[0].is_valid_ip_address() or Net.is_v6(r[0])):
+			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+		if r.size() >= 3 and String(r[1]) == "key":
+			dev.services["radius_key"] = String(r[2])
 		dev.radius = r[0]
 		Game.topology_changed.emit()
 		return ""
@@ -1102,20 +1512,39 @@ class EOS extends Session:
 		return ""
 
 	func _show_mlag(_r: Array) -> String:
-		if dev.mlag_peer == "":
-			return "MLAG is not configured\n"
+		var mc: Dictionary = dev.services.get("mlag", {})
 		var peer := Sim.mlag_peer_of(dev)
-		var out := "peer      : %s (%s)\n" % [dev.mlag_peer, "up" if peer != null else "down"]
 		var pl := Sim.mlag_peerlink(dev)
-		out += "peer-link : %s\n" % (EOS._short(pl.name) if pl != null else "none: the pair cannot stay in step")
-		out += "%-6s %-12s %s\n" % ["ID", "LOCAL", "PEER"]
+		var peer_addr := String(mc.get("peer_addr", ""))
+		if peer_addr == "" and peer != null:
+			peer_addr = CLI.first_ip_of(peer)
+		var configured := 0
+		var active_full := 0
+		var active_partial := 0
+		var inactive := 0
 		for i: Net.Iface in dev.ifaces:
 			if i.mlag <= 0:
 				continue
+			configured += 1
 			var far := Sim.mlag_port(peer, i.mlag) if peer != null else null
-			out += "%-6d %-12s %s\n" % [i.mlag, "%s %s" % [EOS._short(i.name),
-				"up" if Game.link_at(i) != null and i.enabled else "down"],
-				("%s %s" % [EOS._short(far.name), "up" if Game.link_at(far) != null and far.enabled else "down"]) if far != null else "missing"]
+			var l_up := Game.link_at(i) != null and i.enabled
+			var r_up := far != null and Game.link_at(far) != null and far.enabled
+			if l_up and r_up:
+				active_full += 1
+			elif l_up or r_up:
+				active_partial += 1
+			else:
+				inactive += 1
+		var out := "MLAG Configuration:\ndomain_id                          : %18s\nlocal-interface                    : %18s\npeer-address                       : %18s\npeer-link                          : %18s\npeer-config                        : %18s\n\n" % [
+			String(mc.get("domain", dev.mlag_peer if dev.mlag_peer != "" else "")), String(mc.get("local_if", "")), peer_addr,
+			String(mc.get("peer_link", ("Port-Channel%d" % pl.lag if pl.lag > 0 else pl.name) if pl != null else "")),
+			"consistent" if peer != null else "unknown"]
+		out += "MLAG Status:\nstate                              : %18s\nnegotiation status                 : %18s\npeer-link status                   : %18s\nlocal-int status                   : %18s\nsystem-id                          : %18s\ndual-primary detection             : %18s\n\n" % [
+			"Active" if peer != null and pl != null else ("Inactive" if peer != null else "Disabled"),
+			"Connected" if peer != null and pl != null else "Connecting", "Up" if pl != null else "Down",
+			"Up" if peer != null else "Down", dev.ifaces[0].mac.to_lower() if not dev.ifaces.is_empty() else "-", "Disabled"]
+		out += "MLAG Ports:\nDisabled                           : %18d\nConfigured                         : %18d\nInactive                           : %18d\nActive-partial                     : %18d\nActive-full                        : %18d\n" % [
+			0, configured - active_full - active_partial - inactive, inactive, active_partial, active_full]
 		return out
 
 	func _show_flows(_r: Array) -> String:
@@ -1295,6 +1724,15 @@ class EOS extends Session:
 		Game.topology_changed.emit()
 		return ""
 
+	func _sync_vtep_src() -> void:
+		## the VTEP address follows its source interface
+		var src_if := String(dev.vtep.get("src_if", ""))
+		if src_if == "":
+			return
+		for i: Net.Iface in dev.ifaces:
+			if i.name == src_if and not i.ips.is_empty():
+				dev.vtep["src"] = String(i.ips[0]).split("/")[0]
+
 	func _if_ip(r: Array) -> String:
 		if ctx_ifs.size() > 1:
 			return _range_only("an address")
@@ -1304,7 +1742,10 @@ class EOS extends Session:
 		r = CLI.fold_mask(r)
 		if r.size() != 1:
 			return "% Incomplete command\n"
-		return "" if Game.add_ip(ctx_if, r[0]) else "% invalid CIDR or duplicate\n"
+		if not Game.add_ip(ctx_if, r[0]):
+			return "% Invalid input\n"
+		_sync_vtep_src()
+		return ""
 
 	func _if_helper(r: Array) -> String:
 		if not dev.ip_forwarding:
@@ -2191,12 +2632,22 @@ class EOS extends Session:
 			nb["prepend"] = clampi(int(r[2]), 0, 10)  # longer path: how THEY reach us
 			Game.topology_changed.emit()
 			return ""
+		if r.size() == 4 and "prefix-list".begins_with(r[1]) and String(r[3]) in ["in", "out"]:
+			# EOS order: neighbor X prefix-list NAME in
+			var named: Dictionary = dev.services.get("prefix_lists", {})
+			if not named.has(String(r[2])):
+				return "% Invalid input\n"
+			nb["prefix_%s" % r[3]] = named[String(r[2])].duplicate()
+			nb["prefix_%s_name" % r[3]] = String(r[2])
+			Game.topology_changed.emit()
+			return ""
 		if r.size() == 4 and "prefix-list".begins_with(r[1]) and String(r[2]) in ["in", "out"]:
 			var list: Array = []
 			for part in String(r[3]).split(","):
 				if part.strip_edges() != "":
 					list.append(part.strip_edges())
 			nb["prefix_%s" % r[2]] = list
+			nb.erase("prefix_%s_name" % r[2])
 			Game.topology_changed.emit()
 			return ""
 		return "% Invalid input\n"
@@ -2245,40 +2696,12 @@ class EOS extends Session:
 			return ""
 		return "% Invalid input\n"
 
-	func _show_bgp_table(_r: Array) -> String:
-		## the table itself: every path, and which one the router picked
-		if dev.bgp.is_empty():
-			return "% BGP not running: 'router bgp <asn>' in config mode\n"
-		var out := "BGP routing table information for VRF default\nRouter identifier %s, local AS number %d\n" % [
-			CLI.first_ip_of(dev), int(dev.bgp["asn"])]
-		out += "Origin codes: i - IGP, e - EGP, ? - incomplete\n"
-		out += "    %-20s %-16s %-7s %-8s %-7s %s\n" % ["Network", "Next Hop", "Metric", "LocPref", "Weight", "Path"]
-		var installed := {}
-		for e in Sim.rib(dev):
-			if e["src"] == "B":
-				installed["%s/%d|%s" % [e["prefix"], int(e["plen"]), e["next_hop"]]] = true
-		var any := false
-		for net in dev.bgp.get("networks", []):
-			any = true
-			out += " *> %-20s %-16s %-7d %-8d %-7d %s\n" % [net, "0.0.0.0", 0, 100, 32768, "i"]
-		for rt in Sim._bgp_learned(dev):
-			any = true
-			var pfx := "%s/%d" % [rt["prefix"], int(rt["plen"])]
-			var path: Array = []
-			for k in 1 + int(rt.get("prepend", 0)):
-				path.append(str(int(rt.get("asn", 0))))
-			out += " %s %-20s %-16s %-7d %-8d %-7d %s i\n" % ["*>" if installed.has("%s|%s" % [pfx, rt["via"]]) else "* ",
-				pfx, rt["via"], 0, int(rt.get("pref", 100)), 0, " ".join(PackedStringArray(path))]
-		return out if any else out + "  (no prefixes: no session is established)\n"
-
 	func _show_bgp(_r: Array) -> String:
 		if dev.bgp.is_empty():
-			return "% BGP not running: 'router bgp <asn>' in config mode\n"
-		var out := "BGP summary information for VRF default\nRouter identifier %s, local AS number %d\n" % [
+			return ""
+		var out := "BGP summary information for VRF default\nRouter identifier %s, local AS number %d\nNeighbor Status Codes: m - Under maintenance\n" % [
 			CLI.first_ip_of(dev), int(dev.bgp["asn"])]
 		out += "  %-16s %-2s %-6s %-8s %-8s %-4s %-5s %-9s %-7s %s\n" % ["Neighbor", "V", "AS", "MsgRcvd", "MsgSent", "InQ", "OutQ", "Up/Down", "State", "PfxRcd"]
-		if dev.bgp["neighbors"].is_empty():
-			out += "  (no neighbors configured)\n"
 		for nb in dev.bgp["neighbors"]:
 			# Active: we are trying and the peer is on a wire we have; Idle: no
 			# such subnet, so the router is not even trying. A number in the
@@ -2294,26 +2717,34 @@ class EOS extends Session:
 			out += "  %-16s %-2d %-6d %-8d %-8d %-4d %-5d %-9s %-7s %s\n" % [nb["ip"], 4, int(nb["remote_as"]),
 				msgs, msgs + 1, 0, 0, ("00:%02d:%02d" % [(Game.cycle * 3) % 60, (Game.cycle * 7) % 60]) if up else "never",
 				st, str(received) if up else "0"]
-			var policy: Array = []
-			if int(nb.get("local_pref", 100)) != 100:
-				policy.append("local-pref %d" % int(nb["local_pref"]))
-			if int(nb.get("prepend", 0)) > 0:
-				policy.append("prepend x%d" % int(nb["prepend"]))
-			if not nb.get("prefix_in", []).is_empty():
-				policy.append("in: %s" % ",".join(PackedStringArray(nb["prefix_in"])))
-			if not nb.get("prefix_out", []).is_empty():
-				policy.append("out: %s" % ",".join(PackedStringArray(nb["prefix_out"])))
-			if bool(nb.get("rpki", false)):
-				policy.append("rpki validating")
-			if not policy.is_empty():
-				out += "                 policy: %s\n" % "   ".join(PackedStringArray(policy))
-		if not dev.bgp["networks"].is_empty():
-			out += "Announcing: %s\n" % ", ".join(PackedStringArray(dev.bgp["networks"]))
+		return out
+
+	func _show_bgp_table(_r: Array) -> String:
+		## the table itself: every path, which one the router picked, and the
+		## origin-validation code that tells a hijack from a legitimate path
+		if dev.bgp.is_empty():
+			return ""
+		var out := "BGP routing table information for VRF default\nRouter identifier %s, local AS number %d\n" % [
+			CLI.first_ip_of(dev), int(dev.bgp["asn"])]
+		out += "Route status codes: s - suppressed, * - valid, > - active, E - ECMP head, e - ECMP\n                    S - Stale, c - Contributing to ECMP, b - backup, L - labeled-unicast\n                    % - Pending BGP convergence\nOrigin codes: i - IGP, e - EGP, ? - incomplete\nRPKI Origin Validation codes: V - valid, I - invalid, U - unknown\nAS Path Attributes: Or-ID - Originator ID, C-LST - Cluster List, LL Nexthop - Link Local Nexthop\n\n"
+		out += "          %-22s %-21s %-7s %-10s %-7s %-7s %s\n" % ["Network", "Next Hop", "Metric", "AIGP", "LocPref", "Weight", "Path"]
+		var installed := {}
+		for e in Sim.rib(dev):
+			if e["src"] == "B":
+				installed["%s/%d|%s" % [e["prefix"], int(e["plen"]), e["next_hop"]]] = true
 		var roas: Array = dev.bgp.get("roa", [])
-		out += "Signed (ROA): %s\n" % (", ".join(PackedStringArray(roas)) if not roas.is_empty()
-			else "nothing: an unsigned prefix cannot be defended")
+		for net in dev.bgp.get("networks", []):
+			out += " * > %s    %-22s %-21s %-7s %-10s %-7s %-7d %s\n" % ["V" if net in roas else "U", net, "-", "-", "-", "-", 0, "i"]
+		for rt in Sim._bgp_learned(dev):
+			var pfx := "%s/%d" % [rt["prefix"], int(rt["plen"])]
+			var path: Array = []
+			for k in 1 + int(rt.get("prepend", 0)):
+				path.append(str(int(rt.get("asn", 0))))
+			out += " * %s %s    %-22s %-21s %-7s %-10s %-7d %-7d %s i\n" % [">" if installed.has("%s|%s" % [pfx, rt["via"]]) else " ",
+				"U", pfx, rt["via"], "-", "-", int(rt.get("pref", 100)), 0, " ".join(PackedStringArray(path))]
 		for h in Game.hijacks:
-			out += "HIJACK: %s/%d is being announced by %s\n" % [h["prefix"], int(h["plen"]), h["by"]]
+			# somebody else's announcement of a prefix: valid to BGP, invalid to RPKI
+			out += " *   I    %-22s %-21s %-7s %-10s %-7d %-7d %s i\n" % ["%s/%d" % [h["prefix"], int(h["plen"])], h["by"], "-", "-", 100, 0, "64666"]
 		return out
 
 	func _cfg_ssid(r: Array) -> String:
@@ -2851,7 +3282,7 @@ class EOS extends Session:
 		var n := 0
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.effective_peer(i)
-			if peer != null:
+			if peer != null and not dev.services.has("lldp_off"):
 				n += 1
 				# LLDP hears the device at the far end, not the panel in between
 				rows += "%-13s %-24s %-22s %d\n" % [EOS._short(i.name), peer.dev.name, peer.name, 120]
@@ -3181,6 +3612,18 @@ class EOS extends Session:
 			out += "!\n"
 		for vrf_name in dev.vrfs:
 			out += "vrf instance %s\n!\n" % vrf_name
+		for user in dev.services.get("users", {}):
+			out += "username %s privilege %d secret sha512 (hidden)\n" % [user, int(dev.services["users"][user].get("privilege", 1))]
+		if not dev.services.get("users", {}).is_empty():
+			out += "!\n"
+		var plists: Dictionary = dev.services.get("prefix_lists", {})
+		for pl_name in plists:
+			var seq := 10
+			for pfx in plists[pl_name]:
+				out += "ip prefix-list %s seq %d permit %s\n" % [pl_name, seq, pfx]
+				seq += 10
+		if not plists.is_empty():
+			out += "!\n"
 		var acl_names: Array = []
 		for rule in dev.acls:
 			var nm := String(rule.get("list", ""))
@@ -3206,7 +3649,8 @@ class EOS extends Session:
 				out += "   mtu %d\n" % i.mtu
 			if i.parent != "":
 				out += "   encapsulation dot1q vlan %d\n" % i.dot1q
-			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
+			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") \
+					and not i.name.begins_with("Vlan") and not i.name.begins_with("Loopback"):
 				out += "   no switchport\n"  # first: the address below depends on it
 			if i.mode == "trunk":
 				if i.untagged_vlan != 1:
@@ -3222,6 +3666,8 @@ class EOS extends Session:
 				out += "   switchport protected\n"
 			if i.lag > 0:
 				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
+			if i.mlag > 0:
+				out += "   mlag %d\n" % i.mlag
 			if i.vrf != "":
 				out += "   vrf %s\n" % i.vrf
 			for cidr in i.ips:
@@ -3265,11 +3711,41 @@ class EOS extends Session:
 			if i.dhcp_trusted:
 				out += "   ip dhcp snooping trust\n"
 			if i.dot1x:
-				out += "   dot1x\n"
+				out += "   dot1x pae authenticator\n   dot1x port-control auto\n"
 			if i.storm_limit > 0:
-				out += "   storm-control broadcast %d\n" % i.storm_limit
+				out += "   storm-control broadcast level %s\n" % (str(i.storm_limit / 10) if i.storm_limit % 10 == 0 else "%.1f" % (i.storm_limit / 10.0))
 			if i.duplex != "auto":
 				out += "   duplex %s\n" % i.duplex
+			out += "!\n"
+		if not dev.vtep.is_empty() and (dev.vtep.has("src_if") or not dev.vtep.get("map", {}).is_empty()):
+			out += "interface Vxlan1\n"
+			if String(dev.vtep.get("src_if", "")) != "":
+				out += "   vxlan source-interface %s\n" % dev.vtep["src_if"]
+			out += "   vxlan udp-port 4789\n"
+			for v in dev.vtep.get("map", {}):
+				out += "   vxlan vlan %d vni %d\n" % [int(v), int(dev.vtep["map"][v])]
+			if not dev.vtep.get("peers", []).is_empty():
+				out += "   vxlan flood vtep %s\n" % " ".join(PackedStringArray(dev.vtep["peers"]))
+			out += "!\n"
+		if dev.mlag_peer != "" or dev.services.has("mlag"):
+			var mc: Dictionary = dev.services.get("mlag", {})
+			out += "mlag configuration\n"
+			if String(mc.get("domain", "")) != "":
+				out += "   domain-id %s\n" % mc["domain"]
+			if String(mc.get("local_if", "")) != "":
+				out += "   local-interface %s\n" % mc["local_if"]
+			var peer_addr := String(mc.get("peer_addr", ""))
+			if peer_addr == "" and dev.mlag_peer != "":
+				for d in Game.all_devices():
+					if d.name == dev.mlag_peer:
+						peer_addr = CLI.first_ip_of(d)
+			if peer_addr != "" and peer_addr != "0.0.0.0":
+				out += "   peer-address %s\n" % peer_addr
+			var pl := Sim.mlag_peerlink(dev)
+			if String(mc.get("peer_link", "")) != "":
+				out += "   peer-link %s\n" % mc["peer_link"]
+			elif pl != null:
+				out += "   peer-link %s\n" % ("Port-Channel%d" % pl.lag if pl.lag > 0 else pl.name)
 			out += "!\n"
 		var static_vids := dev.mac_static.keys()
 		static_vids.sort()
@@ -3321,6 +3797,9 @@ class EOS extends Session:
 			out += "router bgp %d\n" % int(dev.bgp["asn"])
 			for nb in dev.bgp["neighbors"]:
 				out += "   neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
+				for dir in ["in", "out"]:
+					if nb.has("prefix_%s_name" % dir):
+						out += "   neighbor %s prefix-list %s %s\n" % [nb["ip"], nb["prefix_%s_name" % dir], dir]
 			for net in dev.bgp["networks"]:
 				out += "   network %s\n" % net
 			out += "!\n"

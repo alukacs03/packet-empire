@@ -40,49 +40,33 @@ static func probe() -> void:
 	var sw := Game.new_device("sw-24")
 	var sw2 := Game.new_device("sw-24")
 	var rt := Game.new_device("rtr-edge")
-	var rt2 := Game.new_device("rtr-edge")
 	rk.slots[0] = sw
 	rk.slots[1] = sw2
 	rk.slots[2] = rt
-	rk.slots[3] = rt2
-	Game.connect_ifaces(sw.ifaces[0], sw2.ifaces[0])
-	Game.connect_ifaces(sw.ifaces[1], sw2.ifaces[1])
-	Game.connect_ifaces(sw.ifaces[2], rt.ifaces[0])
-	Game.connect_ifaces(rt.ifaces[1], rt2.ifaces[1])
+	Game.connect_ifaces(sw.ifaces[7], sw2.ifaces[7])
+	Game.connect_ifaces(sw.ifaces[0], rt.ifaces[0])
 	var s := CLI.new_session(sw)
-	s.exec("enable")
-	s.exec("configure terminal")
-	s.exec("interface Ethernet1-2")
-	s.exec("channel-group 1 mode active")
-	s.exec("end")
 	var s2 := CLI.new_session(sw2)
-	s2.exec("enable")
-	s2.exec("configure terminal")
-	s2.exec("interface Ethernet1-2")
-	s2.exec("channel-group 1 mode active")
-	s2.exec("end")
-	for line in ["show lldp neighbors", "show spanning-tree", "show port-channel summary", "show version", "show ip interface brief",
-			"show interfaces counters", "show interfaces counters errors", "show interfaces transceiver", "show logging", "show clock", "show interfaces trunk"]:
-		print("%s %s\n%s" % [s.prompt(), line, s.exec(line)])
-	var r := CLI.new_session(rt)
-	var r2 := CLI.new_session(rt2)
-	for ses in [r, r2]:
+	for ses in [s, s2]:
 		ses.exec("enable")
 		ses.exec("configure terminal")
-	r.exec("interface Ethernet1")
-	r.exec("ip address 10.0.0.1/24")
-	r.exec("interface Ethernet2")
-	r.exec("ip address 10.9.0.1/30")
-	r.exec("router ospf 1")
-	r.exec("network 10.0.0.0/8 area 0")
-	r.exec("end")
-	r2.exec("interface Ethernet2")
-	r2.exec("ip address 10.9.0.2/30")
-	r2.exec("router ospf 1")
-	r2.exec("network 10.0.0.0/8 area 0")
-	r2.exec("end")
-	Game.topology_changed.emit()
-	for line in ["show ip ospf neighbor", "show ip ospf interface", "show ip route", "show ip route 10.0.0.5", "show ip interface brief"]:
+		ses.exec("vlan 4094")
+		ses.exec("interface Vlan4094")
+	s.exec("ip address 10.255.255.1/30")
+	s2.exec("ip address 10.255.255.2/30")
+	for line in ["exit", "vlan 50", "exit", "interface Ethernet8", "switchport mode trunk", "exit", "mlag configuration", "domain-id DC1", "local-interface Vlan4094", "peer-address 10.255.255.2", "peer-link Ethernet8", "exit",
+			"interface Ethernet1", "mlag 1", "exit", "interface Loopback1", "ip address 10.200.1.2/32", "exit", "interface Vxlan1", "vxlan source-interface Loopback1", "vxlan vlan 50 vni 5000", "vxlan flood vtep 10.200.2.2", "exit",
+			"dot1x system-auth-control", "interface Ethernet3", "dot1x pae authenticator", "dot1x port-control auto", "storm-control broadcast level 10", "exit", "username ops privilege 15 secret x", "banner motd Authorised access only",
+			"show mlag", "show mlag interfaces", "show vxlan vtep", "show vxlan vni", "show vxlan address-table", "show inventory", "show environment", "show users", "show running-config section mlag", "show running-config interfaces Ethernet1", "show running-config"]:
+		print("%s %s\n%s" % [s.prompt(), line, s.exec(line)])
+	s2.exec("exit")
+	s2.exec("mlag configuration")
+	s2.exec("peer-address 10.255.255.1")
+	s2.exec("end")
+	print("peer a: ", sw.mlag_peer, " peer b: ", sw2.mlag_peer)
+	var r := CLI.new_session(rt)
+	for line in ["enable", "configure terminal", "interface Ethernet1", "ip address 10.0.0.1/24", "exit", "ip prefix-list ONLYDEF seq 10 permit 0.0.0.0/0", "router bgp 65001", "neighbor 10.0.0.2 remote-as 64500", "neighbor 10.0.0.2 prefix-list ONLYDEF in", "network 10.30.0.0/24", "exit",
+			"show ip prefix-list", "show ip bgp summary", "show ip bgp", "show ip bgp neighbors", "configure checkpoint save before", "show configuration checkpoints", "show running-config section bgp", "show ntp status", "show hosts", "show ip route vrf nope"]:
 		print("%s %s\n%s" % [r.prompt(), line, r.exec(line)])
 
 static func _describe_widest(row: Control) -> String:
@@ -1366,7 +1350,7 @@ static func run() -> int:
 	check(es.exec("show ip bgp summary").contains("Estab") and es.exec("show ip bgp summary").contains("PfxRcd"),
 		"bgp: session establishes with the handoff, in the columns IOS people read")
 	var bgp_table := es.exec("show ip bgp")
-	check(bgp_table.contains("*> 0.0.0.0/0") and bgp_table.contains("Path"),
+	check(bgp_table.contains("* >") and bgp_table.contains("0.0.0.0/0") and bgp_table.contains("Path") and "RPKI Origin Validation codes" in bgp_table,
 		"bgp: show ip bgp lists the learned default with the best-path marker and an AS path")
 	check(Sim.ping(edge, "8.8.8.8")["ok"], "bgp: router reaches the internet via learned default")
 	check(not Sim.ping(web, "8.8.8.8")["ok"], "bgp: server fails until prefix announced (no return path)")
@@ -3389,7 +3373,7 @@ static func run() -> int:
 	check(pvs.exec("storm-control broadcast 1").is_empty(), "storm: a broadcast limit can be set")
 	pvs.exec("end")
 	check(pv_sw.ifaces[0].storm_limit == 1, "storm: the limit is stored")
-	check(pvs.exec("show run").contains("storm-control broadcast 1"), "storm: it renders in the config")
+	check(pvs.exec("show run").contains("storm-control broadcast level 0.1"), "storm: it renders in the config as an EOS level")
 
 	# --- anycast: the same address in two places ---
 	var any_rack := Game.add_rack(Vector2i(24, 1))
@@ -7143,8 +7127,9 @@ static func run() -> int:
 		"bgp: a permitted prefix is still accepted")
 	check(Sim.route_via(mh_edge, "8.8.8.8") == "100.71.0.1",
 		"bgp: the default route is filtered out and the other upstream carries it")
-	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
-		"bgp: show ip bgp reports the policy")
+	check(mh_cli.exec("show ip bgp neighbors").contains("Inbound prefix list: 203.0.113.0/24")
+			and "203.0.113.0/24" not in mh_cli.exec("show ip bgp summary"),
+		"bgp: show ip bgp neighbors reports the policy, the summary stays a summary")
 	# the two-transits contract: every policy in place, and the winner proved
 	check(not Game.try_complete_contract(_contract("two_transits")), "two transits: a prepend and a second prefix-list are still missing")
 	mh_cli.exec("configure terminal")
@@ -8050,8 +8035,8 @@ static func run() -> int:
 	check(not Game.hijack_on("203.0.113.9").is_empty(),
 		"rpki: an address inside a hijacked prefix is affected")
 	check(Game.hijack_on("8.8.8.8").is_empty(), "rpki: one outside it is not")
-	check(mh_cli.exec("show ip bgp summary").contains("HIJACK"),
-		"rpki: the session summary reports it")
+	check(mh_cli.exec("show ip bgp").contains(" *   I    203.0.113.0/24"),
+		"rpki: the table shows the hijacker's path with the invalid origin code")
 	Game.hijacks = []
 
 	# --- MTU, jumbo frames and the mismatch that only breaks big packets ---

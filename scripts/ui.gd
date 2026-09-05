@@ -6195,6 +6195,10 @@ func _cli_key(e: InputEvent) -> void:
 		cli_in.text = cli_history[cli_hist_idx]
 		cli_in.caret_column = cli_in.text.length()
 		return
+	if e is InputEventKey and e.pressed and e.keycode == KEY_Z and e.ctrl_pressed and cli_session != null:
+		cli_in.accept_event()
+		_cli_submit("end")  # Ctrl-Z: back to privileged exec, the way a real console does it
+		return
 	if e is InputEventKey and e.pressed and e.keycode == KEY_DOWN:
 		cli_in.accept_event()
 		cli_hist_idx = mini(cli_history.size(), cli_hist_idx + 1)
