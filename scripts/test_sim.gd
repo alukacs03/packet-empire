@@ -445,8 +445,12 @@ static func ui_smoke(world: Node2D) -> int:
 	ui._refresh_tutorial()
 	check(ui.tutorial_panel.visible, "ui: the checklist follows on to the next job")
 	ui.tutorial_hidden = true
+	ui._brief_hidden_for = ui._brief_key()
 	ui._refresh_tutorial()
 	check(not ui.tutorial_panel.visible, "ui: the checklist can be dismissed")
+	Game.contracts_done = ["rackup", "two_tenants"] if ui._brief_key() != "" else ["rackup"]
+	ui._refresh_tutorial()
+	check(not ui.tutorial_hidden or ui._brief_key() == ui._brief_hidden_for, "ui: a new job brings the dismissed checklist back")
 	ui.tutorial_hidden = false
 	Game.contracts_done = tut_done
 	ui._refresh_tutorial()

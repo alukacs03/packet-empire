@@ -10307,6 +10307,18 @@ func apply_blueprint(r: Net.Rack, b: Dictionary) -> String:
 	topology_changed.emit()
 	return ""
 
+func unique_name(base: String, among: Array) -> String:
+	## "switch standard", then "switch standard 2", "switch standard 3": nothing is overwritten
+	var taken := {}
+	for item in among:
+		taken[String(item.get("name", ""))] = true
+	if not taken.has(base):
+		return base
+	var n := 2
+	while taken.has("%s %d" % [base, n]):
+		n += 1
+	return "%s %d" % [base, n]
+
 func save_template(d: Net.NDevice, name: String) -> String:
 	name = name.strip_edges()
 	if name == "":

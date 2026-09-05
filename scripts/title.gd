@@ -204,6 +204,11 @@ func _clear_pane() -> void:
 	for c in panel_box.get_children():
 		c.queue_free()
 
+func _generated_company() -> String:
+	var towns := ["Buda", "Óbuda", "Szeged", "Pécs", "Győr", "Debrecen", "Csepel", "Kelenföld", "Zugló", "Sopron"]
+	var trades := ["Networks", "Hosting", "Colo", "Telecom", "Datacenter"]
+	return "%s %s" % [towns[randi() % towns.size()], trades[randi() % trades.size()]]
+
 func show_error(msg: String) -> void:
 	_clear_pane()
 	pane_title.text = "Something went wrong"
@@ -224,7 +229,7 @@ func show_intro() -> void:
 	panel_box.add_child(tips)
 	tips.add_child(_lbl("Worth knowing", 14, ACCENT))
 	for tip in ["F1 opens help at any time.", "Escape steps back out of anything.",
-			"The encyclopedia explains every concept the game uses.",
+			"The field manual (LEARN) explains every concept the game uses.",
 			"Nothing you do to a device is permanent until you save its configuration."]:
 		tips.add_child(_lbl("  •  " + tip, 13, MUTED))
 
@@ -239,7 +244,7 @@ func show_new_game(is_demo: bool) -> void:
 	pane_title.text = "Play the demo" if is_demo else "New game"
 	panel_box.add_child(_lbl("Company name", 13, MUTED))
 	var name_in := LineEdit.new()
-	name_in.text = "Packet Empire"
+	name_in.placeholder_text = "Your company (blank picks one for you)"
 	panel_box.add_child(name_in)
 
 	var diff := 1
@@ -290,7 +295,7 @@ func show_new_game(is_demo: bool) -> void:
 	UIW.style_button(go, "primary")
 	go.pressed.connect(func() -> void:
 		var slot := _free_slot()
-		start_requested.emit(slot, name_in.text.strip_edges(), 1 if is_demo else diff, is_demo))
+		start_requested.emit(slot, name_in.text.strip_edges() if name_in.text.strip_edges() != "" else _generated_company(), 1 if is_demo else diff, is_demo))
 	panel_box.add_child(go)
 	panel_box.add_child(_para("A new game takes the first free slot. If all three are full it overwrites the oldest, so rename or clear a slot first if you care about it."))
 

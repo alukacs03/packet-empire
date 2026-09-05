@@ -29,7 +29,7 @@ const CATALOG := {
 	"title.load": {"en": "Load game", "hu": "Játék betöltése"},
 	"title.load.sub": {"en": "Pick a save slot", "hu": "Válassz mentési helyet"},
 	"title.settings": {"en": "Settings", "hu": "Beállítások"},
-	"title.settings.sub": {"en": "Scale, speed, colour", "hu": "Méret, sebesség, szín"},
+	"title.settings.sub": {"en": "Scale, sound, colour, language", "hu": "Méret, hang, szín, nyelv"},
 	"title.quit": {"en": "Quit", "hu": "Kilépés"},
 	"settings.fullscreen": {"en": "Fullscreen", "hu": "Teljes képernyő"},
 	"settings.sound": {"en": "Sound", "hu": "Hang"},
@@ -72,8 +72,8 @@ const CATALOG := {
 		"hu": "Egy kölcsönkapott ketrec. Kétes kábelezés. Pénz pontosan egy rakra. Csinálj ebből az elfeledett sarokból olyan hálózatot, amire számítani lehet."},
 	"welcome.module1.title": {"en": "READ THE ROOM", "hu": "OLVASD A TERMET"},
 	"welcome.module1.body": {
-		"en": "Drag to pan. Scroll to zoom. Every cable and blinking port is part of the simulation.",
-		"hu": "Húzással mozgatsz, görgetéssel nagyítasz. Minden kábel és villogó port a szimuláció része."},
+		"en": "Right-drag to pan. Scroll to zoom. Every cable and blinking port is part of the simulation.",
+		"hu": "Jobb gombbal húzva mozgatsz, görgetéssel nagyítasz. Minden kábel és villogó port a szimuláció része."},
 	"welcome.module2.title": {"en": "BUILD FOR REAL", "hu": "ÉPÍTS IGAZÁN"},
 	"welcome.module2.body": {
 		"en": "Place a rack, install hardware, then wire ports. Cheap PacketTik gear speaks RouterOS.",
@@ -86,8 +86,8 @@ const CATALOG := {
 		"en": "The live brief stays on the right. It gives you the next objective without solving the network for you.",
 		"hu": "Az élő feladatleírás jobb oldalt marad. Megadja a következő célt, de nem oldja meg helyetted a hálózatot."},
 	"welcome.start": {
-		"en": "CLOCK IN  ·  OPEN FIRST CONTRACT",
-		"hu": "MŰSZAK KEZDÉSE  ·  ELSŐ SZERZŐDÉS"},
+		"en": "CLOCK IN  ·  OPEN THE FIRST JOB",
+		"hu": "MŰSZAK KEZDÉSE  ·  AZ ELSŐ MUNKA"},
 	"contract.rackup.title": {
 		"en": "Rack and stack",
 		"hu": "Beépítés és bekábelezés"},
@@ -98,8 +98,8 @@ const CATALOG := {
 		"en": "Press R, click a floor tile to place the rack, then click the rack to open it. Buy from the slot menu: one switch, two servers. Then click a server's port and choose Run cable, and click the switch port you want it in.",
 		"hu": "Nyomd meg az R-t, kattints egy padlócsempére a rak elhelyezéséhez, majd kattints a rakra a megnyitásához. A férőhely-menüből vegyél egy switchet és két szervert. Ezután kattints a szerver portjára, válaszd a Kábel húzása lehetőséget, és kattints arra a switchportra, amelyikbe akarod."},
 	"contract.rackup.brief": {
-		"en": "Welcome to your corner of the colo floor! Buy a rack (toolbar or R, click a floor tile), open it and install one switch and two servers, then cable both servers to the switch (click a server port, then 'Run cable…').",
-		"hu": "Üdv a kolokáció saját sarkodban! Vegyél egy rakot (eszköztár vagy R, majd kattints egy padlócsempére), nyisd ki, építs bele egy switchet és két szervert, végül kösd mindkét szervert a switchre (kattints a szerver portjára, majd a „Kábel húzása…” lehetőségre)."},
+		"en": "Welcome to your corner of the colo floor! Buy a rack (BUILD or R, click a floor tile), open it and install one switch and two servers, then cable both servers to the switch (click a server port, then 'Run cable…').",
+		"hu": "Üdv a kolokáció saját sarkodban! Vegyél egy rakot (ÉPÍTÉS vagy R, majd kattints egy padlócsempére), nyisd ki, építs bele egy switchet és két szervert, végül kösd mindkét szervert a switchre (kattints a szerver portjára, majd a „Kábel húzása…” lehetőségre)."},
 	"event.outage.raised": {
 		"en": "FIRST OUTAGE: {customer} is unreachable. A known-safe access port tripped; acknowledge the alert and diagnose from evidence.",
 		"hu": "ELSŐ ÜZEMZAVAR: {customer} nem érhető el. Egy biztonságosan visszaállítható hozzáférési port esett ki; vedd át az incidenst, és a bizonyítékokból diagnosztizálj."},

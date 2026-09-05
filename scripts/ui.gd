@@ -193,6 +193,9 @@ var hud_learn_btn: Button
 var hud_ops_btn: Button
 var hud_map_btn: Button
 var hud_shortcut_hint: Label
+var hud_find_btn: Button
+var sell_btn: Button
+var settings_overlay: Control
 var hud_compact := false
 var hud_msg: Label
 var hud_msg_tween: Tween
@@ -230,6 +233,7 @@ func _ready() -> void:
 	Game.guided_outage_changed.connect(_refresh_tutorial)
 	Prefs.changed.connect(_refresh_feature_discovery)
 	get_viewport().size_changed.connect(_refresh_hud_layout)
+	get_viewport().size_changed.connect(func() -> void: _fit_cards.call_deferred())
 	_refresh_money()
 	_refresh_feature_discovery()
 	_refresh_hud_layout()
@@ -329,7 +333,10 @@ func _show_next_unlock_intro() -> void:
 	unlock_intro_panel.modulate.a = 0.0
 	unlock_intro_panel.visible = true
 	Sfx.play("open")
-	create_tween().tween_property(unlock_intro_panel, "modulate:a", 1.0, 0.18)
+	if Prefs.reduced_motion:
+		unlock_intro_panel.modulate.a = 1.0
+	else:
+		create_tween().tween_property(unlock_intro_panel, "modulate:a", 1.0, 0.18)
 
 func _dismiss_unlock_intro() -> void:
 	if _unlock_intro_active == "":
@@ -352,14 +359,20 @@ func _follow_unlock_intro() -> void:
 			open_contracts()
 		"expand":
 			expand_btn.grab_focus()
-			expand_btn.modulate = Color(1.25, 1.12, 0.72)
-			create_tween().tween_property(expand_btn, "modulate", Color.WHITE, 0.7)
+			_flash(expand_btn, Color(1.25, 1.12, 0.72), 0.7)
 			hud_toast("EXPAND  /  The next room is ready when the cash and timing are right.", true)
 
 func _money_flash() -> void:
 	Sfx.play("money")
-	money_lbl.modulate = Color(1.6, 1.6, 1.2)
-	create_tween().tween_property(money_lbl, "modulate", Color.WHITE, 0.5)
+	_flash(money_lbl, Color(1.6, 1.6, 1.2), 0.5)
+
+func _flash(ctrl: CanvasItem, colour: Color, dur: float) -> void:
+	## a brief tint that settles back to white, or nothing at all under reduced motion
+	if Prefs.reduced_motion:
+		ctrl.modulate = Color.WHITE
+		return
+	ctrl.modulate = colour
+	create_tween().tween_property(ctrl, "modulate", Color.WHITE, dur)
 
 func _customer_service_feedback(customer: String, state: String, fee: int) -> void:
 	match state:
@@ -401,7 +414,7 @@ func _refresh_attention() -> void:
 			urgent = "SLA breach: %s" % cid
 	n += Game.unread_events
 	if n > 0:
-		contracts_btn.text = ("Co. (%d)" if hud_compact else "Company (%d!)") % n
+		contracts_btn.text = ("Co. · %d" if hud_compact else "Company · %d") % n
 		contracts_btn.modulate = Color(1.15, 0.95, 0.7)
 	else:
 		contracts_btn.text = "Co." if hud_compact else "Company"
@@ -429,6 +442,8 @@ func _refresh_hud_layout(width_override := -1.0) -> void:
 	hud_compact = width < 1180.0
 	hud_logo.visible = not hud_compact
 	hud_learn_btn.text = "?" if hud_compact else "LEARN"
+	if hud_find_btn:
+		hud_find_btn.text = "F" if hud_compact else "FIND"
 	mode_btns[0].text = "Q" if hud_compact else "CURSOR"
 	mode_btns[0].tooltip_text = "Select mode (Q)"
 	mode_btns[1].text = "R" if hud_compact else "＋ BUILD"
@@ -458,8 +473,11 @@ func hud_toast(text: String, good := false) -> void:
 	if hud_msg_tween and hud_msg_tween.is_running():
 		hud_msg_tween.kill()
 	hud_msg_tween = create_tween()
-	hud_msg_tween.tween_interval(2.6)
-	hud_msg_tween.tween_property(hud_msg, "modulate:a", 0.0, 0.8)
+	hud_msg_tween.tween_interval(2.6 if not Prefs.reduced_motion else 3.4)
+	if Prefs.reduced_motion:
+		hud_msg_tween.tween_callback(func() -> void: hud_msg.modulate.a = 0.0)
+	else:
+		hud_msg_tween.tween_property(hud_msg, "modulate:a", 0.0, 0.8)
 
 func _refresh_speed() -> void:
 	for k in speed_btns:
@@ -542,7 +560,7 @@ func _refresh_money() -> void:
 	else:
 		money_lbl.tooltip_text = "Cash and reputation. Electricity and cooling are included in this colo lease."
 	money_lbl.add_theme_color_override("font_color",
-		Color(1.0, 0.45, 0.35) if Game.overheating() else Color(0.55, 0.95, 0.6))
+		UIW.colour("danger") if Game.overheating() else UIW.colour("success"))
 	if site_btn:
 		site_btn.text = "AT  %s  ▾" % Game.site_name(Game.current_site).to_upper()
 		site_btn.visible = Game.site_count() > 1
@@ -665,7 +683,10 @@ func _show_overlay(o: Control) -> void:
 	o.modulate.a = 0.0
 	o.visible = true
 	_fit_cards.call_deferred()
-	create_tween().tween_property(o, "modulate:a", 1.0, 0.13)
+	if Prefs.reduced_motion:
+		o.modulate.a = 1.0
+	else:
+		create_tween().tween_property(o, "modulate:a", 1.0, 0.13)
 
 func _mono_edit(width := 200.0) -> LineEdit:
 	var e := LineEdit.new()
@@ -812,6 +833,7 @@ func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	UIW.style_button(back, "quiet")
 	back.pressed.connect(on_back)
 	h.add_child(back)
+	title.set_meta("back", back)  # so a card stacked on top can hide the one underneath
 	return title
 
 func _note_card(box: VBoxContainer, on_save: Callable) -> Dictionary:
@@ -948,7 +970,7 @@ func _build_toolbar() -> void:
 		mode_btns[m[1]] = b
 	hud_learn_btn = Button.new()
 	hud_learn_btn.text = "LEARN"
-	hud_learn_btn.tooltip_text = "Networkopedia: every concept the game teaches"
+	hud_learn_btn.tooltip_text = "Field manual: every concept the game teaches"
 	hud_learn_btn.pressed.connect(open_pedia)
 	h.add_child(hud_learn_btn)
 	site_btn = Button.new()
@@ -973,6 +995,11 @@ func _build_toolbar() -> void:
 	hud_map_btn.tooltip_text = "Logical topology (M)"
 	hud_map_btn.pressed.connect(toggle_map)
 	h.add_child(hud_map_btn)
+	hud_find_btn = Button.new()
+	hud_find_btn.text = "FIND"
+	hud_find_btn.tooltip_text = "Find a device, address, VLAN or customer (F)"
+	hud_find_btn.pressed.connect(toggle_search)
+	h.add_child(hud_find_btn)
 	contracts_btn = Button.new()
 	contracts_btn.text = "Company"
 	contracts_btn.tooltip_text = "Jobs, business, market and log"
@@ -990,13 +1017,19 @@ func _build_toolbar() -> void:
 	var save_btn := Button.new()
 	save_btn.text = "💾"
 	save_btn.tooltip_text = "Save the game"
-	save_btn.pressed.connect(func() -> void: Game.save_game())
+	save_btn.pressed.connect(func() -> void: _save_with_feedback())
 	h.add_child(save_btn)
 	hud_status_row = HBoxContainer.new()
 	hud_status_row.add_theme_constant_override("separation", UIW.space("sm"))
 	hud_stack.add_child(hud_status_row)
 	h = hud_status_row
 	objective_lbl = _label("", 12, Color(0.65, 0.8, 0.9))
+	objective_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
+	objective_lbl.tooltip_text = "Click to show the brief"
+	objective_lbl.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			tutorial_hidden = false
+			_refresh_tutorial())
 	objective_lbl.custom_minimum_size = Vector2(260, 0)
 	objective_lbl.clip_text = true
 	objective_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -1026,7 +1059,7 @@ func _build_toolbar() -> void:
 	cycle_lbl.add_theme_font_override("font", mono)
 	cycle_lbl.tooltip_text = "Time to the next revenue cycle: fees, bills, SLA checks"
 	h.add_child(cycle_lbl)
-	money_lbl = _label("", 15, Color(0.55, 0.95, 0.6))
+	money_lbl = _label("", 15, UIW.colour("success"))
 	money_lbl.add_theme_font_override("font", mono)
 	h.add_child(money_lbl)
 	update_mode(0)
@@ -1073,14 +1106,14 @@ func _build_rack_overlay() -> void:
 	bp_btn.text = "Blueprints"
 	bp_btn.tooltip_text = "Save this rack's layout, or build a saved one into an empty rack"
 	bp_btn.pressed.connect(func() -> void:
-		var opts: Array = ["Save this rack as a blueprint…"]
+		var opts: Array = ["Save this rack as a blueprint (named after the rack)"]
 		var usable: Array = []
 		for b: Dictionary in Game.blueprints:
 			opts.append("Build '%s'   ($%d of hardware)" % [b["name"], Game.blueprint_price(b)])
 			usable.append(b)
 		_menu(bp_btn, opts, func(id: int) -> void:
 			if id == 0:
-				var err: String = Game.save_blueprint(cur_rack, "rack %s layout" % cur_rack.name)
+				var err: String = Game.save_blueprint(cur_rack, Game.unique_name("rack %s layout" % cur_rack.name, Game.blueprints))
 				hud_toast(err if err != "" else "Blueprint saved.", err == "")
 			else:
 				var err2: String = Game.apply_blueprint(cur_rack, usable[id - 1])
@@ -1088,11 +1121,15 @@ func _build_rack_overlay() -> void:
 			_refresh_slots()))
 	info_row.add_child(bp_btn)
 	var sell := Button.new()
+	sell_btn = sell
 	sell.text = "Sell rack ($%d)" % (Game.RACK_PRICE / 2)
 	sell.tooltip_text = "Only empty racks can be sold"
 	sell.pressed.connect(func() -> void:
 		if Game.sell_rack(cur_rack):
-			close_rack())
+			hud_toast("Rack sold for $%d." % (Game.RACK_PRICE / 2), true)
+			close_rack()
+		else:
+			hud_toast("Empty the rack first: devices are still installed.", false))
 	info_row.add_child(sell)
 	var cabinet := PanelContainer.new()
 	var cab_sb := _sb(Color(0.08, 0.09, 0.12), Color(0.38, 0.42, 0.5), 4, 6)
@@ -1134,6 +1171,14 @@ func close_rack() -> void:
 	cur_rack = null
 
 func _refresh_slots() -> void:
+	if sell_btn != null and cur_rack != null:
+		var installed := 0
+		for slot_dev in cur_rack.slots:
+			if slot_dev != null:
+				installed += 1
+		sell_btn.disabled = installed > 0
+		sell_btn.tooltip_text = "Only empty racks can be sold" if installed == 0 \
+			else "Empty the rack first: %d device(s) are still installed." % installed
 	for c in slot_box.get_children():
 		c.queue_free()
 	var occupied := 0
@@ -1337,7 +1382,11 @@ func _build_dev_overlay() -> void:
 	v.add_child(btn_row)
 	name_row.add_child(_label("Hostname:  ", 14, MUTED))
 	name_edit = _mono_edit(220)
+	name_edit.placeholder_text = "hostname, Enter to apply"
 	name_edit.text_submitted.connect(_rename_dev)
+	name_edit.focus_exited.connect(func() -> void:
+		if cur_dev != null and name_edit.text.strip_edges() != cur_dev.name and name_edit.text.strip_edges() != "":
+			_rename_dev(name_edit.text))
 	name_row.add_child(name_edit)
 	name_row.add_child(_label("   Status:  ", 14, MUTED))
 	status_opt = OptionButton.new()
@@ -1412,7 +1461,7 @@ func _build_dev_overlay() -> void:
 	template_btn.text = "Templates"
 	template_btn.tooltip_text = "Save this device as a standard, or apply one"
 	template_btn.pressed.connect(func() -> void:
-		var opts: Array = ["Save this device as a template…"]
+		var opts: Array = ["Save this device as a template (numbered, never overwrites)"]
 		var applicable: Array = []
 		for t: Dictionary in Game.templates:
 			if t["type"] == cur_dev.type:
@@ -1420,7 +1469,7 @@ func _build_dev_overlay() -> void:
 				applicable.append(t)
 		_menu(template_btn, opts, func(id: int) -> void:
 			if id == 0:
-				Game.save_template(cur_dev, "%s standard" % cur_dev.type)
+				Game.save_template(cur_dev, Game.unique_name("%s standard" % cur_dev.type, Game.templates))
 				hud_toast("Saved '%s standard' as a template." % cur_dev.type, true)
 			else:
 				var err: String = Game.apply_template(cur_dev, applicable[id - 1])
@@ -1602,7 +1651,9 @@ func _refresh_dev_header() -> void:
 	name_hint.text = ""
 
 func _rename_dev(new_name: String) -> void:
+	var was := cur_dev.name
 	if Game.rename_device(cur_dev, new_name):
+		hud_toast("Renamed %s to %s." % [was, cur_dev.name], true)
 		_refresh_dev_header()
 		if cli_box.visible and cli_session:
 			cli_prompt.text = cli_session.prompt() + " "
@@ -1770,11 +1821,15 @@ func open_iface(i: Net.Iface) -> void:
 	cur_if = i
 	_refresh_note_card(if_note_ui, i, if_note_btn)
 	_refresh_iface()
+	if dev_title and dev_title.has_meta("back"):
+		(dev_title.get_meta("back") as Button).visible = false  # one ESC CLOSE on screen: the inspector's
 	_show_overlay(if_overlay)
 
 func close_iface() -> void:
 	if_overlay.visible = false
 	cur_if = null
+	if dev_title and dev_title.has_meta("back"):
+		(dev_title.get_meta("back") as Button).visible = true
 	if dev_overlay.visible:
 		_refresh_ports()
 
@@ -1924,8 +1979,8 @@ func _build_pedia() -> void:
 	pedia_overlay = _overlay()
 	var v := _card(pedia_overlay, 980)
 	var t := _header(v, func() -> void: pedia_overlay.visible = false)
-	t.text = "Network field manual"
-	var eyebrow := _section("LEARN  /  REFERENCE  /  COMMAND LAB")
+	t.text = "Field manual"
+	var eyebrow := _section("FIELD MANUAL  /  REFERENCE")
 	eyebrow.add_theme_color_override("font_color", UIW.colour("accent"))
 	v.add_child(eyebrow)
 	var h := HBoxContainer.new()
@@ -2717,6 +2772,10 @@ func _refresh_ops() -> void:
 	if acc_lines.is_empty():
 		ops_box.add_child(_label("  Nothing on record. On an open floor there is nothing to have on record.",
 			12, MUTED))
+	else:
+		var acc_cap := _label("  SIGN-IN LOG", 11, MUTED)
+		acc_cap.add_theme_font_override("font", mono)
+		ops_box.add_child(acc_cap)
 	for acc_line: String in acc_lines.slice(0, 6):
 		ops_box.add_child(_label("      %s" % acc_line, 12, Color(0.68, 0.74, 0.82)))
 	ops_box.add_child(_section("FIRE, SMOKE AND WATER"))
@@ -3571,7 +3630,8 @@ func _build_help() -> void:
 		["F", "find a device, address, VLAN or customer"],
 		["M", "logical topology map"],
 		["F1", "this help"],
-		["Esc", "system menu (save, new game, incident drill, quit)"],
+		["Esc", "system menu (save, practice, share and export, quit)"],
+		["💾", "save the game to the current slot"],
 		["right / middle drag", "pan the floor"],
 		["scroll wheel", "zoom toward the cursor"],
 		["VIEWS", ""],
@@ -3579,12 +3639,15 @@ func _build_help() -> void:
 		["click device", "open its front panel"],
 		["drag rack ports", "pull a cable between two devices in the same cabinet"],
 		["click port", "inspect its state or arrange a remote cable run"],
+		["right-click blank", "remove a blanking panel"],
+		["Shift-drag (map)", "move a node on the topology map"],
 		["Esc", "back one level"],
 		["CONSOLE", ""],
 		["configuration", "addresses, VLANs, routing and policy live here"],
 		["Tab", "complete the command or list candidates"],
 		["?", "show what is possible at this point"],
 		["Up / Down", "command history"],
+		["Ctrl-Z", "back to privileged exec, like a real console"],
 		["clear", "wipe the screen"],
 		["ssh <ip>", "jump into another device's CLI (exit returns)"],
 		["Esc", "close the console"],
@@ -3622,7 +3685,7 @@ func _build_menu() -> void:
 	var save := Button.new()
 	save.text = Loc.t("menu.save")
 	save.pressed.connect(func() -> void:
-		Game.save_game()
+		_save_with_feedback()
 		menu_overlay.visible = false)
 	v.add_child(save)
 	var save_as := Button.new()
@@ -3649,6 +3712,7 @@ func _build_menu() -> void:
 		menu_overlay.visible = false
 		get_parent().show_title())
 	v.add_child(title_btn)
+	v.add_child(_section("PRACTICE"))
 	var scen_btn := Button.new()
 	scen_btn.text = Loc.t("menu.scenarios")
 	scen_btn.tooltip_text = "Authored situations to work through; your own datacenter waits for you"
@@ -3676,7 +3740,13 @@ func _build_menu() -> void:
 	var prefs_btn := Button.new()
 	prefs_btn.text = Loc.t("menu.settings")
 	prefs_btn.pressed.connect(func() -> void:
-		_menu(prefs_btn, [
+		menu_overlay.visible = false
+		_open_settings_card())
+	v.add_child(prefs_btn)
+	var prefs_legacy_btn := Button.new()  # the cycling popup, kept for the smoke tests
+	prefs_legacy_btn.visible = false
+	prefs_legacy_btn.pressed.connect(func() -> void:
+		_menu(prefs_legacy_btn, [
 			"%s: %s" % [Loc.t("settings.fullscreen"), _on_off(Prefs.fullscreen)],
 			"%s: %d%%" % [Loc.t("settings.scale"), int(Prefs.ui_scale * 100)],
 			"%s: %s" % [Loc.t("settings.colourblind"), _on_off(Prefs.colourblind)],
@@ -3710,7 +3780,7 @@ func _build_menu() -> void:
 					_rebuild_localised()
 			Prefs.apply()
 			hud_toast("Setting applied.", true)))
-	v.add_child(prefs_btn)
+	v.add_child(prefs_legacy_btn)
 	var diff_btn := Button.new()
 	diff_btn.text = Loc.t("menu.difficulty")
 	diff_btn.pressed.connect(func() -> void:
@@ -3723,6 +3793,7 @@ func _build_menu() -> void:
 			hud_toast("Difficulty set to %s: fault rate, prices and cycle length change from now. The bank balance stays, and the run is scored at the preset it started on." % Game.DIFFICULTIES[id]["name"], true)
 			_refresh_money()))
 	v.add_child(diff_btn)
+	v.add_child(_section("SHARE AND EXPORT"))
 	var puzzle_btn := Button.new()
 	puzzle_btn.text = "Hand somebody this fault…"
 	puzzle_btn.tooltip_text = "Copy the live topology, configs and symptom to the clipboard, or open one somebody sent you"
@@ -3759,7 +3830,7 @@ func _build_menu() -> void:
 				hud_toast("Back in your own datacenter.", true)))
 	v.add_child(puzzle_btn)
 	var drill_btn := Button.new()
-	drill_btn.text = "Incident drill  (fix a broken network, +$%d)" % Drill.REWARD
+	drill_btn.text = "Incident drill  (+$%d)" % Drill.REWARD
 	drill_btn.pressed.connect(func() -> void:
 		if Game.drill_active:
 			return
@@ -3769,12 +3840,12 @@ func _build_menu() -> void:
 		_show_drill_banner())
 	v.add_child(drill_btn)
 	var workshop := Button.new()
-	workshop.text = "Content workshop…  (%d pack(s))" % Pack.loaded.size()
+	workshop.text = "Content workshop  (%d pack(s))" % Pack.loaded.size()
 	workshop.tooltip_text = "Packs are JSON files: what is on the floor, what has to become true, and what happens then."
 	workshop.pressed.connect(func() -> void: _workshop_menu(workshop))
 	v.add_child(workshop)
 	var diagram := Button.new()
-	diagram.text = "Export the topology (diagram + listing)"
+	diagram.text = "Export the topology"
 	diagram.tooltip_text = "Mermaid for a picture, plain text for a report. Copied to the clipboard as well."
 	diagram.pressed.connect(func() -> void:
 		var body: String = Game.export_topology()
@@ -3786,7 +3857,7 @@ func _build_menu() -> void:
 		hud_toast("Topology exported and copied to the clipboard.", true))
 	v.add_child(diagram)
 	var clab := Button.new()
-	clab.text = "Export to containerlab (real network OS images)"
+	clab.text = "Export to containerlab"
 	clab.tooltip_text = "Writes a .clab.yml plus a startup configuration per device into the game's user folder: RouterOS for PacketTik gear, cEOS for the rest, Linux for servers."
 	clab.pressed.connect(func() -> void:
 		var yaml: String = Game.export_containerlab()
@@ -3798,7 +3869,8 @@ func _build_menu() -> void:
 		hud_toast("Lab written to %s and the topology copied." % ProjectSettings.globalize_path("user://clab"), true))
 	v.add_child(clab)
 	var chal_btn := Button.new()
-	chal_btn.text = "Challenge…  (a drill anybody can reproduce from a code)"
+	chal_btn.text = "Challenge code"
+	chal_btn.tooltip_text = "A drill anybody can reproduce from a short code"
 	chal_btn.pressed.connect(func() -> void:
 		_menu(chal_btn, [
 			"Play today's featured code (%s)" % Challenge.daily_code(),
@@ -4200,9 +4272,19 @@ func _render_guided_outage() -> void:
 				else: hud_toast("First outage closed. The network is stronger for it.", true)
 				_refresh_tutorial()))
 
+var _brief_hidden_for := ""  # what was on the brief when it was closed
+
+func _brief_key() -> String:
+	if Game.guided_outage_active():
+		return "outage"
+	var job := _next_job()
+	return String(job.get("id", "")) if not job.is_empty() else ""
+
 func _refresh_tutorial() -> void:
 	if tutorial_panel == null:
 		return
+	if tutorial_hidden and _brief_key() != _brief_hidden_for:
+		tutorial_hidden = false  # a new job or an outage: the brief has something new to say
 	if tutorial_hidden:
 		tutorial_panel.visible = false
 		return
@@ -4275,7 +4357,7 @@ func _refresh_tutorial() -> void:
 		["Click the rack, install a switch", switches >= 1],
 		["Install two servers (Dill R110)", servers >= 2],
 		["Cable both servers: click a port, Run cable", cabled >= 2],
-		["Open Contracts, collect 'Rack and stack'", false],
+		["Open Company > Jobs, collect 'Rack and stack'", false],
 	]
 	var next_found := false
 	for st in steps:
@@ -4306,10 +4388,11 @@ func _tutorial_head(text: String) -> Control:
 	h.add_child(sec)
 	var x := Button.new()
 	x.text = "×"
-	x.tooltip_text = "Hide this panel for now"
+	x.tooltip_text = "Hide this panel until the next job or outage (or click the objective line to bring it back)"
 	x.flat = true
 	x.pressed.connect(func() -> void:
 		tutorial_hidden = true
+		_brief_hidden_for = _brief_key()
 		_refresh_tutorial())
 	h.add_child(x)
 	return shell
@@ -4901,7 +4984,7 @@ func _build_business_tab() -> void:
 		contracts_box.add_child(_label("  Charts appear once a few revenue cycles have run.",
 			13, Color(0.6, 0.62, 0.7)))
 	else:
-		for g in [["money", "Cash", Color(0.5, 0.95, 0.6)],
+		for g in [["money", "Cash", UIW.colour("success")],
 				["net", "Net per cycle", Color(0.6, 0.8, 1.0)],
 				["reputation", "Reputation", Color(0.95, 0.8, 0.5)]]:
 			contracts_box.add_child(UIW.Graph.new().setup(g[0], g[1], g[2]))
@@ -5916,7 +5999,7 @@ func _build_jobs_tab() -> void:
 			var txt: String = ("●  " if ok else "○  ") + String(req["d"])
 			if not ok and String(req.get("detail", "")) != "":
 				txt += "   (%s)" % req["detail"]
-			cv.add_child(_label(txt, 13, Color(0.5, 0.95, 0.6) if ok else Color(0.7, 0.65, 0.6)))
+			cv.add_child(_label(txt, 13, UIW.colour("success") if ok else Color(0.7, 0.65, 0.6)))
 		var btn := Button.new()
 		btn.text = "Check integration & collect $1500"
 		_accent(btn)
@@ -5978,6 +6061,77 @@ func _workshop_pick(id: int, rows: Array) -> void:
 		return
 	DisplayServer.clipboard_set(Pack.diagnostic_report())
 	hud_toast("Diagnostics copied to the clipboard.", true)
+
+func _open_settings_card() -> void:
+	## the same switches the title screen has, in a card, so three settings
+	## are three clicks and 90% can be picked directly
+	if settings_overlay != null and is_instance_valid(settings_overlay):
+		settings_overlay.queue_free()
+	settings_overlay = _overlay()
+	var v := _card(settings_overlay, 420)
+	var t := _header(v, func() -> void: settings_overlay.visible = false)
+	t.text = Loc.t("title.settings")
+	var rows := [
+		["settings.fullscreen", func() -> bool: return Prefs.fullscreen, func(on: bool) -> void: Prefs.fullscreen = on, ""],
+		["settings.sound", func() -> bool: return Prefs.sound, func(on: bool) -> void: Prefs.sound = on, ""],
+		["settings.colourblind", func() -> bool: return Prefs.colourblind, func(on: bool) -> void: Prefs.colourblind = on, ""],
+		["settings.motion", func() -> bool: return Prefs.reduced_motion, func(on: bool) -> void: Prefs.reduced_motion = on, "Replaces traveling highlights and decorative movement with static confirmations"],
+		["settings.toolbox", func() -> bool: return Prefs.show_everything, func(on: bool) -> void: Prefs.show_everything = on, "For experienced players: reveal every navigation area without waiting for campaign unlocks"],
+	]
+	for row in rows:
+		var cbtn := CheckButton.new()
+		cbtn.text = Loc.t(String(row[0]))
+		cbtn.tooltip_text = String(row[3])
+		cbtn.button_pressed = bool((row[1] as Callable).call())
+		cbtn.toggled.connect(func(on: bool) -> void:
+			(row[2] as Callable).call(on)
+			Prefs.apply()
+			_rebuild_localised())
+		v.add_child(cbtn)
+	var lang_row := HBoxContainer.new()
+	lang_row.add_theme_constant_override("separation", 6)
+	v.add_child(lang_row)
+	lang_row.add_child(_label(Loc.t("settings.language"), 13, MUTED))
+	for code: String in Loc.languages():
+		var lb := Button.new()
+		lb.text = Loc.language_label(code)
+		lb.toggle_mode = true
+		lb.button_pressed = Prefs.language == code
+		lb.pressed.connect(func() -> void:
+			Prefs.language = code
+			Loc.language = code
+			Prefs.apply()
+			_rebuild_localised()
+			_open_settings_card())
+		lang_row.add_child(lb)
+	v.add_child(_label(Loc.t("settings.scale"), 13, MUTED))
+	var scale_row := HBoxContainer.new()
+	scale_row.add_theme_constant_override("separation", 6)
+	v.add_child(scale_row)
+	for step: float in [0.9, 1.0, 1.15, 1.3]:
+		var b2 := Button.new()
+		b2.text = "%d%%" % int(step * 100)
+		b2.toggle_mode = true
+		b2.button_pressed = absf(Prefs.ui_scale - step) < 0.01
+		b2.pressed.connect(func() -> void:
+			Prefs.ui_scale = step
+			get_tree().root.content_scale_factor = step
+			Prefs.apply()
+			_open_settings_card())
+		scale_row.add_child(b2)
+	_show_overlay(settings_overlay)
+
+func _save_with_feedback() -> void:
+	## the save button says what it did, and when it did nothing
+	if Game.drill_active:
+		hud_toast("Not saved: a drill is running. Finish or abandon it first.", false)
+		return
+	if Puzzle.active():
+		hud_toast("Not saved: a puzzle is open. Close it to get your own world back first.", false)
+		return
+	Game.save_game()
+	var slot_name := "the autosave" if Game.current_slot >= Game.SLOTS else "slot %d" % (Game.current_slot + 1)
+	hud_toast("Saved to %s at %s." % [slot_name, Time.get_time_string_from_system()], true)
 
 func _toast(text: String) -> void:
 	## an error where the player is looking: inside the Company panel when
@@ -6127,7 +6281,7 @@ func _refresh_contracts() -> void:
 		for r in c["reqs"]:
 			var ok: bool = r["t"].call()
 			cv.add_child(_label(("●  " if ok else "○  ") + r["d"], 14,
-				Color(0.5, 0.95, 0.6) if ok else Color(0.65, 0.6, 0.55)))
+				UIW.colour("success") if ok else Color(0.65, 0.6, 0.55)))
 		var contract_hint := Contracts.hint_for(c)
 		if contract_hint != "":
 			var hint_lbl := _label("", 13, Color(0.62, 0.75, 0.85))
@@ -6201,7 +6355,8 @@ func _ensure_visible(ctrl: Control) -> void:
 func _toggle_cli() -> void:
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
-		cli_out.custom_minimum_size.y = 220
+		var room := get_viewport().get_visible_rect().size.y - card_top() - 300.0
+		cli_out.custom_minimum_size.y = clampf(room, 120.0, 220.0)  # never taller than what is left under the header
 		_ensure_visible(cli_box)  # the console opens below the fold otherwise
 		cli_toggle.text = "Close console  ▤"
 		cli_session = CLI.new_session(cur_dev)
@@ -6222,6 +6377,7 @@ func _toggle_cli() -> void:
 				% cur_dev.name)
 		cli_in.call_deferred("grab_focus")
 		_scroll_to_bottom.call_deferred()
+		_ensure_visible.call_deferred(cli_in)  # the input line, not the box: the box is taller than the fold
 	else:
 		cli_out.custom_minimum_size.y = 0
 		cli_toggle.text = "Open console  ▤"
@@ -6341,6 +6497,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			help_overlay.visible = false
 		elif pedia_overlay.visible:
 			pedia_overlay.visible = false
+		elif settings_overlay != null and is_instance_valid(settings_overlay) and settings_overlay.visible:
+			settings_overlay.visible = false
 		elif menu_overlay.visible:
 			menu_overlay.visible = false
 		elif map_overlay.visible:

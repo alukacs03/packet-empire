@@ -31,6 +31,11 @@ const TYPE_SCALE := {"caption": 11, "small": 12, "body": 14, "body_large": 15,
 const RADII := {"sm": 4, "md": 7, "lg": 11}
 
 static func colour(token: String) -> Color:
+	## the status pair follows the colourblind setting everywhere it is used
+	if token == "success":
+		return Prefs.ok_colour()
+	if token == "danger":
+		return Prefs.bad_colour()
 	return COLORS.get(token, COLORS["text"])
 
 static func space(token: String) -> int:
@@ -634,7 +639,7 @@ class TopoMap extends Control:
 			Color(UIW.colour("border"), 0.75), 1.0)
 		var ly := size.y - 24
 		draw_string(_mono, Vector2(30, ly),
-			"─ HOST LINK     ━ TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE",
+			"─ HOST LINK     ━ TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE     outline: type   fill: vendor",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
 		draw_string(_mono, Vector2(30, ly - 16),
 			"SHIFT-DRAG BETWEEN TWO DEVICES TO RUN A CABLE",
