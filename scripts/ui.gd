@@ -3702,8 +3702,8 @@ func _build_menu() -> void:
 			var d: Dictionary = Game.DIFFICULTIES[i]
 			opts.append("%s%s: %s" % ["▸ " if i == Game.difficulty else "   ", d["name"], d["blurb"]])
 		_menu(diff_btn, opts, func(id: int) -> void:
-			Game.apply_difficulty(id)
-			hud_toast("Difficulty set to %s. Starting cash reset." % Game.DIFFICULTIES[id]["name"], true)
+			Game.apply_difficulty(id, false)
+			hud_toast("Difficulty set to %s: fault rate, prices and cycle length change from now. The bank balance stays, and the run is scored at the preset it started on." % Game.DIFFICULTIES[id]["name"], true)
 			_refresh_money()))
 	v.add_child(diff_btn)
 	var puzzle_btn := Button.new()

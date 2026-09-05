@@ -66,9 +66,11 @@ static func anyone_on_shift() -> bool:
 	return false
 
 static func market_rate(member: Dictionary) -> int:
-	## what this person could get elsewhere, which is what they compare against
+	## what this person believes they are worth, which is what they compare
+	## against: the figure they asked for when hired, so hiring at the ask is
+	## never "underpaid"; older records without an ask fall back to the role table
 	var base: int = int(ROLES[member["role"]]["base"])
-	var rate := int(base * (0.7 + 0.18 * int(member["skill"])))
+	var rate := int(member.get("ask", int(base * (0.7 + 0.18 * int(member["skill"])))))
 	return int(rate * float(SHIFTS[shift_of(member)]["premium"]))
 
 static func set_shift(member: Dictionary, shift: String) -> String:

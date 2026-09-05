@@ -6664,6 +6664,17 @@ static func run() -> int:
 	check(Game.fault_scale() > 1.0, "difficulty: on-call breaks things more often")
 	Game.apply_difficulty(1)
 	Game.money = money_pre
+	var mid_run_cash := Game.money
+	var run_diff_before := Game.run_difficulty
+	Game.apply_difficulty(0, false)
+	check(Game.money == mid_run_cash and Game.run_difficulty == run_diff_before,
+		"difficulty: a mid-run change never touches the bank balance or the preset the run is scored on")
+	Game.set_speed(2)
+	check(is_equal_approx(Game.cycle_timer.wait_time, float(Game.DIFFICULTIES[0]["cycle"]) / 2.0),
+		"difficulty: the cycle length follows the preset through a speed change")
+	Game.set_speed(1)
+	Game.apply_difficulty(1, false)
+	Game.money = money_pre
 	check(Prefs.ok_colour() != Prefs.bad_colour(), "prefs: status colours differ")
 	Prefs.colourblind = true
 	var cb_ok := Prefs.ok_colour()
@@ -6904,15 +6915,37 @@ static func run() -> int:
 		"params": {"ip": "10.222.0.10"}, "fee": 200, "load": 100, "brief": "",
 		"sla": 2, "cycles": 0, "up_cycles": 0, "healthy": false}
 	Game.deals.append(sla_deal)
+	var sla_before: int = int(Game.pl_totals.get("SLA penalties", 0))
 	for i in 5:  # never delivered: the strict tier bites
 		Game.sla_tick()
-	check(Game.last_pl.has("SLA penalties"), "sla: a missed service level is charged back")
+	check(int(Game.pl_totals.get("SLA penalties", 0)) < sla_before, "sla: a missed service level is charged back")
 	var penalised := false
 	for ev in Game.events:
 		if "SLA PENALTY" in ev:
 			penalised = true
 	check(penalised, "sla: the penalty is explained in the log")
 	check(Market.tier(2)["pay"] > Market.tier(0)["pay"], "sla: a strict tier pays more up front")
+	# one bad cycle is one service credit, not a charge every cycle for a month
+	Game.deals = []
+	var one_bad := {"id": "sla2", "customer": "Fair Zrt", "kind": "hosting",
+		"params": {"ip": "10.222.0.11"}, "fee": 200, "load": 100, "brief": "",
+		"sla": 2, "cycles": 0, "up_cycles": 0, "healthy": true, "recent": "111111111110"}
+	Game.deals.append(one_bad)
+	var charges := 0
+	for i in 6:
+		one_bad["healthy"] = true
+		one_bad["recent"] = one_bad["recent"].substr(1) + "1"
+		one_bad["cycles"] += 1
+		one_bad["up_cycles"] += 1
+		var sla2 := Market.tier(2)
+		if Game.sla_uptime(one_bad) < float(sla2["uptime"]) and not bool(one_bad.get("penalised", false)):
+			charges += 1
+			one_bad["penalised"] = true
+		elif Game.sla_uptime(one_bad) >= float(sla2["uptime"]):
+			one_bad["penalised"] = false
+	check(charges <= 1, "sla: a single bad cycle is charged once, then the window recovers")
+	var windowed := {"recent": "000000111111", "up_cycles": 1, "cycles": 100}
+	check(is_equal_approx(Game.sla_uptime(windowed), 0.5), "sla: uptime is judged over the last %d cycles, not the deal's life" % Game.SLA_WINDOW)
 	Game.deals = []
 
 	# --- staff ---
@@ -7029,7 +7062,7 @@ static func run() -> int:
 	Game.toggle_pause()
 	check(Game.speed == 1, "speed: unpausing returns to normal")
 	Game.set_speed(3)
-	check(is_equal_approx(Game.cycle_timer.wait_time, Game.SLA_PERIOD / 3.0),
+	check(is_equal_approx(Game.cycle_timer.wait_time, Game.cycle_period() / 3.0),
 		"speed: faster speed shortens the cycle")
 	Game.set_speed(9)
 	check(Game.speed == 3, "speed: the multiplier is clamped")
@@ -7766,6 +7799,10 @@ static func run() -> int:
 	check(Staff.on_shift(st_a), "staff: moving them to nights covers those hours")
 	check(int(st_a["salary"]) >= Staff.market_rate(st_a),
 		"staff: and nights are paid at the night rate")
+	var at_ask := Staff.make_candidate(RandomNumberGenerator.new(), {})
+	at_ask["ask"] = 100
+	at_ask["salary"] = 100
+	check(Staff.market_rate(at_ask) <= 100, "staff: someone hired at their own asking price is never underpaid")
 	Staff.set_shift(st_a, "day")
 	Game.cycle = 3
 	# morale: a quiet cycle helps, a bad one hurts, underpaying hurts more

@@ -802,13 +802,20 @@ func _scale_rival_aggression() -> void:
 func price_scale() -> float:
 	return float(DIFFICULTIES[difficulty].get("prices", 1.0))
 
-func apply_difficulty(idx: int) -> void:
+var run_difficulty := -1  # the preset the run started on, which is what the finale scores
+
+func apply_difficulty(idx: int, new_run := true) -> void:
+	## new_run: hand out the preset's starting cash and rescale the rivals.
+	## A mid-run change only moves the fault rate, prices and cycle length:
+	## the bank balance is never a menu option.
 	difficulty = clampi(idx, 0, DIFFICULTIES.size() - 1)
 	var d: Dictionary = DIFFICULTIES[difficulty]
-	money = int(d["cash"])
+	if new_run:
+		money = int(d["cash"])
+		run_difficulty = difficulty
+		_scale_rival_aggression()
 	if cycle_timer:
 		cycle_timer.wait_time = float(d["cycle"]) / maxf(1.0, float(speed))
-	_scale_rival_aggression()
 	money_changed.emit()
 
 func fault_scale() -> float:
@@ -5250,7 +5257,7 @@ func finale_snapshot(ending: String) -> Dictionary:
 		if String(control_state(String(c["id"]))["status"]) == "compliant":
 			controls_passing += 1
 	return {"ending": ending, "cycle": cycle, "company": company_name,
-		"identity": identity_label(), "difficulty": DIFFICULTIES[difficulty]["name"],
+		"identity": identity_label(), "difficulty": DIFFICULTIES[run_difficulty if run_difficulty >= 0 else difficulty]["name"],
 		"earned": int(stats.get("earned", 0)), "money": money, "reputation": reputation,
 		"references": references.size(), "deals": deals.size(),
 		"contracts": int(stats.get("contracts", 0)), "sites": site_count(),
@@ -6226,7 +6233,11 @@ func check_contract_mastery(cid: String) -> String:
 func dismiss_contract_debrief() -> void:
 	active_contract_debrief = {}
 
-const SLA_PERIOD := 45.0  # seconds per billing cycle
+const SLA_PERIOD := 45.0  # seconds per billing cycle on the middle preset
+
+func cycle_period() -> float:
+	## seconds per cycle for the preset in force, before the speed multiplier
+	return float(DIFFICULTIES[clampi(difficulty, 0, DIFFICULTIES.size() - 1)].get("cycle", SLA_PERIOD))
 
 var sla_status := {}  # contract id -> bool (last billing check passed)
 var last_link_load := {}  # Link -> Mbps, from the latest cycle
@@ -6253,7 +6264,7 @@ func set_speed(v: int) -> void:
 	if cycle_timer:
 		cycle_timer.paused = speed == 0
 		if speed > 0:
-			cycle_timer.wait_time = SLA_PERIOD / float(speed)
+			cycle_timer.wait_time = cycle_period() / float(speed)
 			if cycle_timer.is_stopped():
 				cycle_timer.start()
 	speed_changed.emit()
@@ -6274,7 +6285,7 @@ func _ready() -> void:
 	Pack.load_all()  # authored content, if anybody has written any
 	topology_changed.connect(Sim.prune_learned_state)
 	cycle_timer = Timer.new()
-	cycle_timer.wait_time = SLA_PERIOD
+	cycle_timer.wait_time = cycle_period()
 	cycle_timer.autostart = true
 	cycle_timer.timeout.connect(sla_tick)
 	add_child(cycle_timer)
@@ -8946,6 +8957,15 @@ func autosave_due() -> void:
 		return
 	save_game(SLOTS)
 
+const SLA_WINDOW := 12  # a quarter of cycles: the period a service level is measured over
+
+func sla_uptime(deal: Dictionary) -> float:
+	## uptime over the measurement window (the deal's whole life until it is that old)
+	var recent := String(deal.get("recent", ""))
+	if recent == "":
+		return float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1)))
+	return float(recent.count("1")) / float(recent.length())
+
 func sla_tick() -> void:
 	## Completed contracts pay recurring service fees: but only while
 	## their requirements still hold. Break the network, lose the revenue.
@@ -9058,17 +9078,22 @@ func sla_tick() -> void:
 			var fee: int = int(c["reward"]) / 10
 			raise_invoice({"customer": String(c["customer"]), "id": "contract:%s" % c["id"],
 				"ctype": "startup" if String(c["customer"]) == "Internal ops" else "enterprise"}, fee)
-	for d in all_devices():  # transit invoices
+	for d in all_devices():  # transit invoices: the carrier bills a port, your own routers do not
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
 				Skills.observe("bgp_peering")
+				var peer := Sim._ip_owner(String(nb.get("ip", "")))
+				if peer == null or peer.type != "uplink":
+					continue
 				last_pl["transit ports"] = int(last_pl.get("transit ports", 0)) - TRANSIT_FEE
 				last_business["transit"] = int(last_business.get("transit", 0)) + TRANSIT_FEE
 				earned -= TRANSIT_FEE
-	if overheating():
-		# heat kills, and it kills where the heat is: the hottest cabinet loses
-		# a device first, which is what makes CRAC placement a decision
-		var hot := hottest_rack(0)
+	for hot_site in site_count():
+		if not overheating(hot_site):
+			continue
+		# heat kills, and it kills where the heat is: the hottest cabinet on
+		# that site loses a device first, which is what makes CRAC placement a decision
+		var hot := hottest_rack(hot_site)
 		var tripped := false
 		if hot != null:
 			for d in hot.slots:
@@ -9081,7 +9106,7 @@ func sla_tick() -> void:
 					break
 		if not tripped:
 			for d in all_devices():
-				if d.status == "active" and d.type != "cooling":
+				if d.status == "active" and d.type != "cooling" and site_of_device(d) == hot_site:
 					d.status = "offline"
 					topology_changed.emit()
 					break
@@ -9212,19 +9237,24 @@ func sla_tick() -> void:
 		# only counts against uptime if the service was actually delivered
 		if not in_maintenance() or deal["healthy"]:
 			deal["cycles"] = int(deal.get("cycles", 0)) + 1
+			# the service level is judged over the last quarter, not the deal's
+			# whole life: one bad night is paid for once, not for thirty cycles
+			deal["recent"] = (String(deal.get("recent", "")) + ("1" if deal["healthy"] else "0")).right(SLA_WINDOW)
 		if deal["healthy"]:
 			customer_growth(deal)
 			deal["up_cycles"] = int(deal.get("up_cycles", 0)) + 1
 		var sla := Market.tier(int(deal.get("sla", 0)))
-		var uptime := float(deal.get("up_cycles", 0)) / maxf(1.0, float(deal.get("cycles", 1)))
+		var uptime := sla_uptime(deal)
 		if float(sla["uptime"]) > 0.0 and int(deal["cycles"]) >= 4 and uptime < float(sla["uptime"]):
-			var penalty := int(float(deal["fee"]) * float(sla["penalty"]))
-			last_pl["SLA penalties"] = int(last_pl.get("SLA penalties", 0)) - penalty
-			earned -= penalty
-			reputation = maxi(0, reputation - 3)
 			if not bool(deal.get("penalised", false)):
-				log_event("SLA PENALTY: %s is at %d%% uptime against a %s contract: $%d charged back."
-					% [deal["customer"], int(uptime * 100), sla["label"], penalty])
+				# one service credit per breach: charged when the window drops
+				# below the tier, again only after it has recovered and dropped again
+				var penalty := int(float(deal["fee"]) * float(sla["penalty"]))
+				last_pl["SLA penalties"] = int(last_pl.get("SLA penalties", 0)) - penalty
+				earned -= penalty
+				reputation = maxi(0, reputation - 3)
+				log_event("SLA PENALTY: %s is at %d%% uptime over the last %d cycles against a %s contract: $%d service credit."
+					% [deal["customer"], int(uptime * 100), SLA_WINDOW, sla["label"], penalty])
 				record_incident("sla", "%s missed their %s service level" % [deal["customer"], sla["label"]])
 			deal["penalised"] = true
 		else:
@@ -10103,7 +10133,7 @@ func _serialize() -> Dictionary:
 		"quarter_depreciation": quarter_depreciation,
 		"invoices": invoices,
 		"reputation": reputation, "debt": debt, "stats": stats, "rivals": rivals,
-		"difficulty": difficulty, "achievements": achievements,
+		"difficulty": difficulty, "run_difficulty": run_difficulty, "achievements": achievements,
 		"market_intel": market_intel, "nemesis": nemesis, "nemesis_reason": nemesis_reason, "staff": staff, "candidates": candidates,
 		"monitors": monitors, "history": history, "templates": templates, "reports": reports,
 		"attacks": attacks, "scrubbing": scrubbing, "insured": insured, "marketing": marketing,
@@ -10485,6 +10515,9 @@ func _apply(data: Dictionary) -> void:
 	customer_outage_active = bool(data.get("customer_outage_active", false))
 	reputation = int(data.get("reputation", 50))
 	difficulty = int(data.get("difficulty", 1))
+	run_difficulty = int(data.get("run_difficulty", -1))
+	if cycle_timer:
+		cycle_timer.wait_time = cycle_period() / maxf(1.0, float(speed))
 	achievements = data.get("achievements", [])
 	acquisitions = data.get("acquisitions", [])
 	circuits = data.get("circuits", [])
