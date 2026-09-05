@@ -184,7 +184,7 @@ class RejectOverlay extends Node2D:
 		if elapsed < 0.0:
 			return
 		elapsed += dt
-		if elapsed >= 0.62:
+		if elapsed >= 1.4:
 			elapsed = -1.0
 			reason = ""
 		queue_redraw()
@@ -192,7 +192,7 @@ class RejectOverlay extends Node2D:
 	func _draw() -> void:
 		if elapsed < 0.0:
 			return
-		var p := clampf(elapsed / 0.62, 0.0, 1.0)
+		var p := clampf(elapsed / 1.4, 0.0, 1.0)
 		var fade := 1.0 - p
 		var pulse := 1.0 if Prefs.reduced_motion else 0.72 + 0.28 * sin(p * PI * 3.0)
 		var danger := Color(Prefs.bad_colour(), fade * pulse)
@@ -204,9 +204,15 @@ class RejectOverlay extends Node2D:
 		draw_polyline(points + PackedVector2Array([points[0]]), danger, 2.5)
 		draw_line(center + Vector2(-7, -4), center + Vector2(7, 4), danger, 2.0)
 		draw_line(center + Vector2(7, -4), center + Vector2(-7, 4), danger, 2.0)
-		if elapsed < 0.42:
-			draw_string(UIW.mono_font(), center + Vector2(14, -10), reason,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, danger)
+		# the reason is the useful part: a readable plate that outlasts the flash
+		var font := UIW.mono_font()
+		var size := 13
+		var width := font.get_string_size(reason, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		var plate := Rect2(center + Vector2(-width / 2.0 - 8, -Iso.TILE_H / 2.0 - 30), Vector2(width + 16, 22))
+		draw_rect(plate, Color(0.03, 0.05, 0.09, fade * 0.92))
+		draw_rect(plate, Color(danger, fade), false, 1.0)
+		draw_string(font, plate.position + Vector2(8, 16), reason, HORIZONTAL_ALIGNMENT_LEFT, -1, size,
+			Color(Prefs.bad_colour(), fade))
 
 func _draw_room_atmosphere(grid: Vector2i) -> void:
 	## The facility is a character. Early stages are a rented, warm, slightly

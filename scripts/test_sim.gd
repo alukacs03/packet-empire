@@ -3222,6 +3222,7 @@ static func run() -> int:
 	check(Sim.ping(wg_a, "172.20.2.10")["ok"], "wg: it comes back with the path")
 	check(Game.try_complete_contract(_contract("wireguard_link")), "wg: the contract verifies")
 	check(Market.check("site_vpn", {"ip": "172.20.2.10"}), "market: the encrypted-link kind sells the tunnel again")
+	check(Game._achievement_met("tunnelled"), "achievements: a WireGuard handshake is one")
 
 	# --- geography and latency ---
 	check(Game.site_city(0) != "", "geo: every site sits in a city")
@@ -6203,6 +6204,7 @@ static func run() -> int:
 	Game.lb_health_check()
 	check(Sim.ping(lb_client, "10.190.0.100")["ok"], "lb: the pool recovers when servers come back")
 	check(Game.try_complete_contract(_contract("always_on")), "lb: the always-on contract verifies")
+	check(Game._achievement_met("balanced"), "achievements: a two-member pool is one")
 	check(Market.check("balanced", {"vip": "10.190.0.100"}) and not Market.check("balanced", {"vip": "10.190.0.101"}),
 		"market: the load-balanced kind needs that virtual address with a two-member pool")
 	var done_before_mk := Game.contracts_done.duplicate()
@@ -8518,6 +8520,7 @@ static func run() -> int:
 	Sim.ping(ov_a, "192.168.70.11")
 	check(Game.try_complete_contract(ov),
 		"overlay lab: underlay, one VNI across two leaves, an unmapped neighbour and EVPN learning")
+	check(Game._achievement_met("overlaid"), "achievements: VXLAN with EVPN is one")
 	check(Market.check("overlay_segment", {"vni": 7000}) and not Market.check("overlay_segment", {"vni": 7001}),
 		"market: the overlay kind is verified by the VNI actually carried on two leaves")
 

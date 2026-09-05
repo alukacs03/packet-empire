@@ -15,6 +15,7 @@ var eyebrow_lbl: Label
 var tagline_lbl: Label
 var esc_lbl: Label
 var footer_lbl: Label
+var pane_scroll: ScrollContainer
 var root: Control
 var menu_box: VBoxContainer
 var panel_box: VBoxContainer  # the right-hand pane: slots, new game, credits
@@ -88,6 +89,10 @@ func _ready() -> void:
 	panel_box.add_theme_constant_override("separation", 14)
 	panel_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(panel_box)
+	pane_scroll = scroll
+	# the pane grows with what it holds, up to the window: a fourth save slot
+	# is not cut in half under the footer
+	panel_box.minimum_size_changed.connect(_fit_pane)
 	esc_lbl = _lbl(Loc.t("title.esc"), 11, UIW.colour("muted"))
 	rv.add_child(esc_lbl)
 
@@ -187,6 +192,13 @@ static func _money(v: int) -> String:
 			grouped += ","
 		grouped += digits[i]
 	return ("-$%s" if v < 0 else "$%s") % grouped
+
+func _fit_pane() -> void:
+	if pane_scroll == null:
+		return
+	var want := panel_box.get_combined_minimum_size().y + 8.0
+	var room := get_viewport().get_visible_rect().size.y - 260.0
+	pane_scroll.custom_minimum_size.y = clampf(want, 0.0, maxf(room, 300.0))
 
 func _clear_pane() -> void:
 	for c in panel_box.get_children():

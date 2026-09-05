@@ -59,6 +59,8 @@ const STAGES := [
 		"blurb": "Your own room: more floor, but the power bill is yours now."},
 	{"name": "Datacenter floor", "grid": Vector2i(12, 12), "price": 25000,
 		"blurb": "A real floor. Grow the empire."},
+	{"name": "Campus hall", "grid": Vector2i(18, 18), "price": 80000,
+		"blurb": "A hall built for you. Room for a fabric, and for the late campaign to happen somewhere."},
 ]
 const TYPE_DEFAULTS := {"switch": "sw-8", "server": "srv-1", "router": "rtr-lite", "firewall": "fw-1",
 	"uplink": "isp-uplink", "cooling": "crac-1", "loadbalancer": "lb-1", "ap": "ap-1",
@@ -125,7 +127,7 @@ const DISCOVERY_IGNORED_CYCLES := 6
 
 const ACHIEVEMENTS := [
 	{"id": "first_light", "name": "First light", "how": "Complete your first contract."},
-	{"id": "segmented", "name": "Good fences", "how": "Run at least three VLANs on one switch."},
+	{"id": "segmented", "name": "Good fences", "how": "Run five customer VLANs on one switch."},
 	{"id": "on_the_internet", "name": "On the internet", "how": "Establish a BGP session with an upstream."},
 	{"id": "no_spof", "name": "No single point of failure", "how": "Run a VRRP group with two members."},
 	{"id": "empire", "name": "Two roofs", "how": "Operate two or more sites."},
@@ -139,6 +141,16 @@ const ACHIEVEMENTS := [
 	{"id": "dual_stack", "name": "The address you were given", "how": "Answer a service natively over IPv6."},
 	{"id": "bundled", "name": "Two of everything", "how": "Run two links in one bundle between switches."},
 	{"id": "covered", "name": "Somebody is awake", "how": "Have somebody on call while nobody is on shift."},
+	{"id": "overlaid", "name": "Nothing stretched", "how": "Carry a tenant between two leaves over VXLAN with EVPN."},
+	{"id": "tunnelled", "name": "Nobody read it", "how": "Complete a WireGuard handshake between two routers."},
+	{"id": "migrated", "name": "Still answering", "how": "Move a virtual machine to another host without changing its address."},
+	{"id": "balanced", "name": "Half of it can die", "how": "Serve a virtual address from a two-member pool."},
+	{"id": "translated", "name": "Both internets", "how": "Carry an IPv6-only client to an IPv4-only service through NAT64."},
+	{"id": "overlapping", "name": "Same address, twice", "how": "Route a tenant in its own VRF."},
+	{"id": "paired", "name": "Pull either cable", "how": "Pair two switches with MLAG."},
+	{"id": "watched", "name": "Knowing it died", "how": "Bring up a BFD session on a routed link."},
+	{"id": "badged", "name": "Only the badged", "how": "Authorise a machine through 802.1X."},
+	{"id": "veteran", "name": "Two hundred cycles", "how": "Keep the company running to cycle 200."},
 ]
 
 func _achievement_met(id: String) -> bool:
@@ -182,9 +194,51 @@ func _achievement_met(id: String) -> bool:
 			return oncall != "" and not staff.is_empty() and not Staff.anyone_on_shift()
 		"segmented":
 			for d in all_devices():
-				if d.type == "switch" and d.vlans.size() >= 3:
+				if d.type == "switch" and d.vlans.size() >= 6:  # VLAN 1 and five of the customers'
 					return true
 			return false
+		"overlaid":
+			return Contracts._overlay_vteps().size() >= 2 and Contracts._overlay_evpn()
+		"tunnelled":
+			return Contracts._wg_handshaken()
+		"migrated":
+			return Contracts._vm_migrated()
+		"balanced":
+			return Contracts._lb_pool() >= 2 and Contracts._lb_healthy() >= 1
+		"translated":
+			for d in all_devices():
+				if int(Sim.nat64_of(d).get("translated", 0)) > 0:
+					return true
+			return false
+		"overlapping":
+			for d in all_devices():
+				if d.vrfs.is_empty():
+					continue
+				for i: Net.Iface in d.ifaces:
+					if i.vrf != "" and not i.ips.is_empty():
+						return true
+			return false
+		"paired":
+			for d in all_devices():
+				if d.mlag_peer != "":
+					for other in all_devices():
+						if other.name == d.mlag_peer and other.mlag_peer == d.name:
+							return true
+			return false
+		"watched":
+			for d in all_devices():
+				for i: Net.Iface in d.ifaces:
+					if i.bfd and Sim.bfd_session(i) == "up":
+						return true
+			return false
+		"badged":
+			for d in all_devices():
+				for i: Net.Iface in d.ifaces:
+					if i.dot1x and i.dot1x_ok != "":
+						return true
+			return false
+		"veteran":
+			return cycle >= 200
 		"on_the_internet":
 			# passive: a configured session towards a device that speaks BGP
 			for d in all_devices():
