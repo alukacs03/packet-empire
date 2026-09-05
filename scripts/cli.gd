@@ -222,6 +222,8 @@ class EOS extends Session:
 				return dev.name + "(config-router)#"
 			"ospf":
 				return dev.name + "(config-router-ospf)#"
+			"dhcp":
+				return dev.name + "(dhcp-config)#"
 		return dev.name + ">"
 
 	static func _short(ifname: String) -> String:
@@ -229,7 +231,7 @@ class EOS extends Session:
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
-		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf"]  # show/ping work everywhere via 'do'-free shortcut
+		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
@@ -312,8 +314,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
-			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
-			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["interface", "range"], "h": _cfg_if_range},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
 			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source},
@@ -348,6 +350,18 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
 			{"m": ["config"], "p": ["router", "bgp"], "h": _cfg_router_bgp},
 			{"m": ["config"], "p": ["router", "ospf"], "h": _cfg_router_ospf},
+			{"m": ["config"], "p": ["ip", "dhcp", "pool"], "h": _cfg_dhcp_pool},
+			{"m": ["config"], "p": ["no", "ip", "dhcp", "pool"], "h": func(_r):
+				dev.services.erase("dhcp")
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["config"], "p": ["ip", "dhcp", "excluded-address"], "h": _cfg_dhcp_excluded},
+			{"m": ["dhcp"], "p": ["network"], "h": _dhcp_network},
+			{"m": ["dhcp"], "p": ["default-router"], "h": func(r): return _dhcp_opt("gw", r)},
+			{"m": ["dhcp"], "p": ["dns-server"], "h": func(r): return _dhcp_opt("dns", r)},
+			{"m": EP, "p": ["show", "ip", "dhcp", "binding"], "h": _show_dhcp_binding},
+			{"m": EP, "p": ["show", "ip", "dhcp", "pool"], "h": _show_dhcp_pool},
+			{"m": EP, "p": ["show", "ip", "dhcp", "conflict"], "h": _show_dhcp_conflict},
 			{"m": ["ospf"], "p": ["network"], "h": _ospf_network},
 			{"m": ["ospf"], "p": ["no", "network"], "h": _ospf_no_network},
 			{"m": ["router"], "p": ["neighbor"], "h": _bgp_neighbor},
@@ -439,7 +453,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
 			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
 			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
-			{"m": ["config", "if", "vlan", "router", "ospf"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
 		]
@@ -460,13 +474,13 @@ class EOS extends Session:
 		if filter != "":
 			return CLI.filter_output(exec(line), filter)
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
-		if mode in ["config", "if", "vlan", "router", "ospf"]:
+		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
 		# resolve with per-token prefix matching (Cisco-style abbreviation).
 		# A global configuration command typed inside a sub-mode (interface,
 		# router) is accepted and switches mode, exactly as IOS does.
 		var modes: Array = [mode]
-		if mode in ["if", "vlan", "router", "ospf"]:
+		if mode in ["if", "vlan", "router", "ospf", "dhcp"]:
 			modes.append("config")
 		var full: Array = []
 		for c in _cmds:
@@ -571,7 +585,7 @@ class EOS extends Session:
 
 	func _exit(_r: Array) -> String:
 		match mode:
-			"if", "vlan", "router", "ospf":
+			"if", "vlan", "router", "ospf", "dhcp":
 				mode = "config"
 			"config":
 				mode = "priv"
@@ -1481,6 +1495,95 @@ class EOS extends Session:
 			out += "%2d  %s\n" % [n, CLI.acl_rule_text(rule)]
 			n += 1
 		return out + "    (first match wins; implicit deny any any at the end)\n"
+
+	func _dhcp_svc() -> Dictionary:
+		if not dev.services.has("dhcp"):
+			dev.services["dhcp"] = {"iface": "", "start": "", "end": "", "plen": 24, "gw": "", "dns": "",
+				"leases": {}, "since": {}, "excluded": [], "name": ""}
+		return dev.services["dhcp"]
+
+	func _cfg_dhcp_pool(r: Array) -> String:
+		if not dev.ip_forwarding:
+			return "% a DHCP pool lives on a router; a server runs dhcpd\n"
+		if r.size() != 1:
+			return "usage: ip dhcp pool <name>\n"
+		var svc := _dhcp_svc()
+		svc["name"] = String(r[0])
+		mode = "dhcp"
+		return ""
+
+	func _dhcp_network(r: Array) -> String:
+		## network <addr>/<len>  |  network <addr> <mask>
+		r = CLI.fold_mask(r)
+		if r.size() != 1 or not Net.valid_cidr(r[0]):
+			return "usage: network <address> <mask>   (or <address>/<len>)\n"
+		var netw := Net.network_of(String(r[0]))
+		var plen := int(netw["plen"])
+		if plen > 30:
+			return "% a pool needs a subnet with room in it\n"
+		var base := Net.ip_to_int(String(netw["prefix"]))
+		var svc := _dhcp_svc()
+		svc["plen"] = plen
+		svc["start"] = Net.int_to_ip(base + 1)
+		svc["end"] = Net.int_to_ip(base + (1 << (32 - plen)) - 2)  # everything but network and broadcast
+		Game.topology_changed.emit()
+		return ""
+
+	func _dhcp_opt(key: String, r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
+			return "usage: %s <ip>\n" % ("default-router" if key == "gw" else "dns-server")
+		_dhcp_svc()[key] = String(r[0])
+		Game.topology_changed.emit()
+		return ""
+
+	func _cfg_dhcp_excluded(r: Array) -> String:
+		## ip dhcp excluded-address <low> [<high>]
+		if r.is_empty() or not String(r[0]).is_valid_ip_address() or (r.size() == 2 and not String(r[1]).is_valid_ip_address()) or r.size() > 2:
+			return "usage: ip dhcp excluded-address <low> [<high>]\n"
+		var svc := _dhcp_svc()
+		var lo := Net.ip_to_int(String(r[0]))
+		var hi := Net.ip_to_int(String(r[r.size() - 1]))
+		if hi - lo > 1024:
+			return "% that excludes more than a pool could hold\n"
+		for n in range(lo, hi + 1):
+			var ip := Net.int_to_ip(n)
+			if ip not in svc["excluded"]:
+				svc["excluded"].append(ip)
+		return ""
+
+	func _show_dhcp_binding(_r: Array) -> String:
+		var svc: Dictionary = dev.services.get("dhcp", {})
+		if svc.is_empty():
+			return "% no DHCP pool on this device\n"
+		if svc["leases"].is_empty():
+			return "%-16s %-18s %-12s %s\n  (no bindings yet)\n" % ["IP address", "Client-ID/HW addr", "Lease left", "Type"]
+		var out := "%-16s %-18s %-12s %s\n" % ["IP address", "Client-ID/HW addr", "Lease left", "Type"]
+		for mac in svc["leases"]:
+			var left: int = Sim.DHCP_LEASE - (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle)))
+			out += "%-16s %-18s %-12s %s\n" % [svc["leases"][mac], mac, "%d cycle(s)" % maxi(0, left), "Automatic"]
+		return out
+
+	func _show_dhcp_pool(_r: Array) -> String:
+		var svc: Dictionary = dev.services.get("dhcp", {})
+		if svc.is_empty():
+			return "% no DHCP pool on this device\n"
+		var total := Net.ip_to_int(String(svc["end"])) - Net.ip_to_int(String(svc["start"])) + 1 if String(svc.get("start", "")) != "" else 0
+		var out := "Pool %s :\n Utilization mark (high/low)    : 100 / 0\n Subnet size (first/next)       : 0 / 0\n" % svc.get("name", "dhcpd")
+		out += " Total addresses                : %d\n Leased addresses               : %d\n Excluded addresses             : %d\n" % [
+			total, svc["leases"].size(), svc.get("excluded", []).size()]
+		out += " Default router                 : %s\n DNS server                     : %s\n" % [
+			svc.get("gw", "") if String(svc.get("gw", "")) != "" else "-", svc.get("dns", "") if String(svc.get("dns", "")) != "" else "-"]
+		return out
+
+	func _show_dhcp_conflict(_r: Array) -> String:
+		var svc: Dictionary = dev.services.get("dhcp", {})
+		var conflicts: Array = svc.get("conflicts", [])
+		if conflicts.is_empty():
+			return "  (no conflicts detected)\n"
+		var out := "%-16s %s\n" % ["IP address", "Detection method"]
+		for ip in conflicts:
+			out += "%-16s %s\n" % [ip, "ARP probe before offer"]
+		return out
 
 	func _cfg_router_ospf(r: Array) -> String:
 		if not dev.ip_forwarding or dev.type == "uplink":
@@ -2438,6 +2541,17 @@ class EOS extends Session:
 		for svid in static_vids:
 			for smac in dev.mac_static[svid]:
 				out += "mac address-table static %s vlan %d interface %s\n" % [smac, svid, dev.mac_static[svid][smac]]
+		var pool: Dictionary = dev.services.get("dhcp", {})
+		if not pool.is_empty() and String(pool.get("iface", "")) == "" and String(pool.get("start", "")) != "":
+			for ex in pool.get("excluded", []):
+				out += "ip dhcp excluded-address %s\n" % ex
+			out += "ip dhcp pool %s\n   network %s/%d\n" % [pool.get("name", "LAN"),
+				Net.network_of("%s/%d" % [pool["start"], int(pool["plen"])])["prefix"], int(pool["plen"])]
+			if String(pool.get("gw", "")) != "":
+				out += "   default-router %s\n" % pool["gw"]
+			if String(pool.get("dns", "")) != "":
+				out += "   dns-server %s\n" % pool["dns"]
+			out += "!\n"
 		for r in dev.static_routes:
 			out += "ip route %s/%d %s%s\n!\n" % [r["prefix"], int(r["plen"]), r["via"],
 				"" if int(r.get("ad", 1)) == 1 else " %d" % int(r["ad"])]

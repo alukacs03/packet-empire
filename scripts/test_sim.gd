@@ -878,6 +878,55 @@ static func run() -> int:
 	check(client.resolver == "10.2.0.5", "dhcp: lease delivered the DNS resolver")
 	check(Sim.ping(client, "10.2.0.5")["ok"], "dhcp: leased address is routable")
 	check(cls_.exec("dhclient eth0").contains("10.2.0.10"), "dhcp: same MAC keeps its lease")
+	# leases have a clock: a holder that is gone frees the address, a live one renews
+	var dh_svc: Dictionary = dhcp_srv.services["dhcp"]
+	dh_svc["since"][client.ifaces[0].mac] = Game.cycle - Sim.DHCP_LEASE - 1
+	Sim.dhcp_tick()
+	check(dh_svc["leases"].has(client.ifaces[0].mac) and int(dh_svc["since"][client.ifaces[0].mac]) == Game.cycle,
+		"dhcp: a client still holding its address renews at expiry instead of losing it")
+	var ghost_mac := "02:ff:ff:ff:00:01"
+	dh_svc["leases"][ghost_mac] = "10.2.0.11"
+	dh_svc["since"][ghost_mac] = Game.cycle - Sim.DHCP_LEASE - 1
+	Sim.dhcp_tick()
+	check(not dh_svc["leases"].has(ghost_mac), "dhcp: a lease whose holder has gone expires and the address is free again")
+	# a router-side pool, IOS style, with an exclusion and a conflict probe
+	var pool_rack := Game.add_rack(Vector2i(10, 10))  # inside the floor the grandfather test grows into
+	var pool_rtr := Game.new_device("rtr-edge")
+	var pool_sw := Game.new_device("sw-8")
+	var pool_c1 := Game.new_device("srv-1")
+	var pool_c2 := Game.new_device("srv-1")
+	var pool_static := Game.new_device("srv-1")
+	pool_rack.slots[0] = pool_rtr
+	pool_rack.slots[2] = pool_sw
+	pool_rack.slots[4] = pool_c1
+	pool_rack.slots[5] = pool_c2
+	pool_rack.slots[6] = pool_static
+	Game.connect_ifaces(pool_rtr.ifaces[0], pool_sw.ifaces[0])
+	Game.connect_ifaces(pool_c1.ifaces[0], pool_sw.ifaces[1])
+	Game.connect_ifaces(pool_c2.ifaces[0], pool_sw.ifaces[2])
+	Game.connect_ifaces(pool_static.ifaces[0], pool_sw.ifaces[3])
+	Game.add_ip(pool_rtr.ifaces[0], "10.4.0.1/24")
+	Game.add_ip(pool_static.ifaces[0], "10.4.0.11/24")  # somebody configured this one by hand
+	var pool_cli := CLI.new_session(pool_rtr)
+	pool_cli.exec("en")
+	pool_cli.exec("conf t")
+	check(pool_cli.exec("ip dhcp excluded-address 10.4.0.1 10.4.0.10") == "", "dhcp: a router excludes its own end of the range")
+	check(pool_cli.exec("ip dhcp pool LAN") == "" and pool_cli.prompt().contains("dhcp-config"), "dhcp: ip dhcp pool enters its own mode")
+	check(pool_cli.exec("network 10.4.0.0 255.255.255.0") == "", "dhcp: the pool takes an IOS network and mask")
+	check(pool_cli.exec("default-router 10.4.0.1") == "" and pool_cli.exec("dns-server 10.4.0.1") == "", "dhcp: option 3 and option 6")
+	pool_cli.exec("end")
+	var pool_lease := CLI.new_session(pool_c1).exec("dhclient eth0")
+	check("bound to 10.4.0.12/24" in pool_lease,
+		"dhcp: the first lease skips the excluded block and the address that answered an ARP probe (got %s)" % pool_lease.strip_edges())
+	check(CLI.new_session(pool_c2).exec("dhclient eth0").contains("10.4.0.13"), "dhcp: the next client gets the next free address")
+	check(Sim.ping(pool_c1, "10.4.0.1")["ok"] and pool_c1.static_routes.size() == 1, "dhcp: a router-served lease carries the gateway")
+	var binding := pool_cli.exec("show ip dhcp binding")
+	check(binding.contains("10.4.0.12") and binding.contains(pool_c1.ifaces[0].mac) and binding.contains("cycle(s)"),
+		"dhcp: show ip dhcp binding lists the lease with its remaining time")
+	check(pool_cli.exec("show ip dhcp conflict").contains("10.4.0.11"), "dhcp: the address that was already in use is on the conflict list")
+	check(pool_cli.exec("show ip dhcp pool").contains("Leased addresses               : 2"), "dhcp: show ip dhcp pool counts the leases")
+	check(pool_cli.exec("show run").contains("ip dhcp pool LAN") and pool_cli.exec("show run").contains("default-router 10.4.0.1"),
+		"dhcp: the pool is in the running configuration")
 	check(Sim.resolve(client, "www.delta.hu") == "10.2.0.10", "dns: client resolves via the network")
 	check(cls_.exec("ping www.delta.hu").contains("3 received"), "dns: ping by name works (client owns the A record)")
 	check(cls_.exec("nslookup nope.example").contains("can't find"), "dns: unknown name fails cleanly")
@@ -919,9 +968,8 @@ static func run() -> int:
 	var a3 := _dev_named(a.name)
 	a3.ifaces[0].enabled = false
 	Game.topology_changed.emit()
-	var m2 := Game.money
 	Game.sla_tick()
-	check(Game.money < m2 + 90, "sla: broken network stops (part of) the revenue")
+	check(int(Game.last_business.get("revenue", 0)) < 90, "sla: broken network stops (part of) the revenue")
 	check(Game.sla_status.values().has(false), "sla: breach is flagged for the UI")
 	a3.ifaces[0].enabled = true
 	Game.topology_changed.emit()

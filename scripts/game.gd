@@ -8856,6 +8856,7 @@ func sla_tick() -> void:
 	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
 		"power": 0, "transit": 0}
 	cert_tick()  # after the reset, so its line shows up in this cycle's P&L
+	Sim.dhcp_tick()
 	_maybe_start_guided_outage()
 	dispute_tick()
 	report_tick()
