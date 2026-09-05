@@ -12,6 +12,7 @@ func _ready() -> void:
 	Game.topology_changed.connect(queue_redraw)
 	reject_overlay = RejectOverlay.new()
 	reject_overlay.z_index = 200
+	reject_overlay.z_as_relative = false  # above the cabinets, whatever their own order
 	add_child(reject_overlay)
 
 func reject_tile(tile: Vector2i, reason: String) -> void:

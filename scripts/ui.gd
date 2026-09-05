@@ -1287,6 +1287,11 @@ func _build_dev_overlay() -> void:
 
 	var name_row := HBoxContainer.new()
 	v.add_child(name_row)
+	# the actions sit under the hostname, above the faceplate and the port
+	# list, so a long port list or a handover note never pushes them out of view
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 8)
+	v.add_child(btn_row)
 	name_row.add_child(_label("Hostname:  ", 14, MUTED))
 	name_edit = _mono_edit(220)
 	name_edit.text_submitted.connect(_rename_dev)
@@ -1338,9 +1343,6 @@ func _build_dev_overlay() -> void:
 	vlan_box = VBoxContainer.new()
 	vlan_section.add_child(vlan_box)
 
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 8)
-	v.add_child(btn_row)
 	dev_note_btn = Button.new()
 	dev_note_btn.text = "✎ LEAVE NOTE"
 	dev_note_btn.tooltip_text = "Leave short handover context on this device"
@@ -2196,9 +2198,8 @@ func _refresh_ops() -> void:
 		if not _device_alerts(d).is_empty():
 			alerting += 1
 	ops_title.text = "Network operations"
-	var watts := 0
-	for si in Game.site_count():
-		watts += int(Game.capacity(si)["watts"])
+	# the scope line says THIS FLOOR, so the card must not quietly sum every site
+	var watts := int(Game.capacity(Game.current_site)["watts"])
 	(ops_metric_values["devices"] as Label).text = "%02d ONLINE" % devs.size()
 	(ops_metric_notes["devices"] as Label).text = "installed estate"
 	(ops_metric_values["links"] as Label).text = "%02d / %02d UP" % [Game.links.size() - links_down,
@@ -2267,8 +2268,10 @@ func _refresh_ops() -> void:
 		var due_in: int = int(Game.tour["cycle"]) - Game.cycle
 		var when := "arrives in %d cycle(s)" % due_in if due_in > 0 else (
 			"is walking the floor now" if due_in == 0 else "was due %d cycle(s) ago" % -due_in)
+		var who := String(tk["label"])
+		who = who.substr(0, 1).to_upper() + who.substr(1)  # a sentence starts with a capital
 		ops_box.add_child(_wrap("  %s %s. They care about %s. On what they would see right now, you score %d%%."
-			% [tk["label"], when, tk["cares"],
+			% [who, when, tk["cares"],
 				int(Game.tour_score(kind) * 100.0)], 13, Color(1.0, 0.82, 0.5), 780))
 		var cram_btn := Button.new()
 		cram_btn.text = "Bring in a crew at short notice ($600)"
