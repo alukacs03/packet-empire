@@ -95,9 +95,13 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 		rtt_ms = outer_rtt
 	return result
 
+static var last_trace_note := ""  # why the last traceroute stopped: unreachable-host|net|admin or ""
+
 static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Array:
-	## -> array of hop strings ("10.0.0.1" or "*"), last is dst on success
+	## -> array of hop strings ("10.0.0.1" or "*"), last is dst on success;
+	## last_trace_note carries the unreachable code a router answered with
 	var hops: Array = []
+	last_trace_note = ""
 	for ttl in range(1, max_hops + 1):
 		var r := ping(dev, dst_ip, ttl)
 		if r["ok"]:
@@ -106,6 +110,8 @@ static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Arra
 		if r["detail"] != "ttl-exceeded":
 			# unreachable: the router that complained is usually the last hop
 			# already listed, so do not print it twice
+			if String(r["detail"]).begins_with("unreachable-"):
+				last_trace_note = String(r["detail"])
 			if r["from"] != "" and (hops.is_empty() or hops.back() != r["from"]):
 				hops.append(r["from"])
 			elif r["from"] == "":

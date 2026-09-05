@@ -223,16 +223,20 @@ static func fmt_traceroute(dev: Net.NDevice, target: String, numeric := false) -
 	if ip == "":
 		return "traceroute: %s: Name or service not known\n" % target
 	var out := "traceroute to %s (%s), 30 hops max, 60 byte packets\n" % [target, ip]
+	var hops := Sim.traceroute(dev, ip)
+	# a router that answered unreachable gets the annotation after each time
+	var mark := {"unreachable-host": " !H", "unreachable-net": " !N", "unreachable-admin": " !X"}.get(Sim.last_trace_note, "")
 	var n := 1
-	for hop in Sim.traceroute(dev, ip):
+	for hop in hops:
+		var tag := mark if n == hops.size() and String(hop) != ip else ""
 		if hop == "*":
 			out += "%2d  * * *\n" % n
 		else:
 			var probe := Sim.ping(dev, String(hop))
 			var rtt := maxf(0.04, float(probe.get("rtt", 0.1)))
 			var name := "" if numeric else Sim.reverse_lookup(dev, String(hop))
-			out += ("%2d  %s  %.3f ms  %.3f ms  %.3f ms\n" % [n, hop, rtt, rtt * 1.03, rtt * 0.98]) if numeric \
-				else ("%2d  %s (%s)  %.3f ms  %.3f ms  %.3f ms\n" % [n, name if name != "" else hop, hop, rtt, rtt * 1.03, rtt * 0.98])
+			out += ("%2d  %s  %.3f ms%s  %.3f ms%s  %.3f ms%s\n" % [n, hop, rtt, tag, rtt * 1.03, tag, rtt * 0.98, tag]) if numeric \
+				else ("%2d  %s (%s)  %.3f ms%s  %.3f ms%s  %.3f ms%s\n" % [n, name if name != "" else hop, hop, rtt, tag, rtt * 1.03, tag, rtt * 0.98, tag])
 		n += 1
 	return out
 
