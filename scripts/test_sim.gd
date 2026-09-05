@@ -696,6 +696,25 @@ static func run() -> int:
 		"L3: the last-hop router says Destination Host Unreachable when ARP fails")
 	check("Destination Net Unreachable" in CLI.fmt_ping(a, "10.9.0.1"), "L3: ping prints the unreachable reason")
 	check(Sim.traceroute(a, "10.9.0.1") == ["10.0.0.254"], "L3: traceroute stops at the router that complained")
+	# proxy ARP: a host whose mask is too wide still gets through, because the router answers for the far side
+	var wide_ips: Array = a.ifaces[0].ips.duplicate()
+	var wide_routes: Array = a.static_routes.duplicate(true)
+	a.ifaces[0].ips = ["10.0.0.1/8"]
+	a.static_routes = []
+	Sim.flush_learned_state()
+	check(not Sim.ping(a, "10.1.0.2")["ok"], "arp: a PacketTik router does not proxy ARP by default, so the wrong mask is the host's problem")
+	var px_cli := CLI.new_session(rtr)
+	check(px_cli.exec("/interface set ether1 arp=proxy-arp") == "", "arp: RouterOS turns proxy ARP on per interface")
+	a.arp.clear()
+	Sim.flush_learned_state()
+	check(Sim.ping(a, "10.1.0.2")["ok"] and String(a.arp.get("10.1.0.2", "")) == rtr.ifaces[0].mac,
+		"arp: proxy ARP answers an off-subnet request with the router's own MAC (the classic wrong-mask survival)")
+	check(px_cli.exec("/export").contains("arp=proxy-arp"), "arp: the export keeps it")
+	px_cli.exec("/interface set ether1 arp=enabled")
+	a.arp.clear()
+	a.ifaces[0].ips = wide_ips
+	a.static_routes = wide_routes
+	Sim.flush_learned_state()
 	var before_unsol := a.arp.size()
 	Sim._host_rx(a, a.ifaces[0], {"src": "de:ad:be:ef:00:01", "dst": a.ifaces[0].mac, "vlan": 0, "type": "arp",
 		"pl": {"op": "rep", "spa": "10.0.0.77", "sha": "de:ad:be:ef:00:01", "tpa": "10.0.0.1"}})
@@ -1021,6 +1040,14 @@ static func run() -> int:
 	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: default permit forwards")
 	var fw_arp := CLI.new_session(fw)
 	check(fw_arp.exec("show arp").contains("Age (min)"), "arp: show arp has an age column")
+	fw_arp.exec("en")
+	fw_arp.exec("conf t")
+	check(fw_arp.exec("no ip proxy-arp") == "", "arp: Cisco-style gear proxies by default and can be told not to")
+	fw_arp.exec("end")
+	check(fw_arp.exec("show run").contains("no ip proxy-arp"), "arp: show run prints the off switch")
+	fw_arp.exec("conf t")
+	fw_arp.exec("ip proxy-arp")
+	fw_arp.exec("end")
 	Game.cycle += 3
 	check(fw_arp.exec("show arp").contains("   3   "), "arp: an entry learned three cycles ago says so")
 	Game.cycle -= 3
@@ -1942,6 +1969,24 @@ static func run() -> int:
 	l2sw.exec("conf t")
 	check(l2sw.exec("interface Vlan40").contains("no L3 switching"), "svi: budget switches refuse SVIs")
 	check(Game.try_complete_contract(_contract("one_switch_two_nets")), "svi: collapse-the-core contract verifies")
+	# a routed port: the L3 switch's third port becomes a router interface
+	var rp_host := Game.new_device("srv-1")
+	var rp_rack := Game.add_rack(Vector2i(12, 12))
+	rp_rack.slots[0] = rp_host
+	Game.connect_ifaces(rp_host.ifaces[0], l3.ifaces[2])
+	Game.add_ip(rp_host.ifaces[0], "10.80.60.10/24")
+	Game.add_static_route(rp_host, "0.0.0.0", 0, "10.80.60.1")
+	l3s.exec("conf t")
+	l3s.exec("interface Ethernet3")
+	check(l3s.exec("ip address 10.80.60.1/24").contains("no switchport"), "routed port: a switchport refuses an address and names the fix")
+	check(l3s.exec("no switchport") == "" and l3.ifaces[2].mode == "routed", "routed port: 'no switchport' makes the port routed")
+	check(l3s.exec("ip address 10.80.60.1/24") == "", "routed port: and then it takes an address")
+	l3s.exec("end")
+	check(Sim.ping(rp_host, "10.80.60.1")["ok"] and Sim.ping(rp_host, "10.80.40.10")["ok"],
+		"routed port: the host behind it reaches the switch and the SVI subnets")
+	check(l3s.exec("show run").contains("no switchport"), "routed port: show run prints it")
+	l2sw.exec("interface Ethernet3")
+	check(l2sw.exec("no switchport").contains("no L3 switching"), "routed port: a budget switch refuses")
 
 	# --- port security ---
 	var ps_sw := Game.new_device("sw-8")
@@ -8200,6 +8245,36 @@ static func run() -> int:
 			if Sim.stp_blocked(ms_d2.ifaces[ms_i2]):
 				ms_blocked += 1
 	check(ms_blocked == 1, "stp: one end of the spare link is blocked")
+	# port cost, not hop count: three 10G hops beat two hops through a 1G box
+	var pc_rack := Game.add_rack(Vector2i(13, 13))
+	var pc_root := Game.new_device("sw-24")
+	var pc_s1 := Game.new_device("sw-24")
+	var pc_s2 := Game.new_device("sw-24")
+	var pc_leaf := Game.new_device("sw-24")
+	var pc_slow := Game.new_device("sw-8")
+	pc_rack.slots[0] = pc_root
+	pc_rack.slots[2] = pc_s1
+	pc_rack.slots[4] = pc_s2
+	pc_rack.slots[6] = pc_leaf
+	pc_rack.slots[1] = pc_slow
+	pc_root.stp_priority = 4096  # the root, whatever the MACs say
+	Game.connect_ifaces(pc_leaf.ifaces[0], pc_s1.ifaces[0])
+	Game.connect_ifaces(pc_s1.ifaces[1], pc_s2.ifaces[0])
+	Game.connect_ifaces(pc_s2.ifaces[1], pc_root.ifaces[0])
+	Game.connect_ifaces(pc_leaf.ifaces[1], pc_slow.ifaces[0])
+	Game.connect_ifaces(pc_slow.ifaces[1], pc_root.ifaces[1])
+	Sim.flush_learned_state()
+	Game.topology_changed.emit()
+	check(Sim.stp_root_of(pc_leaf) == pc_root, "stp cost: (the priority made the root)")
+	check(Sim.stp_port_cost(pc_leaf.ifaces[0]) == 2000 and Sim.stp_port_cost(pc_leaf.ifaces[1]) == 20000,
+		"stp cost: a 10G port costs 2000 and a link that only runs at 1G costs 20000")
+	check(Sim.stp_role(pc_leaf.ifaces[0]) == "root",
+		"stp cost: the three-hop 10G path is the root path, not the two-hop 1G one")
+	check(Sim.stp_blocked(pc_leaf.ifaces[1]) or Sim.stp_blocked(pc_slow.ifaces[0]) or Sim.stp_blocked(pc_slow.ifaces[1]) or Sim.stp_blocked(pc_root.ifaces[1]),
+		"stp cost: the slow loop is where the tree is cut")
+	var pc_cli := CLI.new_session(pc_leaf)
+	check(pc_cli.exec("show spanning-tree").contains("Cost") and pc_cli.exec("show spanning-tree").contains("20000"),
+		"stp cost: show spanning-tree prints the port cost")
 	# priority decides the root, not just the address
 	var ms_cli_a := CLI.new_session(ms_a)
 	var ms_cli_b := CLI.new_session(ms_b)

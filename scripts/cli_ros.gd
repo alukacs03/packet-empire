@@ -359,7 +359,7 @@ func exec(line: String) -> String:
 		"interface set":
 			var i := _target(args, p)
 			if i == null:
-				return "usage: /interface set <name> disabled=yes|no mtu=N\n"
+				return "usage: /interface set <name> disabled=yes|no mtu=N arp=enabled|proxy-arp\n"
 			for old_key in ["pvid", "mode", "tagged"]:
 				if p.has(old_key):
 					return "failure: VLAN membership lives on the bridge: /interface bridge port set [find interface=%s] pvid=N and /interface bridge vlan add vlan-ids=N tagged=... untagged=...\n" % i.name
@@ -376,6 +376,14 @@ func exec(line: String) -> String:
 					i.enabled = i.fault == ""
 			if p.has("mtu") and String(p["mtu"]).is_valid_int():
 				i.mtu = clampi(int(p["mtu"]), 576, 9216)
+			if p.has("arp"):
+				if String(p["arp"]) not in ["enabled", "proxy-arp", "reply-only", "disabled"]:
+					return "failure: arp is enabled, proxy-arp, reply-only or disabled\n"
+				var proxied: Array = dev.services.get("proxy_arp_ifaces", [])
+				proxied.erase(i.name)
+				if String(p["arp"]) == "proxy-arp":
+					proxied.append(i.name)
+				dev.services["proxy_arp_ifaces"] = proxied
 			Game.topology_changed.emit()
 			return ""
 		"interface bonding add":
@@ -500,8 +508,8 @@ func exec(line: String) -> String:
 			for i: Net.Iface in dev.ifaces:
 				if i.name.begins_with("Management"):
 					continue
-				out += "%-2d %s%s %-10s %-8s yes  %4d  0x80             10\n" % [n,
-					" " if i.enabled else "I", "H", i.name, BRIDGE, i.untagged_vlan]
+				out += "%-2d %s%s %-10s %-8s yes  %4d  0x80      %9d\n" % [n,
+					" " if i.enabled else "I", "H", i.name, BRIDGE, i.untagged_vlan, Sim.stp_port_cost(i)]
 				n += 1
 			return out
 		"interface bridge port monitor":
@@ -1033,6 +1041,8 @@ func _export() -> String:
 	for i: Net.Iface in dev.ifaces:
 		if not i.enabled and i.admin_down:
 			out += "/interface set %s disabled=yes\n" % i.name
+		if i.name in dev.services.get("proxy_arp_ifaces", []):
+			out += "/interface set %s arp=proxy-arp\n" % i.name
 		if i.parent != "":
 			out += "/interface vlan add name=vlan%d vlan-id=%d interface=%s\n" % [i.dot1q, i.dot1q, i.parent]
 		if i.name.begins_with("wg"):

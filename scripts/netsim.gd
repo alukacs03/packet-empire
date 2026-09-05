@@ -930,31 +930,42 @@ static func _stp_tree(instance: int) -> Dictionary:
 		if not edges.has(key):
 			edges[key] = {"links": [], "a": l.a.dev, "b": l.b.dev}
 		edges[key]["links"].append(l)
-	# one spanning tree per connected component, rooted at its lowest MAC
+	# one spanning tree per connected component, rooted at its lowest bridge
+	# id, with root path cost by port cost (a 10G link is cheaper than a 1G
+	# one), ties broken by bridge id the way 802.1D does
 	var dist := {}
 	var tree := {}
+	var parent_edge := {}
+	var done := {}
 	for sw in switches:  # sorted by bridge id, so the best one roots its component
 		if dist.has(sw):
 			continue
 		dist[sw] = 0
-		var frontier: Array = [sw]
-		while not frontier.is_empty():
-			frontier.sort_custom(func(x, y): return stp_id(x) < stp_id(y))
-			var cur: Net.NDevice = frontier.pop_front()
+		while true:
+			var cur: Net.NDevice = null
+			for d in dist:
+				if not done.has(d) and (cur == null or int(dist[d]) < int(dist[cur])
+						or (int(dist[d]) == int(dist[cur]) and stp_id(d) < stp_id(cur))):
+					cur = d
+			if cur == null:
+				break
+			done[cur] = true
 			_stp_roots[cur] = sw
+			if parent_edge.has(cur):
+				tree[parent_edge[cur]] = true
 			for key in edges:
-				if tree.has(key):
-					continue
 				var e: Dictionary = edges[key]
 				var nb: Net.NDevice = null
 				if e["a"] == cur:
 					nb = e["b"]
 				elif e["b"] == cur:
 					nb = e["a"]
-				if nb != null and not dist.has(nb):
-					dist[nb] = dist[cur] + 1
-					tree[key] = true
-					frontier.append(nb)
+				if nb == null or done.has(nb):
+					continue
+				var cost: int = int(dist[cur]) + stp_edge_cost(e, nb)
+				if not dist.has(nb) or cost < int(dist[nb]):
+					dist[nb] = cost
+					parent_edge[nb] = key
 					# the port on the far switch that leads back toward the root
 					var first_link: Net.Link = e["links"][0]
 					_stp_root_ports[instance][nb] = first_link.a if first_link.a.dev == nb else first_link.b
@@ -996,6 +1007,26 @@ static func stp_role(i: Net.Iface) -> String:
 		if _stp_root_ports[inst].get(i.dev) == i:
 			return "root"
 	return "designated"
+
+static func stp_port_cost(i: Net.Iface) -> int:
+	## the 802.1D long path cost: 20,000,000 over the link speed in Mbps
+	## (100M 200000, 1G 20000, 10G 2000); a bundle counts its summed speed
+	var l := Game.link_at(i)
+	var speed := Game.iface_speed(i)
+	if l != null:
+		speed = mini(speed, Game.iface_speed(l.other(i)))
+		if i.lag > 0 and l.other(i).lag > 0 and lag_compatible(i, l.other(i)):
+			var total := 0
+			for m in Game.lag_members(l):
+				total += mini(Game.iface_speed(m.a), Game.iface_speed(m.b))
+			speed = maxi(speed, total)
+	return maxi(1, 20000000 / maxi(1, speed))
+
+static func stp_edge_cost(e: Dictionary, toward: Net.NDevice) -> int:
+	## the receiving port's cost, on the switch further from the root
+	var first_link: Net.Link = e["links"][0]
+	var port: Net.Iface = first_link.a if first_link.a.dev == toward else first_link.b
+	return stp_port_cost(port)
 
 static func _stp_prev_blocked(instance: int) -> Array:
 	return _stp_blocked_inst.get(instance, {}).keys()
@@ -1442,8 +1473,8 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	_cap(peer.dev, peer, frame)
 	_depth += 1
-	if peer.dev.type in ["switch", "ap"] and not peer.name.begins_with("Management"):
-		_switch_rx(peer.dev, peer, frame)
+	if peer.dev.type in ["switch", "ap"] and not peer.name.begins_with("Management") and peer.mode != "routed":
+		_switch_rx(peer.dev, peer, frame)  # a routed port on an L3 switch is a router interface
 	else:
 		_host_rx(peer.dev, _logical_rx_iface(peer, frame), frame)
 	_depth -= 1
@@ -1825,6 +1856,12 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				var answer_mac: String = vrrp_mac(int(iface.vrrp["group"])) if for_vip else iface.mac
 				_tx(iface, {"src": answer_mac, "dst": p["sha"], "vlan": 0, "type": frame["type"],
 					"pl": {"op": "rep", "spa": p["tpa"], "sha": answer_mac, "tpa": p["spa"]}})
+			elif _proxy_arp_answers(dev, iface, String(p["tpa"])):
+				# proxy ARP: a host with a mask too wide asks for an address the
+				# router can reach elsewhere; IOS answers with its own MAC by default
+				_learn_neighbour(dev, nkey, p["sha"])
+				_tx(iface, {"src": iface.mac, "dst": p["sha"], "vlan": 0, "type": frame["type"],
+					"pl": {"op": "rep", "spa": p["tpa"], "sha": iface.mac, "tpa": p["spa"]}})
 		elif _arp_pending.has("%s|%s" % [dev.name, nkey]) or dev.arp.has(nkey):
 			# a reply nobody asked for is ignored, unless it updates an entry we
 			# already hold (a gratuitous ARP after a move)
@@ -2130,6 +2167,26 @@ static func vrrp_master(vip: String, group: int) -> Net.NDevice:
 	else:
 		_vrrp_current[key] = best
 	return best
+
+static func _proxy_arp_answers(dev: Net.NDevice, iface: Net.Iface, tpa: String) -> bool:
+	if not dev.ip_forwarding or dev.type == "switch" or Net.is_v6(tpa) or frame_is_v6_key(tpa):
+		return false
+	# IOS proxies by default; RouterOS only where an interface says arp=proxy-arp
+	if String(Game.MODELS.get(dev.model, {}).get("os", "eos")) == "ros":
+		if iface.name not in dev.services.get("proxy_arp_ifaces", []):
+			return false
+	elif not bool(dev.services.get("proxy_arp", true)):
+		return false
+	# never for an address on the asking segment itself, and only when a
+	# route leads out of a different interface
+	for cidr in iface.ips:
+		if not Net.is_v6(cidr) and Net.same_subnet(tpa, String(cidr).split("/")[0], int(String(cidr).split("/")[1])):
+			return false
+	var rt := _route_lookup(dev, tpa, "", iface.vrf)
+	return not rt.is_empty() and rt.get("iface") != null and rt["iface"] != iface and String(rt.get("next_hop", "")) != "null0"
+
+static func frame_is_v6_key(s: String) -> bool:
+	return ":" in s
 
 static func _vrrp_mac_ours(dev: Net.NDevice, iface: Net.Iface, mac: String) -> bool:
 	if iface.vrrp.is_empty() or mac != vrrp_mac(int(iface.vrrp.get("group", -1))):

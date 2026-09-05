@@ -355,6 +355,12 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["router", "bgp"], "h": _cfg_router_bgp},
 			{"m": ["config"], "p": ["router", "ospf"], "h": _cfg_router_ospf},
 			{"m": ["config"], "p": ["ip", "dhcp", "pool"], "h": _cfg_dhcp_pool},
+			{"m": ["config"], "p": ["ip", "proxy-arp"], "h": func(_r):
+				dev.services.erase("proxy_arp")  # on, the IOS default
+				return ""},
+			{"m": ["config"], "p": ["no", "ip", "proxy-arp"], "h": func(_r):
+				dev.services["proxy_arp"] = false
+				return ""},
 			{"m": ["config"], "p": ["no", "ip", "dhcp", "pool"], "h": func(_r):
 				dev.services.erase("dhcp")
 				Game.topology_changed.emit()
@@ -379,6 +385,8 @@ class EOS extends Session:
 			{"m": ["router"], "p": ["no", "network"], "h": _bgp_no_network},
 			{"m": ["vlan"], "p": ["name"], "h": func(r): return _vlan_name(r)},
 			{"m": ["if"], "p": ["switchport", "mode"], "h": _sw_mode, "dyn": func(): return ["access", "trunk"]},
+			{"m": ["if"], "p": ["no", "switchport"], "h": _no_switchport},
+			{"m": ["if"], "p": ["switchport"], "h": _switchport_back},
 			{"m": ["if"], "p": ["switchport", "access", "vlan"], "h": _sw_access_vlan, "dyn": _vlan_ids},
 			{"m": ["if"], "p": ["switchport", "trunk", "allowed", "vlan"], "h": _sw_trunk_vlans},
 			{"m": ["if"], "p": ["switchport", "trunk", "native", "vlan"], "h": _sw_trunk_native},
@@ -797,9 +805,36 @@ class EOS extends Session:
 				return ""
 		return "% no such interface\n"
 
+	func _no_switchport(_r: Array) -> String:
+		## a routed port: the L3 switch treats it as a router interface
+		if dev.type != "switch":
+			return "% switchport commands need a switch\n"
+		if not Game.is_l3_switch(dev):
+			return "% this model has no L3 switching: a routed port needs an Arivista-class switch\n"
+		return _each(func(i: Net.Iface) -> String:
+			if i.name.begins_with("Vlan") or i.name.begins_with("Management"):
+				return "% %s is not a switchport\n" % i.name
+			i.mode = "routed"
+			i.tagged_vlans = []
+			Game.topology_changed.emit()
+			return "")
+
+	func _switchport_back(r: Array) -> String:
+		if not r.is_empty():
+			return "% Invalid input\n"
+		return _each(func(i: Net.Iface) -> String:
+			if i.mode == "routed":
+				for cidr in i.ips.duplicate():
+					Game.remove_ip(i, cidr)  # a switchport carries no address
+				i.mode = "access"
+				Game.topology_changed.emit()
+			return "")
+
 	func _sw_mode(r: Array) -> String:
 		if dev.type != "switch":
 			return "% switchport commands need a switch\n"
+		if ctx_if != null and ctx_if.mode == "routed":
+			return "% %s is a routed port: 'switchport' first\n" % ctx_if.name
 		for m in ["access", "trunk"]:
 			if r.size() == 1 and m.begins_with(r[0]):
 				return _each(func(i: Net.Iface) -> String:
@@ -1106,8 +1141,8 @@ class EOS extends Session:
 		if ctx_ifs.size() > 1:
 			return _range_only("an address")
 		if dev.type == "switch" and not ctx_if.name.begins_with("Management") \
-				and not ctx_if.name.begins_with("Vlan"):
-			return "% a switchport carries no address: put it on an SVI (interface Vlan<n>) or the Management1 port\n"
+				and not ctx_if.name.begins_with("Vlan") and ctx_if.mode != "routed":
+			return "% a switchport carries no address: put it on an SVI (interface Vlan<n>), the Management1 port, or make this a routed port with 'no switchport'\n"
 		r = CLI.fold_mask(r)
 		if r.size() != 1:
 			return "usage: ip address <a.b.c.d/len | a.b.c.d mask>\n"
@@ -2220,7 +2255,7 @@ class EOS extends Session:
 		out += "Bridge ID:   priority %d  address %s\n" % [dev.stp_priority, dev.ifaces[0].mac if not dev.ifaces.is_empty() else "-"]
 		if root and root != dev:
 			out += "Root ID:     priority %d  address %s\n" % [root.stp_priority, root.ifaces[0].mac if not root.ifaces.is_empty() else "-"]
-		out += "%-11s %-11s %-12s %-6s %s\n" % ["Port", "Role", "State", "Type", "Instances"]
+		out += "%-11s %-11s %-12s %-8s %-6s %s\n" % ["Port", "Role", "State", "Cost", "Type", "Instances"]
 		var any := false
 		for i: Net.Iface in dev.ifaces:
 			var l := Game.link_at(i)
@@ -2233,7 +2268,7 @@ class EOS extends Session:
 					"disc" if Sim._stp_blocked_inst.get(inst2, {}).has(i) else "fwd"])
 			var role := Sim.stp_role(i) if i.enabled else "disabled"
 			var state := "discarding" if role in ["alternate", "disabled"] else "forwarding"
-			out += "%-11s %-11s %-12s %-6s %s\n" % [EOS._short(i.name), role, state,
+			out += "%-11s %-11s %-12s %-8d %-6s %s\n" % [EOS._short(i.name), role, state, Sim.stp_port_cost(i),
 				"Edge" if i.portfast else "P2p", " ".join(PackedStringArray(per))]
 		return out if any else out + "  (no cabled ports)\n"
 
@@ -2647,6 +2682,8 @@ class EOS extends Session:
 			out += "firewall stateful\n!\n"
 		for rule in dev.acls:
 			out += "acl %s\n!\n" % CLI.acl_config_text(rule)
+		if dev.ip_forwarding and dev.type != "switch" and not bool(dev.services.get("proxy_arp", true)):
+			out += "no ip proxy-arp\n!\n"
 		var nat_cfg: Dictionary = dev.services.get("nat", {})
 		for list_id in nat_cfg.get("acls", {}):
 			for entry in nat_cfg["acls"][list_id]:
@@ -2715,6 +2752,8 @@ class EOS extends Session:
 				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
 			if i.port_security:
 				out += "   switchport port-security\n"
+			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
+				out += "   no switchport\n"
 			if i.portfast:
 				out += "   spanning-tree portfast\n"
 			if i.bpduguard:

@@ -9582,6 +9582,9 @@ func forget_device_state(name: String) -> void:
 	for ren in renewals.duplicate():
 		if String(ren.get("serial", "")) == name:
 			renewals.erase(ren)
+	for tc in tac_cases:
+		if String(tc.get("device", "")) == name and String(tc.get("stage", "")) != "closed":
+			tc["stage"] = "closed"  # the vendor is not going to fix hardware you no longer have
 	if String(guided_outage.get("device", "")) == name and String(guided_outage.get("state", "")) in ["choice", "recovered"]:
 		guided_outage["state"] = "complete"
 
@@ -10048,7 +10051,7 @@ func _serialize() -> Dictionary:
 		"skill_log": skill_log, "skill_fumbles": skill_fumbles, "pending_reports": pending_reports,
 		"acquisitions": acquisitions, "sites": sites, "current_site": current_site,
 		"circuits": circuits,
-		"events": events, "incidents_seen": incidents_seen, "counters": _counter,
+		"events": events, "incidents_seen": incidents_seen, "counters": _counter, "digest": digest,
 		"contracts_done": contracts_done, "offers": offers, "deals": deals,
 		"racks": rack_data, "devices": devs, "links": link_data}
 
@@ -10414,6 +10417,8 @@ func _apply(data: Dictionary) -> void:
 	docs = data.get("docs", {})
 	confirm_commits = data.get("confirm_commits", {})
 	tickets = data.get("tickets", [])
+	for dk in data.get("digest", {}):
+		digest[int(dk)] = data["digest"][dk]  # JSON turned the cycle keys into strings
 	_ticket_seq = 0
 	for t0 in tickets:
 		var tid := String(t0.get("id", "T0")).trim_prefix("T")
