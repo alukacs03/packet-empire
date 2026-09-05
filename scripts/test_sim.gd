@@ -9781,15 +9781,26 @@ static func run() -> int:
 	var eos_devs := {"switch": Game.new_device("sw-8"), "router": Game.new_device("rtr-edge")}
 	eos_rack.slots[0] = eos_devs["switch"]
 	eos_rack.slots[1] = eos_devs["router"]
+	var hint_defaults := {"switch": "sw-8", "router": "rtr-edge", "firewall": "fw-1", "server": "srv-1"}
 	for eos_id in Contracts.DIALECT_HINTS:
-		var eos_dt := String(Contracts.DIALECT_HINTS[eos_id]["device_type"])
-		var eos_ses := CLI.new_session(eos_devs[eos_dt])
-		for eos_cmd in Contracts.hint_commands(String(eos_id), "eos"):
-			var eos_out := eos_ses.exec(eos_cmd)
-			check(not eos_out.begins_with("%") and not eos_out.begins_with("usage:"),
-				"eos hints: %s accepts '%s' (%s)" % [eos_id, eos_cmd, eos_out.strip_edges()])
+		var hint_cfg: Dictionary = Contracts.DIALECT_HINTS[eos_id]
+		# every hint runs on a fresh device of the model it is written for
+		var hint_dev := Game.new_device(String(hint_cfg.get("model", hint_defaults[String(hint_cfg["device_type"])])))
+		eos_rack.slots[5] = hint_dev
+		var eos_ses := CLI.new_session(hint_dev)
+		for dialect in ["eos", "linux"]:
+			for raw_cmd in Contracts.hint_commands(String(eos_id), dialect):
+				var eos_cmd := Contracts.bare_command(String(raw_cmd))
+				if eos_cmd == "":
+					continue  # a placeholder the player fills in
+				var eos_out := eos_ses.exec(eos_cmd)
+				check(not eos_out.begins_with("%") and not eos_out.begins_with("usage:") and not eos_out.begins_with("unknown"),
+					"%s hints: %s accepts '%s' (%s)" % [dialect, eos_id, eos_cmd, eos_out.strip_edges().substr(0, 60)])
+		eos_rack.slots[5] = null
 	var trunk_view := CLI.new_session(eos_devs["switch"])
 	trunk_view.exec("enable")
+	for trunk_cmd in Contracts.hint_commands("stretch_vlans", "eos"):
+		trunk_view.exec(String(trunk_cmd))  # the hint builds the trunk the view should list
 	check("Ethernet8" in trunk_view.exec("show interfaces trunk")
 		and "Ethernet1 " not in trunk_view.exec("show interfaces trunk"),
 		"eos: show interfaces trunk lists the trunk and not the access ports")

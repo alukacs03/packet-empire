@@ -90,6 +90,343 @@ const DIALECT_HINTS := {
 			"show ip route",
 		],
 	},
+	"plug_and_play": {
+		"device_type": "server",
+		"intro": "One server becomes the DHCP server: a static address in the subnet, then the lease range, prefix length and gateway. A new machine on the same VLAN asks by broadcast and gets an address without anybody typing it.",
+		"after": "Both machines must sit in one broadcast domain: same switch and same VLAN, or the broadcast never reaches the server.",
+		"linux": [
+			"ip addr add 10.2.0.5/24 dev eth0",
+			"dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1",
+			"dhclient eth0        (on the new machine)",
+			"ip addr",
+		],
+	},
+	"names_not_numbers": {
+		"device_type": "server",
+		"intro": "A resolver holds the records; a client is pointed at the resolver. Then names work in ping.",
+		"after": "The record's address is the real server's; the resolver's own address is what goes in 'nameserver'. Or hand the resolver out through DHCP's dns field.",
+		"linux": [
+			"dns add www.delta.hu 10.2.0.10        (on the resolver)",
+			"nameserver 10.2.0.5                  (on the client)",
+			"nslookup www.delta.hu",
+			"ping www.delta.hu",
+		],
+	},
+	"lock_it_down": {
+		"device_type": "firewall",
+		"intro": "Two legs, two subnets, and a list that names what must never happen, followed by a permit for everything else. Without that last line the implicit deny drops the app server's traffic too.",
+		"after": "Test both directions: a stateless deny also kills replies, and that asymmetry is the lesson.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"acl deny 172.16.1.0/24 172.16.2.20/32",
+			"acl permit any any",
+			"end",
+			"show ip access-lists",
+		],
+	},
+	"join_internet": {
+		"device_type": "router",
+		"intro": "Address the leg toward the handoff, start BGP with your own AS, peer with the ISP's AS, then announce the prefix you actually own. The default route arrives by itself once the session is up.",
+		"after": "The server behind the router needs the router as its default gateway, and the announced prefix must cover the server's subnet.",
+		"ros": [
+			"/ip address add address=100.64.0.2/30 interface=ether1",
+			"/ip firewall address-list add list=bgp-nets address=10.3.0.0/24",
+			"/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets",
+			"/routing bgp session print",
+			"/ip route print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet1",
+			"ip address 100.64.0.2/30",
+			"router bgp 65001",
+			"neighbor 100.64.0.1 remote-as 64500",
+			"network 10.3.0.0/24",
+			"end",
+			"show ip bgp summary",
+			"show ip bgp",
+		],
+	},
+	"hide_the_internals": {
+		"device_type": "router",
+		"intro": "Withdraw the private prefix from BGP, then translate instead: on Cisco-style gear mark the inside and outside interfaces, write a standard list of who may be translated, and tie the list to the outside interface with overload. RouterOS masquerades everything leaving the outside interface.",
+		"after": "Substitute your real subnet and port names. The server keeps its private address and still reaches 8.8.8.8.",
+		"ros": [
+			"/ip firewall address-list remove [find address=10.3.0.0/24]",
+			"/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1",
+			"/ip firewall nat print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"router bgp 65001",
+			"no network 10.3.0.0/24",
+			"exit",
+			"interface Ethernet2",
+			"ip nat inside",
+			"interface Ethernet1",
+			"ip nat outside",
+			"exit",
+			"access-list 1 permit 10.3.0.0 0.0.0.255",
+			"ip nat inside source list 1 interface Ethernet1 overload",
+			"end",
+			"show ip nat translations",
+		],
+	},
+	"dynamic_routing": {
+		"device_type": "router",
+		"intro": "Each router advertises the networks it owns and learns the rest from its neighbour. No static routes: the O routes in the table are OSPF's.",
+		"after": "Run it on both routers; the transit subnet between them must be covered by the network statement or no adjacency forms.",
+		"ros": [
+			"/routing ospf instance add name=default router-id=10.20.9.1",
+			"/routing ospf area add name=backbone area-id=0.0.0.0 instance=default",
+			"/routing ospf interface-template add networks=10.20.0.0/16 area=backbone",
+			"/routing ospf neighbor print",
+			"/ip route print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"router ospf 1",
+			"network 10.20.0.0/16 area 0",
+			"end",
+			"show ip ospf neighbor",
+			"show ip route",
+		],
+	},
+	"no_spof": {
+		"device_type": "router",
+		"intro": "Two routers, one virtual address. The one with the higher priority is master; the other answers the same address the moment the master dies. Servers use the virtual address as their gateway.",
+		"after": "Set the priority on the router you prefer; leave the other at the default. 'show vrrp' names the master.",
+		"ros": [
+			"/interface vrrp add name=vrrp1 interface=ether1 vrid=1 priority=120",
+			"/ip address add address=10.40.0.1/32 interface=vrrp1",
+			"/interface vrrp print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet1",
+			"vrrp 1 ip 10.40.0.1",
+			"vrrp 1 priority 120",
+			"end",
+			"show vrrp",
+		],
+	},
+	"double_the_pipe": {
+		"device_type": "switch",
+		"intro": "Both parallel ports on both switches join one channel group. LACP negotiates the bundle: active on at least one side, and the same mode story on both switches.",
+		"after": "Do it on both switches. 'show port-channel summary' shows Po1(SU) and every member (P) when it is right.",
+		"ros": [
+			"/interface bonding add name=bond1 slaves=ether4,ether5 mode=802.3ad",
+			"/interface bonding print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet4",
+			"channel-group 1 mode active",
+			"interface Ethernet5",
+			"channel-group 1 mode active",
+			"end",
+			"show port-channel summary",
+			"show spanning-tree",
+		],
+	},
+	"router_on_a_stick": {
+		"device_type": "router",
+		"intro": "One physical port, one subinterface per VLAN, each tagged with its VLAN id and carrying that VLAN's gateway address. The switch end of the cable is a trunk.",
+		"after": "Servers in VLAN 60 and 61 point their default route at 10.90.60.1 and 10.90.61.1.",
+		"ros": [
+			"/interface vlan add name=vlan60 vlan-id=60 interface=ether1",
+			"/interface vlan add name=vlan61 vlan-id=61 interface=ether1",
+			"/ip address add address=10.90.60.1/24 interface=vlan60",
+			"/ip address add address=10.90.61.1/24 interface=vlan61",
+			"/interface vlan print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet1.60",
+			"encapsulation dot1q 60",
+			"ip address 10.90.60.1/24",
+			"interface Ethernet1.61",
+			"encapsulation dot1q 61",
+			"ip address 10.90.61.1/24",
+			"end",
+			"show ip interface brief",
+		],
+	},
+	"one_switch_two_nets": {
+		"model": "sw-24",
+		"device_type": "switch",
+		"intro": "An L3 switch routes between its own VLANs through SVIs: a virtual interface per VLAN, with the gateway address on it. No router in the path.",
+		"after": "Only an L3-capable model (Arivista 7024) accepts 'interface Vlan40'. Each server's default gateway is its SVI address.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"vlan 40",
+			"vlan 50",
+			"interface Vlan40",
+			"ip address 10.80.40.1/24",
+			"interface Vlan50",
+			"ip address 10.80.50.1/24",
+			"end",
+			"show ip route",
+		],
+	},
+	"guest_wifi": {
+		"model": "ap-1",
+		"device_type": "switch",
+		"intro": "The access point's uplink is a trunk; each SSID maps to a VLAN. Guests and staff share the radio but not the network.",
+		"after": "The AP console takes the ssid lines; on each host type 'wifi join guest-wifi' or 'wifi join staff-wifi' and give it an address in that VLAN's subnet.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"ssid guest-wifi vlan 30",
+			"ssid staff-wifi vlan 31",
+			"end",
+		],
+	},
+	"wireguard_link": {
+		"device_type": "router",
+		"intro": "Each router gets a tunnel interface with a small address, learns the other side's public key, endpoint and allowed networks, and routes the far office down the tunnel.",
+		"after": "Swap in the real keys ('show wireguard' or '/interface wireguard print' shows your own) and the real public addresses.",
+		"ros": [
+			"/interface wireguard add name=wg0",
+			"/interface wireguard print",
+			"/ip address add address=10.99.0.1/30 interface=wg0",
+			"/interface wireguard peers add interface=wg0 public-key=<their key> endpoint-address=<their public address> allowed-address=172.20.2.0/24,10.99.0.2/32",
+			"/ip route add dst-address=172.20.2.0/24 gateway=10.99.0.2",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface wg0",
+			"ip address 10.99.0.1/30",
+			"wireguard peer <their key> endpoint <their public address> allowed 172.20.2.0/24,10.99.0.2/32",
+			"exit",
+			"ip route 172.20.2.0/24 10.99.0.2",
+			"end",
+			"show wireguard",
+		],
+	},
+	"keep_it_moving": {
+		"device_type": "server",
+		"intro": "A virtual machine lives on a host and keeps its address when it moves, which only works while both hosts share the same VLAN.",
+		"after": "Both hosts on the same switch and VLAN; then migrate and ping the same address again.",
+		"linux": [
+			"vm create obs01",
+			"vm addr obs01 10.160.5.20/24",
+			"vm migrate obs01 <other host>",
+			"vm list",
+		],
+	},
+	"always_on": {
+		"model": "lb-1",
+		"device_type": "switch",
+		"intro": "The balancer owns a virtual address and a pool of real servers; it health-checks the pool and hands each flow to a live member.",
+		"after": "Give the balancer its own address on the subnet first. Switch a member off and the virtual address must still answer.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12",
+			"end",
+			"show virtual-server",
+		],
+	},
+	"dual_stack": {
+		"device_type": "router",
+		"intro": "Add a v6 address per router leg and per server, then point each server's v6 default at its gateway. The v4 side keeps working untouched.",
+		"after": "On the servers: 'ip -6 addr add 2001:db8:70::10/64 dev eth0' and 'ip -6 route add default via 2001:db8:70::1'. A capture shows Neighbor Discovery instead of ARP.",
+		"ros": [
+			"/ipv6 address add address=2001:db8:70::1/64 interface=ether1",
+			"/ipv6 address add address=2001:db8:71::1/64 interface=ether2",
+			"/ipv6 address print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet1",
+			"ipv6 address 2001:db8:70::1/64",
+			"interface Ethernet2",
+			"ipv6 address 2001:db8:71::1/64",
+			"end",
+			"show ip interface brief",
+		],
+	},
+	"v6_only_tenant": {
+		"model": "rtr-edge",
+		"device_type": "router",
+		"intro": "Two halves: the resolver synthesises an AAAA for a name that only has an A record, and the translator turns that synthetic destination back into IPv4. Native IPv6 never touches the translator.",
+		"after": "The resolver is a Linux server: 'dns add legacy.pkt 10.164.0.10' then 'dns64 64:ff9b::'. The translator is a Junivista router or the firewall; PacketTik has no NAT64.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"nat64 prefix 64:ff9b:: pool <your v4 address>",
+			"end",
+			"show nat64",
+		],
+	},
+	"overlay_tenant": {
+		"model": "sw-24",
+		"device_type": "switch",
+		"intro": "First the underlay: an address on each leaf and a router between them, until the leaves ping each other. Then the overlay: a source address, a VLAN-to-VNI mapping and a peer on each leaf, and EVPN so they advertise instead of flooding.",
+		"after": "Run the vxlan lines on both leaves with each other's address as the peer. The unmapped VLAN 71 must stay isolated.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"vlan 70",
+			"vxlan source <this leaf's address>",
+			"vxlan vlan 70 vni 7000",
+			"vxlan peer <the other leaf's address>",
+			"vxlan evpn",
+			"end",
+			"show vxlan",
+		],
+	},
+	"build_a_fabric": {
+		"device_type": "router",
+		"intro": "Every leaf has two uplinks, one per spine, each on its own transit subnet. OSPF on all four routers gives each leaf two equal paths, so losing a spine loses nothing.",
+		"after": "The same OSPF configuration on all four; check that each leaf lists both spines as neighbours before pulling one.",
+		"ros": [
+			"/routing ospf instance add name=default router-id=<this router's address>",
+			"/routing ospf area add name=backbone area-id=0.0.0.0 instance=default",
+			"/routing ospf interface-template add networks=10.251.0.0/16 area=backbone",
+			"/routing ospf neighbor print",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"router ospf 1",
+			"network 10.251.0.0/16 area 0",
+			"end",
+			"show ip ospf neighbor",
+			"show ip route 10.251.2.10",
+		],
+	},
+	"big_client": {
+		"device_type": "switch",
+		"intro": "Nothing new: a VLAN with an access port, a server that reaches the Internet, a firewall rule covering its subnet, a live OSPF adjacency, and a switch with an addressed Management port. Each piece is a job you have already done.",
+		"after": "The Management port takes an address on any switch; the rest reuses the earlier hints.",
+		"ros": [
+			"/interface bridge vlan add bridge=bridge1 vlan-ids=30 untagged=ether2",
+			"/interface bridge port set [find interface=ether2] pvid=30",
+			"/ip address add address=10.0.0.99/24 interface=Management1",
+		],
+		"eos": [
+			"enable",
+			"configure terminal",
+			"vlan 30",
+			"interface Ethernet2",
+			"switchport access vlan 30",
+			"interface Management1",
+			"ip address 10.0.0.99/24",
+			"end",
+		],
+	},
 }
 
 static func dialects_for(device_type: String) -> Array[String]:
@@ -114,6 +451,14 @@ static func hint_commands(contract_id: String, dialect: String) -> Array[String]
 		commands.append(String(command))
 	return commands
 
+static func bare_command(line: String) -> String:
+	## the typeable part of a hint line: no trailing "(on the client)" note,
+	## and "" for a line with a <placeholder> the player has to fill in
+	if "<" in line:
+		return ""
+	var cut := line.find("  (")
+	return (line.substr(0, cut) if cut > 0 else line).strip_edges()
+
 static func _command_block(label: String, commands: Array[String]) -> String:
 	var lines: Array[String] = [label]
 	for command in commands:
@@ -131,6 +476,8 @@ static func hint_for(contract: Dictionary) -> String:
 		blocks.append(_command_block("PacketTik RouterOS", hint_commands(id, "ros")))
 	if "eos" in dialects:
 		blocks.append(_command_block("OpenRack / Arivista / Junivista EOS", hint_commands(id, "eos")))
+	if cfg.has("linux"):
+		blocks = [_command_block("Linux servers", hint_commands(id, "linux"))]
 	return "%s\n\n%s\n\n%s" % [String(cfg["intro"]), "\n\n".join(blocks), String(cfg["after"])]
 
 static func retired(id: String) -> bool:

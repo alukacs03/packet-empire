@@ -663,6 +663,19 @@ func exec(line: String) -> String:
 			_bgp_sync_networks()
 			Game.topology_changed.emit()
 			return ""
+		"ip firewall address-list remove":
+			var lists: Dictionary = dev.bgp.get("lists", {})
+			for lname in lists.keys():
+				if p.has("list") and String(p["list"]) != String(lname):
+					continue
+				if p.has("address"):
+					lists[lname].erase(String(p["address"]))
+				elif p.has("list"):
+					lists.erase(lname)
+			if not dev.bgp.is_empty():
+				_bgp_sync_networks()
+			Game.topology_changed.emit()
+			return ""
 		"ip firewall address-list print":
 			var lists: Dictionary = dev.bgp.get("lists", {})
 			var out := "Columns: LIST, ADDRESS\n#   LIST        ADDRESS\n"
@@ -964,7 +977,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "system ssh", "quit
 	"ipv6 address add", "ipv6 address print", "ipv6 nd add", "ipv6 nd set", "ipv6 nd print",
 	"ip route add", "ip route remove", "ip route print",
 	"ip firewall nat add", "ip firewall nat print",
-	"ip firewall address-list add", "ip firewall address-list print",
+	"ip firewall address-list add", "ip firewall address-list remove", "ip firewall address-list print",
 	"routing ospf instance add", "routing ospf instance print",
 	"routing ospf area add", "routing ospf area print",
 	"routing ospf interface-template add", "routing ospf interface-template remove",

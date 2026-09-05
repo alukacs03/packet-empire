@@ -462,10 +462,15 @@ class EOS extends Session:
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
 		if mode in ["config", "if", "vlan", "router", "ospf"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
-		# resolve with per-token prefix matching (Cisco-style abbreviation)
+		# resolve with per-token prefix matching (Cisco-style abbreviation).
+		# A global configuration command typed inside a sub-mode (interface,
+		# router) is accepted and switches mode, exactly as IOS does.
+		var modes: Array = [mode]
+		if mode in ["if", "vlan", "router", "ospf"]:
+			modes.append("config")
 		var full: Array = []
 		for c in _cmds:
-			if mode not in c["m"] or toks.size() < c["p"].size():
+			if toks.size() < c["p"].size() or not modes.any(func(m): return m in c["m"]):
 				continue
 			var okc := true
 			for k in c["p"].size():
@@ -476,7 +481,7 @@ class EOS extends Session:
 				full.append(c)
 		if full.is_empty():
 			for c in _cmds:
-				if mode not in c["m"]:
+				if not modes.any(func(m): return m in c["m"]):
 					continue
 				var okc := true
 				for k in mini(toks.size(), c["p"].size()):
@@ -486,6 +491,11 @@ class EOS extends Session:
 				if okc:
 					return "% Incomplete command\n"
 			return "% Invalid input\n"
+		# the sub-mode's own commands win over a global one that happens to
+		# start the same way ("ip address" on an interface, not "ip access-list")
+		var own: Array = full.filter(func(c): return mode in c["m"])
+		if not own.is_empty():
+			full = own
 		# an exactly typed keyword beats one that merely starts the same way,
 		# so "ip address" is not ambiguous with "ipv6 address"
 		var best_exact := -1
