@@ -108,12 +108,14 @@ func _film_all() -> void:
 	ui._refresh_feature_discovery()
 	Game.set_speed(1)
 	show_title()
+	Film.mood("first_light")
 	Film.say("PACKET EMPIRE", "A datacenter you run, on a network that actually works")
 	await Film.hold(self, 3.0)
 	title.visible = false
 	ui.visible = true
 	ui.close_everything()
 
+	Film.mood("quiet")
 	Film.say("The floor", "Your room, your people, and the state of it read off real things")
 	Game.stage = 0
 	Game.habits["tidy"] = 0.35
@@ -180,6 +182,7 @@ func _film_all() -> void:
 	await Film.hold(self, 4.0)
 	ui.close_everything()
 
+	Film.mood("night")
 	Film.say("The phone, out of hours", "Something is live and the room is empty: get somebody in, or let it wait")
 	Game.staff = []
 	var film_rng := RandomNumberGenerator.new()
@@ -210,6 +213,7 @@ func _film_all() -> void:
 	await Film.hold(self, 4.5)
 	ui.close_everything()
 
+	Film.mood("incident")
 	Film.say("An incident that spans two buildings", "One address in two rooms, broken so it only shows when one goes dark")
 	var film_seed := -1
 	for f_try in range(1, 30):
@@ -228,6 +232,7 @@ func _film_all() -> void:
 	if ui.drill_panel != null:
 		ui.drill_panel.visible = false  # the banner outlives the drill otherwise
 
+	Film.mood("quiet")
 	Film.say("A room that has been run well", "A long clear run, a kept floor, and a redundancy somebody tested")
 	Game.last_customer_outage_cycle = Game.cycle - 200
 	Game.stats["failovers_passed"] = 2
@@ -246,6 +251,7 @@ func _film_all() -> void:
 	await Film.hold(self, 4.5)
 	ui.close_everything()
 
+	Film.mood("first_light")
 	Film.say("Packet Empire", "Real switches, real routing, real consequences")
 	await Film.hold(self, 2.5)
 	print("film: %d frames" % Film.frames())

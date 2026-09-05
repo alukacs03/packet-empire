@@ -18,6 +18,8 @@ static var last_cue := ""  # what actually reached a speaker; "" while muted
 static var _ambient: AudioStreamPlayer = null
 static var _score: AudioStreamPlayer = null
 static var score_mood := ""  # what the room is currently playing, if anything
+static var score_override := ""  # a film picks the mood; the room's state is ignored
+static var score_boost_db := 0.0  # a film wants to hear the hum
 
 static func install(parent: Node) -> void:
 	## call once; safe to call again
@@ -206,7 +208,7 @@ static func mood_for(state: Dictionary) -> String:
 static func score_tick(state: Dictionary) -> void:
 	if _score == null or not is_instance_valid(_score):
 		return
-	var mood := mood_for(state)
+	var mood := score_override if score_override != "" else mood_for(state)
 	if muted or mood == "":
 		score_mood = ""
 		if _score.playing:
@@ -216,7 +218,7 @@ static func score_tick(state: Dictionary) -> void:
 		return
 	score_mood = mood
 	_score.stream = _bank.get("score_%s" % mood)
-	_score.volume_db = float(MOODS[mood]["db"])
+	_score.volume_db = float(MOODS[mood]["db"]) + score_boost_db
 	if _score.stream != null:
 		_score.play()
 

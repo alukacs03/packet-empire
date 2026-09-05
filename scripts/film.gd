@@ -45,6 +45,12 @@ static func _install_caption(world: Node) -> void:
 	caption_body.add_theme_color_override("font_color", Color(0.62, 0.78, 0.86))
 	box.add_child(caption_body)
 
+static func mood(name: String) -> void:
+	## a film chooses what the room hums, and hums it loud enough to hear
+	Sfx.score_boost_db = 16.0
+	Sfx.score_override = name
+	Sfx.score_tick({})
+
 static func say(title: String, body: String) -> void:
 	if caption_title:
 		caption_title.text = title
@@ -52,6 +58,9 @@ static func say(title: String, body: String) -> void:
 		caption_body.text = body
 
 static func _capture(world: Node) -> void:
+	if OS.has_feature("movie"):
+		_frame += 1  # the movie writer is recording; no JPEGs needed
+		return
 	var img := world.get_viewport().get_texture().get_image()
 	img.resize(1280, 720, Image.INTERPOLATE_LANCZOS)
 	img.save_jpg("%s/f%05d.jpg" % [_dir, _frame], 0.86)
