@@ -982,8 +982,10 @@ class EOS extends Session:
 			mode = "vxlan"
 			return ""
 		if want.begins_with("lo") and want.lstrip("abcdefghijklmnopqrstuvwxyz").is_valid_int() and not want.begins_with("lo."):
-			if not dev.ip_forwarding:
+			if not dev.ip_forwarding and not Game.is_l3_switch(dev):
 				return "% Invalid input\n"
+			if Game.is_l3_switch(dev):
+				dev.ip_forwarding = true  # a loopback is an L3 thing: the switch routes from here on
 			var lo_name := "Loopback%d" % int(want.lstrip("abcdefghijklmnopqrstuvwxyz"))
 			for i: Net.Iface in dev.ifaces:
 				if i.name == lo_name:

@@ -19,3 +19,27 @@ show ip bgp
 show ip route 10.20.1.10
 show arp
 show running-config
+show ip interface brief
+show lldp neighbors
+show interfaces description
+show interfaces counters
+show version
+show clock
+show logging
+show ip bgp
+show ip bgp neighbors
+show running-config section bgp
+configure
+interface Ethernet1-2
+description conformance
+exit
+ip access-list TEST
+10 permit tcp any any eq 22
+20 deny ip any any
+exit
+interface Ethernet2
+ip access-group TEST in
+end
+show ip access-lists
+show running-config diffs
+write
