@@ -29,3 +29,20 @@ print where interface=ether1
 /tool traceroute 10.20.2.10
 /interface ethernet monitor ether1
 /system resource print
+/ip neighbor print
+/int pr
+/interface print where name=ether1
+/ip address add ?
+/ip pool add name=pool1 ranges=10.20.1.100-10.20.1.199
+/ip dhcp-server add name=dhcp1 interface=ether1 address-pool=pool1
+/ip dhcp-server network add address=10.20.1.0/24 gateway=10.20.1.1 dns-server=10.20.1.1
+/ip dhcp-server print
+/ip firewall filter add chain=input action=accept connection-state=established,related
+/ip firewall filter add chain=forward action=drop src-address=10.20.2.0/24 dst-address=10.20.1.0/24 comment="no crossing"
+/ip firewall filter print
+/user print
+/ip service print
+/interface monitor-traffic ether1 once
+/system ntp client print
+/routing route print
+/export

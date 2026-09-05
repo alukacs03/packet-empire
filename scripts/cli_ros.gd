@@ -250,6 +250,11 @@ func exec(line: String) -> String:
 			return "expected end of command (line 1 column %d)\n" % (raw.find(String(args[0])) + 1 if not args.is_empty() else raw.length())
 		return "bad command name %s (line 1 column %d)\n" % [first, maxi(1, raw.find(first) + 1)]
 	var text := String(out)
+	if text == "no such item\n":
+		for a in args:
+			if String(a).is_valid_int():
+				text = "no such item (%s)\n" % a
+				break
 	if is_print:
 		if not (opts["where"] as Dictionary).is_empty():
 			text = _where(text, opts["where"])
@@ -2219,9 +2224,15 @@ func _export() -> String:
 			add.call("/interface wireguard", "add listen-port=13231 mtu=1420 name=%s" % i.name)
 	for i: Net.Iface in dev.ifaces:
 		if not i.vrrp.is_empty():
-			add.call("/interface vrrp", "add interface=%s name=vrrp%d priority=%d vrid=%d%s" % [i.name, int(i.vrrp["group"]),
-				int(i.vrrp.get("priority", 100)), int(i.vrrp["group"]),
-				"" if bool(i.vrrp.get("preempt", true)) else " preemption-mode=no"])
+			# alphabetical, defaults omitted, as compact export prints it
+			var vrrp_line := "add interface=%s name=vrrp%d" % [i.name, int(i.vrrp["group"])]
+			if not bool(i.vrrp.get("preempt", true)):
+				vrrp_line += " preemption-mode=no"
+			if int(i.vrrp.get("priority", 100)) != 100:
+				vrrp_line += " priority=%d" % int(i.vrrp["priority"])
+			if int(i.vrrp["group"]) != 1:
+				vrrp_line += " vrid=%d" % int(i.vrrp["group"])
+			add.call("/interface vrrp", vrrp_line)
 	for i: Net.Iface in dev.ifaces:
 		if i.parent != "" or i.name.begins_with("wg"):
 			continue
@@ -2281,7 +2292,7 @@ func _export() -> String:
 		add.call("/routing bgp template", "set default as=%d%s" % [int(dev.bgp["asn"]),
 			(" router-id=%s" % dev.bgp["router_id"]) if dev.bgp.has("router_id") else ""])
 		for nb in dev.bgp["neighbors"]:
-			add.call("/routing bgp connection", "add as=%d local.role=ebgp name=%s%s remote.address=%s .as=%d" % [
+			add.call("/routing bgp connection", "add as=%d local.role=ebgp name=%s%s remote.address=%s/32 .as=%d" % [
 				int(dev.bgp["asn"]), nb.get("name", "peer"),
 				(" output.network=%s" % nb["out_list"]) if String(nb.get("out_list", "")) != "" else "",
 				nb["ip"], int(nb["remote_as"])])
@@ -2299,10 +2310,57 @@ func _export() -> String:
 	if dev.snmp != "":
 		add.call("/snmp community", "set [ find default=yes ] name=%s" % dev.snmp)
 		add.call("/snmp", "set enabled=yes")
+	var rd: Dictionary = dev.services.get("ros_dhcp", {})
+	for pool_name in rd.get("pools", {}):
+		add.call("/ip pool", "add name=%s ranges=%s-%s" % [pool_name, rd["pools"][pool_name][0], rd["pools"][pool_name][1]])
+	if rd.has("server"):
+		add.call("/ip dhcp-server", "add address-pool=%s interface=%s name=%s" % [rd["server"]["pool"], rd["server"]["iface"], rd["server"]["name"]])
+	if rd.has("network"):
+		var nw: Dictionary = rd["network"]
+		add.call("/ip dhcp-server network", "add address=%s%s%s" % [nw["address"], (" dns-server=%s" % nw["dns"]) if String(nw.get("dns", "")) != "" else "",
+			(" gateway=%s" % nw["gw"]) if String(nw.get("gw", "")) != "" else ""])
+	for ifn in dev.services.get("dhcp_clients", {}):
+		add.call("/ip dhcp-client", "add interface=%s" % ifn)
+	for rule in dev.services.get("ros_filter", []):
+		var text := "add"
+		for k in ["action", "chain", "comment", "connection-state", "dst-address", "dst-port", "in-interface", "in-interface-list", "out-interface", "protocol", "src-address", "src-port"]:
+			if rule.has(k):
+				text += " %s=%s" % [k, ("\"%s\"" % rule[k]) if k == "comment" else rule[k]]
+		add.call("/ip firewall filter", text)
+	for lname in dev.services.get("if_lists", {}):
+		add.call("/interface list", "add name=%s" % lname)
+		for ifn in dev.services["if_lists"][lname]:
+			add.call("/interface list member", "add interface=%s list=%s" % [ifn, lname])
+	for sname in dev.services.get("ros_services", {}):
+		var conf: Dictionary = dev.services["ros_services"][sname]
+		var line := "set %s" % sname
+		if conf.has("disabled"):
+			line += " disabled=%s" % ("yes" if bool(conf["disabled"]) else "no")
+		if conf.has("port"):
+			line += " port=%d" % int(conf["port"])
+		add.call("/ip service", line)
+	if dev.ntp_server != "":
+		add.call("/system ntp client", "set enabled=yes servers=%s" % dev.ntp_server)
+	for u in dev.services.get("ros_users", {}):
+		add.call("/user", "add group=%s name=%s" % [dev.services["ros_users"][u], u])
 	add.call("/system identity", "set name=%s" % dev.name)
-	var out := "# %s by RouterOS %s\n# software id = PKTK-T1K1\n#\n# model = CHR\n" % [
-		Time.get_datetime_string_from_system(false, true), VERSION]
+	var out := "# %s by RouterOS %s\n# software id = PKTK-T1K1\n#\n# model = CHR\n# serial number = %08X\n" % [
+		Time.get_datetime_string_from_system(false, true).replace("T", " "), VERSION, dev.name.hash() % 0xFFFFFFFF]
+	# the product prints menus in its own fixed order, not in the order they were built
+	var order := ["/interface bridge", "/interface ethernet", "/interface bonding", "/interface vlan", "/interface wireguard", "/interface vrrp",
+		"/interface list", "/ip pool", "/ip dhcp-server", "/routing bgp template", "/routing ospf instance", "/routing ospf area",
+		"/interface bridge port", "/interface bridge vlan", "/interface list member", "/interface wireguard peers",
+		"/ip address", "/ip dhcp-client", "/ip dhcp-server network", "/ip dns", "/ip firewall address-list", "/ip firewall filter", "/ip firewall nat",
+		"/ip route", "/ip service", "/ipv6 address", "/ipv6 nd", "/routing bfd configuration", "/routing bgp connection",
+		"/routing ospf interface-template", "/snmp", "/snmp community", "/system identity", "/system ntp client", "/user"]
+	var menus: Array = []
+	for menu in order:
+		if groups.has(menu):
+			menus.append(menu)
 	for menu in groups:
+		if menu not in menus:
+			menus.append(menu)
+	for menu in menus:
 		out += menu + "\n"
 		for line in groups[menu]:
 			out += line + "\n"

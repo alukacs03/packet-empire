@@ -38,14 +38,28 @@ static func probe() -> void:
 	var rk := Game.add_rack(Vector2i(2, 2))
 	var r1 := Game.new_device("rtr-lite")
 	var s1 := Game.new_device("srv-2")
+	var sw := Game.new_device("sw-lite")
 	rk.slots[0] = r1
 	rk.slots[1] = s1
+	rk.slots[2] = sw
 	Game.connect_ifaces(r1.ifaces[0], s1.ifaces[0])
-	CLI.new_session(r1).exec("/ip address add address=10.0.0.1/24 interface=ether1")
+	Game.connect_ifaces(r1.ifaces[1], sw.ifaces[0])
+	var a := CLI.new_session(r1)
+	for line in ["/ip address add address=10.0.0.1/24 interface=ether1", "/ip addr add address=10.1.0.1/24 interface=ether2", "/int pr", "/i print",
+			"/ip pool add name=pool1 ranges=10.0.0.50-10.0.0.99", "/ip dhcp-server add name=dhcp1 interface=ether1 address-pool=pool1",
+			"/ip dhcp-server network add address=10.0.0.0/24 gateway=10.0.0.1 dns-server=10.0.0.1", "/ip dhcp-server print", "/ip pool print",
+			"/ip firewall filter add chain=input action=accept connection-state=established,related", "/ip firewall filter add chain=forward action=drop src-address=10.1.0.0/24 dst-address=10.0.0.0/24 comment=\"no crossing\"",
+			"/ip firewall filter print", "/interface print where name=ether1", "/ping address=10.0.0.1 count=1", "/ping count=1 10.0.0.1", "/ip address ?", "/ip address add ?", "?",
+			"/ip neighbor print", "/user add name=ops group=full password=x", "/user print", "/ip service set ssh port=2222", "/ip service disable telnet", "/ip service print",
+			"/interface list add name=WAN", "/interface list member add list=WAN interface=ether2", "/interface list member print", "/interface monitor-traffic ether1 once",
+			"/system ntp client set enabled=yes servers=10.0.0.5", "/system ntp client print", "/routing route print", "/interface bridge vlan print", "/ip addres print", "/ip/addres/print", "/interface wireguard print"]:
+		print("%s %s\n%s" % [a.prompt(), line, a.exec(line)])
 	var x := CLI.new_session(s1)
-	for line in ["ip addr add 10.0.0.10/24 dev eth0", "ping -c 2 10.0.0.1", "tcpdump -i eth0 -n icmp", "tcpdump -i eth0 -e -c 2", "tcpdump -i any icmp or arp", "ip neigh", "ping -c 1 10.0.0.77", "ip neigh", "ip route", "ip link set eth0 down", "ip route", "ip link set eth0 up", "ip addr add 10.0.0.11 dev eth0", "ip addr", "ip route add 10.9.0.0/24 dev eth0", "ip route", "ss -tlnp", "dig -x 10.0.0.1", "host 10.0.0.1", "systemctl start isc-dhcp-server", "systemctl status isc-dhcp-server", "journalctl -xeu isc-dhcp-server", "ifconfig", "resolvectl status"]:
-		print("%s %s\n%s" % [x.prompt(), line, x.exec(line)])
-	print("raw capture: ", s1.capture.slice(0, 3))
+	print(x.exec("ip addr add 10.0.0.10/24 dev eth0"), x.exec("dhclient -v eth1"))
+	var c := CLI.new_session(sw)
+	c.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether1,ether2 untagged=ether3,ether4")
+	print(c.exec("/interface bridge vlan print"))
+	print(c.exec("/interface print"))
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
@@ -1423,8 +1437,21 @@ static func run() -> int:
 		"cli: ROS bare menu steps into it and the prompt shows where you are")
 	check(rs2.exec("..") == "" and rs2.prompt().ends_with("/routing>") and rs2.exec("/") == "" and rs2.prompt().ends_with("] >"),
 		"cli: ROS '..' goes up a menu and '/' goes home")
-	check(rs2.exec("/ip addres print").begins_with("no such command or directory (addres)"),
-		"cli: ROS names the word it did not know")
+	check(rs2.exec("/ip adress print").begins_with("bad command name adress (line 1 column 5)")
+			and rs2.exec("/ip/adress/print").begins_with("no such command or directory (adress)")
+			and rs2.exec("/ip addres print").begins_with("Columns: ADDRESS"),
+		"cli: ROS names the word it did not know, in the words each spelling gets, and a prefix is not a typo")
+	check(rs2.exec("/int pr").begins_with("Flags:") and rs2.exec("/ip ro pr").begins_with("Flags:") and rs2.exec("/sys id pr").begins_with("  name:"),
+		"cli: ROS resolves any unique prefix of a command word")
+	check(rs2.exec("/i print").begins_with("ambiguous command name i"), "cli: ROS says when a prefix is ambiguous")
+	var rs_where := rs2.exec("/interface print where name=ether1")
+	check("ether1 " in rs_where and "ether10" not in rs_where and rs2.exec("/interface print where name=\"ether1\"") == rs_where,
+		"cli: ROS print where compares the named column and accepts a quoted value")
+	check(rs2.exec("/ip address print ?").begins_with("Print values of item properties") or "print -- Print values" in rs2.exec("/ip address ?"),
+		"cli: ROS ? lists a menu's children or a command's parameters with descriptions")
+	check("add -- Create a new item" in rs2.exec("/ip address ?"), "cli: ROS ? describes the verbs")
+	check(rs2.exec("/ip neighbor print").begins_with("Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY, VERSION, BOARD"),
+		"cli: ROS /ip neighbor print is where the far end lives")
 	check(rs2.exec("/interface print foo").begins_with("expected end of command"),
 		"cli: ROS rejects a stray word after print")
 	check(rs2.exec("/ip address add addres=1.1.1.1/24 interface=ether1").begins_with("syntax error (line 1 column 17)"),
@@ -8243,7 +8270,7 @@ static func run() -> int:
 	var n64_ros := Game.new_device("rtr-lite")
 	var n64_rack3 := Game.add_rack(Vector2i(64, 1))
 	n64_rack3.slots[0] = n64_ros
-	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9").contains("no such command or directory (nat64)"),
+	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9").contains("bad command name nat64"),
 		"nat64: PacketTik gear has no NAT64, exactly like RouterOS")
 
 	# the contract that only closes when both halves of the transition exist
