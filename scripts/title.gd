@@ -429,6 +429,12 @@ func _slot_row(i: int) -> Control:
 	del_b.text = "Delete"
 	del_b.add_theme_color_override("font_color", Color(0.9, 0.5, 0.45))
 	del_b.pressed.connect(func() -> void:
+		if del_b.text == "Delete":
+			del_b.text = "Delete? (click again)"  # one click arms it, a second within two seconds does it
+			get_tree().create_timer(2.0).timeout.connect(func() -> void:
+				if is_instance_valid(del_b):
+					del_b.text = "Delete")
+			return
 		Game.delete_slot(i)
 		_build_menu()
 		show_slots())

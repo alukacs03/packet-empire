@@ -928,8 +928,9 @@ func _place_rack(tile: Vector2i) -> void:
 			% Game.site_name(Game.current_site))
 		return
 	if Game.rack_at(tile):
-		($Floor as Node).reject_tile(tile, "CELL OCCUPIED")
-		ui.hud_toast("There is already a rack there.")
+		# a click on a rack you already own opens it; build mode is not a trap
+		mode = Mode.SELECT
+		ui.open_rack(Game.rack_at(tile))
 		return
 	if not Game.try_spend(Game.RACK_PRICE):
 		($Floor as Node).reject_tile(tile, "NEED $%d" % Game.RACK_PRICE)
@@ -937,6 +938,7 @@ func _place_rack(tile: Vector2i) -> void:
 		return
 	add_child(RackVisual.new().setup(Game.add_rack(tile), true))
 	Sfx.play("place")
+	mode = Mode.SELECT  # one rack is the usual case; the next click should open it
 	queue_redraw()
 
 var _anims: Array = []

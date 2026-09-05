@@ -5197,12 +5197,17 @@ func decline_buyout() -> String:
 		return "there is nothing on the table"
 	var who := String(buyout_offer["rival"])
 	buyout_offer = {}
-	# turning somebody down makes them a worse neighbour
+	# turning somebody down makes them a worse neighbour for a quarter: one
+	# step, not one step per refusal, and they do not ask again for two
 	for r in rivals:
 		if String(r["name"]) == who:
-			r["aggression"] = maxf(0.6, float(r["aggression"]) - 0.12)
+			if not r.has("grudge_base"):
+				r["grudge_base"] = float(r["aggression"])
+			r["aggression"] = maxf(0.6, float(r["grudge_base"]) - 0.12)
+			r["grudge_until"] = cycle + 12
 			r["cash"] = int(r["cash"]) + 4000
-	log_event("APPROACH: you turned %s down. They are going to compete harder for it." % who)
+	stats["buyout_cooldown"] = cycle + 24
+	log_event("APPROACH: you turned %s down. They are going to compete harder for it this quarter." % who)
 	return ""
 
 const FINALE_ENDINGS := {
@@ -5644,7 +5649,11 @@ func maybe_end_run() -> void:
 		stats["insolvent_cycles"] = int(stats.get("insolvent_cycles", 0)) + 1
 		if int(stats["insolvent_cycles"]) >= 5:
 			end_run("insolvent")
+		else:
+			log_event("BANK: $%d in the red. %d cycle(s) before the bank calls it." % [money, 5 - int(stats["insolvent_cycles"])])
 	else:
+		if int(stats.get("insolvent_cycles", 0)) > 0:
+			log_event("BANK: back above -$3000. The countdown is off.")
 		stats["insolvent_cycles"] = 0
 
 func rank_score() -> int:
@@ -7019,7 +7028,9 @@ func _renewals_tick() -> void:
 		elif uptime < 0.8:
 			factor = 0.75
 			mood = "they want a discount for the trouble"
-		var proposed := int(float(deal["fee"]) * factor)
+		if not deal.has("signed_fee"):
+			deal["signed_fee"] = int(deal["fee"])
+		var proposed := mini(int(float(deal["fee"]) * factor), int(float(deal["signed_fee"]) * GROWTH_CAP))
 		deal["renewal"] = {"fee": proposed, "mood": mood, "uptime": int(uptime * 100)}
 		log_event("RENEWAL: %s's contract is up. They propose $%d/cycle: %s."
 			% [deal["customer"], proposed, mood])
@@ -7042,12 +7053,26 @@ func decline_renewal(deal: Dictionary) -> void:
 	log_event("ENDED: %s's contract was not renewed." % deal["customer"])
 	money_changed.emit()
 
+const GROWTH_CAP := 3.0  # a customer grows to at most three times what they signed for
+const GROWTH_LOAD_CAP := 800  # and their traffic stops short of a saturated gigabit port
+
+func contract_fee(c: Dictionary) -> int:
+	## the recurring service fee a finished campaign job pays: a share of the
+	## reward, held between the smallest and the largest marketplace deals so
+	## the campaign never turns into an annuity that drowns the market
+	return clampi(int(c["reward"]) / 10, 40, 120)
+
 func customer_growth(deal: Dictionary) -> void:
-	## a startup that survives outgrows its contract, in fee and in traffic
+	## a startup that survives outgrows its contract, in fee and in traffic,
+	## up to a ceiling: nobody pays three times what they signed for forever
 	if deal.get("ctype", "") != "startup" or randf() >= 0.06:
 		return
-	deal["fee"] = int(int(deal["fee"]) * 1.25)
-	deal["load"] = int(int(deal.get("load", 200)) * 1.4)
+	if not deal.has("signed_fee"):
+		deal["signed_fee"] = int(deal["fee"])
+	if float(deal["fee"]) >= float(deal["signed_fee"]) * GROWTH_CAP or int(deal.get("load", 200)) >= GROWTH_LOAD_CAP:
+		return
+	deal["fee"] = mini(int(int(deal["fee"]) * 1.25), int(float(deal["signed_fee"]) * GROWTH_CAP))
+	deal["load"] = mini(int(int(deal.get("load", 200)) * 1.4), GROWTH_LOAD_CAP)
 	log_event("GROWTH: %s is scaling up: their fee rises to $%d and their traffic with it."
 		% [deal["customer"], int(deal["fee"])])
 
@@ -9079,7 +9104,11 @@ func sla_tick() -> void:
 		earned -= interest
 	if money < 0:
 		reputation = maxi(0, reputation - 2)
-		log_event("BANK: you are insolvent ($%d): reputation is bleeding." % money)
+		if not bool(stats.get("insolvent_told", false)):
+			stats["insolvent_told"] = true
+			log_event("BANK: you are insolvent ($%d): reputation bleeds 2 a cycle while it lasts. Below -$3000 the bank calls it after 5 cycles. Ways out: sell gear (half price back), take or extend the loan, or let a contract fee land." % money)
+	else:
+		stats["insolvent_told"] = false
 	for c in circuits:
 		last_pl["wan circuits"] = int(last_pl.get("wan circuits", 0)) - int(c["fee"])
 		earned -= int(c["fee"])
@@ -9115,7 +9144,7 @@ func sla_tick() -> void:
 		if ok:
 			# earned this cycle, owed on the customer's terms: a campaign
 			# customer is still a customer, and the cash arrives when it arrives
-			var fee: int = int(c["reward"]) / 10
+			var fee: int = contract_fee(c)
 			raise_invoice({"customer": String(c["customer"]), "id": "contract:%s" % c["id"],
 				"ctype": "startup" if String(c["customer"]) == "Internal ops" else "enterprise"}, fee)
 	for d in all_devices():  # transit invoices: the carrier bills a port, your own routers do not
@@ -9769,7 +9798,7 @@ func recurring_income() -> int:
 	var total := 0
 	for c in Contracts.all():
 		if c["id"] in contracts_done and not Contracts.retired(c["id"]) and bool(sla_status.get(c["id"], true)):
-			total += int(c["reward"]) / 10
+			total += contract_fee(c)
 	for deal in deals:
 		if bool(deal.get("healthy", true)) and not deal.has("renewal"):
 			total += int(deal["fee"]) / (2 if bool(deal.get("degraded", false)) else 1)

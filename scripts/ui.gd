@@ -688,12 +688,25 @@ func _overlay() -> Control:
 
 var _card_scrolls: Array = []  # ScrollContainers to fit to the viewport
 
-const CARD_TOP := 72.0  # every card hangs from the same edge, just under the HUD
+const CARD_TOP := 72.0  # the fallback hang edge before the HUD has been laid out
+var _hangs: Array = []  # every card's margin container, refitted when the HUD changes height
+
+func card_top() -> float:
+	## just under the HUD, whatever height it laid out at
+	if hud_bar != null and hud_bar.size.y > 0.0:
+		return hud_bar.size.y + 8.0
+	return CARD_TOP
+
+func _refit_hangs() -> void:
+	for h in _hangs:
+		if is_instance_valid(h):
+			h.add_theme_constant_override("margin_top", int(card_top()))
 
 func _card(parent: Control, min_w: float) -> VBoxContainer:
 	var hang := MarginContainer.new()
 	hang.set_anchors_preset(Control.PRESET_FULL_RECT)
-	hang.add_theme_constant_override("margin_top", int(CARD_TOP))
+	hang.add_theme_constant_override("margin_top", int(card_top()))
+	_hangs.append(hang)
 	parent.add_child(hang)
 	var center := HBoxContainer.new()
 	center.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -768,7 +781,7 @@ func _fit_cards() -> void:
 		need_y = maxf(need_y, _laid_out_height(content))
 		scroll.custom_minimum_size = Vector2(
 			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 160.0),
-			minf(need_y, vp.y - CARD_TOP - 60.0))
+			minf(need_y, vp.y - card_top() - 60.0))
 
 func _laid_out_height(content: Control) -> float:
 	## The real height of what is in a card, after layout, including text that
@@ -900,8 +913,12 @@ func _menu(at: Control, items: Array, on_pick: Callable) -> void:
 
 # ---------- toolbar ----------
 
+var hud_bar: PanelContainer
+
 func _build_toolbar() -> void:
 	var bar := PanelContainer.new()
+	hud_bar = bar
+	bar.resized.connect(_refit_hangs)
 	bar.theme = theme_res
 	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	var sb := UIW.panel_box("hud", "sm")
@@ -4968,8 +4985,11 @@ func _build_business_tab() -> void:
 			var keys: Array = []
 			for course in Staff.COURSES:
 				var c: Dictionary = Staff.COURSES[course]
-				opts.append("%s   $%d, %d cycles off the floor" % [c["label"], int(c["cost"]),
-					int(c["cycles"])])
+				var off_role: bool = String(c.get("role", "")) != "" and String(c["role"]) != String(m["role"])
+				opts.append("%s   $%d, %d cycles off the floor%s" % [c["label"],
+					int(c["cost"]) * 3 / 2 if off_role else int(c["cost"]),
+					int(c["cycles"]) + (1 if off_role else 0),
+					"   (written for a %s: dearer and longer)" % Staff.ROLES[c["role"]]["label"] if off_role else ""])
 				keys.append(course)
 			_menu(train_btn, opts, func(id: int) -> void:
 				var err := Staff.start_course(m, String(keys[id]))
@@ -5960,11 +5980,17 @@ func _workshop_pick(id: int, rows: Array) -> void:
 	hud_toast("Diagnostics copied to the clipboard.", true)
 
 func _toast(text: String) -> void:
-	if _toast_lbl == null or not is_instance_valid(_toast_lbl):
-		_toast_lbl = _label("", 14, Color(1.0, 0.85, 0.5))
-		contracts_box.add_child(_toast_lbl)
-		contracts_box.move_child(_toast_lbl, 0)
-	_toast_lbl.text = text
+	## an error where the player is looking: inside the Company panel when
+	## that is what is open, otherwise on the HUD, never into a hidden box
+	if contracts_overlay != null and contracts_overlay.visible:
+		if _toast_lbl == null or not is_instance_valid(_toast_lbl):
+			_toast_lbl = _label("", 14, Color(1.0, 0.85, 0.5))
+			contracts_box.add_child(_toast_lbl)
+			contracts_box.move_child(_toast_lbl, 0)
+		_toast_lbl.text = text
+		Sfx.play("bad")
+		return
+	hud_toast(text, false)
 
 func _build_contract_debrief(debrief: Dictionary) -> void:
 	var card := UIW.style_panel(PanelContainer.new(), "surface", "lg")
@@ -6062,7 +6088,7 @@ func _refresh_contracts() -> void:
 					14, Color(0.55, 0.6, 0.7)))
 				continue
 			var healthy: bool = Game.sla_status.get(c["id"], true)
-			var mrr: int = int(c["reward"]) / 10
+			var mrr: int = Game.contract_fee(c)
 			if healthy:
 				contracts_box.add_child(_chip_row("DONE", Color(0.4, 0.85, 0.5),
 					"%s: %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
@@ -6118,10 +6144,23 @@ func _refresh_contracts() -> void:
 			cv.add_child(hint_btn)
 			cv.add_child(hint_lbl)
 		var btn := Button.new()
-		btn.text = "Check requirements & collect"
+		var all_met := true
+		var first_unmet := ""
+		for r in c["reqs"]:
+			if not r["t"].call():
+				all_met = false
+				if first_unmet == "":
+					first_unmet = String(r["d"])
+		btn.text = "Collect $%d" % int(c["reward"]) if all_met else "Check requirements & collect"
 		_accent(btn)
 		btn.pressed.connect(func() -> void:
-			Game.try_complete_contract(c)
+			if not Game.try_complete_contract(c):
+				var why := ""
+				for r in c["reqs"]:
+					if not r["t"].call():
+						why = String(r["d"])
+						break
+				hud_toast("Not yet: %s" % why if why != "" else "Not yet.", false)
 			_refresh_contracts()
 			check_demo_end())
 		cv.add_child(btn)
@@ -6312,6 +6351,9 @@ func _unhandled_input(e: InputEvent) -> void:
 			close_contracts()
 		elif rack_overlay.visible:
 			close_rack()
+		elif get_parent().mode != get_parent().Mode.SELECT:
+			get_parent().mode = get_parent().Mode.SELECT  # ESC leaves build mode before it opens anything
+			Sfx.play("back")
 		else:
 			toggle_menu()
 		get_viewport().set_input_as_handled()
