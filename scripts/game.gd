@@ -9394,8 +9394,14 @@ func new_device(model: String, second_hand := false) -> Net.NDevice:
 	if type in ["router", "firewall", "uplink", "loadbalancer"]:
 		d.ip_forwarding = true
 	if type == "uplink":
-		# the ISP side is preconfigured: handoff /30 + anycast internet, announces default
-		d.bgp = {"asn": 64500, "neighbors": [], "networks": ["0.0.0.0/0"]}
+		# the ISP side is preconfigured: handoff /30 + anycast internet, announces default.
+		# A second handoff is a second carrier: its own AS and its own /30
+		var second := false
+		for other in all_devices():
+			if other.type == "uplink":
+				second = true
+		d.bgp = {"asn": 64501 if second else 64500, "neighbors": [], "networks": ["0.0.0.0/0"]}
+		d.set_meta("second_carrier", second)
 	for i in m["ports"]:
 		var pfx: String = m.get("if_prefix", spec["if_prefix"])
 		var ifc := Net.Iface.new(d, pfx + str(spec["if_start"] + i), _new_mac())
@@ -9422,7 +9428,7 @@ func new_device(model: String, second_hand := false) -> Net.NDevice:
 		mgmt.mode = "routed"
 		d.ifaces.append(mgmt)
 	if type == "uplink":
-		d.ifaces[0].ips.append("100.64.0.1/30")
+		d.ifaces[0].ips.append("100.65.0.1/30" if bool(d.get_meta("second_carrier", false)) else "100.64.0.1/30")
 		var lo := Net.Iface.new(d, "lo", _new_mac())
 		lo.mode = "routed"
 		lo.ips = ["8.8.8.8/32", "1.1.1.1/32"]  # "the internet"

@@ -407,6 +407,24 @@ const DIALECT_HINTS := {
 			"show ip route 10.251.2.10",
 		],
 	},
+	"two_transits": {
+		"device_type": "router",
+		"intro": "Two sessions from one router, then three policies: local-preference picks the carrier you send through, prepend makes the other path look longer to the world, and a prefix-list in says what you accept from each.",
+		"after": "The second handoff is 100.65.0.1/30 in AS64501; give the router's leg toward it 100.65.0.2/30. Check the winner with 'show ip bgp'.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"router bgp 65001",
+			"neighbor 100.64.0.1 remote-as 64500",
+			"neighbor 100.65.0.1 remote-as 64501",
+			"neighbor 100.64.0.1 local-preference 200",
+			"neighbor 100.65.0.1 prepend 2",
+			"neighbor 100.64.0.1 prefix-list in 0.0.0.0/0",
+			"neighbor 100.65.0.1 prefix-list in 0.0.0.0/0",
+			"end",
+			"show ip bgp",
+		],
+	},
 	"big_client": {
 		"device_type": "switch",
 		"intro": "Nothing new: a VLAN with an access port, a server that reaches the Internet, a firewall rule covering its subnet, a live OSPF adjacency, and a switch with an addressed Management port. Each piece is a job you have already done.",
@@ -851,6 +869,20 @@ static func _campaign() -> Array:
 			],
 		},
 		{
+			"id": "two_transits",
+			"title": "Two transits, one decision",
+			"customer": "Panonia Data (consulting)",
+			"reward": 4800,
+			"brief": "One upstream is one outage away from silence. Buy a second ISP Handoff: the second carrier comes as AS64501 at 100.65.0.1/30. Peer with both from one router, then make the decisions BGP exists for: prefer one carrier for outbound traffic with a higher local-preference, make the other path look longer to the world by prepending your AS on it, and filter what you accept from each with an inbound prefix-list (accept the default, nothing else). Prove the preference: the router's route to 8.8.8.8 must go out through the carrier you preferred.",
+			"reqs": [
+				{"d": "Sessions established with two different upstream ASNs", "t": func() -> bool: return _upstream_sessions() >= 2},
+				{"d": "One carrier preferred outbound with local-preference", "t": func() -> bool: return _preferred_upstream() != ""},
+				{"d": "The other carrier's path prepended", "t": func() -> bool: return _prepended_upstream()},
+				{"d": "An inbound prefix-list on every session", "t": func() -> bool: return _all_sessions_filtered()},
+				{"d": "8.8.8.8 leaves through the preferred carrier", "t": func() -> bool: return _default_via_preferred()},
+			],
+		},
+		{
 			"id": "prove_it",
 			"title": "The exercise",
 			"customer": "Tisza Bank",
@@ -1123,6 +1155,74 @@ static func _uplink_cabled() -> bool:
 				if l and l.other(i).dev.type == "router":
 					return true
 	return false
+
+static func _multihomed_router() -> Net.NDevice:
+	## the router with the most established sessions to distinct upstream ASNs
+	var best: Net.NDevice = null
+	var best_n := 0
+	for d in Game.all_devices():
+		if d.type != "router":
+			continue
+		var asns := {}
+		for nb in d.bgp.get("neighbors", []):
+			if Sim.bgp_established(d, nb):
+				asns[int(nb["remote_as"])] = true
+		if asns.size() > best_n:
+			best_n = asns.size()
+			best = d
+	return best
+
+static func _upstream_sessions() -> int:
+	var r := _multihomed_router()
+	if r == null:
+		return 0
+	var asns := {}
+	for nb in r.bgp.get("neighbors", []):
+		if Sim.bgp_established(r, nb):
+			asns[int(nb["remote_as"])] = true
+	return asns.size()
+
+static func _preferred_upstream() -> String:
+	## the neighbour with the strictly highest local-preference, if one stands out
+	var r := _multihomed_router()
+	if r == null:
+		return ""
+	var best := ""
+	var best_pref := -1
+	var tie := false
+	for nb in r.bgp.get("neighbors", []):
+		var pref := int(nb.get("local_pref", 100))
+		if pref > best_pref:
+			best_pref = pref
+			best = String(nb["ip"])
+			tie = false
+		elif pref == best_pref:
+			tie = true
+	return "" if tie else best
+
+static func _prepended_upstream() -> bool:
+	var r := _multihomed_router()
+	if r == null:
+		return false
+	var preferred := _preferred_upstream()
+	for nb in r.bgp.get("neighbors", []):
+		if String(nb["ip"]) != preferred and int(nb.get("prepend", 0)) > 0:
+			return true
+	return false
+
+static func _all_sessions_filtered() -> bool:
+	var r := _multihomed_router()
+	if r == null or r.bgp.get("neighbors", []).size() < 2:
+		return false
+	for nb in r.bgp.get("neighbors", []):
+		if nb.get("prefix_in", []).is_empty():
+			return false
+	return true
+
+static func _default_via_preferred() -> bool:
+	var r := _multihomed_router()
+	var preferred := _preferred_upstream()
+	return r != null and preferred != "" and Sim.route_via(r, "8.8.8.8") == preferred
 
 static func _bgp_up() -> Net.NDevice:
 	for d in Game.all_devices():

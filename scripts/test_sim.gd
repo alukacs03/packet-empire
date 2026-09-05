@@ -6865,6 +6865,16 @@ static func run() -> int:
 		"bgp: the default route is filtered out and the other upstream carries it")
 	check(mh_cli.exec("show ip bgp summary").contains("in: 203.0.113.0/24"),
 		"bgp: show ip bgp reports the policy")
+	# the two-transits contract: every policy in place, and the winner proved
+	check(not Game.try_complete_contract(_contract("two_transits")), "two transits: a prepend and a second prefix-list are still missing")
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	mh_cli.exec("neighbor 100.70.0.1 prepend 2")
+	mh_cli.exec("neighbor 100.71.0.1 prefix-list in 0.0.0.0/0")
+	mh_cli.exec("neighbor 100.71.0.1 local-preference 200")
+	mh_cli.exec("end")
+	Sim.flush_learned_state()
+	check(Game.try_complete_contract(_contract("two_transits")), "two transits: preference, prepend and filters on two carriers sign the job")
 
 	# --- rack elevations: not everything is one unit tall ---
 	var ru_rack := Game.add_rack(Vector2i(47, 1))
