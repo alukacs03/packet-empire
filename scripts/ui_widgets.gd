@@ -181,7 +181,7 @@ static func make_theme() -> Theme:
 	theme.set_color("font_color", "TooltipLabel", colour("text_strong"))
 	var scroll_track := custom_box(Color(0.025, 0.055, 0.095, 0.72), Color.TRANSPARENT, 4, 0)
 	scroll_track.shadow_size = 0
-	var scroll_grab := custom_box(Color(colour("border_strong"), 0.72), Color.TRANSPARENT, 4, 0)
+	var scroll_grab := custom_box(Color(colour("accent"), 0.55), Color.TRANSPARENT, 4, 0)
 	scroll_grab.shadow_size = 0
 	var scroll_hot := custom_box(colour("accent_soft"), Color(colour("accent"), 0.55), 4, 0)
 	scroll_hot.shadow_size = 0

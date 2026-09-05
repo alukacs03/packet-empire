@@ -693,6 +693,8 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(min_w, 0)
 	scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("md"))
+	# a card that clips a button must look scrollable: a bar you can see
+	scroll.get_v_scroll_bar().custom_minimum_size.x = 10
 	panel.add_child(scroll)
 	_card_scrolls.append(scroll)
 	var content_margin := MarginContainer.new()
@@ -954,15 +956,15 @@ func _build_toolbar() -> void:
 	objective_lbl.custom_minimum_size = Vector2(260, 0)
 	objective_lbl.clip_text = true
 	objective_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	# the sentence gets everything between the alert chip and the clock,
+	# instead of a fixed 260 px that cut every suggestion in half
+	objective_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(objective_lbl)
 	hud_alert_btn = Button.new()
 	hud_alert_btn.visible = false
 	UIW.style_button(hud_alert_btn, "danger")
 	hud_alert_btn.pressed.connect(open_contracts)
 	h.add_child(hud_alert_btn)
-	var status_spacer := Control.new()
-	status_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(status_spacer)
 	clock_lbl = _label("", 11, Color(0.55, 0.65, 0.78))
 	clock_lbl.custom_minimum_size = Vector2(330, 0)
 	clock_lbl.clip_text = true
