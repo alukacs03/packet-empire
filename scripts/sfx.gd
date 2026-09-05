@@ -209,7 +209,7 @@ static func score_tick(state: Dictionary) -> void:
 	if _score == null or not is_instance_valid(_score):
 		return
 	var mood := score_override if score_override != "" else mood_for(state)
-	if muted or mood == "":
+	if muted or mood == "" or mood == "none":
 		score_mood = ""
 		if _score.playing:
 			_score.stop()

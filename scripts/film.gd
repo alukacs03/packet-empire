@@ -45,10 +45,10 @@ static func _install_caption(world: Node) -> void:
 	caption_body.add_theme_color_override("font_color", Color(0.62, 0.78, 0.86))
 	box.add_child(caption_body)
 
-static func mood(name: String) -> void:
-	## a film chooses what the room hums, and hums it loud enough to hear
-	Sfx.score_boost_db = 16.0
-	Sfx.score_override = name
+static func mood(_name: String) -> void:
+	## a film carries its own soundtrack, mixed in afterwards; the room's
+	## sparse hum is a drone on tape, so it stays out of the recording
+	Sfx.score_override = "none"
 	Sfx.score_tick({})
 
 static func say(title: String, body: String) -> void:

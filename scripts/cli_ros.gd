@@ -44,7 +44,7 @@ func _itype(i: Net.Iface) -> String:
 	if i.parent != "":
 		return "vlan"
 	if i.name.begins_with("wg"):
-		return "wireguard"
+		return "wg"
 	return "ether"
 
 func _bridge_member(i: Net.Iface) -> bool:
@@ -164,12 +164,17 @@ func exec(line: String) -> String:
 	if raw == "/":
 		cwd = ""
 		return ""
-	if raw == "?":
-		return _help()
+	var asking := raw.ends_with("?")
+	if asking:
+		raw = raw.trim_suffix("?").strip_edges()
+	if raw == "":
+		return _help_for(cwd, true)
 	var absolute := raw.begins_with("/")
-	# [find key=value] selects an item: the key=value is all the model needs
+	var slashed := raw.trim_prefix("/").contains("/") and _menu_word(raw.split(" ", false)[0])
+	# [find key=value] selects an item: the key=value is all the model needs;
+	# a double-quoted value keeps its spaces and loses its quotes
 	var words: Array = []
-	for t in raw.replace("[", " ").replace("]", " ").split(" ", false):
+	for t in _tokens(raw.replace("[", " ").replace("]", " ")):
 		var s := String(t)
 		if _menu_word(s):
 			for w in s.split("/", false):
@@ -185,10 +190,23 @@ func exec(line: String) -> String:
 	var path := ""
 	var args: Array = []
 	for t in words:
-		if "=" in String(t) or (path != "" and not _is_path_word(path + " " + String(t))):
+		var word := String(t)
+		if "=" in word or not args.is_empty():
 			args.append(t)
+			continue
+		if _is_path_word(path + (" " if path != "" else "") + word):
+			path += (" " if path != "" else "") + word
+			continue
+		# any unique prefix of a command word is the word, as on a real box
+		var matches: Array = _children(path).filter(func(c): return String(c).begins_with(word))
+		if matches.size() == 1:
+			path += (" " if path != "" else "") + String(matches[0])
+		elif matches.size() > 1 and not _is_path_word(path):
+			return "ambiguous command name %s (line 1 column %d)\n" % [word, raw.find(word) + 1]
 		else:
-			path += (" " if path != "" else "") + String(t)
+			args.append(t)
+	if asking:
+		return _help_for(path, args.is_empty())
 	var p := _params(args)
 	# a parameter the menu does not have is a syntax error at its column
 	if PARAMS.has(path):
@@ -222,7 +240,10 @@ func exec(line: String) -> String:
 				return ""
 			for a in args:
 				if "=" not in String(a):
-					return "no such command or directory (%s)\n" % a
+					# the slash spelling says directory; the space spelling says command
+					if slashed:
+						return "no such command or directory (%s)\n" % a
+					return "bad command name %s (line 1 column %d)\n" % [a, raw.find(String(a)) + 1]
 			return "syntax error (line 1 column %d)\n" % (raw.find(String(args[0])) + 1)
 		var first := String(words[0])
 		if path != "" and _is_path_word(path):
@@ -237,6 +258,66 @@ func exec(line: String) -> String:
 		if bool(opts["detail"]):
 			text = _detail(text)
 	return text
+
+static func _tokens(text: String) -> Array:
+	## split on spaces, but a double-quoted stretch is one token without its quotes
+	var out: Array = []
+	var cur := ""
+	var quoted := false
+	for ch in text:
+		if ch == "\"":
+			quoted = not quoted
+		elif ch == " " and not quoted:
+			if cur != "":
+				out.append(cur)
+			cur = ""
+		else:
+			cur += ch
+	if cur != "":
+		out.append(cur)
+	return out
+
+func _children(path: String) -> Array:
+	## the words that can follow a menu path (every first word at the root)
+	var seen := {}
+	for c in PATHS:
+		if path == "":
+			seen[String(c).split(" ")[0]] = true
+		elif c.begins_with(path + " "):
+			seen[String(c.substr(path.length() + 1)).split(" ")[0]] = true
+	return seen.keys()
+
+const VERB_DESC := {"add": "Create a new item", "disable": "Disable items", "edit": "Edit value of item", "enable": "Enable items",
+	"export": "Print or save an export script that can be used to restore configuration", "find": "Find items by value",
+	"get": "Gets value of item's property", "print": "Print values of item properties", "remove": "Remove item", "set": "Change item properties",
+	"monitor": "Monitor interface status", "reboot": "Reboot the router", "save": "Save the configuration", "load": "Load the configuration",
+	"ping": "Send ICMP Echo packets", "traceroute": "Trace route to a host", "torch": "Realtime traffic monitor", "sniffer": "Packet sniffer",
+	"stats": "Interface statistics", "detail": "Show details", "quick": "Quick sniff of packets"}
+const PARAM_DESC := {"address": "IP address", "interface": "Interface name", "network": "Network address", "comment": "Short description of the item",
+	"disabled": "Defines whether item is ignored or used", "gateway": "Gateway address or interface", "dst-address": "Destination address",
+	"distance": "Route distance", "name": "Item name", "vlan-ids": "VLAN IDs", "tagged": "Interfaces that send tagged frames",
+	"untagged": "Interfaces that send untagged frames", "pvid": "Port VLAN ID", "bridge": "Bridge name", "count": "Number of packets to send",
+	"size": "Packet size", "chain": "Rule chain", "action": "Action to take", "protocol": "IP protocol", "dst-port": "Destination port",
+	"src-address": "Source address", "in-interface": "Incoming interface", "out-interface": "Outgoing interface", "ranges": "Address ranges",
+	"address-pool": "Address pool", "dns-server": "DNS server", "servers": "Server addresses", "enabled": "Whether the service is enabled",
+	"password": "Password", "group": "User group", "port": "TCP port", "slaves": "Member interfaces", "mode": "Mode", "vlan-id": "VLAN ID",
+	"vrid": "Virtual router ID", "priority": "Priority", "networks": "Networks", "area": "Area name", "router-id": "Router ID",
+	"remote.address": "Remote address", "remote.as": "Remote AS", "as": "Local AS", "list": "List name", "copy-from": "Item to copy from"}
+
+func _help_for(path: String, menu: bool) -> String:
+	## '?' the RouterOS way: a menu lists what can follow with a word about
+	## each; a command lists its parameters
+	if PARAMS.has(path) and not menu or (PARAMS.has(path) and _children(path).is_empty()):
+		var out := "%s\n\n" % VERB_DESC.get(path.split(" ")[-1], "")
+		for k in PARAMS[path]:
+			out += "%s -- %s\n" % [k, PARAM_DESC.get(String(k), "")]
+		return out
+	var kids := _children(path)
+	kids.sort()
+	var out := ""
+	for k in kids:
+		out += "%s -- %s\n" % [k, VERB_DESC.get(String(k), "")]
+	return out if out != "" else "% no such menu\n"
 
 func _next_words(path: String) -> Dictionary:
 	var nexts := {}
@@ -256,14 +337,36 @@ static func _rows_of(text: String) -> Array:
 	return rows
 
 static func _where(text: String, cond: Dictionary) -> String:
-	## print where key=value: the rows that carry every value, numbered as before
+	## print where key=value: the rows whose named column equals the value
+	## (a substring test when the key is not a column), numbered as before
+	var lines := text.split("\n", false)
+	var cols: PackedStringArray = []
+	var header := ""
+	for l in lines:
+		if l.begins_with("Columns: "):
+			cols = l.trim_prefix("Columns: ").split(", ")
+		elif l.strip_edges().begins_with("#") and header == "":
+			header = l
+	var offs: Array = []
+	for c in cols:
+		offs.append(header.find(c))
 	var out := ""
-	for l in text.split("\n", false):
+	for l in lines:
 		var keep := _is_header(l)
 		if not keep:
 			keep = true
 			for k in cond:
-				if String(cond[k]) not in l:
+				var want := String(cond[k]).replace("\"", "")
+				var col := -1
+				for ci in cols.size():
+					if String(cols[ci]).to_lower() == String(k).to_lower():
+						col = ci
+				if col >= 0:
+					var end: int = int(offs[col + 1]) if col + 1 < cols.size() else l.length()
+					var val := l.substr(int(offs[col]), end - int(offs[col])).strip_edges()
+					if val != want:
+						keep = false
+				elif ("%s=%s" % [k, want]) not in l and ("%s=\"%s\"" % [k, want]) not in l:
 					keep = false
 		if keep:
 			out += l + "\n"
@@ -364,8 +467,8 @@ static func fmt_traceroute(dev: Net.NDevice, target: String, count: int) -> Stri
 	if ip == "":
 		return "invalid value for argument address:\n    while resolving net address: could not get answer from dns server\n"
 	count = clampi(count, 1, 10)
-	var out := "Columns: ADDRESS, LOSS, SENT, LAST, AVG, BEST, WORST, STD-DEV\n"
-	out += "#  ADDRESS          LOSS  SENT  LAST     AVG   BEST  WORST  STD-DEV\n"
+	var out := "Columns: ADDRESS, LOSS, SENT, LAST, AVG, BEST, WORST, STD-DEV, STATUS\n"
+	out += "#  ADDRESS          LOSS  SENT  LAST     AVG   BEST  WORST  STD-DEV  STATUS\n"
 	var n := 1
 	for hop in Sim.traceroute(dev, ip):
 		if hop == "*":
@@ -377,6 +480,30 @@ static func fmt_traceroute(dev: Net.NDevice, target: String, count: int) -> Stri
 				"%.1f" % rtt, "%.1f" % (rtt * 0.98), "%.1f" % (rtt * 1.03), "0"]
 		n += 1
 	return out
+
+func _bare_target(args: Array, p: Dictionary) -> String:
+	## address= or the one bare word, wherever it sits
+	if p.has("address"):
+		return String(p["address"])
+	for a in args:
+		if "=" not in String(a):
+			return String(a)
+	return ""
+
+static func _dur(secs: int) -> String:
+	## 10m, 1h5m12s, 2d3h: RouterOS drops the zero units in front
+	if secs <= 0:
+		return "0s"
+	var parts: Array = []
+	if secs >= 86400:
+		parts.append("%dd" % (secs / 86400))
+	if (secs / 3600) % 24 > 0 or not parts.is_empty():
+		parts.append("%dh" % ((secs / 3600) % 24))
+	if (secs / 60) % 60 > 0 or not parts.is_empty():
+		parts.append("%dm" % ((secs / 60) % 60))
+	if secs % 60 > 0 or parts.is_empty():
+		parts.append("%ds" % (secs % 60))
+	return "".join(PackedStringArray(parts))
 
 func _empty(flags_line: String) -> String:
 	## an empty list on RouterOS is silent, apart from the legend it would have
@@ -404,15 +531,17 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"export":
 			return _export()
 		"ping":
-			if args.size() >= 1 and "=" not in String(args[0]):
+			var target := _bare_target(args, p)
+			if target != "":
 				var ping_size := int(p.get("size", 64)) \
 					if String(p.get("size", "64")).is_valid_int() else 64
 				var count := int(p["count"]) if String(p.get("count", "")).is_valid_int() else 3
-				return fmt_ping(dev, args[0], count, ping_size)
+				return fmt_ping(dev, target, count, ping_size)
 			return "value of address must be specified\n"
 		"tool traceroute":
-			if args.size() >= 1 and "=" not in String(args[0]):
-				return fmt_traceroute(dev, args[0], int(p["count"]) if String(p.get("count", "")).is_valid_int() else 3)
+			var target := _bare_target(args, p)
+			if target != "":
+				return fmt_traceroute(dev, target, int(p["count"]) if String(p.get("count", "")).is_valid_int() else 3)
 			return "value of address must be specified\n"
 		"tool torch":
 			# the live pairs, the way torch shows them
@@ -479,7 +608,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var n := 0
 			for v in dev.versions:
 				if v.has("backup"):
-					out += "%d  %-20s backup   14.2KiB  cycle %d\n" % [n, String(v["backup"]) + ".backup", int(v["cycle"])]
+					out += "%d  %-20s backup   14.2KiB  %s\n" % [n, String(v["backup"]) + ".backup", Time.get_datetime_string_from_system(false, true).replace("T", " ")]
 					n += 1
 			return out
 		"log print":
@@ -490,13 +619,56 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				n += 1
 			return out
 		"user print":
-			return "Flags: X - DISABLED\nColumns: NAME, GROUP, LAST-LOGGED-IN\n#   NAME   GROUP  LAST-LOGGED-IN\n0   admin  full   %s\n" % Time.get_datetime_string_from_system(false, true)
+			var out := "Columns: NAME, GROUP, LAST-LOGGED-IN\n#   NAME   GROUP  LAST-LOGGED-IN\n0   admin  full   %s\n" % Time.get_datetime_string_from_system(false, true).replace("T", " ")
+			var n := 1
+			for u in dev.services.get("ros_users", {}):
+				out += "%d   %-6s %-6s \n" % [n, u, dev.services["ros_users"][u]]
+				n += 1
+			return out
+		"user add":
+			if not p.has("name"):
+				return "value of name must be specified\n"
+			var users: Dictionary = dev.services.get("ros_users", {})
+			users[String(p["name"])] = String(p.get("group", "read"))
+			dev.services["ros_users"] = users
+			return ""
+		"user set", "password":
+			return ""
+		"user remove":
+			var users: Dictionary = dev.services.get("ros_users", {})
+			for a in args:
+				users.erase(String(a))
+			return ""
+		"ip service set":
+			var conf: Dictionary = dev.services.get("ros_services", {})
+			var which := _bare_target(args, p)
+			if which == "" and args.is_empty():
+				return "no such item\n"
+			var entry: Dictionary = conf.get(which, {})
+			if p.has("port"):
+				if not String(p["port"]).is_valid_int():
+					return "invalid value for argument port\n"
+				entry["port"] = int(p["port"])
+			if p.has("disabled"):
+				entry["disabled"] = String(p["disabled"]) == "yes"
+			conf[which] = entry
+			dev.services["ros_services"] = conf
+			return ""
+		"ip service disable", "ip service enable":
+			var conf: Dictionary = dev.services.get("ros_services", {})
+			for a in args:
+				var entry: Dictionary = conf.get(String(a), {})
+				entry["disabled"] = path.ends_with("disable")
+				conf[String(a)] = entry
+			dev.services["ros_services"] = conf
+			return ""
 		"ip service print":
 			var out := "Flags: X - DISABLED, I - INVALID\nColumns: NAME, PORT, ADDRESS, CERTIFICATE\n#   NAME     PORT  ADDRESS  CERTIFICATE\n"
 			var n := 0
 			for svc in [["telnet", 23, true], ["ftp", 21, true], ["www", 80, false], ["ssh", 22, false],
 					["www-ssl", 443, true], ["api", 8728, true], ["winbox", 8291, false], ["api-ssl", 8729, true]]:
-				out += "%d %s %-8s %5d           %s\n" % [n, "X" if bool(svc[2]) else " ", svc[0], int(svc[1]),
+				var conf: Dictionary = dev.services.get("ros_services", {}).get(String(svc[0]), {})
+				out += "%d %s %-8s %5d          %s\n" % [n, "X" if bool(conf.get("disabled", svc[2])) else " ", svc[0], int(conf.get("port", svc[1])),
 					"none" if String(svc[0]).ends_with("ssl") else ""]
 				n += 1
 			return out
@@ -515,29 +687,214 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var out := "Flags: S - STATIC\nColumns: NAME, TYPE, DATA, TTL\n#   NAME                 TYPE  DATA             TTL\n"
 			var n := 0
 			for name in dev.dns_cache:
-				out += "%-3d %-20s A     %-16s %ds\n" % [n, name, dev.dns_cache[name].get("ip", ""),
-					maxi(0, int(dev.dns_cache[name].get("expires", 0)) - Game.cycle) * 3600]
+				out += "%-3d %-20s A     %-16s %s\n" % [n, name, dev.dns_cache[name].get("ip", ""),
+					_dur(maxi(0, int(dev.dns_cache[name].get("expires", 0)) - Game.cycle) * 3600)]
 				n += 1
 			return out
 		"ip dhcp-server print":
+			var rd: Dictionary = dev.services.get("ros_dhcp", {})
 			var svc: Dictionary = dev.services.get("dhcp", {})
 			var out := "Columns: NAME, INTERFACE, ADDRESS-POOL, LEASE-TIME\n#   NAME   INTERFACE  ADDRESS-POOL  LEASE-TIME\n"
+			if rd.has("server"):
+				return out + "0   %-6s %-10s %-13s 10m\n" % [rd["server"]["name"], rd["server"]["iface"], rd["server"]["pool"]]
 			if svc.is_empty():
 				return out
 			return out + "0   dhcp1  %-10s pool1         1d\n" % String(svc.get("iface", ""))
-		"ip dhcp-server lease print":
-			var svc: Dictionary = dev.services.get("dhcp", {})
-			var out := "Flags: X - DISABLED, R - RADIUS, D - DYNAMIC, B - BLOCKED\nColumns: ADDRESS, MAC-ADDRESS, HOST-NAME, SERVER, STATUS, LAST-SEEN\n#    ADDRESS         MAC-ADDRESS        HOST-NAME  SERVER  STATUS  LAST-SEEN\n"
+		"ip pool add":
+			if not p.has("name") or not p.has("ranges"):
+				return "value of %s must be specified\n" % ("name" if not p.has("name") else "ranges")
+			var rng := String(p["ranges"]).split("-")
+			if rng.size() != 2 or not String(rng[0]).is_valid_ip_address() or not String(rng[1]).is_valid_ip_address():
+				return "invalid value for argument ranges\n"
+			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
+			if not rd.has("pools"):
+				rd["pools"] = {}
+			rd["pools"][String(p["name"])] = [String(rng[0]), String(rng[1])]
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
+		"ip pool print":
+			var out := "Columns: NAME, RANGES\n#   NAME    RANGES\n"
 			var n := 0
-			for mac in svc.get("leases", {}):
-				out += "%-2d D %-15s %-18s %-10s dhcp1   bound   %ds\n" % [n, svc["leases"][mac], mac,
-					Sim.reverse_lookup(dev, String(svc["leases"][mac])), (Game.cycle % 7) * 600]
+			for name in dev.services.get("ros_dhcp", {}).get("pools", {}):
+				var rng: Array = dev.services["ros_dhcp"]["pools"][name]
+				out += "%-3d %-7s %s-%s\n" % [n, name, rng[0], rng[1]]
 				n += 1
 			return out
+		"ip dhcp-server add":
+			if not p.has("interface"):
+				return "value of interface must be specified\n"
+			var on := String(p["interface"])
+			if on != BRIDGE and _iface(on) == null:
+				return "input does not match any value of interface\n"
+			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
+			rd["server"] = {"name": String(p.get("name", "dhcp1")), "iface": on, "pool": String(p.get("address-pool", "static-only")),
+				"disabled": String(p.get("disabled", "no")) == "yes"}
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
+		"ip dhcp-server network add":
+			if not p.has("address") or not Net.valid_cidr(String(p["address"])):
+				return "value of address must be specified\n" if not p.has("address") else "invalid value for argument address\n"
+			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
+			rd["network"] = {"address": String(p["address"]), "gw": String(p.get("gateway", "")), "dns": String(p.get("dns-server", ""))}
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
+		"ip dhcp-server network print":
+			var out := "Columns: ADDRESS, GATEWAY, DNS-SERVER\n#   ADDRESS         GATEWAY    DNS-SERVER\n"
+			var nw: Dictionary = dev.services.get("ros_dhcp", {}).get("network", {})
+			if not nw.is_empty():
+				out += "0   %-15s %-10s %s\n" % [nw["address"], nw.get("gw", ""), nw.get("dns", "")]
+			return out
+		"ip dhcp-server setup":
+			return "Select interface to run DHCP server on\n\ndhcp server interface: (this console cannot answer the wizard: use /ip pool add, /ip dhcp-server add and /ip dhcp-server network add)\n"
+		"ip dhcp-client add":
+			var ci := _iface(String(p.get("interface", "")))
+			if ci == null:
+				return "input does not match any value of interface\n"
+			var got := Sim.dhcp_request(dev, ci)
+			var clients: Dictionary = dev.services.get("dhcp_clients", {})
+			clients[ci.name] = {"status": "bound" if not got.is_empty() else "searching...", "address": ("%s/%d" % [got["ip"], int(got["plen"])]) if not got.is_empty() else "",
+				"peer-dns": String(p.get("use-peer-dns", "yes")), "default-route": String(p.get("add-default-route", "yes"))}
+			dev.services["dhcp_clients"] = clients
+			return ""
+		"ip dhcp-server lease print":
+			var svc: Dictionary = dev.services.get("dhcp", {})
+			var out := "Columns: ADDRESS, MAC-ADDRESS, HOST-NAME, SERVER, STATUS, LAST-SEEN\n#    ADDRESS         MAC-ADDRESS        HOST-NAME  SERVER  STATUS  LAST-SEEN\n"
+			var n := 0
+			for mac in svc.get("leases", {}):
+				out += "%d  D %-15s %-18s %-10s dhcp1   bound   %s\n" % [n, svc["leases"][mac], mac,
+					Sim.reverse_lookup(dev, String(svc["leases"][mac])), _dur(60 + (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle))) * 3600)]
+				n += 1
+			return ("Flags: D - DYNAMIC\n" + out) if n > 0 else ""
 		"ip dhcp-client print":
-			return "Columns: INTERFACE, USE-PEER-DNS, ADD-DEFAULT-ROUTE, STATUS, ADDRESS\n#  INTERFACE  USE-PEER-DNS  ADD-DEFAULT-ROUTE  STATUS  ADDRESS\n"
+			var out := "Columns: INTERFACE, USE-PEER-DNS, ADD-DEFAULT-ROUTE, STATUS, ADDRESS\n#  INTERFACE  USE-PEER-DNS  ADD-DEFAULT-ROUTE  STATUS  ADDRESS\n"
+			var n := 0
+			for ifn in dev.services.get("dhcp_clients", {}):
+				var c: Dictionary = dev.services["dhcp_clients"][ifn]
+				out += "%d  %-10s %-13s %-18s %-7s %s\n" % [n, ifn, c.get("peer-dns", "yes"), c.get("default-route", "yes"), c.get("status", ""), c.get("address", "")]
+				n += 1
+			return out
+		"ip firewall filter add":
+			if not p.has("chain") or String(p["chain"]) not in ["input", "forward", "output"]:
+				return "value of chain must be specified\n" if not p.has("chain") else "input does not match any value of chain\n"
+			var action := String(p.get("action", "accept"))
+			if action not in ["accept", "drop", "reject", "log", "passthrough", "fasttrack-connection", "jump", "return"]:
+				return "input does not match any value of action\n"
+			var rules: Array = dev.services.get("ros_filter", [])
+			var rule := {"chain": String(p["chain"]), "action": action}
+			for k in ["src-address", "dst-address", "protocol", "dst-port", "src-port", "in-interface", "out-interface", "connection-state", "comment", "in-interface-list"]:
+				if p.has(k):
+					rule[k] = String(p[k])
+			rules.append(rule)
+			dev.services["ros_filter"] = rules
+			_ros_filter_apply()
+			return ""
+		"ip firewall filter remove":
+			var rules: Array = dev.services.get("ros_filter", [])
+			for a in args:
+				if String(a).is_valid_int() and int(a) >= 0 and int(a) < rules.size():
+					rules.remove_at(int(a))
+					dev.services["ros_filter"] = rules
+					_ros_filter_apply()
+					return ""
+			return "no such item\n"
 		"ip firewall filter print":
-			return "Flags: X - disabled, I - invalid; D - dynamic\n"
+			var out := "Flags: X - disabled, I - invalid; D - dynamic\n"
+			var n := 0
+			for rule in dev.services.get("ros_filter", []):
+				var text := ""
+				for k in ["chain", "action", "protocol", "src-address", "dst-address", "dst-port", "src-port", "in-interface", "out-interface", "in-interface-list", "connection-state", "comment"]:
+					if rule.has(k):
+						text += " %s=%s" % [k, ("\"%s\"" % rule[k]) if k == "comment" else rule[k]]
+				out += " %d   %s log=no log-prefix=\"\"\n" % [n, text.strip_edges()]
+				n += 1
+			return out
+		"interface list add":
+			if not p.has("name"):
+				return "value of name must be specified\n"
+			var lists: Dictionary = dev.services.get("if_lists", {})
+			if not lists.has(String(p["name"])):
+				lists[String(p["name"])] = []
+			dev.services["if_lists"] = lists
+			return ""
+		"interface list member add":
+			var lists: Dictionary = dev.services.get("if_lists", {})
+			if not lists.has(String(p.get("list", ""))):
+				return "input does not match any value of list\n"
+			if _iface(String(p.get("interface", ""))) == null:
+				return "input does not match any value of interface\n"
+			if String(p["interface"]) not in lists[String(p["list"])]:
+				lists[String(p["list"])].append(String(p["interface"]))
+			return ""
+		"interface list print":
+			var out := "Flags: * - builtin; D - dynamic\nColumns: NAME, INCLUDE, EXCLUDE\n#   NAME     INCLUDE  EXCLUDE\n0 * all\n1 * none\n2 * dynamic\n3 * static\n"
+			var n := 4
+			for name in dev.services.get("if_lists", {}):
+				out += "%d   %s\n" % [n, name]
+				n += 1
+			return out
+		"interface list member print":
+			var out := "Flags: D - dynamic\nColumns: LIST, INTERFACE\n#   LIST  INTERFACE\n"
+			var n := 0
+			for name in dev.services.get("if_lists", {}):
+				for ifn in dev.services["if_lists"][name]:
+					out += "%-3d %-5s %s\n" % [n, name, ifn]
+					n += 1
+			return out
+		"interface monitor-traffic":
+			var mi := _target(args, p)
+			if mi == null:
+				return "input does not match any value of numbers\n"
+			return _kv_block([["name", mi.name], ["rx-packets-per-second", str(mi.rx_frames / 60)], ["rx-bits-per-second", "%dkbps" % (mi.rx_frames * 148 * 8 / 60 / 1000)],
+				["fp-rx-packets-per-second", str(mi.rx_frames / 60)], ["fp-rx-bits-per-second", "%dkbps" % (mi.rx_frames * 148 * 8 / 60 / 1000)],
+				["rx-drops-per-second", "0"], ["rx-errors-per-second", str(mi.rx_errors / 60)], ["tx-packets-per-second", str(mi.tx_frames / 60)],
+				["tx-bits-per-second", "%dkbps" % (mi.tx_frames * 148 * 8 / 60 / 1000)], ["fp-tx-packets-per-second", str(mi.tx_frames / 60)],
+				["fp-tx-bits-per-second", "%dkbps" % (mi.tx_frames * 148 * 8 / 60 / 1000)], ["tx-drops-per-second", str(mi.out_drops / 60)],
+				["tx-queue-drops-per-second", "0"], ["tx-errors-per-second", "0"]])
+		"system ntp client set":
+			if p.has("servers"):
+				dev.ntp_server = String(p["servers"]).split(",")[0]
+			if String(p.get("enabled", "")) == "no":
+				dev.ntp_server = ""
+			Game.topology_changed.emit()
+			return ""
+		"system ntp client print":
+			return _kv_block([["enabled", "yes" if dev.ntp_server != "" else "no"], ["mode", "unicast"], ["servers", dev.ntp_server], ["vrf", "main"],
+				["freq-drift", "0 PPM"], ["status", "synchronized" if dev.ntp_server != "" else "stopped"], ["synced-server", dev.ntp_server],
+				["synced-stratum", "3" if dev.ntp_server != "" else "0"], ["system-offset", "0.12 ms" if dev.ntp_server != "" else "0 ms"]])
+		"system logging print":
+			return "Flags: X - disabled, I - invalid; * - default\nColumns: TOPICS, ACTION\n#   TOPICS    ACTION\n0 * info      memory\n1 * error     memory\n2 * warning   memory\n3 * critical  echo\n"
+		"routing route print":
+			return exec("/ip route print").replace("Flags: D - DYNAMIC; A - ACTIVE;", "Flags: D - DYNAMIC; A - ACTIVE, I - INACTIVE;")
+		"interface bridge settings print":
+			if dev.type != "switch":
+				return "failure: no bridge on this device\n"
+			return _kv_block([["use-ip-firewall", "no"], ["use-ip-firewall-for-vlan", "no"], ["use-ip-firewall-for-pppoe", "no"], ["allow-fast-path", "yes"],
+				["bridge-fast-path-active", "yes"], ["bridge-fast-path-packets", str(dev.ifaces[0].rx_frames if not dev.ifaces.is_empty() else 0)],
+				["bridge-fast-path-bytes", str((dev.ifaces[0].rx_frames if not dev.ifaces.is_empty() else 0) * 148)], ["bridge-fast-forward-active", "no"],
+				["bridge-fast-forward-packets", "0"], ["bridge-fast-forward-bytes", "0"]])
+		"ip neighbor print":
+			var out := "Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY, VERSION, BOARD\n#  INTERFACE  ADDRESS         MAC-ADDRESS        IDENTITY  VERSION  BOARD\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				var peer := Game.effective_peer(i)
+				if peer == null:
+					continue
+				var pip := ""
+				for cidr in peer.ips:
+					if not Net.is_v6(cidr):
+						pip = String(cidr).split("/")[0]
+						break
+				if pip == "":
+					pip = CLI.first_ip_of(peer.dev)
+				out += "%-2d %-10s %-15s %-18s %-9s %-8s %s\n" % [n, i.name, pip if pip != "0.0.0.0" else "", peer.mac.to_upper(), peer.dev.name,
+					VERSION if Game.is_ros(peer.dev) else "4.28.3M", "CHR" if Game.is_ros(peer.dev) else String(Game.MODELS.get(peer.dev.model, {}).get("label", "")).split(" ")[0]]
+				n += 1
+			return out
+		"ip neighbor discovery-settings print":
+			return _kv_block([["discover-interface-list", "!dynamic"], ["lldp-med-net-policy-vlan", "disabled"], ["protocol", "cdp,lldp,mndp"], ["mode", "tx-and-rx"]])
 		"ip firewall connection print":
 			var out := "Columns: PROTOCOL, SRC-ADDRESS, DST-ADDRESS, TIMEOUT\n#   PROTOCOL  SRC-ADDRESS      DST-ADDRESS      TIMEOUT\n"
 			var n := 0
@@ -554,7 +911,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			elif String(p.get("enabled", "")) == "yes" and dev.snmp == "":
 				dev.snmp = "public"  # the default community, until it is renamed
 			if not p.has("enabled") and not p.has("community"):
-				return "syntax error (line 1 column 10)\n"
+				return ""
 			Game.topology_changed.emit()
 			return ""
 		"snmp community set", "snmp community add":
@@ -665,7 +1022,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			Game.topology_changed.emit()
 			return ""
 		"interface vrrp print":
-			var out := "Flags: R - RUNNING; M - MASTER, B - BACKUP\nColumns: NAME, INTERFACE, VRID, PRIORITY, INTERVAL\n#     NAME   INTERFACE  VRID  PRIORITY  INTERVAL\n"
+			var out := "Flags: R - RUNNING; M - MASTER, B - BACKUP\nColumns: NAME, INTERFACE, VRID, PRIORITY, INTERVAL\n#    NAME   INTERFACE  VRID  PRIORITY  INTERVAL\n"
 			var n := 0
 			for i: Net.Iface in dev.ifaces:
 				if i.vrrp.is_empty():
@@ -693,11 +1050,11 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			Game.topology_changed.emit()
 			return ""
 		"interface wireguard print":
-			var out := "Flags: X - disabled; R - running\nColumns: NAME, MTU, LISTEN-PORT, PRIVATE-KEY, PUBLIC-KEY\n#   NAME  MTU   LISTEN-PORT  PRIVATE-KEY                                   PUBLIC-KEY\n"
+			var out := "Flags: X - disabled; R - running\n"
 			var n := 0
 			for i: Net.Iface in dev.ifaces:
 				if i.name.begins_with("wg"):
-					out += "%d R %-5s 1420        13231  %-45s %s\n" % [n, i.name, i.wg_key.reverse(), i.wg_key]
+					out += " %d  R name=\"%s\" mtu=1420 listen-port=13231 private-key=\"%s\" public-key=\"%s\"\n" % [n, i.name, i.wg_key.reverse(), i.wg_key]
 					n += 1
 			return out if n > 0 else _empty("Flags: X - disabled; R - running\n")
 		"interface wireguard peers add":
@@ -861,8 +1218,8 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				for i: Net.Iface in dev.ifaces:
 					if i.lag == g and i.lag_mode != "on":
 						lacp = true
-				out += "%d R bond%-2d 1500  %-18s enabled  %-10s          %s\n" % [n, g, _iface(groups[g][0]).mac,
-					"802.3ad" if lacp else "balance-rr", ",".join(PackedStringArray(groups[g]))]
+				out += "%d R %-6s %-5d %-18s %-8s %-11s %-8s %s\n" % [n, "bond%d" % g, 1500, _iface(groups[g][0]).mac, "enabled",
+					"802.3ad" if lacp else "balance-rr", "", ",".join(PackedStringArray(groups[g]))]
 				n += 1
 			return out if not groups.is_empty() else _empty("Flags: R - RUNNING\n")
 		"interface bridge add", "interface bridge set":
@@ -946,9 +1303,16 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var out := "Flags: D - DYNAMIC\nColumns: BRIDGE, VLAN-IDS, CURRENT-TAGGED, CURRENT-UNTAGGED\n#   BRIDGE   VLAN-IDS  CURRENT-TAGGED           CURRENT-UNTAGGED\n"
 			var n := 0
 			for vid in _sorted_vids():
-				out += "%-2d%s %-8s %8d  %-24s %s\n" % [n, "D" if vid == 1 else " ", BRIDGE, vid,
-					",".join(PackedStringArray(_tagged_ports(vid))),
-					",".join(PackedStringArray(_untagged_ports(vid)))]
+					# a multi-valued column prints one value per line, as 7.x does
+				var tagged := _tagged_ports(vid)
+				var untagged := _untagged_ports(vid)
+				var rows := maxi(1, maxi(tagged.size(), untagged.size()))
+				for k in rows:
+					if k == 0:
+						out += "%-2d%s %-8s %8d  %-24s %s\n" % [n, "D" if vid == 1 else " ", BRIDGE, vid,
+							tagged[0] if not tagged.is_empty() else "", untagged[0] if not untagged.is_empty() else ""]
+					else:
+						out += "%-23s %-24s %s\n" % ["", tagged[k] if k < tagged.size() else "", untagged[k] if k < untagged.size() else ""]
 				n += 1
 			return out
 		"interface bridge port add", "interface bridge port set":
@@ -1151,7 +1515,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var out := "Flags: D - DYNAMIC; C - COMPLETE\nColumns: ADDRESS, MAC-ADDRESS, INTERFACE\n#    ADDRESS         MAC-ADDRESS        INTERFACE\n"
 			var n := 0
 			for ip in dev.arp:
-				out += "%-2d DC %-15s %-18s %s\n" % [n, ip, dev.arp[ip], CLI.arp_iface_name(dev, String(ip))]
+				out += "%d DC %-15s %-18s %s\n" % [n, ip, dev.arp[ip], CLI.arp_iface_name(dev, String(ip))]
 				n += 1
 			return out if n > 0 else _empty("Flags: D - DYNAMIC; C - COMPLETE\n")
 		"system tech-support", "system sup-output":
@@ -1242,7 +1606,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var n := 0
 			for lname in lists:
 				for addr in lists[lname]:
-					out += "%-3d %-11s %-18s cycle %d\n" % [n, lname, addr, Game.cycle]
+					out += "%-3d %-11s %-18s %s\n" % [n, lname, addr, Time.get_datetime_string_from_system(false, true).replace("T", " ")]
 					n += 1
 			return out if n > 0 else _empty("Flags: X - disabled, D - dynamic\n")
 		"ip route add":
@@ -1404,10 +1768,10 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				var role := ""
 				if not bool(roles.get("p2p", false)):
 					role = " dr=%s bdr=%s" % [_segment_ip(roles.get("dr"), nb), _segment_ip(roles.get("bdr"), nb)]
-				out += " %d instance=%s area=%s address=%s priority=1 router-id=%s%s state=\"Full\" state-changes=5 adjacency=%s timeout=37s\n" % [
+				out += " %d D instance=%s area=%s address=%s priority=128 router-id=%s%s state=\"Full\" state-changes=5 adjacency=%s timeout=37s\n" % [
 					n, dev.ospf.get("instance", "default"), _area_name(), nb["via_ip"], rid, role, _uptime()]
 				n += 1
-			return out
+			return ("Flags: V - virtual; D - dynamic\n" + out) if n > 0 else ""
 		"routing bgp template set":
 			if dev.type != "router":
 				return "failure: BGP needs a router\n"
@@ -1506,6 +1870,58 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return out
 	return null
 
+func _ros_dhcp_assemble() -> void:
+	## pool + server + network together make the service this world serves
+	var rd: Dictionary = dev.services.get("ros_dhcp", {})
+	var srv: Dictionary = rd.get("server", {})
+	var nw: Dictionary = rd.get("network", {})
+	var pool: Array = rd.get("pools", {}).get(String(srv.get("pool", "")), [])
+	if srv.is_empty() or nw.is_empty() or pool.is_empty() or bool(srv.get("disabled", false)):
+		return
+	var netw := Net.network_of(String(nw["address"]))
+	var iface := String(srv.get("iface", ""))
+	dev.services["dhcp"] = {"iface": "" if iface == BRIDGE else iface, "start": String(pool[0]), "end": String(pool[1]),
+		"plen": int(netw["plen"]), "gw": String(nw.get("gw", "")), "dns": String(nw.get("dns", "")),
+		"leases": dev.services.get("dhcp", {}).get("leases", {}), "since": dev.services.get("dhcp", {}).get("since", {}), "excluded": [], "running": true}
+	Game.topology_changed.emit()
+
+func _ros_filter_apply() -> void:
+	## forward-chain rules filter what crosses the router: they become this
+	## world's access list on every port; input-chain rules are kept for print
+	dev.acls = dev.acls.filter(func(rule): return String(rule.get("list", "")) != "ros-forward")
+	var seq := 10
+	var any := false
+	for rule in dev.services.get("ros_filter", []):
+		if String(rule["chain"]) != "forward":
+			continue
+		any = true
+		var entry := {"action": "permit" if String(rule["action"]) in ["accept", "fasttrack-connection", "passthrough"] else "deny",
+			"src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": "ros-forward", "seq": seq}
+		seq += 10
+		for side in [["src-address", "src", "splen"], ["dst-address", "dst", "dplen"]]:
+			if rule.has(side[0]):
+				var cidr := String(rule[side[0]])
+				if "/" not in cidr:
+					cidr += "/32"
+				if Net.valid_cidr(cidr):
+					entry[side[1]] = cidr.split("/")[0]
+					entry[side[2]] = int(cidr.split("/")[1])
+		if rule.has("protocol") and String(rule["protocol"]) in ["tcp", "udp", "icmp"]:
+			entry["proto"] = String(rule["protocol"])
+		if rule.has("dst-port") and String(rule["dst-port"]).is_valid_int():
+			entry["port"] = int(rule["dst-port"])
+		if String(rule.get("connection-state", "")).contains("established"):
+			entry["established"] = true
+		dev.acls.append(entry)
+	var groups: Dictionary = dev.services.get("acl_groups", {})
+	for i: Net.Iface in dev.ifaces:
+		if any:
+			groups[i.name] = "ros-forward"
+		elif String(groups.get(i.name, "")) == "ros-forward":
+			groups.erase(i.name)
+	dev.services["acl_groups"] = groups
+	Game.topology_changed.emit()
+
 func _run_flag(i: Net.Iface) -> String:
 	return "X" if i.admin_down else ("R" if i.enabled and Game.link_at(i) else " ")
 
@@ -1552,13 +1968,19 @@ func _interface_print() -> String:
 	for r in rows:
 		used[r[0]] = true
 		used[r[1]] = true
-	var legend: Array = []
-	for f in [["R", "RUNNING"], ["S", "SLAVE"], ["X", "DISABLED"]]:
+	# X and R share the first flag column, S has its own: ", " inside a column, "; " between
+	var first: Array = []
+	for f in [["X", "DISABLED"], ["R", "RUNNING"]]:
 		if used.has(f[0]):
-			legend.append("%s - %s" % [f[0], f[1]])
+			first.append("%s - %s" % [f[0], f[1]])
+	var groups_text: Array = []
+	if not first.is_empty():
+		groups_text.append(", ".join(PackedStringArray(first)))
+	if used.has("S"):
+		groups_text.append("S - SLAVE")
 	var out := ""
-	if not legend.is_empty():
-		out += "Flags: %s\n" % "; ".join(PackedStringArray(legend))
+	if not groups_text.is_empty():
+		out += "Flags: %s\n" % "; ".join(PackedStringArray(groups_text))
 	out += "Columns: NAME, TYPE, ACTUAL-MTU, L2MTU, MAC-ADDRESS\n#     NAME         TYPE       ACTUAL-MTU  L2MTU  MAC-ADDRESS\n"
 	var n := 0
 	for r in rows:
@@ -1634,6 +2056,12 @@ func _route_rows() -> Array:
 	return rows
 
 const PATHS := ["help", "export", "ping", "tool traceroute", "tool torch", "tool sniffer quick",
+	"ip pool add", "ip pool print", "ip dhcp-server add", "ip dhcp-server network add", "ip dhcp-server network print", "ip dhcp-server setup",
+	"ip dhcp-client add", "ip firewall filter add", "ip firewall filter remove",
+	"user add", "user set", "user remove", "password", "ip service set", "ip service disable", "ip service enable",
+	"interface list add", "interface list member add", "interface list print", "interface list member print",
+	"interface monitor-traffic", "system ntp client set", "system ntp client print", "system logging print",
+	"routing route print", "interface bridge settings print", "ip neighbor print", "ip neighbor discovery-settings print",
 	"system ssh", "quit",
 	"system backup save", "system backup load", "system reboot", "file print",
 	"system identity set", "system identity print", "system resource print", "system clock print",
@@ -1673,8 +2101,20 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "tool torch", "tool
 ## The parameters each menu knows. A name outside its list is a syntax error
 ## at that column, which is what stops a learner shipping "addres=".
 const PARAMS := {
-	"ping": ["count", "size", "interval", "ttl", "src-address", "interface"],
-	"tool traceroute": ["count", "size", "src-address", "max-hops", "protocol"],
+	"ping": ["address", "count", "size", "interval", "ttl", "src-address", "interface"],
+	"ip pool add": ["name", "ranges", "next-pool", "comment"],
+	"ip dhcp-server add": ["name", "interface", "address-pool", "lease-time", "disabled", "authoritative", "comment"],
+	"ip dhcp-server network add": ["address", "gateway", "dns-server", "netmask", "domain", "ntp-server", "comment"],
+	"ip dhcp-client add": ["interface", "use-peer-dns", "use-peer-ntp", "add-default-route", "disabled", "comment"],
+	"ip firewall filter add": ["chain", "action", "protocol", "src-address", "dst-address", "dst-port", "src-port", "in-interface", "out-interface", "in-interface-list", "out-interface-list", "connection-state", "comment", "disabled", "log", "log-prefix", "jump-target", "src-address-list", "dst-address-list"],
+	"user add": ["name", "group", "password", "comment", "disabled"],
+	"user set": ["name", "group", "password", "comment", "disabled"],
+	"ip service set": ["port", "address", "disabled", "certificate"],
+	"interface list add": ["name", "comment", "include", "exclude"],
+	"interface list member add": ["list", "interface", "comment", "disabled"],
+	"interface monitor-traffic": ["interface", "once", "duration"],
+	"system ntp client set": ["enabled", "servers", "mode", "vrf"],
+	"tool traceroute": ["address", "count", "size", "src-address", "max-hops", "protocol"],
 	"tool torch": ["interface", "src-address", "dst-address", "port", "protocol"],
 	"tool sniffer quick": ["interface", "ip-address", "ip-protocol", "port"],
 	"system identity set": ["name"],
