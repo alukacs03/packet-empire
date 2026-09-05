@@ -1,0 +1,15 @@
+# model: sw-lite
+/interface bridge add name=bridge1 vlan-filtering=yes
+/interface bridge port add bridge=bridge1 interface=ether1 pvid=10
+/interface bridge port add bridge=bridge1 interface=ether2 pvid=20
+/interface bridge port add bridge=bridge1 interface=ether5
+/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether5 untagged=ether1
+/interface bridge vlan add bridge=bridge1 vlan-ids=20 tagged=ether5 untagged=ether2
+/interface bridge vlan print
+/interface bridge port print
+/interface bridge port monitor [find]
+/interface bridge host print
+/interface print
+/interface set ether4 disabled=yes
+/interface print
+/export

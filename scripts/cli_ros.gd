@@ -469,7 +469,7 @@ func exec(line: String) -> String:
 			var out := "Flags: D - DYNAMIC\nColumns: BRIDGE, VLAN-IDS, CURRENT-TAGGED, CURRENT-UNTAGGED\n#   BRIDGE   VLAN-IDS  CURRENT-TAGGED           CURRENT-UNTAGGED\n"
 			var n := 0
 			for vid in _sorted_vids():
-				out += "%-3d %-8s %8d  %-24s %s\n" % [n, BRIDGE, vid,
+				out += "%-2d%s %-8s %8d  %-24s %s\n" % [n, "D" if vid == 1 else " ", BRIDGE, vid,
 					",".join(PackedStringArray(_tagged_ports(vid))),
 					",".join(PackedStringArray(_untagged_ports(vid)))]
 				n += 1
@@ -1025,7 +1025,10 @@ func _export() -> String:
 				out += "/interface wireguard peers add interface=%s public-key=%s endpoint-address=%s endpoint-port=13231 allowed-address=%s\n" % [
 					i.name, pr.get("key", ""), pr.get("endpoint", ""), ",".join(PackedStringArray(pr.get("allowed", [])))]
 		for cidr in i.ips:
-			out += "/%s address add address=%s interface=%s\n" % ["ipv6" if Net.is_v6(cidr) else "ip", cidr, _dname(i)]
+			if Net.is_v6(cidr):
+				out += "/ipv6 address add address=%s interface=%s\n" % [cidr, _dname(i)]
+			else:
+				out += "/ip address add address=%s interface=%s network=%s\n" % [cidr, _dname(i), Net.network_of(cidr)["prefix"]]
 		if i.ra:
 			out += "/ipv6 nd add interface=%s\n" % i.name
 		if i.bfd:

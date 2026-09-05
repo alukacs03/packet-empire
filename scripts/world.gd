@@ -17,6 +17,10 @@ var ui: UILayer
 var title: TitleScreen
 
 func _ready() -> void:
+	if OS.get_environment("PACKET_TEST") == "replay":
+		SimTests.replay(OS.get_environment("PACKET_REPLAY"))  # tools/lab: one script, one device
+		get_tree().quit(0)
+		return
 	if OS.get_environment("PACKET_TEST") == "probe":
 		SimTests.probe()  # one scenario, fast: for chasing a single failure
 		get_tree().quit(0)

@@ -1,0 +1,22 @@
+# model: rtr-lite
+/ip address add address=10.20.1.1/24 interface=ether1
+/ip address add address=10.20.9.1/30 interface=ether2
+/ip address add address=100.64.0.2/30 interface=ether3
+/ip address print
+/routing ospf instance add name=default router-id=10.20.9.1
+/routing ospf area add name=backbone area-id=0.0.0.0 instance=default
+/routing ospf interface-template add networks=10.20.0.0/16 area=backbone
+/routing ospf interface-template print
+/routing ospf neighbor print
+/ip route print
+/ip firewall address-list add list=bgp-nets address=10.20.0.0/16
+/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets
+/routing bgp connection print
+/routing bgp session print
+/ip firewall nat add chain=srcnat action=masquerade out-interface=ether3
+/ip firewall nat print
+/interface vrrp add name=vrrp1 interface=ether1 vrid=1 priority=120
+/ip address add address=10.20.1.254/32 interface=vrrp1
+/interface vrrp print
+/ping 10.20.2.10 count=3
+/export

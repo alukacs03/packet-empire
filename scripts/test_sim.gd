@@ -5,6 +5,33 @@ class_name SimTests
 
 static var fails := 0
 
+static func replay(path: String) -> void:
+	## tools/lab/replay_game.sh: run a command script against one fresh device
+	## and print the transcript, so it can be diffed against a real box
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		print("--- replay start\ncannot open %s\n--- replay end" % path)
+		return
+	var model := "rtr-lite"
+	var lines: Array = []
+	while not f.eof_reached():
+		var line := f.get_line()
+		if line.begins_with("# model:"):
+			model = line.trim_prefix("# model:").strip_edges()
+		elif not line.begins_with("#") and line.strip_edges() != "":
+			lines.append(line)
+	var rack := Game.add_rack(Vector2i(0, 0))
+	var dev := Game.new_device(model)
+	rack.slots[0] = dev
+	var ses := CLI.new_session(dev)
+	print("--- replay start")
+	for line in lines:
+		print("> " + line)
+		var out := ses.exec(line)
+		if out != "":
+			print(out.rstrip("\n"))
+	print("--- replay end")
+
 static func probe() -> void:
 	## scratch space: whatever needs a fast, isolated look right now
 	seed(20260823)

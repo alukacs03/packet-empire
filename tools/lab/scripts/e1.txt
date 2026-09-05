@@ -1,0 +1,21 @@
+# model: rtr-edge
+enable
+configure terminal
+interface Ethernet1
+ip address 100.64.0.1/30
+interface Ethernet2
+ip address 10.30.0.1/24
+exit
+router bgp 64500
+neighbor 100.64.0.2 remote-as 65001
+network 10.30.0.0/24
+exit
+ip route 0.0.0.0/0 100.64.0.2 250
+end
+show ip interface brief
+show ip route
+show ip bgp summary
+show ip bgp
+show ip route 10.20.1.10
+show arp
+show running-config
