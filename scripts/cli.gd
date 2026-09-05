@@ -30,20 +30,26 @@ static func fmt_ping(dev: Net.NDevice, target: String, size := 64) -> String:
 	if ip == "":
 		return "ping: %s: Name or service not known\n" % target
 	var r := Sim.ping(dev, ip, 64, "", size)
-	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, size, size + 28]
+	# Linux counts the payload in the header (56 by default) and the whole
+	# ICMP message in the reply line (64): size here is the reply figure
+	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, size - 8, size + 20]
 	if r["ok"]:
 		var base: float = maxf(0.04, float(r.get("rtt", 0.1)))
+		var rtts: Array = []
 		for seq in [1, 2, 3]:
+			var rtt: float = base * (1.0 + 0.04 * seq)
+			rtts.append(rtt)
 			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n" % [size, r["from"], seq,
-				int(r.get("ttl", 64)), base * (1.0 + 0.04 * seq)]
-		return out + "3 packets transmitted, 3 received, 0% packet loss\n"
+				int(r.get("ttl", 64)), rtt]
+		return out + "\n--- %s ping statistics ---\n3 packets transmitted, 3 received, 0%% packet loss, time 2003ms\nrtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms\n" % [
+			target, rtts[0], (rtts[0] + rtts[1] + rtts[2]) / 3.0, rtts[2], (rtts[2] - rtts[0]) / 2.0]
 	if r["detail"] == "ttl-exceeded":
-		return out + "From %s: icmp_seq=1 Time to live exceeded\n" % r["from"]
+		return out + "From %s icmp_seq=1 Time to live exceeded\n\n--- %s ping statistics ---\n3 packets transmitted, 0 received, +3 errors, 100%% packet loss, time 2003ms\n" % [r["from"], target]
 	if String(r["detail"]).begins_with("unreachable-"):
 		return out + "From %s icmp_seq=1 %s\n3 packets transmitted, 0 received, +3 errors, 100%% packet loss\n" % [
 			r["from"], unreachable_text(String(r["detail"]))]
 	if r["detail"] == "timeout":
-		return out + "3 packets transmitted, 0 received, 100% packet loss\n"
+		return out + "\n--- %s ping statistics ---\n3 packets transmitted, 0 received, 100%% packet loss, time 2003ms\n" % target
 	return out + "ping: %s\n" % r["detail"]
 
 static func fold_mask(r: Array) -> Array:
@@ -97,6 +103,11 @@ static func first_ip_of(dev: Net.NDevice) -> String:
 			if not Net.is_v6(cidr):
 				return String(cidr).split("/")[0]
 	return "0.0.0.0"
+
+static func dev_suffix(dev: Net.NDevice, via: String) -> String:
+	## " dev eth0" for the interface a next hop sits behind, as iproute2 prints it
+	var egress := Sim._connected_iface(dev, via)
+	return (" dev %s" % egress.name) if egress != null else ""
 
 static func unreachable_text(detail: String) -> String:
 	## the words a Linux ping prints for each ICMP unreachable code
@@ -158,14 +169,16 @@ static func fmt_traceroute(dev: Net.NDevice, target: String) -> String:
 	var ip := Sim.resolve(dev, target)
 	if ip == "":
 		return "traceroute: %s: Name or service not known\n" % target
-	var out := "traceroute to %s (%s), 16 hops max\n" % [target, ip]
+	var out := "traceroute to %s (%s), 30 hops max, 60 byte packets\n" % [target, ip]
 	var n := 1
 	for hop in Sim.traceroute(dev, ip):
 		if hop == "*":
-			out += "%2d  *\n" % n
+			out += "%2d  * * *\n" % n
 		else:
 			var probe := Sim.ping(dev, String(hop))
-			out += "%2d  %-18s %.2f ms\n" % [n, hop, maxf(0.04, float(probe.get("rtt", 0.1)))]
+			var rtt := maxf(0.04, float(probe.get("rtt", 0.1)))
+			var name := Sim.reverse_lookup(dev, String(hop))
+			out += "%2d  %s (%s)  %.3f ms  %.3f ms  %.3f ms\n" % [n, name if name != "" else hop, hop, rtt, rtt * 1.03, rtt * 0.98]
 		n += 1
 	return out
 
@@ -275,6 +288,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["ip", "ospf", "cost"], "h": func(r): return _if_ospf("costs", r, 1, 65535)},
 			{"m": ["if"], "p": ["ip", "ospf", "priority"], "h": func(r): return _if_ospf("priorities", r, 0, 255)},
 			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
+			{"m": EP, "p": ["show", "vrrp", "brief"], "h": _show_vrrp_brief},
 			{"m": EP, "p": ["show", "interfaces", "trunk"], "h": _show_int_trunk},
 			{"m": EP, "p": ["show", "port-channel"], "h": _show_lag},
 			{"m": EP, "p": ["show", "port-channel", "summary"], "h": _show_lag},
@@ -489,6 +503,9 @@ class EOS extends Session:
 			return ""
 		if filter != "":
 			return CLI.filter_output(exec(line), filter)
+		if toks.size() > 1 and String(toks[0]) == "do" and mode not in ["exec", "priv"]:
+			toks.pop_front()  # IOS needs 'do' for a show inside config; EOS tolerates it
+			line = " ".join(PackedStringArray(toks))
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
 		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
@@ -1239,17 +1256,42 @@ class EOS extends Session:
 		return ""
 
 	func _show_vrrp(_r: Array) -> String:
-		var out := "%-11s %-6s %-16s %-18s %-9s %-8s %s\n" % ["Interface", "Group", "Virtual IP", "Virtual MAC", "Priority", "Preempt", "State"]
+		var out := ""
 		var any := false
 		for i: Net.Iface in dev.ifaces:
 			if i.vrrp.is_empty():
 				continue
 			any = true
 			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]))
-			out += "%-11s %-6d %-16s %-18s %-9d %-8s %s\n" % [EOS._short(i.name), int(i.vrrp["group"]),
-				i.vrrp["vip"], Sim.vrrp_mac(int(i.vrrp["group"])), int(i.vrrp.get("priority", 100)),
-				"yes" if bool(i.vrrp.get("preempt", true)) else "no",
-				"Master" if master == dev else ("Backup (master: %s)" % (master.name if master else "-"))]
+			var master_ip := "-"
+			if master != null:
+				for mi: Net.Iface in master.ifaces:
+					if int(mi.vrrp.get("group", -1)) == int(i.vrrp["group"]) and not mi.ips.is_empty():
+						master_ip = String(mi.ips[0]).split("/")[0]
+			out += "VRRP Group %d on %s:\n  State is %s\n  Virtual IP address is %s\n  Virtual MAC address is %s\n  Advertisement interval is 1.000s\n  Preemption is %s\n  Priority is %d\n  Master router is %s%s\n\n" % [
+				int(i.vrrp["group"]), i.name, "Master" if master == dev else "Backup", i.vrrp["vip"],
+				Net.mac_dotted(Sim.vrrp_mac(int(i.vrrp["group"]))),
+				"enabled" if bool(i.vrrp.get("preempt", true)) else "disabled", int(i.vrrp.get("priority", 100)),
+				master_ip, " (local)" if master == dev else ""]
+		return out if any else "  (no VRRP groups configured)\n"
+
+	func _show_vrrp_brief(_r: Array) -> String:
+		## the IOS one-liner per group
+		var out := "%-11s %-4s %-4s %-6s %-4s %-4s %-7s %-16s %s\n" % ["Interface", "Grp", "Pri", "Time", "Own", "Pre", "State", "Master addr", "Group addr"]
+		var any := false
+		for i: Net.Iface in dev.ifaces:
+			if i.vrrp.is_empty():
+				continue
+			any = true
+			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]))
+			var master_ip := "-"
+			if master != null:
+				for mi: Net.Iface in master.ifaces:
+					if int(mi.vrrp.get("group", -1)) == int(i.vrrp["group"]) and not mi.ips.is_empty():
+						master_ip = String(mi.ips[0]).split("/")[0]
+			out += "%-11s %-4d %-4d %-6d %-4s %-4s %-7s %-16s %s\n" % [EOS._short(i.name), int(i.vrrp["group"]),
+				int(i.vrrp.get("priority", 100)), 3609, " ", "Y" if bool(i.vrrp.get("preempt", true)) else " ",
+				"Master" if master == dev else "Backup", master_ip, i.vrrp["vip"]]
 		return out if any else "  (no VRRP groups configured)\n"
 
 	func _if_nat(r: Array) -> String:
@@ -1884,15 +1926,26 @@ class EOS extends Session:
 	func _show_bgp(_r: Array) -> String:
 		if dev.bgp.is_empty():
 			return "% BGP not running: 'router bgp <asn>' in config mode\n"
-		var out := "BGP router AS %d\n%-16s %-10s %s\n" % [int(dev.bgp["asn"]), "Neighbor", "Remote-AS", "State"]
+		var out := "BGP summary information for VRF default\nRouter identifier %s, local AS number %d\n" % [
+			CLI.first_ip_of(dev), int(dev.bgp["asn"])]
+		out += "  %-16s %-2s %-6s %-8s %-8s %-4s %-5s %-9s %-7s %s\n" % ["Neighbor", "V", "AS", "MsgRcvd", "MsgSent", "InQ", "OutQ", "Up/Down", "State", "PfxRcd"]
 		if dev.bgp["neighbors"].is_empty():
 			out += "  (no neighbors configured)\n"
 		for nb in dev.bgp["neighbors"]:
 			# Active: we are trying and the peer is on a wire we have; Idle: no
-			# such subnet, so the router is not even trying
-			var st := "Established" if Sim.bgp_established(dev, nb) else \
+			# such subnet, so the router is not even trying. A number in the
+			# State column is the good news, the way IOS has taught everybody
+			var up := Sim.bgp_established(dev, nb)
+			var st := "Estab" if up else \
 				("Active" if Sim._connected_iface(dev, String(nb["ip"])) != null else "Idle")
-			out += "%-16s %-10d %s\n" % [nb["ip"], int(nb["remote_as"]), st]
+			var received := 0
+			for rt in Sim._bgp_learned(dev):
+				if String(rt["via"]) == String(nb["ip"]):
+					received += 1
+			var msgs := 4 + Game.cycle % 97 if up else 0
+			out += "  %-16s %-2d %-6d %-8d %-8d %-4d %-5d %-9s %-7s %s\n" % [nb["ip"], 4, int(nb["remote_as"]),
+				msgs, msgs + 1, 0, 0, ("00:%02d:%02d" % [(Game.cycle * 3) % 60, (Game.cycle * 7) % 60]) if up else "never",
+				st, str(received) if up else "0"]
 			var policy: Array = []
 			if int(nb.get("local_pref", 100)) != 100:
 				policy.append("local-pref %d" % int(nb["local_pref"]))
@@ -2049,36 +2102,53 @@ class EOS extends Session:
 				else ",".join(i.tagged_vlans.map(func(v): return str(v)))]
 		return out
 
-	func _show_interfaces(_r: Array) -> String:
-		var out := "%-11s %-6s %-7s %-8s %-18s %s\n" % ["Interface", "Status", "Speed", "Mode", "Addresses", "Peer"]
+	func _show_interfaces(r: Array) -> String:
+		## the block form real gear prints: the "is up, line protocol is up"
+		## line CCNA people are quizzed on, then hardware, address, duplex,
+		## speed and the counters that tell a grey failure from a good link
+		var only: Net.Iface = _find_iface(String(r[0])) if r.size() >= 1 else null
+		if r.size() >= 1 and only == null:
+			return "% no interface %s\n" % r[0]
+		var out := ""
 		for i: Net.Iface in dev.ifaces:
-			var peer := Game.peer_label(i)
-			var status := Game.iface_status_word(i)
-			if status == "connected":
-				status = "up"
-			var mode_s := i.mode
-			if i.mode == "access":
-				mode_s = "access(%d)" % i.untagged_vlan
-			var addrs := ",".join(i.ips) if not i.ips.is_empty() else "-"
-			out += "%-11s %-6s %-7s %-8s %-18s %s\n" % [EOS._short(i.name), status,
-				("%dG" % (Game.iface_speed(i) / 1000)) if Game.iface_speed(i) >= 1000 else "%dM" % Game.iface_speed(i),
-				mode_s, addrs, peer if peer else "-"]
+			if only != null and i != only:
+				continue
+			var word := Game.iface_status_word(i)
+			var line1 := ""
+			match word:
+				"connected": line1 = "up, line protocol is up (connected)"
+				"disabled": line1 = "administratively down, line protocol is down (disabled)"
+				"err-disabled": line1 = "down, line protocol is down (errdisabled)"
+				_: line1 = "down, line protocol is notpresent (notconnect)"
+			out += "%s is %s\n" % [i.name, line1]
+			out += "  Hardware is Ethernet, address is %s\n" % Net.mac_dotted(i.mac)
+			for cidr in i.ips:
+				out += "  Internet address is %s\n" % cidr
+			var peer := Game.effective_peer(i)
+			var duplex := Sim.effective_duplex(i, peer) if peer != null and i.duplex == "auto" else i.duplex
+			var speed := Game.iface_speed(i)
+			out += "  %s-duplex, %s, auto negotiation: %s\n" % [duplex.capitalize() if duplex != "auto" else "Full",
+				("%dGb/s" % (speed / 1000)) if speed >= 1000 else "%dMb/s" % speed, "on" if i.duplex == "auto" else "off"]
+			out += "  MTU %d bytes\n" % i.mtu
+			out += "     %d packets input, %d input errors, %d CRC, %d giants\n" % [i.rx_frames, i.rx_errors, i.rx_crc, i.rx_giants]
+			out += "     %d packets output, %d output drops, %d late collisions\n" % [i.tx_frames, i.out_drops, i.collisions]
 		return out
 
 	func _show_vlan(_r: Array) -> String:
 		if dev.type != "switch":
 			return "% no VLAN database on this device\n"
-		var out := "%-6s %-16s %s\n" % ["VLAN", "Name", "Ports"]
+		## access ports only, every one spelled out: trunk membership is what
+		## 'show interfaces trunk' is for
+		var out := "%-5s %-32s %-9s %s\n%s %s %s %s\n" % ["VLAN", "Name", "Status", "Ports",
+			"-".repeat(5), "-".repeat(32), "-".repeat(9), "-".repeat(31)]
 		var vids := dev.vlans.keys()
 		vids.sort()
 		for vid in vids:
 			var ports: Array = []
 			for i: Net.Iface in dev.ifaces:
-				# a trunk belongs to a VLAN only if its allowed list carries it
-				var carries: bool = i.mode == "trunk" and (i.tagged_vlans.is_empty() or vid in i.tagged_vlans)
-				if carries or (i.mode == "access" and i.untagged_vlan == vid):
+				if i.mode == "access" and i.untagged_vlan == vid and not i.name.begins_with("Management"):
 					ports.append(EOS._short(i.name))
-			out += "%-6d %-16s %s\n" % [vid, dev.vlans[vid], Net.compress_ports(ports)]
+			out += "%-5d %-32s %-9s %s\n" % [vid, dev.vlans[vid], "active", ", ".join(PackedStringArray(ports))]
 		return out
 
 	func _show_mac(_r: Array) -> String:
@@ -2094,12 +2164,12 @@ class EOS extends Session:
 		for vlan in vids:
 			for mac in dev.mac_static.get(vlan, {}):
 				rows += 1
-				out += "%-6d %-18s %-8s %s\n" % [vlan, mac, "STATIC", EOS._short(String(dev.mac_static[vlan][mac]))]
+				out += "%-6d %-18s %-8s %s\n" % [vlan, Net.mac_dotted(mac), "STATIC", EOS._short(String(dev.mac_static[vlan][mac]))]
 			for mac in dev.mac_table.get(vlan, {}):
 				if dev.mac_static.get(vlan, {}).has(mac):
 					continue
 				rows += 1
-				out += "%-6d %-18s %-8s %s\n" % [vlan, mac, "DYNAMIC", EOS._short(dev.mac_table[vlan][mac].name)]
+				out += "%-6d %-18s %-8s %s\n" % [vlan, Net.mac_dotted(mac), "DYNAMIC", EOS._short(dev.mac_table[vlan][mac].name)]
 		return out if rows > 0 else "  (empty: send some traffic first)\n"
 
 	func _mac_static(r: Array) -> String:
@@ -2115,7 +2185,7 @@ class EOS extends Session:
 		var vid := int(r[2])
 		if not dev.mac_static.has(vid):
 			dev.mac_static[vid] = {}
-		dev.mac_static[vid][String(r[0]).to_upper()] = port.name  # the simulation spells MACs upper-case
+		dev.mac_static[vid][Net.mac_colon(String(r[0]))] = port.name  # dotted or colon in; the simulation spells MACs upper-case colon
 		Game.topology_changed.emit()
 		return ""
 
@@ -2405,7 +2475,7 @@ class EOS extends Session:
 		var out := "%-16s %-10s %-18s %-6s %s\n" % ["Address", "Age (min)", "Hardware Addr", "Type", "Interface"]
 		for ip in dev.arp:
 			var age := Game.cycle - int(dev.arp_seen.get(ip, Game.cycle))
-			out += "%-16s %-10s %-18s %-6s %s\n" % [ip, "-" if age <= 0 else str(age), dev.arp[ip], "ARPA",
+			out += "%-16s %-10s %-18s %-6s %s\n" % [ip, "-" if age <= 0 else str(age), Net.mac_dotted(String(dev.arp[ip])), "ARPA",
 				CLI.arp_iface_name(dev, String(ip))]
 		return out
 
@@ -2414,18 +2484,24 @@ class EOS extends Session:
 		## cost), chosen by longest prefix then administrative distance.
 		var out := "Codes: C - connected, S - static, O - OSPF, B - BGP\n"
 		var any := false
+		var gateway := ""
+		var rows := ""
 		for e in Sim.rib(dev):
+			if String(e["vrf"]) != "":
+				continue  # a VRF's table is 'show ip route vrf <name>'
 			any = true
-			var tag: String = "" if String(e["vrf"]) == "" else "   [vrf %s]" % e["vrf"]
 			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
+			if int(e["plen"]) == 0 and gateway == "" and e["src"] != "C":
+				gateway = String(e["next_hop"])
 			if e["src"] == "C":
-				out += "C  %s is directly connected, %s%s\n" % [pfx, EOS._short(e["iface"].name), tag]
+				rows += "%-7s%s is directly connected, %s\n" % [e["src"], pfx, EOS._short(e["iface"].name)]
 			elif String(e["next_hop"]) == "null0":
-				out += "%s  %s [%d/0] is a discard route, Null0%s\n" % [e["src"], pfx, int(e["ad"]), tag]
+				rows += "%-7s%s is directly connected, Null0\n" % [e["src"], pfx]
 			else:
-				out += "%s  %s [%d/%d] via %s, %s%s\n" % [e["src"], pfx, int(e["ad"]),
-					int(e["cost"]) if e["src"] == "O" else 0, e["next_hop"], EOS._short(e["iface"].name), tag]
-		return out if any else "  (no routes: configure ip addresses)\n"
+				rows += "%-7s%s [%d/%d] via %s, %s\n" % [e["src"], pfx, int(e["ad"]),
+					int(e["cost"]) if e["src"] == "O" else 0, e["next_hop"], EOS._short(e["iface"].name)]
+		out += ("Gateway of last resort is %s to network 0.0.0.0\n\n" % gateway) if gateway != "" else "Gateway of last resort is not set\n\n"
+		return out + rows if any else out + "  (no routes: configure ip addresses)\n"
 
 	func _show_v6_brief(_r: Array) -> String:
 		var out := "%-11s %-30s %-8s\n" % ["Interface", "IPv6 Address", "Status"]
@@ -2524,16 +2600,20 @@ class EOS extends Session:
 		return out
 
 	func _show_if_status(_r: Array) -> String:
-		## One line per port, the way you actually scan a switch.
-		var out := "%-11s %-11s %-7s %-7s %-9s %s\n" % ["Port", "Status", "Speed", "Duplex", "InErrors", "Neighbour"]
+		## One line per port, in the columns people scan a switch by. The
+		## neighbour lives in show lldp neighbors, the errors in show interfaces.
+		var out := "%-11s %-12s %-12s %-8s %-7s %-7s %s\n" % ["Port", "Name", "Status", "Vlan", "Duplex", "Speed", "Type"]
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.effective_peer(i)
 			var status := Game.iface_status_word(i)
 			var duplex_word := "a-%s" % Sim.effective_duplex(i, peer) if peer != null and i.duplex == "auto" else i.duplex
-			out += "%-11s %-11s %-7s %-7s %-9d %s\n" % [EOS._short(i.name), status,
-				("%dG" % (Game.iface_speed(i) / 1000)) if Game.iface_speed(i) >= 1000
-					else "%dM" % Game.iface_speed(i), duplex_word,
-				i.rx_errors, "%s %s" % [peer.dev.name, EOS._short(peer.name)] if peer != null else "-"]
+			var vlan_word := "routed" if i.mode == "routed" else ("trunk" if i.mode == "trunk" else str(i.untagged_vlan))
+			var speed := Game.iface_speed(i)
+			var speed_word := ("%dG" % (speed / 1000)) if speed >= 1000 else "%dM" % speed
+			var kind := "10GBASE-SR" if speed >= 10000 else ("1000BASE-T" if speed >= 1000 else "100BASE-T")
+			var label := String(i.note.get("text", "")).substr(0, 12) if i.note is Dictionary else ""
+			out += "%-11s %-12s %-12s %-8s %-7s %-7s %s\n" % [EOS._short(i.name), label, status, vlan_word,
+				duplex_word, speed_word, kind]
 		return out
 
 	func _show_transceiver(_r: Array) -> String:
@@ -2652,7 +2732,8 @@ class EOS extends Session:
 		return "startup-config saved.%s\n" % ("" if same else "  WARNING: running-config differs (unsaved changes)")
 
 	func _show_run(_r: Array) -> String:
-		var out := "hostname %s\n!\n" % dev.name
+		var out := "! Command: show running-config\n! device: %s (%s, PacketOS EOS 0.3)\n!\nhostname %s\n!\n" % [
+			dev.name, Game.MODELS[dev.model]["label"], dev.name]
 		var vids := dev.vlans.keys()
 		vids.sort()
 		for vid in vids:
@@ -2663,7 +2744,7 @@ class EOS extends Session:
 		static_vids.sort()
 		for svid in static_vids:
 			for smac in dev.mac_static[svid]:
-				out += "mac address-table static %s vlan %d interface %s\n" % [smac, svid, dev.mac_static[svid][smac]]
+				out += "mac address-table static %s vlan %d interface %s\n" % [Net.mac_dotted(smac), svid, dev.mac_static[svid][smac]]
 		var pool: Dictionary = dev.services.get("dhcp", {})
 		if not pool.is_empty() and String(pool.get("iface", "")) == "" and String(pool.get("start", "")) != "":
 			for ex in pool.get("excluded", []):
@@ -2717,6 +2798,8 @@ class EOS extends Session:
 			if i.name == "lo":
 				continue
 			out += "interface %s\n" % i.name
+			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
+				out += "   no switchport\n"  # first: the address below depends on it
 			if i.parent != "":
 				out += "   encapsulation dot1q %d\n" % i.dot1q
 			if i.tunnel_src != "":
@@ -2752,8 +2835,6 @@ class EOS extends Session:
 				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
 			if i.port_security:
 				out += "   switchport port-security\n"
-			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
-				out += "   no switchport\n"
 			if i.portfast:
 				out += "   spanning-tree portfast\n"
 			if i.bpduguard:
@@ -2773,6 +2854,7 @@ class EOS extends Session:
 			if i.admin_down:
 				out += "   shutdown\n"
 			out += "!\n"
+		out += "end\n"
 		return out
 
 # ============================================================ Linux ==
@@ -2825,10 +2907,12 @@ class Linux extends Session:
 				if ifc == null:
 					return "Cannot find device \"%s\"\n" % t[1]
 				var lease := Sim.dhcp_request(dev, ifc)
+				var dora := "DHCPDISCOVER on %s to 255.255.255.255 port 67 interval 3\n" % t[1]
 				if lease.is_empty():
-					return "dhclient: no DHCP server responded on %s\n" % t[1]
-				return "bound to %s/%d  (gw %s, dns %s)\n" % [lease["ip"], int(lease["plen"]),
-					lease.get("gw", "-"), lease.get("dns", "-")]
+					return dora + "No DHCPOFFERS received.\nNo working leases in persistent database - sleeping.\n"
+				var server := String(lease.get("server", lease.get("gw", "0.0.0.0")))
+				return dora + "DHCPOFFER of %s from %s\nDHCPREQUEST for %s on %s to 255.255.255.255 port 67\nDHCPACK of %s from %s\nbound to %s -- renewal in 1800 seconds.\n" % [
+					lease["ip"], server, lease["ip"], t[1], lease["ip"], server, lease["ip"]]
 			"dhcpd":
 				if t.size() < 5 or _iface(t[1]) == null or not Net.valid_cidr(t[2] + "/" + t[4]):
 					return "usage: dhcpd <iface> <first-ip> <last-ip> <plen> [gw] [dns]\n     e.g. dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1 10.2.0.5\n"
@@ -3183,23 +3267,29 @@ class Linux extends Session:
 					return out
 				return "usage: dns add <name> <ip> [ttl] | dns delegate <zone> <ns-ip> | dns64 <prefix>|off | dns list | dns cache | dns flush\n"
 			"nslookup":
+				var head := "Server:\t\t%s\nAddress:\t%s#53\n\n" % [dev.resolver, dev.resolver]
+				if dev.resolver == "":
+					return ";; connection timed out; no servers could be reached\n"
 				if t.size() == 3 and t[1] == "-6":
 					var v6addr := Sim.resolve(dev, String(t[2]), true, true)
 					if v6addr == "":
-						return "** server can't find %s: no AAAA\n" % t[2]
-					return "%s   has AAAA address %s   (%s)\n" % [t[2], v6addr,
-						Sim.last_answer_kind]
+						return head + "** server can't find %s: NXDOMAIN\n" % t[2]
+					return head + "Non-authoritative answer:\nName:\t%s\nAddress: %s%s\n" % [t[2], v6addr,
+						"   (synthesized by DNS64)" if Sim.last_answer_kind == "synthesized" else ""]
 				if t.size() != 2:
 					return "usage: nslookup [-6] <name|ip>\n"
 				if String(t[1]).is_valid_ip_address():
 					var nm := Sim.reverse_lookup(dev, t[1])
+					var octets := String(t[1]).split(".")
+					octets.reverse()
+					var arpa := ".".join(octets) + ".in-addr.arpa"
 					if nm == "":
-						return "** server can't find %s (no PTR)\n" % t[1]
-					return "%s   name = %s\n" % [t[1], nm]
+						return head + "** server can't find %s: NXDOMAIN\n" % arpa
+					return head + "%s\tname = %s.\n" % [arpa, nm]
 				var addr := Sim.resolve(dev, t[1])
 				if addr == "":
-					return "** server can't find %s (resolver: %s)\n" % [t[1], dev.resolver if dev.resolver else "none set"]
-				return "Server:  %s\nName:    %s\nAddress: %s\n" % [dev.resolver, t[1], addr]
+					return head + "** server can't find %s: NXDOMAIN\n" % t[1]
+				return head + "Non-authoritative answer:\nName:\t%s\nAddress: %s\n" % [t[1], addr]
 			"nameserver":
 				if t.size() != 2 or not String(t[1]).is_valid_ip_address():
 					return "usage: nameserver <ip>   (sets this host's DNS resolver)\n"
@@ -3234,18 +3324,50 @@ class Linux extends Session:
 				return i
 		return null
 
+	func _link_flags(i: Net.Iface) -> String:
+		if not i.enabled:
+			return "BROADCAST,MULTICAST"
+		if Game.link_at(i) == null:
+			return "NO-CARRIER,BROADCAST,MULTICAST,UP"
+		return "BROADCAST,MULTICAST,UP,LOWER_UP"
+
+	func _bcast(cidr: String) -> String:
+		var parts := cidr.split("/")
+		var plen := int(parts[1])
+		var host_bits := 32 - plen
+		return Net.int_to_ip((Net.ip_to_int(parts[0]) | ((1 << host_bits) - 1)) & 0xFFFFFFFF) if plen < 32 else parts[0]
+
 	func _ip(t: Array) -> String:
 		if t.is_empty():
 			return "usage: ip addr|link|route ...\n"
-		if String(t[0]).begins_with("a"):  # ip addr
+		if t.size() >= 2 and String(t[0]) in ["-br", "-brief"] and String(t[1]).begins_with("a"):
+			# the one everybody actually types
+			var out := ""
+			for i: Net.Iface in dev.ifaces:
+				var state := "UP" if i.enabled and Game.link_at(i) != null else "DOWN"
+				out += "%-16s %-16s %s\n" % [i.name, state, " ".join(PackedStringArray(i.ips))]
+			return out
+		if String(t[0]).begins_with("a"):  # ip addr [show [IF]]
+			var only := ""
+			if t.size() >= 2 and String(t[1]) in ["show", "list", "ls"]:
+				only = String(t[2]) if t.size() >= 3 else ""
+				t = [t[0]]
 			if t.size() == 1:
 				var out := ""
+				var n := 2  # lo is 1 on a real box
 				for i: Net.Iface in dev.ifaces:
-					out += "%s: <%s> mtu %d\n    link/ether %s\n" % [i.name,
-						"UP" if i.enabled else "DOWN", i.mtu, i.mac]
+					if only != "" and i.name != only:
+						continue
+					out += "%d: %s: <%s> mtu %d qdisc fq_codel state %s group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [n, i.name,
+						_link_flags(i), i.mtu, "UP" if i.enabled and Game.link_at(i) != null else "DOWN", i.mac.to_lower()]
 					for cidr in i.ips:
-						out += "    inet %s\n" % cidr
-					out += "    RX packets %d  TX packets %d\n" % [i.rx_frames, i.tx_frames]
+						if Net.is_v6(cidr):
+							out += "    inet6 %s scope global\n       valid_lft forever preferred_lft forever\n" % cidr
+						else:
+							out += "    inet %s brd %s scope global %s\n       valid_lft forever preferred_lft forever\n" % [cidr, _bcast(cidr), i.name]
+					n += 1
+				if only != "" and out == "":
+					return "Device \"%s\" does not exist.\n" % only
 				return out
 			if t.size() == 5 and t[1] in ["add", "del"] and t[3] == "dev":
 				var ifc := _iface(t[4])
@@ -3258,7 +3380,15 @@ class Linux extends Session:
 					return ""
 				return "Error: address not found\n"
 			return "usage: ip addr [add|del <cidr> dev <if>]\n"
-		if String(t[0]).begins_with("l"):  # ip link set IF up|down
+		if String(t[0]).begins_with("l"):  # ip link [show] | ip link set IF up|down
+			if t.size() == 1 or (t.size() >= 2 and String(t[1]) in ["show", "list", "ls"]):
+				var out := ""
+				var n := 2
+				for i: Net.Iface in dev.ifaces:
+					out += "%d: %s: <%s> mtu %d qdisc fq_codel state %s mode DEFAULT group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [n, i.name,
+						_link_flags(i), i.mtu, "UP" if i.enabled and Game.link_at(i) != null else "DOWN", i.mac.to_lower()]
+					n += 1
+				return out
 			if t.size() == 4 and t[1] == "set" and t[3] in ["up", "down"]:
 				var ifc := _iface(t[2])
 				if ifc == null:
@@ -3282,12 +3412,15 @@ class Linux extends Session:
 				var out := ""
 				for r in dev.static_routes:
 					if r["plen"] == 0:
-						out += "default via %s\n" % r["via"]
+						out += "default via %s%s proto static\n" % [r["via"], CLI.dev_suffix(dev, String(r["via"]))]
 					else:
-						out += "%s/%d via %s\n" % [r["prefix"], int(r["plen"]), r["via"]]
+						out += "%s/%d via %s%s proto static\n" % [r["prefix"], int(r["plen"]), r["via"], CLI.dev_suffix(dev, String(r["via"]))]
 				for i: Net.Iface in dev.ifaces:
 					for cidr: String in i.ips:
-						out += "%s dev %s scope link\n" % [cidr, i.name]
+						if Net.is_v6(cidr):
+							continue
+						var netw := Net.network_of(cidr)
+						out += "%s/%d dev %s proto kernel scope link src %s\n" % [netw["prefix"], int(netw["plen"]), i.name, String(cidr).split("/")[0]]
 				return out if out else "(no routes)\n"
 			if t.size() == 4 and t[1] == "add" and t[3] != "":
 				if t[2] == "default" or Net.valid_cidr(t[2]):

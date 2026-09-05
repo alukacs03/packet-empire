@@ -489,11 +489,13 @@ func _refresh_money() -> void:
 				objective_lbl.text = "TARGET  ·  %s" % qgoal
 		# an outage or a hazard outranks everything else on this line: the
 		# wall sign, the brief and the HUD must never disagree about it
-		if Game.customer_outage_active or not Game.hazards.is_empty():
+		if Game.customer_down_now() or not Game.hazards.is_empty():
 			var down := 0
 			for deal in Game.deals:
 				if not bool(deal.get("healthy", false)):
 					down += 1
+			if down == 0 and Game.guided_outage_active():
+				down = 1  # the teaching outage is a real customer off the air
 			if not Game.hazards.is_empty():
 				var h: Dictionary = Game.hazards[0]
 				objective_lbl.text = "HAZARD  ·  %s in %s" % [Game.HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
@@ -553,7 +555,9 @@ func _refresh_money() -> void:
 	elif Game.stage < Game.STAGES.size() - 1:
 		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
 		expand_btn.text = ("+$%d" if hud_compact else "Expand ($%d)") % int(nxt["price"])
-		expand_btn.tooltip_text = nxt["blurb"]
+		expand_btn.disabled = Game.money < int(nxt["price"])
+		expand_btn.tooltip_text = String(nxt["blurb"]) if not expand_btn.disabled \
+			else "%s   You are $%d short." % [nxt["blurb"], int(nxt["price"]) - Game.money]
 		expand_btn.visible = true
 	else:
 		expand_btn.visible = false
@@ -1122,11 +1126,10 @@ func _refresh_slots() -> void:
 		"%d W  ·  ~$%d/CYCLE" % [rack_watts, int(round(float(rack_watts) *
 			Game.efficiency_factor() * Game.energy_rate()))])
 	(rack_metric_values["feeds"] as Label).text = "A %02d  /  B %02d  /  DUAL %02d" % [feed_a, feed_b, dual]
-	var gaps := 0
+	var gaps := Net.Rack.SLOTS - occupied  # the same unit the elevation draws in
 	var blanks := 0
 	for slot_i in Net.Rack.SLOTS:
 		if cur_rack.slots[slot_i] == null and not cur_rack.covered.has(slot_i):
-			gaps += 1
 			if cur_rack.blanked.has(slot_i):
 				blanks += 1
 	var airflow_gain := int(round(Game.rack_airflow_seal(cur_rack) * 8.0))
@@ -3055,7 +3058,10 @@ func _refresh_ops() -> void:
 		Game.cabling_documented = on
 		_refresh_ops())
 	cabling_row.add_child(cabling_btn)
-	for debt_item: Dictionary in Game.cable_debt_items().slice(0, 5):
+	var debt_items: Array = Game.cable_debt_items()
+	if debt_items.size() > 5:
+		ops_box.add_child(_label("  showing 5 of %d; the rest are the same three kinds" % debt_items.size(), 11, MUTED))
+	for debt_item: Dictionary in debt_items.slice(0, 5):
 		ops_box.add_child(_label("      · %s  (%s)" % [debt_item["label"], debt_item["fix"]], 12,
 			Color(0.68, 0.74, 0.82)))
 	if Game.cable_debt > 0:
@@ -4474,6 +4480,7 @@ func _build_contracts_overlay() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(600, 480)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.get_v_scroll_bar().custom_minimum_size.x = 10  # the same visible bar as every other card
 	v.add_child(scroll)
 	contracts_box = VBoxContainer.new()
 	contracts_box.add_theme_constant_override("separation", 10)
@@ -4517,7 +4524,10 @@ func _build_business_tab() -> void:
 	flow.add_child(_offer_fact("REVENUE EARNED", "+$%d\nservice delivered" % int(Game.last_business.get("revenue", 0)), "success"))
 	flow.add_child(_offer_fact("INVOICES RAISED", "+$%d\nnow receivable" % int(Game.last_business.get("invoiced", 0)), "info"))
 	flow.add_child(_offer_fact("CASH COLLECTED", "+$%d\nreached the bank" % int(Game.last_business.get("collected", 0)), "success"))
-	flow.add_child(_offer_fact("POWER COST", "-$%d\npaid this cycle" % int(Game.last_business.get("power", 0)), "warning"))
+	if Game.stage >= 1:
+		flow.add_child(_offer_fact("POWER COST", "-$%d\npaid this cycle" % int(Game.last_business.get("power", 0)), "warning"))
+	else:
+		flow.add_child(_offer_fact("POWER COST", "$0\nthe colo pays", "info"))
 	flow.add_child(_offer_fact("TRANSIT COST", "-$%d\nports and traffic" % int(Game.last_business.get("transit", 0)), "warning"))
 	var cash_delta := int(Game.last_cycle_delta)
 	flow.add_child(_offer_fact("NET CASH", "%s$%d\nactual bank movement" % [
@@ -6111,10 +6121,19 @@ func _refresh_open() -> void:
 	if rack_overlay.visible and cur_rack:
 		_refresh_slots()
 
+func _ensure_visible(ctrl: Control) -> void:
+	## scroll whichever card holds this control until it is in view
+	var node: Node = ctrl.get_parent()
+	while node != null and not (node is ScrollContainer):
+		node = node.get_parent()
+	if node != null:
+		(node as ScrollContainer).call_deferred("ensure_control_visible", ctrl)
+
 func _toggle_cli() -> void:
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
 		cli_out.custom_minimum_size.y = 220
+		_ensure_visible(cli_box)  # the console opens below the fold otherwise
 		cli_toggle.text = "Close console  ▤"
 		cli_session = CLI.new_session(cur_dev)
 		cli_stack.clear()

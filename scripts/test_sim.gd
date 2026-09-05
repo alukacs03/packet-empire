@@ -736,7 +736,8 @@ static func run() -> int:
 	s.exec("end")
 	var vlan_out: String = s.exec("sh vlan")
 	check(vlan_out.contains("30"), "EOS: 'sh vlan' lists vlan 30 (got: %s)" % vlan_out.replace("\n", " | "))
-	check(s.exec("sh run").begins_with("hostname"), "EOS: show running-config renders")
+	check(s.exec("sh run").begins_with("! Command: show running-config") and s.exec("sh run").contains("\nhostname")
+		and s.exec("sh run").ends_with("end\n"), "EOS: show running-config renders with the banner and the end")
 	check(s.exec("s").begins_with("% Ambiguous"), "EOS: bare 's' is ambiguous (ssh vs show)")
 	check(s.exec("sh").begins_with("% Incomplete"), "EOS: 'sh' alone is an incomplete command")
 	check("interface" in s.exec("help"), "EOS: help lists config commands in config-reachable mode")
@@ -893,7 +894,7 @@ static func run() -> int:
 	dls.exec("dns add www.delta.hu 10.2.0.10")
 	var cls_ := CLI.new_session(client)
 	var lease_out: String = cls_.exec("dhclient eth0")
-	check("bound to 10.2.0.10/24" in lease_out, "dhcp: client got the first lease (got: %s)" % lease_out.strip_edges())
+	check("bound to 10.2.0.10 --" in lease_out and "DHCPOFFER of 10.2.0.10 from 10.2.0.5" in lease_out, "dhcp: client got the first lease (got: %s)" % lease_out.strip_edges())
 	check(client.resolver == "10.2.0.5", "dhcp: lease delivered the DNS resolver")
 	check(Sim.ping(client, "10.2.0.5")["ok"], "dhcp: leased address is routable")
 	check(cls_.exec("dhclient eth0").contains("10.2.0.10"), "dhcp: same MAC keeps its lease")
@@ -935,7 +936,7 @@ static func run() -> int:
 	check(pool_cli.exec("default-router 10.4.0.1") == "" and pool_cli.exec("dns-server 10.4.0.1") == "", "dhcp: option 3 and option 6")
 	pool_cli.exec("end")
 	var pool_lease := CLI.new_session(pool_c1).exec("dhclient eth0")
-	check("bound to 10.4.0.12/24" in pool_lease,
+	check("bound to 10.4.0.12 --" in pool_lease and "DHCPACK of 10.4.0.12 from 10.4.0.1" in pool_lease,
 		"dhcp: the first lease skips the excluded block and the address that answered an ARP probe (got %s)" % pool_lease.strip_edges())
 	check(CLI.new_session(pool_c2).exec("dhclient eth0").contains("10.4.0.13"), "dhcp: the next client gets the next free address")
 	check(Sim.ping(pool_c1, "10.4.0.1")["ok"] and pool_c1.static_routes.size() == 1, "dhcp: a router-served lease carries the gateway")
@@ -1267,7 +1268,8 @@ static func run() -> int:
 	es.exec("router bgp 65001")
 	es.exec("neighbor 100.64.0.1 remote-as 64500")
 	es.exec("end")
-	check(es.exec("show ip bgp summary").contains("Established"), "bgp: session establishes with the handoff")
+	check(es.exec("show ip bgp summary").contains("Estab") and es.exec("show ip bgp summary").contains("PfxRcd"),
+		"bgp: session establishes with the handoff, in the columns IOS people read")
 	var bgp_table := es.exec("show ip bgp")
 	check(bgp_table.contains("*> 0.0.0.0/0") and bgp_table.contains("Path"),
 		"bgp: show ip bgp lists the learned default with the best-path marker and an AS path")
@@ -1400,7 +1402,7 @@ static func run() -> int:
 		"ospf: the RouterOS export replays the three v7 steps")
 	check(Sim.ping(t1, "10.20.2.10")["ok"] and Sim.ping(t2, "10.20.1.10")["ok"],
 		"ospf: cross-office ping with zero static routes on routers")
-	check(os1.exec("sh ip route").contains("O  10.20.2.0/24"), "ospf: O route in show ip route")
+	check(os1.exec("sh ip route").contains("O      10.20.2.0/24"), "ospf: O route in show ip route")
 	check(Game.try_complete_contract(_contract("dynamic_routing")), "ospf: contract verifies")
 	os1.exec("conf t")
 	os1.exec("router ospf")
@@ -1543,7 +1545,8 @@ static func run() -> int:
 	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: client pings the virtual gateway")
 	check(String(vcl.arp.get("10.40.0.1", "")) == "00:00:5e:00:01:01",
 		"vrrp: the client learned the virtual MAC for the virtual address, not a router's own")
-	check(v1.exec("show vrrp").contains("00:00:5e:00:01:01") and v1.exec("show vrrp").contains("yes"),
+	check(v1.exec("show vrrp").contains("Virtual MAC address is 0000.5e00.0101") and v1.exec("show vrrp").contains("Preemption is enabled")
+		and v1.exec("show vrrp brief").contains("Grp"),
 		"vrrp: show vrrp prints the virtual MAC and the preempt flag")
 	check(v1.exec("show vrrp").contains("Master"), "vrrp: show vrrp reports Master")
 	check(v2.exec("show vrrp").contains("Backup"), "vrrp: show vrrp reports Backup")
@@ -1587,7 +1590,7 @@ static func run() -> int:
 		faulted.enabled = true
 		Game.topology_changed.emit()
 	check(cls_.exec("nslookup 10.2.0.10").contains("www.delta.hu"), "dns: reverse lookup finds the name")
-	check(cls_.exec("nslookup 10.2.0.77").contains("no PTR"), "dns: reverse lookup fails cleanly")
+	check(cls_.exec("nslookup 10.2.0.77").contains("77.0.2.10.in-addr.arpa: NXDOMAIN"), "dns: reverse lookup fails the way nslookup fails")
 
 	# --- rack selling ---
 	var r_sell := Game.add_rack(Vector2i(2, 1))
@@ -2109,7 +2112,7 @@ static func run() -> int:
 	rel_es.exec("ip helper-address 10.61.0.5")
 	rel_es.exec("end")
 	var rel_out: String = CLI.new_session(rel_cli).exec("dhclient eth0")
-	check("bound to 10.60.0.50/24" in rel_out, "relay: client leased across the router (got: %s)" % rel_out.strip_edges())
+	check("bound to 10.60.0.50 --" in rel_out, "relay: client leased across the router (got: %s)" % rel_out.strip_edges())
 	check(Sim.ping(rel_cli, "10.61.0.5")["ok"], "relay: leased client routes to the central DHCP server")
 
 	# --- capacity planning ---
@@ -6890,7 +6893,7 @@ static func run() -> int:
 	check(v6_amb.exec("ipv6 address 2001:db8:66::1/64").is_empty(), "v6: 'ipv6 address' still works")
 	check(Sim.ping(v6_a, "10.0.0.1")["detail"] != "", "v6: an IPv4 destination is not reachable over v6 config")
 	var v6_cap := "\n".join(PackedStringArray(v6_a.capture))
-	check("NDP" in v6_cap, "v6: captures name Neighbor Discovery, not ARP")
+	check("ICMP6, neighbor" in v6_cap, "v6: captures name Neighbor Discovery, not ARP (got %s)" % v6_cap.substr(0, 300).replace("\n", " | "))
 	# the campaign job wants a specific pair of prefixes
 	Game.add_ip(v6_a.ifaces[0], "2001:db8:70::10/64")
 	Game.add_ip(v6_c.ifaces[0], "2001:db8:71::10/64")
@@ -9556,9 +9559,12 @@ static func run() -> int:
 		"console: an intermittent fault reads as intermittent loss, which is how it is found")
 	var sw_cli2 := CLI.new_session(dx_sw2)
 	var status := sw_cli2.exec("show interfaces status")
-	check(status.contains("InErrors") and status.contains(dx_a2.name) \
-			and status.contains("connected"),
-		"console: one line per port, with the neighbour and the error count on it")
+	check(status.contains("Vlan") and status.contains("Duplex") and status.contains("connected") and not status.contains("InErrors"),
+		"console: one line per port in the real columns, with no invented ones")
+	var blocks := sw_cli2.exec("show interfaces Ethernet1")
+	check(blocks.contains("is up, line protocol is up") and blocks.contains("input errors") and blocks.contains("Hardware is Ethernet, address is"),
+		"console: show interfaces prints the block real gear prints, errors included")
+	check(sw_cli2.exec("show lldp neighbors").contains(dx_a2.name), "console: the neighbour is where lldp keeps it")
 	var optics := sw_cli2.exec("show interfaces transceiver")
 	check(optics.contains("Rx(dBm)"),
 		"console: the optics report their receive level")
@@ -9592,10 +9598,10 @@ static func run() -> int:
 	check(rtr_cli.exec("ip route 10.197.0.0 255.255.255.0 10.198.0.12 250") == "", "routes: (floating static setup)")
 	rtr_cli.exec("end")
 	var rib_out := rtr_cli.exec("show ip route")
-	check(rib_out.contains("S  10.199.0.0/24 [1/0] via 10.198.0.11") and not rib_out.contains("10.199.0.0/24 [250/0]"),
+	check(rib_out.contains("S      10.199.0.0/24 [1/0] via 10.198.0.11") and not rib_out.contains("10.199.0.0/24 [250/0]"),
 		"routes: the floating static (distance 250) stays out of the table while the primary is installed")
-	check(rib_out.contains("S  10.197.0.0/24 [250/0]"), "routes: a floating static with no rival is installed")
-	check(rib_out.count("10.198.0.0/24") == 1 and rib_out.contains("C  10.198.0.0/24 is directly connected"),
+	check(rib_out.contains("S      10.197.0.0/24 [250/0]"), "routes: a floating static with no rival is installed")
+	check(rib_out.count("10.198.0.0/24") == 1 and rib_out.contains("C      10.198.0.0/24 is directly connected"),
 		"routes: one line per prefix, the connected route wins its own subnet")
 	check(rtr_cli.exec("show ip route for 10.199.0.5").contains("distance 1 beats 250"),
 		"routes: the lookup explains that distance decided, not just prefix length")
@@ -10291,8 +10297,8 @@ static func run() -> int:
 			sm_line20 = sm_l
 		if sm_l.begins_with("10 "):
 			sm_line10 = sm_l
-	check("Et8" in sm_line10 and "Et8" not in sm_line20,
-		"show vlan: a trunk is listed only under the VLANs it actually carries")
+	check("Et8" not in sm_line10 and "Et8" not in sm_line20 and sms.exec("show interfaces trunk").contains("Ethernet8"),
+		"show vlan: access ports only, the way real gear prints it; trunks live in show interfaces trunk")
 	Game.disconnect_iface(sm_h1.ifaces[0])
 	Game.disconnect_iface(sm_h2.ifaces[0])
 	for sm_i in 3:

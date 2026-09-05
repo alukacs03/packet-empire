@@ -149,7 +149,7 @@ static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		svc["since"][p["mac"]] = Game.cycle
 		_tx(iface, {"src": iface.mac, "dst": p["mac"], "vlan": 0, "type": "dhcp",
 			"pl": {"op": "ack", "mac": p["mac"], "ip": ip, "plen": svc["plen"],
-				"gw": svc.get("gw", ""), "dns": svc.get("dns", "")}})
+				"gw": svc.get("gw", ""), "dns": svc.get("dns", ""), "server": _first_ip(iface)}})
 	elif p["op"] == "ack":
 		for i: Net.Iface in dev.ifaces:
 			if i.mac == p["mac"]:
@@ -2115,20 +2115,36 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	var desc := ""
 	match frame["type"]:
 		"dhcp":
-			desc = "DHCP %s %s" % [p["op"], p.get("mac", "")]
+			desc = "IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, %s from %s, length 300" % [
+				"Request" if p["op"] == "discover" else "Reply", String(p.get("mac", "")).to_lower()]
 		"arp":
-			desc = ("ARP who-has %s tell %s" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
-				else ("ARP reply %s is-at %s" % [p["spa"], p["sha"]])
+			desc = ("ARP, Request who-has %s tell %s, length 28" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
+				else ("ARP, Reply %s is-at %s, length 28" % [p["spa"], String(p["sha"]).to_lower()])
 		"ndp":
-			desc = ("NDP solicit %s from %s" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
-				else ("NDP advert %s is-at %s" % [p["spa"], p["sha"]])
+			desc = ("IP6 %s > ff02::1:ff00:0: ICMP6, neighbor solicitation, who has %s, length 32" % [p["spa"], p["tpa"]]) if p["op"] == "req" \
+				else ("IP6 %s > %s: ICMP6, neighbor advertisement, tgt is %s, length 32" % [p["spa"], p["tpa"], p["spa"]])
 		_:
 			var l4: Dictionary = p.get("l4", {})
-			desc = "%s %s > %s %s %s ttl %d" % ["IP6" if Net.is_v6(String(p["src_ip"])) else "IP",
-				p["src_ip"], p["dst_ip"], String(l4.get("proto", "?")).to_upper(),
-				str(l4.get("type", l4.get("q", ""))), int(p["ttl"])]
-	var vl := (" [vlan %d]" % frame["vlan"]) if frame["vlan"] != 0 else ""
-	dev.capture.append("%-10s %s%s" % [iface.name, desc, vl])
+			var v6 := Net.is_v6(String(p["src_ip"]))
+			var proto := String(l4.get("proto", "?"))
+			match proto:
+				"icmp":
+					var kind := String(l4.get("type", ""))
+					var words := {"echo": "echo request", "reply": "echo reply", "ttl-exceeded": "time exceeded in-transit",
+						"unreachable": "%s unreachable" % String(l4.get("code", "net"))}
+					desc = "%s %s > %s: ICMP%s %s, id %d, seq 1, length 64" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
+						"6" if v6 else "", words.get(kind, kind), int(l4.get("id", 0))]
+				"dns":
+					desc = "IP %s.%d > %s.53: %d+ %s? %s. (%d)" % [p["src_ip"], 30000 + int(l4.get("id", 0)) % 30000, p["dst_ip"],
+						int(l4.get("id", 0)) % 65536, "AAAA" if bool(l4.get("v6", false)) else "A", l4.get("q", ""), 30]
+				"dns-resp":
+					desc = "IP %s.53 > %s.%d: %d %s (%d)" % [p["src_ip"], p["dst_ip"], 30000 + int(l4.get("id", 0)) % 30000,
+						int(l4.get("id", 0)) % 65536, ("1/0/0 A %s" % l4.get("answer", "")) if String(l4.get("answer", "")) != "" else "NXDomain 0/0/0", 46]
+				_:
+					desc = "%s %s > %s: %s, length 64" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"], proto.to_upper()]
+	var vl := ("vlan %d, p 0, ethertype %s (0x%s), " % [frame["vlan"], "ARP" if frame["type"] == "arp" else "IPv4", "0806" if frame["type"] == "arp" else "0800"]) if frame["vlan"] != 0 else ""
+	var stamp := "%02d:%02d:%02d.%06d" % [(Game.cycle * 7) % 24, (Game.cycle * 13) % 60, (dev.capture.size() * 3) % 60, (dev.capture.size() * 104729) % 1000000]
+	dev.capture.append("%s %-8s %s%s" % [stamp, iface.name, vl, desc])
 	if dev.capture.size() > 50:
 		dev.capture.pop_front()
 

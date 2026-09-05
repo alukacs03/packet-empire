@@ -278,7 +278,7 @@ class ActionButton extends Button:
 const TYPE_COLORS := {
 	"switch": Color("39d9d0"),
 	"router": Color("ffb45c"),
-	"firewall": Color("ff6f68"),
+	"firewall": Color("f0a85a"),  # amber, not the danger red: a firewall is not an alarm
 	"uplink": Color("b58cff"),
 	"cooling": Color("70c8ff"),
 	"loadbalancer": Color("69e39a"),
@@ -1323,9 +1323,9 @@ class Faceplate extends Control:
 			# detached success banner.
 			draw_rect(panel.grow(-2), Color(saved, fade * 0.12), false, 3.0)
 			draw_circle(Vector2(size.x - 18, 16), 3.0 + p * 2.0, saved)
-			if config_write_elapsed < 0.9:
+			if fade > 0.2:
 				# a plate behind the words: 9 px green on a beige PacketTik
-				# faceplate was invisible
+				# faceplate was invisible. Plate and words fade together.
 				var plate := Rect2(Vector2(size.x - 142, 8), Vector2(118, 17))
 				draw_rect(plate, Color(0.03, 0.06, 0.09, fade * 0.85))
 				draw_string(_mono, Vector2(size.x - 136, 20), "CONFIG WRITTEN",

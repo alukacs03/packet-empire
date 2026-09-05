@@ -6859,7 +6859,11 @@ func _digest_line(at: int) -> String:
 	var lines: Array = digest.get(at, [])
 	var preview: Array = []
 	for line: String in lines.slice(0, 2):
-		preview.append(String(line).substr(0, 48))
+		var cut := String(line)
+		if cut.length() > 48:
+			var at_space := cut.rfind(" ", 48)
+			cut = cut.substr(0, at_space if at_space > 20 else 48) + "…"
+		preview.append(cut)
 	return "cycle %d: %s: %d routine thing(s) handled: %s" % [at, DIGEST_PREFIX, lines.size(),
 		"; ".join(PackedStringArray(preview))]
 

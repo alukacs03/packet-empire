@@ -298,6 +298,23 @@ static func addr_eq(a: String, b: String) -> bool:
 		return false
 	return v6_compress(a) == v6_compress(b) if is_v6(a) else a == b
 
+static func mac_dotted(mac: String) -> String:
+	## 02:50:45:00:00:01 -> 0250.4500.0001, the way EOS and IOS print it
+	var hexs := mac.replace(":", "").replace(".", "").to_lower()
+	if hexs.length() != 12:
+		return mac
+	return "%s.%s.%s" % [hexs.substr(0, 4), hexs.substr(4, 4), hexs.substr(8, 4)]
+
+static func mac_colon(mac: String) -> String:
+	## either spelling in, the simulation's own (upper-case colon) out
+	var hexs := mac.replace(":", "").replace(".", "").replace("-", "").to_upper()
+	if hexs.length() != 12 or not hexs.is_valid_hex_number():
+		return mac
+	var parts: Array = []
+	for k in 6:
+		parts.append(hexs.substr(k * 2, 2))
+	return ":".join(PackedStringArray(parts))
+
 static func ip_to_int(ip: String) -> int:
 	var v := 0
 	for p in ip.split("."):
