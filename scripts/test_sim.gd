@@ -1025,8 +1025,10 @@ static func run() -> int:
 		"dhcp: show ip dhcp binding lists the lease with its remaining time")
 	check(pool_cli.exec("show ip dhcp conflict").contains("10.4.0.11"), "dhcp: the address that was already in use is on the conflict list")
 	check(pool_cli.exec("show ip dhcp pool").contains("Leased addresses               : 2"), "dhcp: show ip dhcp pool counts the leases")
-	check(pool_cli.exec("show run").contains("ip dhcp pool LAN") and pool_cli.exec("show run").contains("default-router 10.4.0.1"),
-		"dhcp: the pool is in the running configuration")
+	check(pool_cli.exec("show run").contains("dhcp server\n   subnet 10.4.0.0/24\n      range ") and pool_cli.exec("show run").contains("default-gateway 10.4.0.1"),
+		"dhcp: the pool is in the running configuration as the EOS dhcp server block")
+	check(pool_cli.exec("show dhcp server leases").contains("10.4.0.") and pool_cli.exec("show dhcp server").contains("Range: "),
+		"dhcp: show dhcp server and its leases print the EOS view")
 	check(Sim.resolve(client, "www.delta.hu") == "10.2.0.10", "dns: client resolves via the network")
 	check(cls_.exec("ping www.delta.hu").contains("3 received"), "dns: ping by name works (client owns the A record)")
 	check(cls_.exec("nslookup nope.example").contains("can't find"), "dns: unknown name fails cleanly")
@@ -1400,6 +1402,26 @@ static func run() -> int:
 		"nat: show ip nat translations lists the flow with its PAT port")
 	check(es.exec("sh run").contains("ip nat outside") and es.exec("sh run").contains("ip nat inside source list 1 interface Ethernet1 overload")
 		and es.exec("sh run").contains("access-list 1 permit 10.3.0.0 0.0.0.255"), "nat: rendered in running-config")
+	# the EOS spelling: a named list and the rule on the outside interface, no inside/outside marks
+	es.exec("conf t")
+	es.exec("no ip nat inside source list 1 interface Ethernet1 overload")
+	es.exec("interface Ethernet2")
+	es.exec("no ip nat")
+	es.exec("exit")
+	check(not Sim.ping(web, "8.8.8.8")["ok"], "nat eos: with the IOS rule gone nothing translates")
+	check(es.exec("ip access-list NAT-ACL") == "" and es.prompt().ends_with("(config-acl-NAT-ACL)#"),
+		"nat eos: ip access-list NAME enters its own mode")
+	es.exec("exit")
+	es.exec("interface Ethernet1")
+	check(es.exec("ip nat source dynamic access-list 1 overload") == "",
+		"nat eos: the rule lives on the outside interface and names the list")
+	es.exec("end")
+	check(Sim.ping(web, "8.8.8.8")["ok"], "nat eos: it translates without any inside mark")
+	var xlate_eos := es.exec("show ip nat translation")
+	check(xlate_eos.begins_with("Source IP       Source Port") and "dynamic" in xlate_eos,
+		"nat eos: show ip nat translation prints the EOS columns")
+	check(es.exec("sh run").contains("   ip nat source dynamic access-list 1 overload"),
+		"nat eos: the rule renders under its interface")
 	check(Game.try_complete_contract(_contract("hide_the_internals")), "nat: contract verifies")
 
 	# --- overheating trips gear ---
@@ -6497,7 +6519,7 @@ static func run() -> int:
 	check(vs2.exec("ip vrf alfa").is_empty(), "vrf: a routing table can be created")
 	vs2.exec("ip vrf beta")
 	vs2.exec("interface Ethernet1")
-	check(vs2.exec("ip vrf forwarding alfa").contains("moved"), "vrf: an interface joins a table")
+	check(vs2.exec("ip vrf forwarding alfa") == "", "vrf: an interface joins a table, silently, as on EOS")
 	vs2.exec("ip address 10.0.0.1/24")
 	vs2.exec("interface Ethernet2")
 	vs2.exec("ip vrf forwarding beta")

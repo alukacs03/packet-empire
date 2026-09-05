@@ -2257,7 +2257,10 @@ static func nat_translate_src(dev: Net.NDevice, in_if: Net.Iface, out: Net.Iface
 				if String(rule.get("iface", "")) == out.name:
 					return _first_ip(out)
 			"overload":
-				if String(rule.get("iface", "")) != out.name or in_if.nat != "inside":
+				# IOS wants the inside mark; EOS has none, anything not outside is inside
+				if String(rule.get("iface", "")) != out.name or (in_if.nat != "inside" and not bool(rule.get("eos", false))):
+					continue
+				if bool(rule.get("eos", false)) and in_if == out:
 					continue
 				if _std_acl_permits(dev, String(rule.get("list", "")), src):
 					return _first_ip(out)
@@ -2269,6 +2272,9 @@ static func _std_acl_permits(dev: Net.NDevice, list_id: String, src: String) -> 
 	for entry in lists.get(list_id, []):
 		if Net.same_subnet(src, String(entry["net"]), int(entry["plen"])):
 			return String(entry["action"]) == "permit"
+	for rule in dev.acls:  # a named list (ip access-list NAME) matched on its source
+		if String(rule.get("list", "")) == list_id and _acl_addr(src, String(rule["src"]), int(rule["splen"])):
+			return String(rule["action"]) == "permit"
 	return false
 
 static func nat_static_inside(dev: Net.NDevice, outside_ip: String) -> String:
@@ -2288,13 +2294,14 @@ static func _acl_permits(dev: Net.NDevice, p: Dictionary) -> bool:
 	## First match wins. With no list there is no policy and everything
 	## passes; once a list exists, anything it does not name is dropped:
 	## the implicit deny at the end of every real access list.
-	if dev.acls.is_empty():
+	var active := active_acls(dev)
+	if active.is_empty():
 		return true
 	var l4: Dictionary = p.get("l4", {})
 	var proto := acl_proto(l4)
 	var port := acl_port(l4)
 	var reply := acl_is_reply(l4)
-	for rule in dev.acls:
+	for rule in active:
 		if not _acl_addr(String(p["src_ip"]), String(rule["src"]), int(rule["splen"])) \
 				or not _acl_addr(String(p["dst_ip"]), String(rule["dst"]), int(rule["dplen"])):
 			continue
@@ -2307,6 +2314,14 @@ static func _acl_permits(dev: Net.NDevice, p: Dictionary) -> bool:
 			continue
 		return rule["action"] == "permit"
 	return false
+
+static func active_acls(dev: Net.NDevice) -> Array:
+	## the rules that filter anything: the old global rules, plus named lists
+	## that an interface has applied with ip access-group
+	var applied := {}
+	for k in dev.services.get("acl_groups", {}):
+		applied[String(dev.services["acl_groups"][k])] = true
+	return dev.acls.filter(func(rule): return String(rule.get("list", "")) == "" or applied.has(String(rule.get("list", ""))))
 
 static func _acl_addr(addr: String, net: String, plen: int) -> bool:
 	return plen == 0 or Net.same_net(addr, net, plen)

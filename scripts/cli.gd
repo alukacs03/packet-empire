@@ -213,7 +213,9 @@ class Session:
 # ============================================================== EOS ==
 
 class EOS extends Session:
-	var mode := "exec"  # exec | priv | config | if | vlan
+	var mode := "exec"  # exec | priv | config | if | vlan | router | ospf | dhcp | acl | dhcpsrv | dhcpsub
+	var ctx_acl := ""  # the named access list being edited
+	var ctx_subnet := ""  # the dhcp server subnet being edited
 	var ctx_if: Net.Iface  # the first of ctx_ifs, for single-interface commands
 	var ctx_ifs: Array = []  # every interface the current context applies to
 	var ctx_vlan := 0
@@ -244,6 +246,12 @@ class EOS extends Session:
 				return dev.name + "(config-router-ospf)#"
 			"dhcp":
 				return dev.name + "(dhcp-config)#"
+			"acl":
+				return "%s(config-acl-%s)#" % [dev.name, ctx_acl]
+			"dhcpsrv":
+				return dev.name + "(config-dhcp-server)#"
+			"dhcpsub":
+				return "%s(config-dhcp-server-subnet-%s)#" % [dev.name, ctx_subnet]
 		return dev.name + ">"
 
 	static func _short(ifname: String) -> String:
@@ -277,7 +285,7 @@ class EOS extends Session:
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
-		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp"]  # show/ping work everywhere via 'do'-free shortcut
+		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
@@ -360,7 +368,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "route", "for"], "h": _show_route_for},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
-			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["show", "running-config"], "h": _show_run},
+			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["show", "running-config"], "h": _show_run},
 			{"m": ["config"], "p": ["hostname"], "h": func(r): return _hostname(r)},
 			{"m": ["config"], "p": ["logging", "host"], "h": _cfg_logging},
 			{"m": ["config"], "p": ["no", "logging", "host"], "h": _no_logging},
@@ -372,8 +380,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["interface", "range"], "h": _cfg_if_range},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
 			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source},
@@ -402,8 +410,49 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "vrf"], "h": _show_vrf},
 			{"m": ["config"], "p": ["firewall", "stateful"], "h": func(_r): return _set_stateful(true)},
 			{"m": ["config"], "p": ["no", "firewall", "stateful"], "h": func(_r): return _set_stateful(false)},
-			{"m": ["config"], "p": ["acl", "permit"], "h": _cfg_acl.bind("permit")},
-			{"m": ["config"], "p": ["acl", "deny"], "h": _cfg_acl.bind("deny")},
+			{"m": ["config"], "p": ["ip", "access-list"], "h": _cfg_ip_acl},
+			{"m": ["config"], "p": ["no", "ip", "access-list"], "h": _cfg_no_ip_acl},
+			{"m": ["acl"], "p": ["permit"], "h": func(r): return _cfg_acl(r, "permit", ctx_acl)},
+			{"m": ["acl"], "p": ["deny"], "h": func(r): return _cfg_acl(r, "deny", ctx_acl)},
+			{"m": ["if"], "p": ["ip", "access-group"], "h": _if_access_group},
+			{"m": ["if"], "p": ["no", "ip", "access-group"], "h": func(_r): return _each(func(i):
+				var groups: Dictionary = dev.services.get("acl_groups", {})
+				groups.erase(i.name)
+				dev.services["acl_groups"] = groups
+				return "")},
+			{"m": ["if"], "p": ["ip", "nat", "source"], "h": _if_nat_source},
+			{"m": ["if"], "p": ["no", "ip", "nat", "source"], "h": func(_r): return _if_no_nat_source()},
+			{"m": EP, "p": ["show", "ip", "nat", "translation"], "h": _show_nat_eos},
+			{"m": ["config"], "p": ["dhcp", "server"], "h": _cfg_dhcp_server},
+			{"m": ["config"], "p": ["no", "dhcp", "server"], "h": func(_r):
+				dev.services.erase("dhcp")
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["dhcpsrv"], "p": ["subnet"], "h": _dhcp_subnet},
+			{"m": ["dhcpsrv"], "p": ["lease", "time"], "h": func(_r): return ""},
+			{"m": ["dhcpsrv"], "p": ["dns", "server", "ipv4"], "h": func(r): return _dhcp_opt("dns", r)},
+			{"m": ["dhcpsub"], "p": ["range"], "h": _dhcp_range},
+			{"m": ["dhcpsub"], "p": ["default-gateway"], "h": func(r): return _dhcp_opt("gw", r)},
+			{"m": ["dhcpsub"], "p": ["name-server"], "h": func(r): return _dhcp_opt("dns", r)},
+			{"m": ["dhcpsub"], "p": ["lease", "time"], "h": func(_r): return ""},
+			{"m": ["if"], "p": ["dhcp", "server", "ipv4"], "h": _if_dhcp_server},
+			{"m": EP, "p": ["show", "dhcp", "server"], "h": _show_dhcp_server},
+			{"m": EP, "p": ["show", "dhcp", "server", "leases"], "h": _show_dhcp_leases},
+			{"m": ["config"], "p": ["vrf", "instance"], "h": _cfg_vrf},
+			{"m": ["config"], "p": ["no", "vrf", "instance"], "h": func(r):
+				if r.size() == 1 and String(r[0]) in dev.vrfs:
+					dev.vrfs.erase(String(r[0]))
+					for i: Net.Iface in dev.ifaces:
+						if i.vrf == String(r[0]):
+							Game.set_iface_vrf(i, "")
+					Game.topology_changed.emit()
+					return ""
+				return "% Invalid input\n"},
+			{"m": ["if"], "p": ["vrf"], "h": _if_vrf},
+			{"m": ["if"], "p": ["no", "vrf"], "h": func(_r): return _if_vrf([""])},
+			{"m": EP, "p": ["show", "vrf"], "h": _show_vrf},
+			{"m": ["config"], "p": ["acl", "permit"], "h": func(r): return _cfg_acl(r, "permit", "")},
+			{"m": ["config"], "p": ["acl", "deny"], "h": func(r): return _cfg_acl(r, "deny", "")},
 			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl},
 			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
 			{"m": ["config"], "p": ["router", "bgp"], "h": _cfg_router_bgp},
@@ -523,7 +572,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
 			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
 			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
 		]
@@ -547,13 +596,20 @@ class EOS extends Session:
 			toks.pop_front()  # IOS needs 'do' for a show inside config; EOS tolerates it
 			line = " ".join(PackedStringArray(toks))
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
-		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp"]:
+		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
+		if mode == "acl" and toks.size() >= 2 and String(toks[0]).is_valid_int():
+			_acl_seq = int(toks[0])  # 10 permit ip any any: the sequence number leads
+			toks.pop_front()
+		elif mode == "acl" and toks.size() == 2 and String(toks[0]) == "no" and String(toks[1]).is_valid_int():
+			return _acl_remove_seq(int(toks[1]))
+		else:
+			_acl_seq = 0
 		# resolve with per-token prefix matching (Cisco-style abbreviation).
 		# A global configuration command typed inside a sub-mode (interface,
 		# router) is accepted and switches mode, exactly as IOS does.
 		var modes: Array = [mode]
-		if mode in ["if", "vlan", "router", "ospf", "dhcp"]:
+		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub"]:
 			modes.append("config")
 		if mode != "exec":
 			modes.append("priv")  # EOS runs exec-level commands from any configuration mode
@@ -671,8 +727,10 @@ class EOS extends Session:
 
 	func _exit(_r: Array) -> String:
 		match mode:
-			"if", "vlan", "router", "ospf", "dhcp":
+			"if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv":
 				mode = "config"
+			"dhcpsub":
+				mode = "dhcpsrv"
 			"config":
 				mode = "priv"
 			"priv":
@@ -1421,6 +1479,51 @@ class EOS extends Session:
 			return ""
 		return usage
 
+	func _if_nat_source(r: Array) -> String:
+		## ip nat source dynamic access-list NAME overload  |  ip nat source static A B
+		## The interface it is typed on is the outside; EOS has no inside/outside marking.
+		if dev.type == "switch":
+			return "% NAT needs a router or firewall\n"
+		if ctx_ifs.size() > 1:
+			return _range_only("NAT")
+		var cfg := _nat_cfg()
+		if r.size() == 3 and String(r[0]) == "static" and String(r[1]).is_valid_ip_address() and String(r[2]).is_valid_ip_address():
+			cfg["rules"].append({"kind": "static", "inside": String(r[1]), "outside": String(r[2]), "iface": ctx_if.name, "eos": true})
+			ctx_if.nat = "outside"
+			Game.topology_changed.emit()
+			return ""
+		if r.size() >= 3 and String(r[0]) == "dynamic" and String(r[1]) == "access-list":
+			if r.size() != 4 or String(r[3]) != "overload":
+				return "% Incomplete command\n"
+			var list_name := String(r[2])
+			var known: bool = cfg["acls"].has(list_name) or dev.acls.any(func(rule): return String(rule.get("list", "")) == list_name)
+			if not known:
+				return "% Invalid input\n"
+			cfg["rules"].append({"kind": "overload", "list": list_name, "iface": ctx_if.name, "eos": true})
+			ctx_if.nat = "outside"
+			Game.topology_changed.emit()
+			return ""
+		return "% Incomplete command\n" if r.size() < 3 else "% Invalid input\n"
+
+	func _if_no_nat_source() -> String:
+		var cfg := _nat_cfg()
+		cfg["rules"] = cfg["rules"].filter(func(rule): return String(rule.get("iface", "")) != ctx_if.name or not bool(rule.get("eos", false)))
+		ctx_if.nat = ""
+		dev.nat_flows.clear()
+		dev.nat_xlate.clear()
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_nat_eos(_r: Array) -> String:
+		var out := "Source IP       Source Port  Destination IP   Destination Port  Translated IP    Translated Port  Protocol  Type\n"
+		for fid in dev.nat_xlate:
+			var t: Dictionary = dev.nat_xlate[fid]
+			var port := int(t["port"])
+			var statics: Array = _nat_cfg()["rules"].filter(func(rule): return String(rule.get("kind", "")) == "static" and String(rule.get("inside", "")) == String(t["il"]))
+			out += "%-15s %-12d %-16s %-17d %-16s %-16d %-9s %s\n" % [t["il"], port, t["ol"], port, t["ig"], port, t["proto"],
+				"static" if not statics.is_empty() else "dynamic"]
+		return out
+
 	func _cfg_no_nat_source(_r: Array) -> String:
 		_nat_cfg()["rules"] = []
 		dev.nat_flows.clear()
@@ -1607,9 +1710,55 @@ class EOS extends Session:
 		Game.topology_changed.emit()
 		return ""
 
-	func _cfg_acl(r: Array, action: String) -> String:
-		if dev.type != "firewall":
-			return "% ACLs need a firewall\n"
+	var _acl_seq := 0  # the sequence number typed in front of a permit/deny, if any
+
+	func _cfg_ip_acl(r: Array) -> String:
+		## ip access-list NAME: enter the list, creating it if new. Routers and
+		## firewalls both filter, as on EOS; a switch would need the L3 model.
+		if not dev.ip_forwarding:
+			return "% Invalid input\n"
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		ctx_acl = String(r[0])
+		mode = "acl"
+		return ""
+
+	func _cfg_no_ip_acl(r: Array) -> String:
+		if r.size() != 1:
+			return "% Incomplete command\n"
+		dev.acls = dev.acls.filter(func(rule): return String(rule.get("list", "")) != String(r[0]))
+		var groups: Dictionary = dev.services.get("acl_groups", {})
+		for k in groups.keys():
+			if String(groups[k]) == String(r[0]):
+				groups.erase(k)
+		Game.topology_changed.emit()
+		return ""
+
+	func _acl_remove_seq(seq: int) -> String:
+		for rule in dev.acls.duplicate():
+			if String(rule.get("list", "")) == ctx_acl and int(rule.get("seq", 0)) == seq:
+				dev.acls.erase(rule)
+				Game.topology_changed.emit()
+				return ""
+		return "% Invalid input\n"
+
+	func _if_access_group(r: Array) -> String:
+		## ip access-group NAME in|out: a list filters nothing until it is applied
+		if not dev.ip_forwarding:
+			return "% Invalid input\n"
+		if r.size() != 2 or String(r[1]) not in ["in", "out"]:
+			return "% Incomplete command\n" if r.size() < 2 else "% Invalid input\n"
+		if not dev.acls.any(func(rule): return String(rule.get("list", "")) == String(r[0])):
+			return "% Invalid input\n"
+		return _each(func(i: Net.Iface) -> String:
+			var groups: Dictionary = dev.services.get("acl_groups", {})
+			groups[i.name] = String(r[0])
+			dev.services["acl_groups"] = groups
+			return "")
+
+	func _cfg_acl(r: Array, action: String, list_name: String) -> String:
+		if dev.type != "firewall" and (list_name == "" or not dev.ip_forwarding):
+			return "% ACLs need a firewall\n" if list_name == "" else "% Invalid input\n"
 		var usage := "% Invalid input\n"
 		var proto := "ip"
 		if not r.is_empty() and String(r[0]) in ["ip", "tcp", "udp", "icmp"]:
@@ -1649,7 +1798,26 @@ class EOS extends Session:
 			rule["port"] = port
 		if established:
 			rule["established"] = true
-		dev.acls.append(rule)
+		if list_name != "":
+			rule["list"] = list_name
+			var seq := _acl_seq
+			if seq == 0:
+				for other in dev.acls:  # EOS numbers by tens after the last entry
+					if String(other.get("list", "")) == list_name:
+						seq = maxi(seq, int(other.get("seq", 0)))
+				seq += 10
+			for other in dev.acls.duplicate():  # a repeated sequence number replaces
+				if String(other.get("list", "")) == list_name and int(other.get("seq", 0)) == seq:
+					dev.acls.erase(other)
+			rule["seq"] = seq
+			var at := dev.acls.size()
+			for k in dev.acls.size():
+				if String(dev.acls[k].get("list", "")) == list_name and int(dev.acls[k].get("seq", 0)) > seq:
+					at = k
+					break
+			dev.acls.insert(at, rule)
+		else:
+			dev.acls.append(rule)
 		Game.topology_changed.emit()
 		return ""
 
@@ -1661,11 +1829,24 @@ class EOS extends Session:
 		return "% Invalid input\n"
 
 	func _show_acl(_r: Array) -> String:
-		if dev.acls.is_empty():
-			return "  (no access list: nothing is filtered)\n"
-		var out := "mode: %s\n" % ("stateful (return traffic auto-permitted)" if dev.stateful else "stateless")
-		var n := 1
+		## named lists in the EOS shape; the old global rules keep their table
+		var out := ""
+		var names: Array = []
 		for rule in dev.acls:
+			var nm := String(rule.get("list", ""))
+			if nm != "" and nm not in names:
+				names.append(nm)
+		for nm in names:
+			out += "IP Access List %s\n" % nm
+			for rule in dev.acls:
+				if String(rule.get("list", "")) == nm:
+					out += "        %d %s\n" % [int(rule.get("seq", 0)), CLI.acl_config_text(rule)]
+		var legacy: Array = dev.acls.filter(func(rule): return String(rule.get("list", "")) == "")
+		if legacy.is_empty():
+			return out
+		out += "mode: %s\n" % ("stateful (return traffic auto-permitted)" if dev.stateful else "stateless")
+		var n := 1
+		for rule in legacy:
 			out += "%2d  %s\n" % [n, CLI.acl_rule_text(rule)]
 			n += 1
 		return out + "    (first match wins; implicit deny any any at the end)\n"
@@ -1675,6 +1856,76 @@ class EOS extends Session:
 			dev.services["dhcp"] = {"iface": "", "start": "", "end": "", "plen": 24, "gw": "", "dns": "",
 				"leases": {}, "since": {}, "excluded": [], "name": ""}
 		return dev.services["dhcp"]
+
+	func _cfg_dhcp_server(_r: Array) -> String:
+		if not dev.ip_forwarding:
+			return "% a DHCP server lives on a router; a Linux host runs dhcpd\n"
+		_dhcp_svc()
+		mode = "dhcpsrv"
+		return ""
+
+	func _dhcp_subnet(r: Array) -> String:
+		## subnet 10.0.10.0/24: the pool is the whole subnet until range says otherwise
+		if r.size() != 1 or not Net.valid_cidr(String(r[0])):
+			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+		var err := _dhcp_network([r[0]])
+		if err != "":
+			return err
+		ctx_subnet = "%s/%d" % [Net.network_of(String(r[0]))["prefix"], int(Net.network_of(String(r[0]))["plen"])]
+		mode = "dhcpsub"
+		return ""
+
+	func _dhcp_range(r: Array) -> String:
+		if r.size() != 2 or not String(r[0]).is_valid_ip_address() or not String(r[1]).is_valid_ip_address():
+			return "% Incomplete command\n" if r.size() < 2 else "% Invalid input\n"
+		var svc := _dhcp_svc()
+		var netw := Net.network_of(ctx_subnet)
+		if not Net.same_net(String(r[0]), String(netw["prefix"]), int(netw["plen"])) or not Net.same_net(String(r[1]), String(netw["prefix"]), int(netw["plen"])):
+			return "% Invalid input\n"
+		svc["start"] = String(r[0])
+		svc["end"] = String(r[1])
+		Game.topology_changed.emit()
+		return ""
+
+	func _if_dhcp_server(_r: Array) -> String:
+		## dhcp server ipv4: the interfaces the server answers on
+		var svc := _dhcp_svc()
+		var on: Array = svc.get("on", [])
+		for i: Net.Iface in ctx_ifs:
+			if i.name not in on:
+				on.append(i.name)
+		svc["on"] = on
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_dhcp_server(_r: Array) -> String:
+		var svc: Dictionary = dev.services.get("dhcp", {})
+		if svc.is_empty() or String(svc.get("start", "")) == "":
+			return ""
+		var netw := Net.network_of("%s/%d" % [svc["start"], int(svc["plen"])])
+		var out := "DHCP Server Configuration\n  Enabled: yes\n  Lease time: 1 day\n  Subnets:\n    %s/%d\n      Range: %s - %s\n" % [
+			netw["prefix"], int(svc["plen"]), svc["start"], svc["end"]]
+		if String(svc.get("gw", "")) != "":
+			out += "      Default gateway: %s\n" % svc["gw"]
+		if String(svc.get("dns", "")) != "":
+			out += "      Name server: %s\n" % svc["dns"]
+		for ex in svc.get("excluded", []):
+			out += "      Reserved: %s\n" % ex
+		out += "  Interfaces: %s\n" % ", ".join(PackedStringArray(svc.get("on", [])))
+		out += "  Leases: %d active\n" % svc.get("leases", {}).size()
+		return out
+
+	func _show_dhcp_leases(_r: Array) -> String:
+		var svc: Dictionary = dev.services.get("dhcp", {})
+		var out := "Subnet             IP Address      Client MAC         Hostname        Lease Expiry\n"
+		if svc.is_empty():
+			return out
+		var netw := Net.network_of("%s/%d" % [svc.get("start", "0.0.0.0"), int(svc.get("plen", 24))])
+		for mac in svc.get("leases", {}):
+			var left: int = Sim.DHCP_LEASE - (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle)))
+			out += "%-18s %-15s %-18s %-15s %s\n" % ["%s/%d" % [netw["prefix"], int(svc["plen"])], svc["leases"][mac], mac,
+				Sim.reverse_lookup(dev, String(svc["leases"][mac])), "%d cycle(s)" % maxi(0, left)]
+		return out
 
 	func _cfg_dhcp_pool(r: Array) -> String:
 		if not dev.ip_forwarding:
@@ -2133,27 +2384,29 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "% Incomplete command\n"
 		if Game.set_iface_vrf(ctx_if, r[0]):
-			return "Interface moved to table '%s'. Its addresses were cleared.\n" % r[0]
-		return "%% no table called '%s'\n" % r[0]
+			return ""  # EOS says nothing; the addresses were cleared, as on the real thing
+		return "% Invalid input\n"
 
 	func _show_vrf(_r: Array) -> String:
-		if dev.vrfs.is_empty():
-			return "  (only the global table)\n"
-		var out := "%-14s %s\n" % ["TABLE", "INTERFACES"]
+		var out := "%-11s %-13s %-13s %-20s %s\n%s %s %s %s %s\n" % ["VRF", "RD", "Protocols", "State", "Interfaces",
+			"-".repeat(11), "-".repeat(13), "-".repeat(13), "-".repeat(20), "-".repeat(11)]
 		for name in dev.vrfs:
 			var members: Array = []
 			for i: Net.Iface in dev.ifaces:
 				if i.vrf == name:
-					members.append(EOS._short(i.name))
-			out += "%-14s %s\n" % [name, ", ".join(PackedStringArray(members))]
+					members.append(i.name)
+			out += "%-11s %-13s %-13s %-20s %s\n" % [name, "<not set>", "ipv4", "v4:routing;", ", ".join(PackedStringArray(members))]
 		return out
 
 	func _cfg_ip_route(r: Array) -> String:
 		if not dev.ip_forwarding:
 			return "% static routing needs a router\n"
-		# ip route <prefix/len | prefix mask> <next-hop> [<distance>] [vrf <name>]
+		# ip route [vrf <name>] <prefix/len | prefix mask> <next-hop> [<distance>]   (EOS puts vrf first)
 		var vrf := ""
-		if r.size() >= 2 and String(r[r.size() - 2]) == "vrf":
+		if r.size() >= 2 and String(r[0]) == "vrf":
+			vrf = String(r[1])
+			r = r.slice(2)
+		elif r.size() >= 2 and String(r[r.size() - 2]) == "vrf":
 			vrf = String(r[r.size() - 1])
 			r = r.slice(0, r.size() - 2)
 		r = CLI.fold_mask(r)
@@ -2926,6 +3179,21 @@ class EOS extends Session:
 			if String(dev.vlans[vid]) != "VLAN%04d" % vid:
 				out += "   name %s\n" % dev.vlans[vid]
 			out += "!\n"
+		for vrf_name in dev.vrfs:
+			out += "vrf instance %s\n!\n" % vrf_name
+		var acl_names: Array = []
+		for rule in dev.acls:
+			var nm := String(rule.get("list", ""))
+			if nm != "" and nm not in acl_names:
+				acl_names.append(nm)
+		for nm in acl_names:
+			out += "ip access-list %s\n" % nm
+			for rule in dev.acls:
+				if String(rule.get("list", "")) == nm:
+					out += "   %d %s\n" % [int(rule.get("seq", 0)), CLI.acl_config_text(rule)]
+			out += "!\n"
+		var acl_groups: Dictionary = dev.services.get("acl_groups", {})
+		var nat_rules_cfg: Array = dev.services.get("nat", {}).get("rules", [])
 		var ordered: Array = dev.ifaces.filter(func(i): return i.name != "lo")
 		ordered.sort_custom(func(a, b): return _if_rank(a.name) < _if_rank(b.name) if _if_rank(a.name) != _if_rank(b.name) else dev.ifaces.find(a) < dev.ifaces.find(b))
 		for i: Net.Iface in ordered:
@@ -2954,10 +3222,25 @@ class EOS extends Session:
 				out += "   switchport protected\n"
 			if i.lag > 0:
 				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
+			if i.vrf != "":
+				out += "   vrf %s\n" % i.vrf
 			for cidr in i.ips:
 				out += "   %s address %s\n" % ["ipv6" if Net.is_v6(cidr) else "ip", cidr]
-			if i.nat != "":
+			if acl_groups.has(i.name):
+				out += "   ip access-group %s in\n" % acl_groups[i.name]
+			var eos_nat := false
+			for rule in nat_rules_cfg:
+				if bool(rule.get("eos", false)) and String(rule.get("iface", "")) == i.name:
+					eos_nat = true
+					if String(rule.get("kind", "")) == "overload":
+						out += "   ip nat source dynamic access-list %s overload\n" % rule["list"]
+					elif String(rule.get("kind", "")) == "static":
+						out += "   ip nat source static %s %s\n" % [rule["inside"], rule["outside"]]
+			if i.nat != "" and not eos_nat:
 				out += "   ip nat %s\n" % i.nat
+			var dhcp_on: Array = dev.services.get("dhcp", {}).get("on", [])
+			if i.name in dhcp_on:
+				out += "   dhcp server ipv4\n"
 			if dev.ospf.get("costs", {}).has(i.name):
 				out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
 			if dev.ospf.get("priorities", {}).has(i.name):
@@ -2998,25 +3281,27 @@ class EOS extends Session:
 		if dev.ip_forwarding:
 			out += "ip routing\n!\n"
 		for r in dev.static_routes:
-			out += "ip route %s/%d %s%s\n" % [r["prefix"], int(r["plen"]), r["via"],
+			out += "ip route %s%s/%d %s%s\n" % [("vrf %s " % r["vrf"]) if String(r.get("vrf", "")) != "" else "", r["prefix"], int(r["plen"]), r["via"],
 				"" if int(r.get("ad", 1)) == 1 else " %d" % int(r["ad"])]
 		if not dev.static_routes.is_empty():
 			out += "!\n"
 		var pool: Dictionary = dev.services.get("dhcp", {})
 		if not pool.is_empty() and String(pool.get("iface", "")) == "" and String(pool.get("start", "")) != "":
-			for ex in pool.get("excluded", []):
-				out += "ip dhcp excluded-address %s\n" % ex
-			out += "ip dhcp pool %s\n   network %s/%d\n" % [pool.get("name", "LAN"),
-				Net.network_of("%s/%d" % [pool["start"], int(pool["plen"])])["prefix"], int(pool["plen"])]
+			# the EOS block, whichever spelling built it
+			var pnet := Net.network_of("%s/%d" % [pool["start"], int(pool["plen"])])
+			out += "dhcp server\n   subnet %s/%d\n      range %s %s\n" % [pnet["prefix"], int(pool["plen"]), pool["start"], pool["end"]]
 			if String(pool.get("gw", "")) != "":
-				out += "   default-router %s\n" % pool["gw"]
+				out += "      default-gateway %s\n" % pool["gw"]
 			if String(pool.get("dns", "")) != "":
-				out += "   dns-server %s\n" % pool["dns"]
+				out += "      name-server %s\n" % pool["dns"]
+			for ex in pool.get("excluded", []):
+				out += "      reserved-address %s\n" % ex
 			out += "!\n"
 		if dev.stateful:
 			out += "firewall stateful\n!\n"
 		for rule in dev.acls:
-			out += "acl %s\n!\n" % CLI.acl_config_text(rule)
+			if String(rule.get("list", "")) == "":
+				out += "acl %s\n!\n" % CLI.acl_config_text(rule)
 		if dev.ip_forwarding and dev.type != "switch" and not bool(dev.services.get("proxy_arp", true)):
 			out += "no ip proxy-arp\n!\n"
 		var nat_cfg: Dictionary = dev.services.get("nat", {})
@@ -3026,6 +3311,8 @@ class EOS extends Session:
 					else "%s %s" % [entry["net"], Net.int_to_ip((~(0xFFFFFFFF << (32 - int(entry["plen"])))) & 0xFFFFFFFF)])
 				out += "access-list %s %s %s\n" % [list_id, entry["action"], where]
 		for rule in nat_cfg.get("rules", []):
+			if bool(rule.get("eos", false)):
+				continue  # printed under its interface
 			if String(rule.get("kind", "")) == "overload":
 				out += "ip nat inside source list %s interface %s overload\n" % [rule["list"], rule["iface"]]
 			elif String(rule.get("kind", "")) == "static":
