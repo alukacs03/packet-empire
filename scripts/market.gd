@@ -161,8 +161,8 @@ static func gen_offer() -> Dictionary:
 		kinds.erase("redundant_gw")  # colo customers aren't that fancy
 		kinds.erase("bonded_uplink")  # and they are not paying for two of anything
 	for kind2 in SECOND_ROUND:
-		if String(SECOND_ROUND[kind2]) not in Game.contracts_done:
-			kinds.erase(kind2)  # nobody asks for what you have not yet shown you can do
+		if String(SECOND_ROUND[kind2]) not in Game.contracts_done or Game.rank_index() < 2:
+			kinds.erase(kind2)  # nobody asks a cable monkey for what you have not yet shown you can do
 	var kind: String = kinds[randi() % kinds.size()]
 	var spec: Dictionary = KINDS[kind]
 	var params := {}

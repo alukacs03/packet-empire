@@ -2719,6 +2719,7 @@ static func run() -> int:
 		"mlag: losing one leg does not take the server off the network")
 	ml_a.ifaces[0].enabled = true
 	Sim.flush_learned_state()
+	check(Game.try_complete_contract(_contract("pull_either_cable")), "mlag: the pull-either-cable contract verifies")
 
 	# --- invoicing and receivables ---
 	Game.invoices = []
@@ -3032,6 +3033,7 @@ static func run() -> int:
 	Game.connect_ifaces(dx_sw.ifaces[dx_sw.ifaces.size() - 1], dx_sw.ifaces[7])
 	Sim.flush_learned_state()
 	check(Sim.ping(dx_known, "10.115.0.5")["ok"], "dot1x: an authorised machine gets on")
+	check(Game.try_complete_contract(_contract("only_the_badged")), "dot1x: the only-badged-machines contract verifies")
 	check(dx_sw.ifaces[1].dot1x_ok == dx_known.ifaces[0].mac, "dot1x: the port records who it let in")
 	Sim.flush_learned_state()
 	check(not Sim.ping(dx_stranger, "10.115.0.5")["ok"], "dot1x: an unknown machine gets nothing")
@@ -6114,6 +6116,7 @@ static func run() -> int:
 	check(lease2.contains("10.170.0."), "snooping: the trusted server still serves leases")
 	check(not lease2.contains("10.170.0.2"), "snooping: the rogue server's range is not used")
 	check(sn_sw.bindings.size() >= 1, "snooping: a binding is recorded for the lease")
+	check(Game.try_complete_contract(_contract("the_home_router")), "snooping: the home-router contract verifies")
 	check(sn_s.exec("show ip dhcp snooping").contains("Trusted ports"), "snooping: state is reported")
 	# ARP inspection: a machine claiming somebody else's address is dropped
 	var victim_ip: String = String(sn_sw.bindings[sn_cli.ifaces[0].mac])
@@ -6242,6 +6245,7 @@ static func run() -> int:
 	Game.sla_tick()
 	check(not bool(premium.get("degraded", true)), "qos: the strict service level is served first")
 	check(bool(cheap.get("degraded", false)), "qos: the best-effort customer absorbs the shortfall (cheap healthy=%s)" % str(cheap.get("healthy")))
+	check(Game.try_complete_contract(_contract("who_goes_without")), "qos: the who-goes-without contract verifies")
 	var qs := CLI.new_session(qos_sw)
 	qs.exec("en")
 	check(qs.exec("show qos").contains("priority queueing"), "qos: the policy is reported")
@@ -6342,6 +6346,7 @@ static func run() -> int:
 		"vrf: each table has exactly its own path")
 	check(Sim._route_paths(vrf_rtr, "10.0.0.50", "").is_empty(),
 		"vrf: the global table knows nothing about tenant addresses")
+	check(Game.try_complete_contract(_contract("own_table")), "vrf: the two-tenants-one-prefix contract verifies")
 
 	# --- achievements ---
 	Game.achievements = []
@@ -7637,6 +7642,7 @@ static func run() -> int:
 		"slaac: the host builds an address from the advertised prefix")
 	check(Sim.ping(sl_host, "2001:db8:77::1")["ok"],
 		"slaac: and the address it built actually works")
+	check(Game.try_complete_contract(_contract("nobody_hands_them_out")), "slaac: the addresses-nobody-hands-out contract verifies")
 	var sl_default := false
 	for sl_r in sl_host.static_routes:
 		if String(sl_r["prefix"]) == "::" and int(sl_r["plen"]) == 0:
@@ -7917,6 +7923,7 @@ static func run() -> int:
 		"dns: the parent answers for its own zone")
 	check(Sim.resolve(dz_client, "www.eu.example.hu", false) == "10.220.9.2",
 		"dns: a delegated name is resolved by following the referral")
+	check(Game.try_complete_contract(_contract("hand_the_subzone_over")), "dns: the hand-the-subzone-over contract verifies")
 	check(Sim.resolve(dz_client, "www.nowhere.hu", false) == "",
 		"dns: a name nobody is authoritative for fails")
 	# TTL: a changed record is not seen until the cached answer expires
@@ -8170,6 +8177,7 @@ static func run() -> int:
 	Sim.flush_learned_state()
 	check(Sim.bfd_session(bf_r1.ifaces[1]) == "up", "bfd: and comes back up with the link")
 	check(Sim.ping(bf_host, "10.210.2.10")["ok"], "bfd: traffic flows again")
+	check(Game.try_complete_contract(_contract("knowing_it_died")), "bfd: the port-that-never-went-down contract verifies")
 
 	# --- RSTP, bridge priority and MST ---
 	var ms_rack := Game.add_rack(Vector2i(37, 1))
@@ -10313,6 +10321,40 @@ static func run() -> int:
 	for k in 6:
 		eos_rack.slots[k] = null
 	Game.racks.erase(eos_rack)
+
+	# --- ranks unlock the second half ---
+	var rk_stats := Game.stats.duplicate(true)
+	Game.stats["earned"] = 0
+	Game.stats["contracts"] = 0
+	Game.stats["deals"] = 0
+	var rk_rep := Game.reputation
+	var rk_stage := Game.stage
+	Game.reputation = 0
+	Game.stage = 0
+	check(Contracts.rank_locked(_contract("own_table")) and not Contracts.rank_locked(_contract("rackup")),
+		"ranks: a dead-feature job waits for a senior engineer; the first job waits for nobody")
+	Game.stats["earned"] = 60000
+	check(not Contracts.rank_locked(_contract("own_table")) and Contracts.rank_locked(_contract("two_transits")),
+		"ranks: the title unlocks the job, and the architect's job still waits")
+	Game.stats = rk_stats
+	Game.reputation = rk_rep
+	Game.stage = rk_stage
+
+	# --- the floor as a containerlab lab ---
+	var clab_yaml := Game.export_containerlab("user://clab_test")
+	check(clab_yaml.contains("kind: mikrotik_ros") and clab_yaml.contains("kind: ceos") and clab_yaml.contains("kind: linux"),
+		"clab: every dialect on the floor maps to a real image kind")
+	check(clab_yaml.contains("endpoints: [") and clab_yaml.contains(":eth1") and not clab_yaml.contains("Management"),
+		"clab: cables become links on data ports, and management stays out of it")
+	check(FileAccess.file_exists("user://clab_test/%s.clab.yml" % Game.company_name.to_lower().replace(" ", "-")),
+		"clab: the topology file is written where the menu says")
+	var clab_dir := DirAccess.open("user://clab_test")
+	var clab_cfgs := 0
+	if clab_dir != null:
+		for fname in clab_dir.get_files():
+			if fname.ends_with(".rsc") or fname.ends_with(".cfg"):
+				clab_cfgs += 1
+	check(clab_cfgs >= 2, "clab: startup configurations are written beside it")
 
 	# --- state that must follow a device, leave with it, or start clean ---
 	var bug_rack := Game.add_rack(Vector2i(70, 1))

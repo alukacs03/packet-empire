@@ -5489,6 +5489,82 @@ func export_topology(path := "user://topology.md") -> String:
 	log_event("EXPORTED: the topology is written out as a diagram and a plain listing.")
 	return body
 
+func export_containerlab(dir := "user://clab") -> String:
+	## The floor as a containerlab topology plus one startup configuration per
+	## node, so what was built here can be promoted to real network operating
+	## systems: RouterOS CHR for PacketTik gear, cEOS for the rest, Linux for
+	## the servers. Pure files; nothing here needs Docker.
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+	var lab := company_name.to_lower().replace(" ", "-")
+	var nodes: Array = []
+	var yaml := "name: %s\ntopology:\n  kinds:\n    mikrotik_ros:\n      image: vrnetlab/mikrotik_ros:7.16\n    ceos:\n      image: ceos:4.32.0F\n    linux:\n      image: alpine:3.20\n  nodes:\n" % lab
+	for d in all_devices():
+		if d.type in ["cooling", "panel", "console"]:
+			continue
+		var node: String = d.name.to_lower()
+		nodes.append(d.name)
+		var kind := "linux"
+		if d.type in ["switch", "router", "firewall", "loadbalancer", "ap"]:
+			kind = "mikrotik_ros" if String(MODELS[d.model].get("os", "eos")) == "ros" else "ceos"
+		yaml += "    %s:\n      kind: %s\n" % [node, kind]
+		var cfg := ""
+		match kind:
+			"mikrotik_ros":
+				cfg = CLI.new_session(d).exec("/export")
+				yaml += "      startup-config: %s.rsc\n" % node
+			"ceos":
+				var ses := CLI.new_session(d)
+				ses.exec("enable")
+				cfg = ses.exec("show running-config")
+				yaml += "      startup-config: %s.cfg\n" % node
+			"linux":
+				var lines: Array = []
+				for i: Net.Iface in d.ifaces:
+					var eth := _clab_iface(i)
+					if eth == "":
+						continue
+					for cidr in i.ips:
+						lines.append("ip addr add %s dev %s" % [cidr, eth])
+				for r in d.static_routes:
+					lines.append("ip route add %s via %s" % ["default" if int(r["plen"]) == 0 else "%s/%d" % [r["prefix"], int(r["plen"])], r["via"]])
+				if not lines.is_empty():
+					yaml += "      exec:\n"
+					for line in lines:
+						yaml += "        - %s\n" % line
+		if cfg != "":
+			var f := FileAccess.open("%s/%s.%s" % [dir, node, "rsc" if kind == "mikrotik_ros" else "cfg"], FileAccess.WRITE)
+			if f != null:
+				f.store_string(cfg)
+	yaml += "  links:\n"
+	for l in links:
+		var a := _clab_iface(l.a)
+		var b := _clab_iface(l.b)
+		if a == "" or b == "" or l.a.dev.name not in nodes or l.b.dev.name not in nodes:
+			continue
+		yaml += "    - endpoints: [\"%s:%s\", \"%s:%s\"]\n" % [l.a.dev.name.to_lower(), a, l.b.dev.name.to_lower(), b]
+	var yf := FileAccess.open("%s/%s.clab.yml" % [dir, lab], FileAccess.WRITE)
+	if yf == null:
+		return ""
+	yf.store_string(yaml)
+	log_event("EXPORTED: the floor is written out as a containerlab topology in %s." % dir)
+	return yaml
+
+func _clab_iface(i: Net.Iface) -> String:
+	## containerlab keeps eth0 for management, so a device's first data port is eth1
+	if i.name.begins_with("Management") or i.name == "lo" or i.name.begins_with("wg") \
+			or i.name.begins_with("Vlan") or i.parent != "" or i.name.begins_with("radio"):
+		return ""
+	var digits := ""
+	for ch in i.name:
+		if ch.is_valid_int():
+			digits += ch
+	if digits == "":
+		return ""
+	var n := int(digits)
+	if i.name.begins_with("eth"):
+		n += 1  # Linux eth0 -> eth1
+	return "eth%d" % n
+
 func end_run(ending: String) -> String:
 	## Freeze it. The save is untouched: this is a report, not a deletion.
 	if not FINALE_ENDINGS.has(ending):
@@ -5548,6 +5624,13 @@ func rank_score() -> int:
 
 func identity_label() -> String:
 	return IDENTITIES[identity]["label"] if identity != "" else "General operator"
+
+func rank_index() -> int:
+	var idx := 0
+	for k in RANKS.size():
+		if rank_score() >= int(RANKS[k][1]):
+			idx = k
+	return idx
 
 func rank() -> String:
 	var name: String = RANKS[0][0]

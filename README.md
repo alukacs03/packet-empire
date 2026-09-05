@@ -138,7 +138,7 @@ The CLI depends on what you buy, like real life:
 
 | Gear | Dialect |
 |---|---|
-| PacketTik (budget) | RouterOS-style (`/interface print`, `/ip address add …`, `export`) |
+| PacketTik (budget) | RouterOS 7 (`/interface bridge vlan add …`, `/routing ospf interface-template add …`, `/routing bgp connection add …`, `export`); the syntax is the real one, so it transfers to a CHR |
 | OpenRack / Arivista / Junivista / PacketSense | EOS/IOS-style (`conf t`, `show run`, abbreviations) |
 | Dill servers | Linux (`ip addr`, `ping`, `dhclient`, `tcpdump`, …) |
 
@@ -180,8 +180,13 @@ PACKET_TEST=1 godot --headless --path . --quit-after 600
 ```
 
 Or `./run_tests.sh`, which is the same thing with the exit code checked.
+`PACKET_TEST=probe` runs `SimTests.probe()` alone (a scratch scenario for
+chasing one failure fast), and `PACKET_TEST=replay PACKET_REPLAY=<file>` runs
+a command script against a fresh device and prints the transcript, which is
+what `tools/lab/` uses to diff the game's dialects against real RouterOS and
+cEOS in containerlab.
 
-Over 1400 integration checks across the simulation, all three CLI dialects,
+Over 2100 integration checks across the simulation, all three CLI dialects,
 the campaign, the marketplace, every operational system above, and a UI smoke
 pass that opens every screen (including in pseudo-localisation). Exit code 0 =
 green. Tests write their own save, history and pack files, never the

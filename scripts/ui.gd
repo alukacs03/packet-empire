@@ -3730,6 +3730,18 @@ func _build_menu() -> void:
 		menu_overlay.visible = false
 		hud_toast("Topology exported and copied to the clipboard.", true))
 	v.add_child(diagram)
+	var clab := Button.new()
+	clab.text = "Export to containerlab (real network OS images)"
+	clab.tooltip_text = "Writes a .clab.yml plus a startup configuration per device into the game's user folder: RouterOS for PacketTik gear, cEOS for the rest, Linux for servers."
+	clab.pressed.connect(func() -> void:
+		var yaml: String = Game.export_containerlab()
+		if yaml == "":
+			_toast("could not write the lab")
+			return
+		DisplayServer.clipboard_set(yaml)
+		menu_overlay.visible = false
+		hud_toast("Lab written to %s and the topology copied." % ProjectSettings.globalize_path("user://clab"), true))
+	v.add_child(clab)
 	var chal_btn := Button.new()
 	chal_btn.text = "Challenge…  (a drill anybody can reproduce from a code)"
 	chal_btn.pressed.connect(func() -> void:
@@ -6015,6 +6027,12 @@ func _refresh_contracts() -> void:
 		if active_shown >= 3:
 			contracts_box.add_child(_label("🔒  more jobs unlock as you finish these", 13, Color(0.45, 0.5, 0.6)))
 			break
+		if Contracts.rank_locked(c):
+			active_shown += 1
+			contracts_box.add_child(_chip_row("RANK", Color(0.75, 0.65, 0.4),
+				"%s: %s   comes to a %s; you are a %s" % [c["title"], c["customer"], String(c["rank"]), Game.rank()],
+				14, Color(0.75, 0.7, 0.55)))
+			continue
 		active_shown += 1
 		found_active = true
 		var card := PanelContainer.new()

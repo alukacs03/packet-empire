@@ -407,6 +407,124 @@ const DIALECT_HINTS := {
 			"show ip route 10.251.2.10",
 		],
 	},
+	"own_table": {
+		"device_type": "router",
+		"intro": "One router, one table per tenant. An interface joins a table and takes an address that may already exist in another table; the global table never sees either.",
+		"after": "Tenant hosts point at 10.0.0.1 as usual; from the router, ping a tenant with 'ping vrf alfa <ip>'.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"ip vrf alfa",
+			"ip vrf beta",
+			"interface Ethernet1",
+			"ip vrf forwarding alfa",
+			"ip address 10.0.0.1/24",
+			"interface Ethernet2",
+			"ip vrf forwarding beta",
+			"ip address 10.0.0.1/24",
+			"end",
+			"show ip vrf",
+		],
+	},
+	"pull_either_cable": {
+		"device_type": "switch",
+		"intro": "Pair the two switches over a trunk marked as the peer link, then put the server's two ports, one on each switch, into the same MLAG group. The server bonds its two cables.",
+		"after": "Run the same lines on both switches with their own port names; on the server: 'bond eth0 eth1'.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"mlag peer <the other switch>",
+			"interface Ethernet8",
+			"switchport mode trunk",
+			"mlag peer-link",
+			"interface Ethernet1",
+			"mlag 1",
+			"end",
+			"show mlag",
+		],
+	},
+	"knowing_it_died": {
+		"device_type": "router",
+		"intro": "A BFD session on both ends of the routed link; the static route that rides that next hop is withdrawn the moment the session drops.",
+		"after": "Both routers, same interface toward each other. 'show bfd' reports the session.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet2",
+			"bfd",
+			"end",
+			"show bfd",
+		],
+	},
+	"only_the_badged": {
+		"device_type": "switch",
+		"intro": "An authentication server holds the list of allowed MACs; the switch is pointed at it from an address that can reach it, and every customer port demands authentication.",
+		"after": "On the server: 'radiusd add <mac>' per allowed machine. The switch's Management address must reach the server.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Management1",
+			"ip address 10.115.0.2/24",
+			"exit",
+			"radius-server host 10.115.0.5",
+			"interface range Ethernet2-3",
+			"dot1x",
+			"end",
+		],
+	},
+	"the_home_router": {
+		"device_type": "switch",
+		"intro": "Snooping drops DHCP answers from every port but the trusted one, and ARP inspection believes only the bindings it learned that way.",
+		"after": "Trust exactly the port your real server is on; a client then re-runs 'dhclient eth0'.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"ip dhcp snooping",
+			"interface Ethernet1",
+			"ip dhcp snooping trust",
+			"exit",
+			"ip arp inspection",
+			"end",
+			"show ip dhcp snooping",
+		],
+	},
+	"who_goes_without": {
+		"device_type": "switch",
+		"intro": "Queueing does not make a link bigger; it decides who is served first when it is full. Turn it on under the ports on the shared path.",
+		"after": "Watch the Company screen at the busy part of the day: the strict tier stays green, the best-effort one degrades.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface range Ethernet1-2",
+			"qos priority-queueing",
+			"end",
+			"show qos",
+		],
+	},
+	"nobody_hands_them_out": {
+		"device_type": "router",
+		"intro": "The router advertises the /64 it owns; each host builds its own address from that prefix and its MAC.",
+		"after": "On each host: 'autoconf eth0'. No server, no leases.",
+		"eos": [
+			"enable",
+			"configure terminal",
+			"interface Ethernet1",
+			"ipv6 address 2001:db8:77::1/64",
+			"ipv6 nd ra",
+			"end",
+		],
+	},
+	"hand_the_subzone_over": {
+		"device_type": "server",
+		"intro": "The parent delegates the subzone to a second server; the second server holds the records; a client asks the parent and follows the referral.",
+		"after": "Substitute the delegate's real address. 'nslookup' from the client shows the referral being followed.",
+		"linux": [
+			"dns delegate eu.delta.hu 10.220.0.11        (on the parent)",
+			"dns add www.eu.delta.hu 10.220.9.2          (on the delegate)",
+			"nameserver 10.220.0.10                      (on the client)",
+			"nslookup www.eu.delta.hu",
+		],
+	},
 	"two_transits": {
 		"device_type": "router",
 		"intro": "Two sessions from one router, then three policies: local-preference picks the carrier you send through, prepend makes the other path look longer to the world, and a prefix-list in says what you accept from each.",
@@ -497,6 +615,21 @@ static func hint_for(contract: Dictionary) -> String:
 	if cfg.has("linux"):
 		blocks = [_command_block("Linux servers", hint_commands(id, "linux"))]
 	return "%s\n\n%s\n\n%s" % [String(cfg["intro"]), "\n\n".join(blocks), String(cfg["after"])]
+
+static func rank_locked(c: Dictionary) -> bool:
+	## some jobs only come to somebody with a title: the board's way of
+	## saying the second half of the campaign is earned, not queued
+	var need := String(c.get("rank", ""))
+	if need == "":
+		return false
+	var have := 0
+	var want := 0
+	for k in Game.RANKS.size():
+		if String(Game.RANKS[k][0]) == Game.rank():
+			have = k
+		if String(Game.RANKS[k][0]) == need:
+			want = k
+	return have < want
 
 static func retired(id: String) -> bool:
 	for successor in SUPERSEDES:
@@ -721,6 +854,110 @@ static func _campaign() -> Array:
 			],
 		},
 		{
+			"id": "own_table",
+			"rank": "Senior network engineer",
+			"title": "Two tenants, one 10.0.0.0/24",
+			"customer": "Panonia Data (consulting)",
+			"reward": 3200,
+			"brief": "Two acquired companies both built their office on 10.0.0.0/24 and neither will renumber. Route both from one router anyway: give the router a VRF per tenant ('ip vrf alfa', 'ip vrf beta'), put each tenant's interface into its table ('ip vrf forwarding alfa' under the interface) and address both legs 10.0.0.1/24. A host in each tenant must reach its own 10.0.0.1, and the global table must know nothing about either. 'show ip vrf' lists the tables and 'ping vrf alfa 10.0.0.50' tests one of them.",
+			"reqs": [
+				{"d": "A router running two VRFs", "t": func() -> bool: return _vrf_router() != null},
+				{"d": "The same prefix configured in both tables", "t": func() -> bool: return _vrf_overlap()},
+				{"d": "A host in each tenant reaches its own gateway", "t": func() -> bool: return _vrf_tenants_reach() >= 2},
+			],
+		},
+		{
+			"id": "pull_either_cable",
+			"rank": "Senior network engineer",
+			"title": "Pull either cable",
+			"customer": "Obsidian Cloud",
+			"reward": 3600,
+			"brief": "Obsidian's hypervisor has two NICs and they want both live, to two different switches, with no spanning tree blocking one. That is MLAG: pair two switches ('mlag peer <other>' on each, a trunk between them marked 'mlag peer-link'), bond the server's two cables ('bond eth0 eth1' on the server), and put the two switch ports in the same MLAG group ('mlag 1' under each). Then prove it: another host must keep reaching the server with either of its cables pulled.",
+			"reqs": [
+				{"d": "Two switches paired as MLAG peers", "t": func() -> bool: return _mlag_pair() != null},
+				{"d": "A server bonded across both switches", "t": func() -> bool: return _mlag_server() != null},
+				{"d": "It stays reachable with either leg down", "t": func() -> bool: return _mlag_survives()},
+			],
+		},
+		{
+			"id": "knowing_it_died",
+			"rank": "Senior network engineer",
+			"title": "The port that never went down",
+			"customer": "Tisza Bank",
+			"reward": 3000,
+			"brief": "Tisza Bank's routers sit on either side of a carrier circuit, and when the carrier fails in the middle both ports stay up: the static route points at a next hop that no longer answers, and traffic falls into the hole for as long as it takes somebody to notice. BFD notices in milliseconds: 'bfd' under the interface on BOTH routers brings up a session, and when the far end dies the route it guards is withdrawn. Prove it: with the session up, shut the far interface and the route must be gone.",
+			"reqs": [
+				{"d": "A BFD session up between two routers", "t": func() -> bool: return _bfd_link() != null},
+				{"d": "A static route rides that next hop", "t": func() -> bool: return _bfd_guarded_route() != {}},
+				{"d": "The route is withdrawn when the far end dies", "t": func() -> bool: return _bfd_withdraws()},
+			],
+		},
+		{
+			"id": "only_the_badged",
+			"rank": "Senior network engineer",
+			"title": "Only badged machines",
+			"customer": "Epsilon Bank",
+			"reward": 3400,
+			"brief": "Epsilon's auditors want the wall jacks in the branch to refuse anything the bank does not own. 802.1X: an authentication server on a Linux box ('radiusd add <mac> [vlan]' for each allowed machine), the switch pointed at it ('radius-server host <ip>', from a Management address that can reach it) and 'dot1x' under every customer-facing port. A known machine must get on and reach the server; an unknown one plugged into the same jack gets nothing.",
+			"reqs": [
+				{"d": "An authentication server with at least one authorised machine", "t": func() -> bool: return _radius_server() != null},
+				{"d": "A switch pointed at it with 802.1X on its ports", "t": func() -> bool: return _dot1x_switch() != null},
+				{"d": "A machine authorised through a port and reaching the server", "t": func() -> bool: return _dot1x_authorised()},
+			],
+		},
+		{
+			"id": "the_home_router",
+			"rank": "Senior network engineer",
+			"title": "The home router",
+			"customer": "Delta Media",
+			"reward": 2600,
+			"brief": "Somebody in Delta's office plugged in a home router and it is handing out leases to the whole segment. DHCP snooping: 'ip dhcp snooping' on the switch, 'ip dhcp snooping trust' on exactly the port your real server sits behind, and 'ip arp inspection' so the bindings it learns are also the only ARP it believes. A client must still get a lease from the real server, and the switch must hold a binding for it.",
+			"reqs": [
+				{"d": "DHCP snooping on the switch with one trusted port", "t": func() -> bool: return _snooping_switch() != null},
+				{"d": "The trusted port leads to a real DHCP server", "t": func() -> bool: return _snooping_trusts_server()},
+				{"d": "A client holds a lease the switch has a binding for", "t": func() -> bool: return _snooping_binding()},
+			],
+		},
+		{
+			"id": "who_goes_without",
+			"rank": "Senior network engineer",
+			"title": "Who goes without",
+			"customer": "Strict Kft",
+			"reward": 2800,
+			"brief": "Strict Kft pays for the strict tier and shares a switch uplink with a best-effort customer who does not. At the busy part of the day that link is oversubscribed and both suffer equally, which is not what the strict tier bought. Turn on priority queueing ('qos priority-queueing' under the switch ports on the path): bandwidth is not created, it is allocated, and the strict customer is served first while the best-effort one degrades. Prove it during a busy cycle.",
+			"reqs": [
+				{"d": "Priority queueing on a switch port", "t": func() -> bool: return _qos_port() != null},
+				{"d": "A strict-tier customer served undegraded", "t": func() -> bool: return _strict_undegraded()},
+				{"d": "A best-effort customer taking the shortfall", "t": func() -> bool: return _best_effort_degraded()},
+			],
+		},
+		{
+			"id": "nobody_hands_them_out",
+			"rank": "Senior network engineer",
+			"title": "Addresses nobody hands out",
+			"customer": "Hollo Media",
+			"reward": 2400,
+			"brief": "Hollo Media's IPv6 hosts should configure themselves. No DHCP server, no lease database: the router advertises its /64 ('ipv6 nd ra' under the interface that owns the prefix) and each host builds its own address from the prefix and its MAC ('autoconf eth0'). A host must end up with an address inside the advertised /64 and reach the router over it.",
+			"reqs": [
+				{"d": "A router interface advertising a /64", "t": func() -> bool: return _ra_iface() != null},
+				{"d": "A host with a self-built address in that prefix", "t": func() -> bool: return _slaac_host() != null},
+				{"d": "It reaches the router over IPv6", "t": func() -> bool: return _slaac_reaches()},
+			],
+		},
+		{
+			"id": "hand_the_subzone_over",
+			"rank": "Senior network engineer",
+			"title": "Hand the subzone over",
+			"customer": "Delta Media",
+			"reward": 2200,
+			"brief": "Delta's European office wants to run its own names. The parent resolver keeps its zone and hands the subzone to a second server ('dns delegate eu.delta.hu <server ip>'); the second server holds the records ('dns add www.eu.delta.hu <ip>'). A client pointed at the parent ('nameserver <parent ip>') must resolve the delegated name by following the referral.",
+			"reqs": [
+				{"d": "A resolver that delegates a subzone", "t": func() -> bool: return _delegating_server() != null},
+				{"d": "The delegate holds a record in that zone", "t": func() -> bool: return _delegate_record() != ""},
+				{"d": "A client resolves the delegated name through the parent", "t": func() -> bool: return _delegation_resolves()},
+			],
+		},
+		{
 			"id": "bandwidth_crunch",
 			"title": "Bandwidth crunch",
 			"customer": "Everyone at once",
@@ -870,6 +1107,7 @@ static func _campaign() -> Array:
 		},
 		{
 			"id": "two_transits",
+			"rank": "Datacenter architect",
 			"title": "Two transits, one decision",
 			"customer": "Panonia Data (consulting)",
 			"reward": 4800,
@@ -1223,6 +1461,302 @@ static func _default_via_preferred() -> bool:
 	var r := _multihomed_router()
 	var preferred := _preferred_upstream()
 	return r != null and preferred != "" and Sim.route_via(r, "8.8.8.8") == preferred
+
+# ---- the dead-feature jobs: structure first, then the live proof ----
+
+static func _vrf_router() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.type == "router" and d.vrfs.size() >= 2:
+			return d
+	return null
+
+static func _vrf_overlap() -> bool:
+	var r := _vrf_router()
+	if r == null:
+		return false
+	var seen := {}  # prefix -> vrfs it appears in
+	for i: Net.Iface in r.ifaces:
+		if i.vrf == "":
+			continue
+		for cidr in i.ips:
+			if Net.is_v6(cidr):
+				continue
+			var key := "%s/%d" % [Net.network_of(cidr)["prefix"], int(Net.network_of(cidr)["plen"])]
+			if not seen.has(key):
+				seen[key] = []
+			if i.vrf not in seen[key]:
+				seen[key].append(i.vrf)
+			if seen[key].size() >= 2:
+				return true
+	return false
+
+static func _vrf_tenants_reach() -> int:
+	## one host per VRF that pings the gateway address on its own leg
+	var r := _vrf_router()
+	if r == null:
+		return 0
+	var ok_vrfs := {}
+	for i: Net.Iface in r.ifaces:
+		if i.vrf == "" or i.ips.is_empty():
+			continue
+		var gw := String(i.ips[0]).split("/")[0]
+		for host in _hosts_behind(i):
+			if Sim.ping(host, gw)["ok"]:
+				ok_vrfs[i.vrf] = true
+	return ok_vrfs.size()
+
+static func _hosts_behind(port: Net.Iface) -> Array:
+	## servers reachable through this port: directly, or through one switch
+	var l := Game.link_at(port)
+	if l == null:
+		return []
+	var far: Net.Iface = l.other(port)
+	if far.dev.type == "server":
+		return [far.dev]
+	var out: Array = []
+	if far.dev.type == "switch":
+		for sp: Net.Iface in far.dev.ifaces:
+			var sl := Game.link_at(sp)
+			if sl != null and sl.other(sp).dev.type == "server":
+				out.append(sl.other(sp).dev)
+	return out
+
+static func _mlag_pair() -> Array:
+	for a in Game.all_devices():
+		if a.type != "switch" or a.mlag_peer == "":
+			continue
+		for b in Game.all_devices():
+			if b.name == a.mlag_peer and b.mlag_peer == a.name:
+				return [a, b]
+	return []
+
+static func _mlag_server() -> Net.NDevice:
+	var pair := _mlag_pair()
+	if pair.is_empty():
+		return null
+	for d in Game.all_devices():
+		if d.type != "server":
+			continue
+		var switches := {}
+		for i: Net.Iface in d.ifaces:
+			var l := Game.link_at(i)
+			if i.lag > 0 and l != null and l.other(i).dev in pair and l.other(i).mlag > 0:
+				switches[l.other(i).dev] = true
+		if switches.size() == 2:
+			return d
+	return null
+
+static func _mlag_survives() -> bool:
+	var srv := _mlag_server()
+	if srv == null or srv.ifaces[0].ips.is_empty():
+		return false
+	var ip := String(srv.ifaces[0].ips[0]).split("/")[0]
+	var asker: Net.NDevice = null
+	for d in Game.all_devices():
+		if d.type == "server" and d != srv and Sim.ping(d, ip)["ok"]:
+			asker = d
+			break
+	if asker == null:
+		return false
+	var legs: Array = []
+	for i: Net.Iface in srv.ifaces:
+		if i.lag > 0 and Game.link_at(i) != null:
+			legs.append(Game.link_at(i).other(i))
+	for leg: Net.Iface in legs:
+		leg.enabled = false
+		Sim.flush_learned_state()
+		var still: bool = Sim.ping(asker, ip)["ok"]
+		leg.enabled = true
+		Sim.flush_learned_state()
+		if not still:
+			return false
+	return legs.size() == 2
+
+static func _bfd_link() -> Net.Link:
+	for l in Game.links:
+		if l.a.bfd and l.b.bfd and l.a.dev.ip_forwarding and l.b.dev.ip_forwarding \
+				and Sim.bfd_session(l.a) == "up":
+			return l
+	return null
+
+static func _bfd_guarded_route() -> Dictionary:
+	## a static route on one end whose next hop is the other end's address
+	var l := _bfd_link()
+	if l == null:
+		return {}
+	for pair in [[l.a, l.b], [l.b, l.a]]:
+		var near: Net.Iface = pair[0]
+		var far: Net.Iface = pair[1]
+		for r in near.dev.static_routes:
+			for cidr in far.ips:
+				if String(cidr).split("/")[0] == String(r["via"]):
+					return {"router": near.dev, "far": far, "prefix": r["prefix"], "plen": int(r["plen"])}
+	return {}
+
+static func _bfd_withdraws() -> bool:
+	var g := _bfd_guarded_route()
+	if g.is_empty():
+		return false
+	var probe := Net.int_to_ip(Net.ip_to_int(String(g["prefix"])) + 1)
+	var far: Net.Iface = g["far"]
+	var was := far.enabled
+	far.enabled = false
+	Sim.flush_learned_state()
+	var gone := Sim.route_via(g["router"], probe) == ""
+	far.enabled = was
+	Sim.flush_learned_state()
+	return gone
+
+static func _radius_server() -> Net.NDevice:
+	for d in Game.all_devices():
+		if not d.services.get("radius", {}).get("users", {}).is_empty():
+			return d
+	return null
+
+static func _dot1x_switch() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.type == "switch" and d.radius != "":
+			for i: Net.Iface in d.ifaces:
+				if i.dot1x:
+					return d
+	return null
+
+static func _dot1x_authorised() -> bool:
+	var srv := _radius_server()
+	if srv == null or srv.ifaces[0].ips.is_empty():
+		return false
+	var srv_ip := String(srv.ifaces[0].ips[0]).split("/")[0]
+	for d in Game.all_devices():
+		if d.type != "switch":
+			continue
+		for i: Net.Iface in d.ifaces:
+			if i.dot1x and i.dot1x_ok != "":
+				var l := Game.link_at(i)
+				if l != null and l.other(i).mac == i.dot1x_ok and Sim.ping(l.other(i).dev, srv_ip)["ok"]:
+					return true
+	return false
+
+static func _snooping_switch() -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.type == "switch" and d.snooping:
+			var trusted := 0
+			for i: Net.Iface in d.ifaces:
+				if i.dhcp_trusted:
+					trusted += 1
+			if trusted == 1:
+				return d
+	return null
+
+static func _snooping_trusts_server() -> bool:
+	var sw := _snooping_switch()
+	if sw == null:
+		return false
+	for i: Net.Iface in sw.ifaces:
+		if i.dhcp_trusted:
+			var l := Game.link_at(i)
+			return l != null and not l.other(i).dev.services.get("dhcp", {}).is_empty()
+	return false
+
+static func _snooping_binding() -> bool:
+	var sw := _snooping_switch()
+	if sw == null or sw.bindings.is_empty():
+		return false
+	for mac in sw.bindings:
+		var holder := Sim._mac_owner(String(mac))
+		if holder != null and holder.ips.any(func(c): return String(c).split("/")[0] == String(sw.bindings[mac])):
+			return true
+	return false
+
+static func _qos_port() -> Net.Iface:
+	for d in Game.all_devices():
+		if d.type == "switch":
+			for i: Net.Iface in d.ifaces:
+				if i.qos:
+					return i
+	return null
+
+static func _strict_undegraded() -> bool:
+	for deal in Game.deals:
+		if int(deal.get("sla", 0)) >= 2 and bool(deal.get("healthy", false)) and not bool(deal.get("degraded", false)):
+			return true
+	return false
+
+static func _best_effort_degraded() -> bool:
+	for deal in Game.deals:
+		if int(deal.get("sla", 0)) == 0 and bool(deal.get("degraded", false)):
+			return true
+	return false
+
+static func _ra_iface() -> Net.Iface:
+	for d in Game.all_devices():
+		if not d.ip_forwarding:
+			continue
+		for i: Net.Iface in d.ifaces:
+			if i.ra and i.ips.any(func(c): return Net.is_v6(c) and String(c).ends_with("/64")):
+				return i
+	return null
+
+static func _slaac_host() -> Net.NDevice:
+	var ra := _ra_iface()
+	if ra == null:
+		return null
+	for cidr in ra.ips:
+		if not Net.is_v6(cidr):
+			continue
+		var pfx := String(cidr).split("/")[0]
+		for d in Game.all_devices():
+			if d.type != "server":
+				continue
+			for i: Net.Iface in d.ifaces:
+				for hc in i.ips:
+					if Net.is_v6(hc) and Net.same_net(String(hc).split("/")[0], pfx, 64) \
+							and Net.addr_eq(String(hc).split("/")[0], Net.slaac_address(pfx, 64, i.mac)):
+						return d
+	return null
+
+static func _slaac_reaches() -> bool:
+	var ra := _ra_iface()
+	var host := _slaac_host()
+	if ra == null or host == null:
+		return false
+	for cidr in ra.ips:
+		if Net.is_v6(cidr) and Sim.ping(host, String(cidr).split("/")[0])["ok"]:
+			return true
+	return false
+
+static func _delegating_server() -> Net.NDevice:
+	for d in Game.all_devices():
+		if not d.services.get("dns", {}).get("delegations", {}).is_empty():
+			return d
+	return null
+
+static func _delegate_record() -> String:
+	## a name inside a delegated zone that the delegate actually holds
+	var parent := _delegating_server()
+	if parent == null:
+		return ""
+	var zones: Dictionary = parent.services["dns"]["delegations"]
+	for zone in zones:
+		var ns := _owner(String(zones[zone]))
+		if ns == null:
+			continue
+		for name in ns.services.get("dns", {}).get("records", {}):
+			if String(name).ends_with("." + String(zone)):
+				return String(name)
+	return ""
+
+static func _delegation_resolves() -> bool:
+	var parent := _delegating_server()
+	var name := _delegate_record()
+	if parent == null or name == "" or parent.ifaces[0].ips.is_empty():
+		return false
+	var parent_ip := String(parent.ifaces[0].ips[0]).split("/")[0]
+	for d in Game.all_devices():
+		if d.type == "server" and d.resolver == parent_ip and d != parent:
+			var answer := Sim.resolve(d, name, false)
+			if answer != "":
+				return true
+	return false
 
 static func _bgp_up() -> Net.NDevice:
 	for d in Game.all_devices():
