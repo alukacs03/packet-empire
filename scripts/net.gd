@@ -18,6 +18,7 @@ class Iface:
 	var nat := ""  # "" | "inside" | "outside" (srcnat/masquerade toward outside)
 	var vrrp := {}  # {"group": int, "vip": String, "priority": int}
 	var lag := 0  # port-channel group id; 0 = standalone
+	var lag_mode := "on"  # on (static) | active | passive (LACP)
 	var helper := ""  # DHCP relay target (ip helper-address)
 	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var qos := false  # when congested, serve traffic in service-level order
@@ -37,6 +38,8 @@ class Iface:
 	var wg_key := ""  # WireGuard: this interface's public key
 	var wg_peers: Array = []  # [{key, endpoint, allowed: ["10.0.0.0/24", ...]}]
 	var port_security := false  # sticky-MAC lockdown on an access port
+	var portfast := false  # edge port: forwards at once, no listening/learning wait
+	var bpduguard := false  # err-disable the port if a bridge ever talks on it
 	var secure_mac := ""  # the MAC this port is locked to
 	var violations := 0
 	var parent := ""  # 802.1Q subinterface: name of the physical parent
@@ -75,6 +78,7 @@ class NDevice:
 	var mst_instances := {}  # instance id -> [vlan ids] when running MST
 	var dns_cache := {}  # name -> {"ip": .., "expires": cycle}; why a change is not seen at once
 	var vtep := {}  # {"src": ip, "peers": [ip], "map": {vlan: vni}, "evpn": bool}
+	var arp_seen := {}  # neighbour key -> cycle it was learned, for the Age column
 	var remote_macs := {}  # vlan -> {mac: vtep ip}: what the overlay says is elsewhere
 	var nat64_flows := {}  # translation state: flow id -> the IPv6 client waiting
 	var talkers := {}  # "src>dst" -> packets forwarded, netflow-style
@@ -106,6 +110,8 @@ class NDevice:
 	var services := {}  # "dhcp": {iface,start,end,plen,gw,dns,leases}, "dns": {records}
 	var resolver := ""  # DNS server ip for this host
 	var nat_flows := {}  # runtime: l4 id -> original private src ip
+	var nat_xlate := {}  # runtime: l4 id -> {proto, il, ig, port, ol}: the translation table
+	var nat_seq := 1024  # next PAT port
 	# runtime state (not saved): learned tables
 	var mac_table := {}  # vlan -> {mac -> Iface}: learned, and it ages out
 	var mac_static := {}  # vlan -> {mac -> port name}: pinned by an engineer, never ages

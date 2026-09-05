@@ -1208,7 +1208,8 @@ func duties_tick() -> void:
 					last_digest.append("%s: nothing on the dock" % name)
 				elif good:
 					check_crate(waiting[0])
-					unpack_crate(waiting[0])
+					if waiting[0] in crates:  # a damaged one went straight back
+						unpack_crate(waiting[0])
 					last_digest.append("%s checked and unpacked a crate" % name)
 				else:
 					unpack_crate(waiting[0])
@@ -1448,6 +1449,7 @@ func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 		var damaged := randf() < 0.1
 		var wrong := "" if damaged or randf() > 0.1 else _wrong_model(model)
 		crates.append({"model": model, "shipped": wrong if wrong != "" else model,
+			"paid": order_estimate(model, tier),
 			"ordered": cycle, "site": current_site,
 			"due": cycle + randi_range(int(spec["wait"][0]), int(spec["wait"][1])), "arrived": -1,
 			"checked": false, "damaged": damaged, "used": tier == "used",
@@ -1489,7 +1491,7 @@ func check_crate(crate: Dictionary) -> String:
 		log_event("RECEIVING: the %s arrived damaged. Checked on receipt, so it goes straight back and the money comes with it."
 			% MODELS[crate["model"]]["label"])
 		crates.erase(crate)
-		_refund(int(float(MODELS[crate["model"]]["price"]) * 0.85))
+		_refund(int(float(crate.get("paid", MODELS[crate["model"]]["price"])) * 0.85))
 		return ""
 	if String(crate["shipped"]) != String(crate["model"]):
 		log_event("RECEIVING: they shipped a %s instead of a %s. Caught at the dock; the right one is on its way."
@@ -2213,7 +2215,17 @@ func ticket_tick() -> void:
 			log_event("TICKET %s reopened by %s, and they are not being polite about it. It was never fixed."
 				% [t["id"], t["customer"]])
 	if tickets.size() > 12:
-		tickets.resize(12)
+		# keep every open ticket, cap the closed tail: trimming an open one
+		# only made it come back next cycle under a new number
+		var kept: Array = []
+		var closed_kept := 0
+		for t2 in tickets:
+			if String(t2.get("state", "")) != "closed":
+				kept.append(t2)
+			elif closed_kept < 12:
+				kept.append(t2)
+				closed_kept += 1
+		tickets = kept
 
 func management_ips(d: Net.NDevice) -> Array:
 	var out: Array = []
@@ -4266,7 +4278,9 @@ func collect_invoices() -> int:
 				% [deal["customer"], amount])
 		invoices.erase(inv)
 	for inv2 in invoices.duplicate():
-		if cycle - int(inv2["due"]) > WRITE_OFF_AFTER:
+		var deal2 := deal_by_id(String(inv2["deal"]))
+		var expected := int(inv2.get("raised", int(inv2["due"]))) + (payment_terms(deal2) if not deal2.is_empty() else 0)
+		if cycle - expected > WRITE_OFF_AFTER:
 			invoices.erase(inv2)
 			reputation = maxi(0, reputation - 2)
 			log_event("WRITTEN OFF: $%d from %s is never arriving." % [int(inv2["amount"]), inv2["customer"]])
@@ -5706,7 +5720,7 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 				"Its table carries %d announced prefix(es), and a default arrives from upstream."
 					% speaker.bgp.get("networks", []).size()]
 			base["concept"] = "Somebody else's network, on purpose"
-			base["practice"] = _dialect_cmd(speaker, "/routing bgp peer print", "show ip bgp summary")
+			base["practice"] = _dialect_cmd(speaker, "/routing bgp session print", "show ip bgp summary")
 			base["avoided"] = "The default route is learned, not invented, so it disappears when the session does."
 			base["mastery"] = "Keep the session up while announcing your own prefix."
 		"hide_the_internals":
@@ -6008,6 +6022,15 @@ func _ready() -> void:
 	_ensure_sites()
 	_pristine = _serialize()  # a snapshot of an untouched game, for New Game
 
+func reset_run_state() -> void:
+	## per-run state that is never carried over: without this a second company
+	## inherits the first one's totals, its breach flags and its ticket numbers
+	stats = {"earned": 0, "incidents": 0, "faults": 0, "contracts": 0, "deals": 0}
+	sla_status = {}
+	digest = {}
+	lockout_state = {}
+	unread_events = 0
+
 func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	## start over from the state the game boots into, rather than trying to
 	## remember by hand which of the several dozen fields need clearing
@@ -6284,8 +6307,15 @@ func hire(candidate: Dictionary) -> String:
 	money_changed.emit()
 	return ""
 
+func drop_duties_of(name: String) -> void:
+	for k in duties.keys():
+		if String(duties[k]) == name:
+			duties.erase(k)
+	_sync_duty_policies()
+
 func fire(member: Dictionary) -> void:
 	staff.erase(member)
+	drop_duties_of(String(member.get("name", "")))
 	if String(member.get("name", "")) == oncall:
 		oncall = ""  # nobody is carrying the phone until somebody else is asked
 	if String(member.get("name", "")) == callout_who:
@@ -6361,8 +6391,8 @@ func buy_rival(r: Dictionary) -> String:
 		for model in rack_models:
 			var dev := new_device(model, true)  # their serials, not your licences
 			dev.acquired_from = r["name"]
-			rack.slots[slot] = dev
-			slot += 1
+			install_device(rack, slot, dev)
+			slot += model_height(model)
 			# wire and address it exactly as they ran it: their vlan, their subnet
 			if dev.type == "switch":
 				rack_switch = dev
@@ -6927,7 +6957,7 @@ func choose_guided_resilience(choice: String) -> String:
 	if String(guided_outage.get("state", "")) != "choice":
 		return "finish the incident debrief first"
 	var iface := guided_outage_iface()
-	if iface == null:
+	if iface == null and choice != "monitor":
 		return "the affected device is no longer installed"
 	match choice:
 		"spare":
@@ -8656,7 +8686,6 @@ func sla_tick() -> void:
 		power_tick()
 		carrier_tick()
 		hijack_tick()
-		cert_tick()
 	if drill_active:
 		return  # the economy pauses while you run a drill
 	if sandbox:
@@ -8668,6 +8697,7 @@ func sla_tick() -> void:
 	last_pl = {}
 	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
 		"power": 0, "transit": 0}
+	cert_tick()  # after the reset, so its line shows up in this cycle's P&L
 	_maybe_start_guided_outage()
 	dispute_tick()
 	report_tick()
@@ -9284,9 +9314,56 @@ func free_slots(rack: Net.Rack, dev: Net.NDevice) -> void:
 		if rack.covered[key] == dev:
 			rack.covered.erase(key)
 
+func _restore_vtep(d: Net.NDevice, src: Dictionary) -> void:
+	## JSON turned the vlan->vni map keys into strings
+	d.vtep = src.get("vtep", {}).duplicate(true)
+	if d.vtep.has("map"):
+		var fixed := {}
+		for k in d.vtep["map"]:
+			fixed[int(k)] = int(d.vtep["map"][k])
+		d.vtep["map"] = fixed
+
+func forget_device_state(name: String) -> void:
+	## everything keyed by a device name, for a device that is leaving. The
+	## documentation is deliberately left alone: stale docs are a lesson
+	for table in [physical_access, confirm_commits, lockout_state, firmware_bugs]:
+		table.erase(name)
+	for key in grey_faults.keys():
+		if String(key).begins_with(name + "|"):
+			grey_faults.erase(key)
+	for ren in renewals.duplicate():
+		if String(ren.get("serial", "")) == name:
+			renewals.erase(ren)
+	if String(guided_outage.get("device", "")) == name and String(guided_outage.get("state", "")) in ["choice", "recovered"]:
+		guided_outage["state"] = "complete"
+
+func rekey_device_state(old_name: String, new_name: String) -> void:
+	## the same tables, following a rename
+	for table in [physical_access, confirm_commits, lockout_state, firmware_bugs]:
+		if table.has(old_name):
+			table[new_name] = table[old_name]
+			table.erase(old_name)
+	for key in grey_faults.keys():
+		if String(key).begins_with(old_name + "|"):
+			grey_faults[new_name + String(key).substr(old_name.length())] = grey_faults[key]
+			grey_faults.erase(key)
+	for ren in renewals:
+		if String(ren.get("serial", "")) == old_name:
+			ren["serial"] = new_name
+	for tc in tac_cases:
+		if String(tc.get("device", "")) == old_name:
+			tc["device"] = new_name
+	for m in monitors:
+		for field in ["from", "target"]:
+			if String(m.get(field, "")) == old_name:
+				m[field] = new_name
+	if String(guided_outage.get("device", "")) == old_name:
+		guided_outage["device"] = new_name
+
 func uninstall_device(dev: Net.NDevice, refund := true) -> void:
 	for i: Net.Iface in dev.ifaces:
 		disconnect_iface(i)
+	forget_device_state(dev.name)
 	var r := rack_of(dev)
 	if r:
 		free_slots(r, dev)
@@ -9315,6 +9392,7 @@ func rename_device(dev: Net.NDevice, new_name: String) -> bool:
 	for d in all_devices():
 		if d != dev and d.name == new_name:
 			return false
+	rekey_device_state(dev.name, new_name)
 	dev.name = new_name
 	topology_changed.emit()
 	return true
@@ -9798,6 +9876,7 @@ func apply_template(d: Net.NDevice, t: Dictionary) -> String:
 	d.vlans = {}
 	for vid in cfg.get("vlans", {}):
 		d.vlans[int(vid)] = cfg["vlans"][vid]
+	_restore_vtep(d, cfg)
 	d.acls = cfg.get("acls", []).duplicate(true)
 	d.stateful = bool(cfg.get("stateful", false))
 	var src_ifs: Array = cfg.get("ifaces", [])
@@ -9903,6 +9982,7 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	d.vlans = {}
 	for vid in cfg.get("vlans", {}):
 		d.vlans[int(vid)] = cfg["vlans"][vid]
+	_restore_vtep(d, cfg)
 	d.mac_static = {}
 	for vid in cfg.get("mac_static", {}):
 		d.mac_static[int(vid)] = Dictionary(cfg["mac_static"][vid]).duplicate()
@@ -9958,16 +10038,17 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		ifs.append({"name": i.name, "mac": i.mac, "enabled": i.enabled, "mtu": i.mtu,
 			"admin_down": i.admin_down, "err_disabled": i.err_disabled, "fault": i.fault, "duplex": i.duplex,
 			"mode": i.mode, "untagged_vlan": i.untagged_vlan, "tagged_vlans": i.tagged_vlans,
-			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "helper": i.helper,
+			"nat": i.nat, "vrrp": i.vrrp, "lag": i.lag, "lag_mode": i.lag_mode, "helper": i.helper,
 			"mlag": i.mlag, "mlag_peerlink": i.mlag_peerlink, "bfd": i.bfd, "ra": i.ra,
 			"parent": i.parent, "dot1q": i.dot1q,
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
+			"portfast": i.portfast, "bpduguard": i.bpduguard,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
 			"ips": i.ips, "note": i.note})
-	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans,
+	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans, "vtep": d.vtep,
 		"mac_static": d.mac_static, "note": d.note,
 		"ip_forwarding": d.ip_forwarding, "static_routes": d.static_routes,
 		"services": d.services, "resolver": d.resolver, "acls": d.acls, "stateful": d.stateful, "bgp": d.bgp,
@@ -10085,6 +10166,11 @@ func _apply(data: Dictionary) -> void:
 	docs = data.get("docs", {})
 	confirm_commits = data.get("confirm_commits", {})
 	tickets = data.get("tickets", [])
+	_ticket_seq = 0
+	for t0 in tickets:
+		var tid := String(t0.get("id", "T0")).trim_prefix("T")
+		if tid.is_valid_int():
+			_ticket_seq = maxi(_ticket_seq, int(tid))
 	grey_faults = data.get("grey_faults", {})
 	physical_access = data.get("physical_access", {})
 	remote_jobs = data.get("remote_jobs", [])
@@ -10138,16 +10224,22 @@ func _apply(data: Dictionary) -> void:
 		callout_until = -1
 	if oncall != "" and Staff.by_name(oncall).is_empty():
 		oncall = ""
+	for k in duties.keys():
+		if Staff.by_name(String(duties[k])).is_empty():
+			duties.erase(k)
 	candidates = data.get("candidates", [])
 	rivals = data.get("rivals", [])
 	if rivals.is_empty():
 		rivals = Rivals.spawn()
 	debt = int(data.get("debt", 0))
+	reset_run_state()
 	for k in data.get("stats", {}):
 		stats[k] = int(data["stats"][k])
 	events = data.get("events", [])
 	incidents_seen = data.get("incidents_seen", {})
 	deals = data.get("deals", [])
+	for k in _counter.keys():
+		_counter[k] = 0  # a new company numbers its first switch sw1 again
 	for k in data["counters"]:
 		_counter[k] = int(data["counters"][k])
 	var by_name := {}
@@ -10191,6 +10283,7 @@ func _apply(data: Dictionary) -> void:
 		d.resolver = sd.get("resolver", "")
 		for vid in sd.get("vlans", {}):
 			d.vlans[int(vid)] = sd["vlans"][vid]
+		_restore_vtep(d, sd)
 		for vid in sd.get("mac_static", {}):
 			d.mac_static[int(vid)] = Dictionary(sd["mac_static"][vid]).duplicate()
 		for si in sd.get("ifaces", []):
@@ -10208,6 +10301,7 @@ func _apply(data: Dictionary) -> void:
 			i.nat = si.get("nat", "")
 			i.vrrp = si.get("vrrp", {})
 			i.lag = int(si.get("lag", 0))
+			i.lag_mode = String(si.get("lag_mode", "on"))
 			i.mlag = int(si.get("mlag", 0))
 			i.bfd = bool(si.get("bfd", false))
 			i.ra = bool(si.get("ra", false))
@@ -10221,6 +10315,8 @@ func _apply(data: Dictionary) -> void:
 			i.dot1x = bool(si.get("dot1x", false))
 			i.storm_limit = int(si.get("storm_limit", 0))
 			i.port_security = si.get("port_security", false)
+			i.portfast = bool(si.get("portfast", false))
+			i.bpduguard = bool(si.get("bpduguard", false))
 			i.secure_mac = si.get("secure_mac", "")
 			i.tunnel_src = si.get("tunnel_src", "")
 			i.tunnel_dst = si.get("tunnel_dst", "")

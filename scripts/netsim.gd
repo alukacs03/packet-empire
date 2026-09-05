@@ -283,7 +283,8 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 				var parts := String(net).split("/")
 				out.append({"prefix": parts[0], "plen": int(parts[1]), "via": nb["ip"],
 					"pref": int(nb.get("local_pref", 100)),
-					"cost": 1 + int(peer_nb.get("prepend", 0))})
+					"cost": 1 + int(peer_nb.get("prepend", 0)),
+					"asn": int(peer.bgp.get("asn", 0)), "prepend": int(peer_nb.get("prepend", 0))})
 	for other in Game.all_devices():
 		if other == dev or other.bgp.is_empty():
 			continue
@@ -302,7 +303,8 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 					# their prepending is how they ask us to prefer the other path
 					out.append({"prefix": parts[0], "plen": int(parts[1]), "via": via,
 						"pref": int(our_nb.get("local_pref", 100)),
-						"cost": 1 + int(onb.get("prepend", 0))})
+						"cost": 1 + int(onb.get("prepend", 0)),
+						"asn": int(other.bgp.get("asn", 0)), "prepend": int(onb.get("prepend", 0))})
 	return out
 
 static func _neighbor_towards(dev: Net.NDevice, other: Net.NDevice) -> Dictionary:
@@ -488,7 +490,26 @@ static func leg_usable(port: Net.Iface) -> bool:
 	if l == null:
 		return false
 	var far: Net.Iface = l.b if l.a == port else l.a
+	if port.lag > 0 and far.lag > 0 and not lag_compatible(port, far):
+		return false  # suspended: the two ends never agreed to bundle
 	return far.enabled and far.dev.status == "active"
+
+static func lag_compatible(a: Net.Iface, b: Net.Iface) -> bool:
+	## LACP negotiates: active talks to active or passive, passive never
+	## starts, and 'on' bundles blindly but only with another 'on'
+	if a.lag_mode == "on" or b.lag_mode == "on":
+		return a.lag_mode == "on" and b.lag_mode == "on"
+	return a.lag_mode == "active" or b.lag_mode == "active"
+
+static func lag_bundled(port: Net.Iface) -> bool:
+	## a member that is actually carrying the bundle right now
+	if port.lag <= 0:
+		return false
+	var l := Game.link_at(port)
+	if l == null:
+		return false
+	var far: Net.Iface = l.other(port)
+	return far.lag > 0 and lag_compatible(port, far) and leg_usable(port)
 
 static func _mlag_live(port: Net.Iface) -> bool:
 	return leg_usable(port) and not stp_blocked(port)
@@ -555,6 +576,7 @@ static func flush_learned_state() -> void:
 		d.mac_table.clear()
 		d.arp.clear()
 		d.nat_flows.clear()
+		d.nat_xlate.clear()
 		d.nat64_flows.clear()
 		d.flows.clear()
 
@@ -626,8 +648,10 @@ static func prune_learned_state() -> void:
 					and String(own_a.vrrp.get("vip", "")) != bare)
 			if arp_iface(d, String(ip)) == null or moved:
 				d.arp.erase(ip)
+				d.arp_seen.erase(ip)
 		# translation and flow state rides on paths that may just have moved
 		d.nat_flows.clear()
+		d.nat_xlate.clear()
 		d.nat64_flows.clear()
 		d.flows.clear()
 
@@ -675,6 +699,7 @@ static func stp_blocked_for(i: Net.Iface, vlan: int) -> bool:
 	return _stp_blocked_inst.get(inst, {}).has(i)
 
 static var _stp_blocked_inst := {}  # instance -> {Iface: true}
+static var _stp_root_ports := {}  # instance -> {switch: the port facing the root}
 static var _stp_wanted_since := {}  # Iface -> cycle it first wanted to forward
 
 static func _stp_ensure() -> void:
@@ -706,9 +731,23 @@ static func _stp_tree(instance: int) -> Dictionary:
 	if switches.is_empty():
 		return blocked
 	switches.sort_custom(func(x, y): return stp_id(x) < stp_id(y))
+	_stp_root_ports[instance] = {}
+	# BPDU guard: a port meant for a host that hears a bridge on the wire
+	# shuts itself, before that bridge can become part of the tree
+	for l in Game.links:
+		for port: Net.Iface in [l.a, l.b]:
+			var far: Net.Iface = l.other(port)
+			if port.bpduguard and port.enabled and far.dev.type == "switch" and far.enabled \
+					and far.dev.status == "active" and port.dev.status == "active":
+				port.err_disabled = true
+				port.enabled = false
+				Game.device_log(port.dev, "%s: BPDU received on a bpduguard port from %s, err-disabled" % [port.name, far.dev.name])
+				Game.log_event("BPDU GUARD: %s %s heard a switch (%s) and shut itself." % [port.dev.name, port.name, far.dev.name])
 	var sw_links: Array = []
 	for l in Game.links:
 		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
+			if l.a.lag > 0 and l.b.lag > 0 and not lag_compatible(l.a, l.b):
+				continue  # suspended members carry nothing, not even BPDUs
 			sw_links.append(l)
 	# each instance walks the links in its own order, so the alternate port
 	# lands on a different link per instance and both cables carry traffic
@@ -752,6 +791,9 @@ static func _stp_tree(instance: int) -> Dictionary:
 					dist[nb] = dist[cur] + 1
 					tree[key] = true
 					frontier.append(nb)
+					# the port on the far switch that leads back toward the root
+					var first_link: Net.Link = e["links"][0]
+					_stp_root_ports[instance][nb] = first_link.a if first_link.a.dev == nb else first_link.b
 	for key in edges:
 		if tree.has(key):
 			continue
@@ -771,7 +813,7 @@ static func _stp_tree(instance: int) -> Dictionary:
 	for port2 in _stp_prev_blocked(instance):
 		if blocked.has(port2) or not is_instance_valid(port2.dev):
 			continue
-		if port2.dev.stp_mode != "stp":
+		if port2.dev.stp_mode != "stp" or port2.portfast:
 			continue
 		if not _stp_wanted_since.has(port2):
 			_stp_wanted_since[port2] = Game.cycle
@@ -780,6 +822,16 @@ static func _stp_tree(instance: int) -> Dictionary:
 	return blocked
 
 const STP_HOLD := 1  # cycles classic STP holds a port down before forwarding
+
+static func stp_role(i: Net.Iface) -> String:
+	## root, designated or alternate, the words show spanning-tree uses
+	_stp_ensure()
+	if stp_blocked(i):
+		return "alternate"
+	for inst in _stp_root_ports:
+		if _stp_root_ports[inst].get(i.dev) == i:
+			return "root"
+	return "designated"
 
 static func _stp_prev_blocked(instance: int) -> Array:
 	return _stp_blocked_inst.get(instance, {}).keys()
@@ -1111,10 +1163,25 @@ static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> Stri
 	var key := _neigh_key(iface, ip)
 	if dev.arp.has(key):
 		return dev.arp[key]
+	# a reply is only believed once we have asked; the flag stays until the
+	# answer lands, because a congested link can deliver it a while later
+	_arp_pending["%s|%s" % [dev.name, key]] = true
 	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0,
 		"type": "ndp" if Net.is_v6(ip) else "arp",
 		"pl": {"op": "req", "spa": _first_ip(iface, Net.is_v6(ip)), "sha": iface.mac, "tpa": ip}})
 	return dev.arp.get(key, "")
+
+static var _arp_pending := {}  # neighbour keys with a request in flight
+static var _vrrp_current := {}  # "vip|group" -> the router holding mastership
+
+static func vrrp_mac(group: int) -> String:
+	## the virtual MAC every VRRP master answers with, so hosts never re-ARP
+	return "00:00:5e:00:01:%02x" % (group & 0xff)
+
+static func _learn_neighbour(dev: Net.NDevice, key: String, mac: String) -> void:
+	dev.arp[key] = mac
+	dev.arp_seen[key] = Game.cycle
+	_arp_pending.erase("%s|%s" % [dev.name, key])
 
 static func _first_ip(iface: Net.Iface, v6 := false) -> String:
 	for cidr: String in iface.ips:
@@ -1135,10 +1202,15 @@ static func _has_ip(dev: Net.NDevice, ip: String) -> bool:
 static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if iface.lag > 0 and not leg_usable(iface):
 		# a bond survives losing a leg: hand the frame to one that is still up
+		var carried := false
 		for member: Net.Iface in bond_members(iface):
 			if leg_usable(member):
 				iface = member
+				carried = true
 				break
+		if not carried and Game.link_at(iface) != null and Game.link_at(iface).other(iface).lag > 0 \
+				and not lag_compatible(iface, Game.link_at(iface).other(iface)):
+			return  # every member is suspended: the bundle never came up
 	if _depth > MAX_DEPTH:
 		return
 	if not iface.enabled or iface.dev.status != "active":
@@ -1570,7 +1642,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				return
 			if frame["dst"] == BCAST:
 				_host_rx(dev, guest, frame)
-	if frame["dst"] != iface.mac and frame["dst"] != BCAST:
+	if frame["dst"] != iface.mac and frame["dst"] != BCAST and not _vrrp_mac_ours(dev, iface, String(frame["dst"])):
 		return
 	var p: Dictionary = frame["pl"]
 	if frame["type"] == "dhcp":
@@ -1580,13 +1652,19 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		var nkey := _neigh_key(iface, String(p["spa"]))
 		if p["op"] == "req":
 			var lb_vip: String = String(dev.services.get("lb", {}).get("vip", ""))
-			if _iface_owns_ip(iface, p["tpa"]) or _vrrp_owns(dev, iface, p["tpa"]) \
+			var for_vip := not _iface_owns_ip(iface, p["tpa"]) and _vrrp_owns(dev, iface, p["tpa"])
+			if _iface_owns_ip(iface, p["tpa"]) or for_vip \
 					or (lb_vip != "" and Net.addr_eq(lb_vip, String(p["tpa"]))):
-				dev.arp[nkey] = p["sha"]
-				_tx(iface, {"src": iface.mac, "dst": p["sha"], "vlan": 0, "type": frame["type"],
-					"pl": {"op": "rep", "spa": p["tpa"], "sha": iface.mac, "tpa": p["spa"]}})
-		else:
-			dev.arp[nkey] = p["sha"]
+				_learn_neighbour(dev, nkey, p["sha"])
+				# the virtual address answers with the virtual MAC: that is why a
+				# failover needs no host to notice anything
+				var answer_mac: String = vrrp_mac(int(iface.vrrp["group"])) if for_vip else iface.mac
+				_tx(iface, {"src": answer_mac, "dst": p["sha"], "vlan": 0, "type": frame["type"],
+					"pl": {"op": "rep", "spa": p["tpa"], "sha": answer_mac, "tpa": p["spa"]}})
+		elif _arp_pending.has("%s|%s" % [dev.name, nkey]) or dev.arp.has(nkey):
+			# a reply nobody asked for is ignored, unless it updates an entry we
+			# already hold (a gratuitous ARP after a move)
+			_learn_neighbour(dev, nkey, p["sha"])
 		return
 	# ipv4
 	if dev.ip_forwarding and _has_ip(dev, p["dst_ip"]):
@@ -1620,9 +1698,10 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 						"type": "ipv4", "pl": back64})
 			return
 		var out_if := _nat_outside(dev)
-		if out_if != null and dev.nat_flows.has(flow_id) and _iface_owns_ip(out_if, p["dst_ip"]):
+		var static_in := nat_static_inside(dev, String(p["dst_ip"])) if out_if != null else ""
+		if out_if != null and (dev.nat_flows.has(flow_id) or static_in != "") and _iface_owns_ip(out_if, p["dst_ip"]):
 			var back := p.duplicate(true)
-			back["dst_ip"] = dev.nat_flows[flow_id]
+			back["dst_ip"] = dev.nat_flows[flow_id] if dev.nat_flows.has(flow_id) else static_in
 			back["ttl"] -= 1
 			var rt2 := _route_lookup(dev, back["dst_ip"])
 			if not rt2.is_empty():
@@ -1769,10 +1848,15 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		dev.talkers[talk_key] = int(dev.talkers.get(talk_key, 0)) + 1
 		var fwd := p.duplicate(true)
 		fwd["ttl"] -= 1
-		if out.nat == "outside":
+		var new_src := nat_translate_src(dev, iface, out, String(fwd["src_ip"]))
+		if new_src != "":
 			# source NAT: hide the private source behind our outside address
-			dev.nat_flows[fwd["l4"].get("id", 0)] = fwd["src_ip"]
-			fwd["src_ip"] = _first_ip(out)
+			var fid: int = int(fwd["l4"].get("id", 0))
+			dev.nat_flows[fid] = fwd["src_ip"]
+			dev.nat_seq = 1024 if dev.nat_seq >= 65535 else dev.nat_seq + 1
+			dev.nat_xlate[fid] = {"proto": acl_proto(fwd["l4"]), "il": fwd["src_ip"], "ig": new_src,
+				"port": dev.nat_seq, "ol": fwd["dst_ip"]}
+			fwd["src_ip"] = new_src
 		_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4", "pl": fwd})
 
 static func frame_size(frame: Dictionary) -> int:
@@ -1852,6 +1936,8 @@ static func vrrp_master(vip: String, group: int) -> Net.NDevice:
 	var best: Net.NDevice = null
 	var best_prio := -1
 	var best_ip := -1
+	var best_preempt := true
+	var alive := {}
 	for d in Game.all_devices():
 		if not d.ip_forwarding or d.status != "active":
 			continue
@@ -1860,13 +1946,31 @@ static func vrrp_master(vip: String, group: int) -> Net.NDevice:
 				continue
 			if i.vrrp.get("vip", "") != vip or int(i.vrrp.get("group", -1)) != group:
 				continue
+			alive[d] = true
 			var prio: int = int(i.vrrp.get("priority", 100))
 			var ipn := Net.ip_to_int(_first_ip(i))
 			if prio > best_prio or (prio == best_prio and ipn > best_ip):
 				best = d
 				best_prio = prio
 				best_ip = ipn
+				best_preempt = bool(i.vrrp.get("preempt", true))
+	# a router with preempt off does not take the address back from a live
+	# master of lower priority: the master stays until it dies
+	var key := "%s|%d" % [vip, group]
+	var current: Net.NDevice = _vrrp_current.get(key)
+	if best != null and not best_preempt and current != null and current != best \
+			and is_instance_valid(current) and alive.has(current):
+		best = current
+	if best == null:
+		_vrrp_current.erase(key)
+	else:
+		_vrrp_current[key] = best
 	return best
+
+static func _vrrp_mac_ours(dev: Net.NDevice, iface: Net.Iface, mac: String) -> bool:
+	if iface.vrrp.is_empty() or mac != vrrp_mac(int(iface.vrrp.get("group", -1))):
+		return false
+	return vrrp_master(String(iface.vrrp.get("vip", "")), int(iface.vrrp.get("group", -1))) == dev
 
 static func _vrrp_owns(dev: Net.NDevice, iface: Net.Iface, ip: String) -> bool:
 	if iface.vrrp.is_empty() or iface.vrrp.get("vip", "") != ip:
@@ -1881,6 +1985,46 @@ static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf
 		return
 	_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "unreachable", "code": code,
 		"id": l4.get("id", 0)}, vrf)
+
+static func nat_rules(dev: Net.NDevice) -> Array:
+	return dev.services.get("nat", {}).get("rules", [])
+
+static func nat_translate_src(dev: Net.NDevice, in_if: Net.Iface, out: Net.Iface, src: String) -> String:
+	## the outside address to write over src, or "" to leave the packet alone.
+	## masquerade (RouterOS): anything leaving the outside interface.
+	## overload (IOS): only what came in an inside interface and matches the
+	## list. static: one inside address, always.
+	if out.nat != "outside":
+		return ""
+	for rule in nat_rules(dev):
+		match String(rule.get("kind", "")):
+			"static":
+				if String(rule.get("inside", "")) == src:
+					return String(rule.get("outside", ""))
+			"masquerade":
+				if String(rule.get("iface", "")) == out.name:
+					return _first_ip(out)
+			"overload":
+				if String(rule.get("iface", "")) != out.name or in_if.nat != "inside":
+					continue
+				if _std_acl_permits(dev, String(rule.get("list", "")), src):
+					return _first_ip(out)
+	return ""
+
+static func _std_acl_permits(dev: Net.NDevice, list_id: String, src: String) -> bool:
+	## a standard access list: source addresses only, implicit deny
+	var lists: Dictionary = dev.services.get("nat", {}).get("acls", {})
+	for entry in lists.get(list_id, []):
+		if Net.same_subnet(src, String(entry["net"]), int(entry["plen"])):
+			return String(entry["action"]) == "permit"
+	return false
+
+static func nat_static_inside(dev: Net.NDevice, outside_ip: String) -> String:
+	## the inside host a static mapping points at, for unsolicited inbound
+	for rule in nat_rules(dev):
+		if String(rule.get("kind", "")) == "static" and String(rule.get("outside", "")) == outside_ip:
+			return String(rule.get("inside", ""))
+	return ""
 
 static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:

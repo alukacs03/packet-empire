@@ -17,6 +17,10 @@ var ui: UILayer
 var title: TitleScreen
 
 func _ready() -> void:
+	if OS.get_environment("PACKET_TEST") == "probe":
+		SimTests.probe()  # one scenario, fast: for chasing a single failure
+		get_tree().quit(0)
+		return
 	if OS.get_environment("PACKET_TEST") == "1":
 		var fails: int = SimTests.run()
 		if fails == 0:

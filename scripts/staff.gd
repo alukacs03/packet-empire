@@ -141,6 +141,7 @@ static func morale_tick(incidents_this_cycle: int) -> void:
 		m["morale"] = clampi(int(m.get("morale", 70)) + drift, 0, 100)
 		if int(m["morale"]) <= 12 and randf() < 0.35:
 			Game.staff.erase(m)
+			Game.drop_duties_of(String(m.get("name", "")))
 			if String(m.get("name", "")) == Game.oncall:
 				Game.oncall = ""
 			if String(m.get("name", "")) == Game.callout_who:

@@ -15,10 +15,10 @@ const DIALECT_HINTS := {
 		"intro": "Create VLANs 10 and 20, then put the port facing 10.0.0.1 in VLAN 10 and the port facing 10.0.0.2 in VLAN 20. The ping failing afterwards is the point: the tenants are isolated.",
 		"after": "Use the interface names that are actually cabled to the two servers.",
 		"ros": [
-			"/interface bridge vlan add vlan-ids=10",
-			"/interface bridge vlan add vlan-ids=20",
-			"/interface set ether1 pvid=10",
-			"/interface set ether2 pvid=20",
+			"/interface bridge port set [find interface=ether1] pvid=10",
+			"/interface bridge port set [find interface=ether2] pvid=20",
+			"/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether1",
+			"/interface bridge vlan add bridge=bridge1 vlan-ids=20 untagged=ether2",
 			"/interface bridge vlan print",
 		],
 		"eos": [
@@ -38,8 +38,7 @@ const DIALECT_HINTS := {
 		"intro": "The link between the switches must be a trunk on BOTH ends so tagged VLAN 10 can cross it. Create VLAN 10 on the second switch, trunk the cabled inter-switch port on each switch, then attach 10.0.0.3/24 to a VLAN 10 access port on the second switch.",
 		"after": "Run the switch commands on both ends of the inter-switch cable, substituting its real port name. On the new server use: ip addr add 10.0.0.3/24 dev eth0",
 		"ros": [
-			"/interface bridge vlan add vlan-ids=10",
-			"/interface set ether5 mode=trunk",
+			"/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether5",
 			"/interface bridge vlan print",
 			"/interface bridge port print",
 		],
@@ -57,7 +56,7 @@ const DIALECT_HINTS := {
 		"intro": "Run a second cable between the switches. Spanning tree should keep one path forwarding and hold the other in discarding state so the loop cannot melt the network. Inspect the port states, then disable the forwarding link to watch the spare take over.",
 		"after": "Substitute the real forwarding port when testing failover, and re-enable it afterwards.",
 		"ros": [
-			"/interface bridge port print",
+			"/interface bridge port monitor [find]",
 			"/interface set ether4 disabled=yes",
 			"/interface set ether4 disabled=no",
 		],
@@ -181,7 +180,7 @@ static func _campaign() -> Array:
 			"title": "Two tenants, one switch",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 800,
-			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. Cisco-style gear: 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1' → 'switchport access vlan 10'. PacketTik (RouterOS): '/interface bridge vlan add vlan-ids=10' and '/interface set ether1 pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
+			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. Cisco-style gear: 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1' → 'switchport access vlan 10'. PacketTik (RouterOS 7): '/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether1' and '/interface bridge port set [find interface=ether1] pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
 			"reqs": [
 				{"d": "A switch has VLANs 10 and 20", "t": func() -> bool: return _switch_with_vlans([10, 20]) != null},
 				{"d": "Access ports assigned to both VLAN 10 and 20", "t": func() -> bool: return _access_port_in(10) and _access_port_in(20)},
@@ -193,7 +192,7 @@ static func _campaign() -> Array:
 			"title": "Growing pains",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 1000,
-			"brief": "Alfa and Beta grew: you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (Cisco-style: 'switchport mode trunk'; PacketTik: '/interface set ether5 mode=trunk'): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
+			"brief": "Alfa and Beta grew: you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (Cisco-style: 'switchport mode trunk'; PacketTik: '/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether5', which lists the port as tagged for that VLAN): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
 			"reqs": [
 				{"d": "Two switches joined by a trunk (both ends)", "t": func() -> bool: return _trunk_between_switches(10)},
 				{"d": "10.0.0.3 reaches 10.0.0.1 across switches", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
@@ -266,7 +265,7 @@ static func _campaign() -> Array:
 			"title": "Join the Internet",
 			"customer": "Zeta Hosting",
 			"reward": 3000,
-			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4: '/routing bgp set as=65001', '/routing bgp peer add address=100.64.0.1 as=64500'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/routing bgp network add prefix=<your-server-subnet>/24' (Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
+			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4 (RouterOS 7): '/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/ip firewall address-list add list=bgp-nets address=<your-server-subnet>/24' (the address list named in output.network is what gets announced; Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
 			"reqs": [
 				{"d": "ISP handoff cabled to a router", "t": func() -> bool: return _uplink_cabled()},
 				{"d": "eBGP session Established", "t": func() -> bool: return _bgp_up() != null},
@@ -278,7 +277,7 @@ static func _campaign() -> Array:
 			"title": "Hide the internals",
 			"customer": "Zeta Hosting (again)",
 			"reward": 2200,
-			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista: in config mode, under the uplink-facing interface, 'ip nat outside'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
+			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista (Cisco-style, four lines): 'ip nat inside' under the server-facing interface, 'ip nat outside' under the uplink-facing one, 'access-list 1 permit <server-subnet> <wildcard>' to say who may be translated, and 'ip nat inside source list 1 interface <uplink-if> overload' to tie them together. Check with 'show ip nat translations'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
 			"reqs": [
 				{"d": "A NAT outside interface on a router", "t": func() -> bool: return _nat_router() != null},
 				{"d": "A private (10.x) server reaches 8.8.8.8", "t": func() -> bool: return _private_pings_inet() != null},
@@ -290,7 +289,7 @@ static func _campaign() -> Array:
 			"title": "Static spaghetti",
 			"customer": "Gamma Corp (again)",
 			"reward": 2600,
-			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista, from config mode: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik: '/routing ospf network add prefix=10.20.0.0/16'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
+			"brief": "Gamma opened a third office and your static routes are becoming spaghetti: every new subnet means touching every router. Time for a routing protocol: OSPF. Build two offices behind two routers (servers 10.20.1.10/24 and 10.20.2.10/24, routers linked by a transit subnet, e.g. 10.20.9.1/30 and 10.20.9.2/30), then on EACH router enable OSPF and advertise its subnets. Junivista, from config mode: 'router ospf', 'network 10.20.0.0/16 area 0'. PacketTik (RouterOS 7, three steps): '/routing ospf instance add name=default router-id=<one of its addresses>', '/routing ospf area add name=backbone area-id=0.0.0.0 instance=default', '/routing ospf interface-template add networks=10.20.0.0/16 area=backbone'. NO static routes on the routers: OSPF learns the paths ('show ip ospf neighbor', look for O routes in 'show ip route').",
 			"reqs": [
 				{"d": "Servers own 10.20.1.10 and 10.20.2.10", "t": func() -> bool: return _owner("10.20.1.10") != null and _owner("10.20.2.10") != null},
 				{"d": "Two routers share an OSPF adjacency", "t": func() -> bool: return _ospf_adjacency()},
@@ -445,7 +444,7 @@ static func _campaign() -> Array:
 			"title": "The tenant with no IPv4",
 			"customer": "Turul Mobil",
 			"reward": 4000,
-			"brief": "Turul Mobil's platform is IPv6 only and they will not take an IPv4 address, not even one. Give their host 2001:db8:64::10/64 and make it reach two things: your own native IPv6 service at 2001:db8:64::20, and a legacy IPv4-only service at 10.164.0.10 that is never getting an IPv6 address. The second one needs both halves of the transition: DNS64 on their resolver to synthesize an AAAA from the A record (the resolver needs that A record first: 'dns add legacy.pkt 10.164.0.10', then 'dns64 64:ff9b::'), and NAT64 on the router to translate the flow ('nat64 prefix 64:ff9b:: pool <your v4 address>', or '/ipv6 nat64 set prefix=64:ff9b:: pool=<v4>' on PacketTik). Native IPv6 must not go anywhere near the translator.",
+			"brief": "Turul Mobil's platform is IPv6 only and they will not take an IPv4 address, not even one. Give their host 2001:db8:64::10/64 and make it reach two things: your own native IPv6 service at 2001:db8:64::20, and a legacy IPv4-only service at 10.164.0.10 that is never getting an IPv6 address. The second one needs both halves of the transition: DNS64 on their resolver to synthesize an AAAA from the A record (the resolver needs that A record first: 'dns add legacy.pkt 10.164.0.10', then 'dns64 64:ff9b::'), and NAT64 on the router to translate the flow ('nat64 prefix 64:ff9b:: pool <your v4 address>' on a Junivista router or the firewall: PacketTik gear has no NAT64, exactly like the real thing). Native IPv6 must not go anywhere near the translator.",
 			"reqs": [
 				{"d": "An IPv6-only tenant host at 2001:db8:64::10 with no IPv4", "t": func() -> bool:
 					var host := _owner("2001:db8:64::10")
@@ -548,6 +547,8 @@ static func _vrrp_ifaces() -> Array:
 static func _vrrp_pair() -> bool:
 	var by_vip := {}
 	for i: Net.Iface in _vrrp_ifaces():
+		if String(i.vrrp.get("vip", "")) == "":
+			continue  # a group with no address is not a gateway yet
 		var key := "%s|%d" % [i.vrrp["vip"], int(i.vrrp["group"])]
 		by_vip[key] = by_vip.get(key, 0) + 1
 		if by_vip[key] >= 2:
@@ -1028,7 +1029,8 @@ static func _parallel_sw_links() -> int:
 	var pair_count := {}
 	var best := 0
 	for l in Game.links:
-		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled:
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled \
+				and l.a.dev != l.b.dev:
 			var names := [l.a.dev.name, l.b.dev.name]
 			names.sort()
 			var key := "%s|%s" % [names[0], names[1]]

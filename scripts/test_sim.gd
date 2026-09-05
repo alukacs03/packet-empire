@@ -5,6 +5,42 @@ class_name SimTests
 
 static var fails := 0
 
+static func probe() -> void:
+	## scratch space: whatever needs a fast, isolated look right now
+	seed(20260823)
+	Game.money = 100000
+	Game.board_targets = false
+	Game.deals = []
+	var qos_rack := Game.add_rack(Vector2i(19, 1))
+	var qos_sw := Game.new_device("sw-8")
+	var qos_a := Game.new_device("srv-1")
+	var qos_b := Game.new_device("srv-1")
+	qos_rack.slots[0] = qos_sw
+	qos_rack.slots[1] = qos_a
+	qos_rack.slots[2] = qos_b
+	Game.connect_ifaces(qos_a.ifaces[0], qos_sw.ifaces[0])
+	Game.connect_ifaces(qos_b.ifaces[0], qos_sw.ifaces[1])
+	Game.add_ip(qos_a.ifaces[0], "10.180.0.10/24")
+	Game.add_ip(qos_b.ifaces[0], "10.180.0.11/24")
+	Game.add_static_route(qos_a, "0.0.0.0", 0, "10.180.0.11")
+	Game.add_static_route(qos_b, "0.0.0.0", 0, "10.180.0.10")
+	var premium := {"id": "q1", "customer": "Strict Kft", "kind": "hosting", "sla": 2,
+		"params": {"ip": "10.180.0.10"}, "fee": 200, "load": 900, "brief": "",
+		"cycles": 0, "up_cycles": 0, "healthy": true}
+	var cheap := {"id": "q2", "customer": "Cheap Bt", "kind": "hosting", "sla": 0,
+		"params": {"ip": "10.180.0.11"}, "fee": 80, "load": 900, "brief": "",
+		"cycles": 0, "up_cycles": 0, "healthy": true}
+	Game.deals = [premium, cheap]
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 3
+	Game.sla_tick()
+	print("tick1 premium: ", premium.get("degraded"), " healthy ", premium.get("healthy"), " cheap: ", cheap.get("degraded"), " healthy ", cheap.get("healthy"))
+	for i: Net.Iface in qos_sw.ifaces:
+		i.qos = true
+	Game.sla_tick()
+	print("tick2 premium: ", premium.get("degraded"), " healthy ", premium.get("healthy"), " cheap: ", cheap.get("degraded"), " healthy ", cheap.get("healthy"))
+	print("ping a->b ", Sim.ping(qos_a, "10.180.0.11"), " b->a ", Sim.ping(qos_b, "10.180.0.10"))
+	print("deals now: ", Game.deals.size(), " events: ", Game.events.slice(maxi(0, Game.events.size() - 5)))
+
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
 	if row == null:
@@ -587,6 +623,9 @@ static func run() -> int:
 	fails = 0
 	Game.money = 1000000
 	Game.board_targets = false  # quarterly bonuses would move the money the sections below measure
+	# the drawer is not under test until the parts section: keep it full so a
+	# new check elsewhere never silently fails to cable something
+	Game.parts = {"patch": 400, "optic": 100, "power": 60, "blank": 60}
 
 	# --- topology: two servers on one switch ---
 	var r := Game.add_rack(Vector2i(0, 0))
@@ -651,6 +690,11 @@ static func run() -> int:
 		"L3: the last-hop router says Destination Host Unreachable when ARP fails")
 	check("Destination Net Unreachable" in CLI.fmt_ping(a, "10.9.0.1"), "L3: ping prints the unreachable reason")
 	check(Sim.traceroute(a, "10.9.0.1") == ["10.0.0.254"], "L3: traceroute stops at the router that complained")
+	var before_unsol := a.arp.size()
+	Sim._host_rx(a, a.ifaces[0], {"src": "de:ad:be:ef:00:01", "dst": a.ifaces[0].mac, "vlan": 0, "type": "arp",
+		"pl": {"op": "rep", "spa": "10.0.0.77", "sha": "de:ad:be:ef:00:01", "tpa": "10.0.0.1"}})
+	check(a.arp.size() == before_unsol and not a.arp.has("10.0.0.77"),
+		"arp: a reply nobody asked for is not cached (the poisoning a real stack ignores)")
 	Game.remove_static_route(a, "0.0.0.0", 0)
 	check(not Sim.ping(a, "10.1.0.2")["ok"], "L3: no default route, no reply (return path intact)")
 	Game.add_static_route(a, "0.0.0.0", 0, "10.0.0.254")
@@ -748,6 +792,48 @@ static func run() -> int:
 	check(blocked_n == 1, "stp: exactly one port of the loop is discarding (got %d)" % blocked_n)
 	var ses := CLI.new_session(sw_a)
 	check(ses.exec("show spanning-tree").contains("Root bridge"), "stp: show spanning-tree renders")
+	var stp_root_sw: Net.NDevice = Sim.stp_root_of(sw_a)
+	var stp_other: Net.NDevice = sw_b if stp_root_sw == sw_a else sw_a
+	var stp_other_cli := CLI.new_session(stp_other)
+	var stp_view := stp_other_cli.exec("show spanning-tree")
+	check(stp_view.contains(" root ") and stp_view.contains("Root ID"),
+		"stp: the non-root switch shows exactly one root port and the root's bridge id")
+	check(not CLI.new_session(stp_root_sw).exec("show spanning-tree").contains(" root "),
+		"stp: the root bridge has no root port")
+	var guard_port: Net.Iface = null
+	for gp: Net.Iface in stp_other.ifaces:
+		var gl := Game.link_at(gp)
+		if gl != null and gl.other(gp).dev.type != "switch":
+			guard_port = gp
+			break
+	check(guard_port != null and stp_view.contains(CLI.EOS._short(guard_port.name) + " "), "stp: host-facing ports are listed too")
+	stp_other_cli.exec("en")
+	stp_other_cli.exec("conf t")
+	check(stp_other_cli.exec("spanning-tree priority 4000").contains("4096"), "stp: a priority that is not a multiple of 4096 is refused")
+	stp_other_cli.exec("interface " + guard_port.name)
+	check(stp_other_cli.exec("spanning-tree portfast") == "" and stp_other_cli.exec("spanning-tree bpduguard enable") == "",
+		"stp: portfast and bpduguard are accepted on an edge port")
+	stp_other_cli.exec("end")
+	check(stp_other_cli.exec("show spanning-tree").contains("Edge") and stp_other_cli.exec("show run").contains("spanning-tree bpduguard enable"),
+		"stp: an edge port is marked Edge and the config keeps both settings")
+	var guard_peer: Net.Iface = Game.link_at(guard_port).other(guard_port)
+	Game.disconnect_iface(guard_port)
+	var rogue_sw := Game.new_device("sw-8")
+	var rogue_rack := Game.add_rack(Vector2i(30, 30))
+	rogue_rack.slots[0] = rogue_sw
+	Game.connect_ifaces(guard_port, rogue_sw.ifaces[0])
+	Game.topology_changed.emit()
+	Sim.stp_blocked(guard_port)  # the tree is computed lazily
+	check(guard_port.err_disabled and not guard_port.enabled, "stp: bpduguard err-disables the port the moment a switch appears on it")
+	Game.disconnect_iface(guard_port)
+	rogue_rack.slots[0] = null
+	Game.racks.erase(rogue_rack)
+	guard_port.err_disabled = false
+	guard_port.enabled = true
+	guard_port.bpduguard = false
+	guard_port.portfast = false
+	Game.connect_ifaces(guard_port, guard_peer)
+	Game.topology_changed.emit()
 	sw_a.ifaces[3].enabled = false
 	Game.topology_changed.emit()
 	check(Sim.ping(a2, "10.0.0.2")["ok"], "stp: primary link dies, blocked spare takes over")
@@ -879,6 +965,11 @@ static func run() -> int:
 	Game.add_ip(fw.ifaces[2], "172.16.3.1/24")
 	Game.add_static_route(app, "0.0.0.0", 0, "172.16.3.1")
 	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: default permit forwards")
+	var fw_arp := CLI.new_session(fw)
+	check(fw_arp.exec("show arp").contains("Age (min)"), "arp: show arp has an age column")
+	Game.cycle += 3
+	check(fw_arp.exec("show arp").contains("   3   "), "arp: an entry learned three cycles ago says so")
+	Game.cycle -= 3
 	var fs := CLI.new_session(fw)
 	fs.exec("en")
 	fs.exec("conf t")
@@ -1053,15 +1144,27 @@ static func run() -> int:
 	check(mkt_sw.ifaces[0].name == "ether1", "ros: PacketTik ports are etherN")
 	rs.exec("/interface bridge vlan add vlan-ids=50 comment=lab")
 	check(mkt_sw.vlans.has(50), "ros: bridge vlan add creates vlan")
-	rs.exec("/interface set ether2 pvid=50")
-	check(mkt_sw.ifaces[1].untagged_vlan == 50 and mkt_sw.ifaces[1].mode == "access", "ros: pvid assigns access vlan")
+	rs.exec("/interface bridge port set [find interface=ether2] pvid=50")
+	check(mkt_sw.ifaces[1].untagged_vlan == 50 and mkt_sw.ifaces[1].mode == "access", "ros: bridge port pvid assigns access vlan")
+	check(rs.exec("/interface set ether2 pvid=50").contains("bridge"), "ros: the old /interface set pvid form points at the bridge")
 	check(rs.exec("export").contains("vlan-ids=50"), "ros: export renders config")
 	var rr := CLI.new_session(mkt_rtr)
 	rr.exec("/ip address add address=10.7.0.1/24 interface=ether1")
 	check("10.7.0.1/24" in mkt_rtr.ifaces[0].ips, "ros: ip address add")
-	rr.exec("/routing bgp set as=65010")
-	rr.exec("/routing bgp peer add address=100.64.0.9 as=64500")
-	check(mkt_rtr.bgp["neighbors"].size() == 1, "ros: bgp peer configured")
+	check(rr.exec("/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1") == ""
+		and rr.exec("/ip firewall nat print").contains("action=masquerade out-interface=ether1")
+		and Sim.nat_translate_src(mkt_rtr, mkt_rtr.ifaces[1], mkt_rtr.ifaces[0], "10.9.9.9") == "10.7.0.1",
+		"ros: masquerade needs no inside marking, exactly like RouterOS")
+	check(rr.exec("/routing bgp connection add name=isp remote.address=100.64.0.9 remote.as=64500").contains("no local AS"),
+		"ros: a connection without a local AS is refused with the fix named")
+	rr.exec("/routing bgp template set default as=65010")
+	check(rr.exec("/routing bgp connection add name=isp remote.address=100.64.0.9 remote.as=64500 local.role=ebgp output.network=bgp-nets") == "",
+		"ros: RouterOS 7 bgp connection configured")
+	check(mkt_rtr.bgp["neighbors"].size() == 1 and int(mkt_rtr.bgp["asn"]) == 65010, "ros: bgp peer configured")
+	rr.exec("/ip firewall address-list add list=bgp-nets address=10.7.0.0/24")
+	check("10.7.0.0/24" in mkt_rtr.bgp["networks"], "ros: the address list named in output.network is what gets announced")
+	check(rr.exec("/routing bgp connection print").contains(".as=64500") and rr.exec("/export").contains("output.network=bgp-nets"),
+		"ros: connection print and export show the v7 shape")
 
 	# --- BGP to the internet (EOS router) ---
 	var r4 := Game.add_rack(Vector2i(2, 0))
@@ -1084,6 +1187,9 @@ static func run() -> int:
 	es.exec("neighbor 100.64.0.1 remote-as 64500")
 	es.exec("end")
 	check(es.exec("show ip bgp summary").contains("Established"), "bgp: session establishes with the handoff")
+	var bgp_table := es.exec("show ip bgp")
+	check(bgp_table.contains("*> 0.0.0.0/0") and bgp_table.contains("Path"),
+		"bgp: show ip bgp lists the learned default with the best-path marker and an AS path")
 	check(Sim.ping(edge, "8.8.8.8")["ok"], "bgp: router reaches the internet via learned default")
 	check(not Sim.ping(web, "8.8.8.8")["ok"], "bgp: server fails until prefix announced (no return path)")
 	es.exec("conf t")
@@ -1103,8 +1209,21 @@ static func run() -> int:
 	es.exec("int et1")
 	es.exec("ip nat outside")
 	es.exec("end")
+	check(not Sim.ping(web, "8.8.8.8")["ok"], "nat: 'ip nat outside' alone translates nothing (there is no rule yet)")
+	es.exec("conf t")
+	es.exec("interface Ethernet2")
+	es.exec("ip nat inside")
+	es.exec("exit")
+	check(es.exec("access-list 1 permit 10.3.0.0 0.0.0.255") == "", "nat: a standard access list with a wildcard mask")
+	check(es.exec("ip nat inside source list 1 interface Ethernet1") != "", "nat: without overload the router says why")
+	check(es.exec("ip nat inside source list 1 interface Ethernet1 overload") == "", "nat: the overload rule ties list and interface")
+	es.exec("end")
 	check(Sim.ping(web, "8.8.8.8")["ok"], "nat: masquerade restores internet for the private server")
-	check(es.exec("sh run").contains("ip nat outside"), "nat: rendered in running-config")
+	var xlate := es.exec("show ip nat translations")
+	check(xlate.contains("icmp") and xlate.contains("8.8.8.8:") and xlate.contains("Inside global"),
+		"nat: show ip nat translations lists the flow with its PAT port")
+	check(es.exec("sh run").contains("ip nat outside") and es.exec("sh run").contains("ip nat inside source list 1 interface Ethernet1 overload")
+		and es.exec("sh run").contains("access-list 1 permit 10.3.0.0 0.0.0.255"), "nat: rendered in running-config")
 	check(Game.try_complete_contract(_contract("hide_the_internals")), "nat: contract verifies")
 
 	# --- overheating trips gear ---
@@ -1171,9 +1290,18 @@ static func run() -> int:
 	os1.exec("network 10.20.0.0/16 area 0")
 	os1.exec("end")
 	var os2 := CLI.new_session(o_r2)
-	os2.exec("/routing ospf network add prefix=10.20.0.0/16")
+	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone").contains("no such instance"),
+		"ospf: RouterOS 7 wants the instance before the template")
+	os2.exec("/routing ospf instance add name=default router-id=10.20.9.2")
+	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone").contains("no such area"),
+		"ospf: and the area before the template")
+	os2.exec("/routing ospf area add name=backbone area-id=0.0.0.0 instance=default")
+	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone") == "",
+		"ospf: interface-template with networks and area is the v7 spelling")
 	check(os1.exec("show ip ospf neighbor").contains(o_r2.name), "ospf: adjacency comes up (EOS side)")
-	check(os2.exec("/routing ospf print").contains(o_r1.name), "ospf: adjacency visible from RouterOS side")
+	check(os2.exec("/routing ospf neighbor print").contains("state=\"Full\""), "ospf: adjacency visible from RouterOS side")
+	check(os2.exec("/export").contains("interface-template add networks=10.20.0.0/16 area=backbone"),
+		"ospf: the RouterOS export replays the three v7 steps")
 	check(Sim.ping(t1, "10.20.2.10")["ok"] and Sim.ping(t2, "10.20.1.10")["ok"],
 		"ospf: cross-office ping with zero static routes on routers")
 	check(os1.exec("sh ip route").contains("O  10.20.2.0/24"), "ospf: O route in show ip route")
@@ -1317,6 +1445,10 @@ static func run() -> int:
 	v2.exec("end")
 	check(Sim.vrrp_master("10.40.0.1", 1) == vr1, "vrrp: higher priority wins mastership")
 	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: client pings the virtual gateway")
+	check(String(vcl.arp.get("10.40.0.1", "")) == "00:00:5e:00:01:01",
+		"vrrp: the client learned the virtual MAC for the virtual address, not a router's own")
+	check(v1.exec("show vrrp").contains("00:00:5e:00:01:01") and v1.exec("show vrrp").contains("yes"),
+		"vrrp: show vrrp prints the virtual MAC and the preempt flag")
 	check(v1.exec("show vrrp").contains("Master"), "vrrp: show vrrp reports Master")
 	check(v2.exec("show vrrp").contains("Backup"), "vrrp: show vrrp reports Backup")
 	check(Game.try_complete_contract(_contract("no_spof")), "vrrp: no-SPOF contract verifies")
@@ -1326,6 +1458,23 @@ static func run() -> int:
 	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: virtual IP survives the master's death")
 	vr1.status = "active"
 	Game.topology_changed.emit()
+	check(Sim.vrrp_master("10.40.0.1", 1) == vr1, "vrrp: a returning higher-priority router preempts by default")
+	v1.exec("conf t")
+	v1.exec("int et1")
+	check(v1.exec("no vrrp 1 preempt") == "", "vrrp: preempt can be switched off")
+	v1.exec("end")
+	vr1.status = "offline"
+	Game.topology_changed.emit()
+	check(Sim.vrrp_master("10.40.0.1", 1) == vr2, "vrrp: (backup holds the address)")
+	vr1.status = "active"
+	Game.topology_changed.emit()
+	check(Sim.vrrp_master("10.40.0.1", 1) == vr2, "vrrp: with preempt off the returning router leaves the live master alone")
+	check(v1.exec("show run").contains("no vrrp 1 preempt"), "vrrp: show run keeps the preempt setting")
+	v1.exec("conf t")
+	v1.exec("int et1")
+	v1.exec("vrrp 1 preempt")
+	v1.exec("end")
+	check(Sim.vrrp_master("10.40.0.1", 1) == vr1, "vrrp: turning preempt back on hands the address back")
 
 	# --- field faults, redundant-gw offers, reverse DNS ---
 	# marketplace checks first: a field fault may reboot gear and wipe its config
@@ -1495,7 +1644,7 @@ static func run() -> int:
 	Game.connect_ifaces(w_sw.ifaces[2], w_sw2.ifaces[7])  # inter-switch link
 	Game.connect_ifaces(w_s3.ifaces[0], w_sw2.ifaces[0])
 	var w_ros := CLI.new_session(w_sw)  # PacketTik: RouterOS dialect
-	w_ros.exec("/interface set ether3 mode=trunk")
+	w_ros.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether3")
 	var w_eos := CLI.new_session(w_sw2)  # OpenRack: EOS dialect
 	w_eos.exec("enable")
 	w_eos.exec("configure terminal")
@@ -1517,18 +1666,18 @@ static func run() -> int:
 		"debrief: the tagged path names both real switches and both vendor dialects")
 	check(Game.check_contract_mastery("stretch_vlans") != "",
 		"mastery: a trunk carrying every VLAN is complete but not yet disciplined")
-	check(w_ros.exec("/interface set ether3 tagged=10,20") == "",
-		"routeros: a PacketTik trunk can be pruned from its own CLI")
+	check(w_ros.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=20 tagged=ether3") == "",
+		"routeros: a tagged port carries exactly the VLANs it is listed under")
 	w_eos.exec("configure terminal")
 	w_eos.exec("interface Ethernet8")
 	w_eos.exec("switchport trunk allowed vlan 10,20")
 	w_eos.exec("end")
 	check(Game.check_contract_mastery("stretch_vlans") == "" and "stretch_vlans" in Game.mastered_contracts,
 		"mastery: pruning both real trunk ends to the intended VLANs is recognized")
-	check("tagged=10,20" in w_ros.exec("/export"),
+	check("vlan-ids=10 tagged=ether3" in w_ros.exec("/export") and "vlan-ids=20 tagged=ether3" in w_ros.exec("/export"),
 		"routeros: PacketTik exports preserve the mastered trunk pruning")
 	Game.connect_ifaces(w_sw.ifaces[3], w_sw2.ifaces[6])  # the spare link
-	w_ros.exec("/interface set ether4 mode=trunk")
+	w_ros.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether4")
 	w_eos.exec("configure terminal")
 	w_eos.exec("interface Ethernet7")
 	w_eos.exec("switchport mode trunk")
@@ -1638,7 +1787,8 @@ static func run() -> int:
 	check(not post_blocked, "lag: bundled links form one logical edge, nothing blocked")
 	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: traffic flows over the bundle")
 	check(Game.link_capacity(Game.link_at(lsw1.ifaces[1])) == 2000, "lag: bundle capacity sums members")
-	check(lag_s.exec("show port-channel").contains("Et2,Et3"), "lag: show port-channel lists members")
+	check(lag_s.exec("show port-channel summary").contains("Po1(SU)") and lag_s.exec("show port-channel").contains("Et2(P) Et3(P)"),
+		"lag: show port-channel summary flags the bundle up and its members bundled")
 	lsw1.ifaces[1].enabled = false
 	Game.topology_changed.emit()
 	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: member death fails over inside the bundle")
@@ -1646,6 +1796,40 @@ static func run() -> int:
 	Game.topology_changed.emit()
 
 	check(Game.try_complete_contract(_contract("double_the_pipe")), "lag: double-the-pipe contract verifies")
+	# LACP negotiation: passive never starts a conversation
+	for lacp_ses in [lag_s, lag_s2]:
+		lacp_ses.exec("conf t")
+		lacp_ses.exec("int et2")
+		lacp_ses.exec("channel-group 1 mode passive")
+		lacp_ses.exec("int et3")
+		lacp_ses.exec("channel-group 1 mode passive")
+		lacp_ses.exec("end")
+	check(not Sim.ping(lh1, "10.50.0.2")["ok"] and lag_s.exec("show port-channel summary").contains("Po1(SD)"),
+		"lag: passive on both ends never bundles, and the members are suspended")
+	check(lag_s.exec("show port-channel summary").contains("Et2(I)"), "lag: a suspended member is flagged I")
+	lag_s.exec("conf t")
+	lag_s.exec("int et2")
+	lag_s.exec("channel-group 1 mode active")
+	lag_s.exec("int et3")
+	lag_s.exec("channel-group 1 mode active")
+	lag_s.exec("end")
+	check(Sim.ping(lh1, "10.50.0.2")["ok"] and lag_s.exec("show port-channel summary").contains("LACP"),
+		"lag: active on one end is enough, and the protocol column says LACP")
+	check(lag_s.exec("show run").contains("channel-group 1 mode active"), "lag: show run keeps the mode")
+	lag_s2.exec("conf t")
+	lag_s2.exec("int et2")
+	lag_s2.exec("channel-group 1 mode on")
+	lag_s2.exec("int et3")
+	lag_s2.exec("channel-group 1 mode on")
+	lag_s2.exec("end")
+	check(not Sim.ping(lh1, "10.50.0.2")["ok"], "lag: 'on' against LACP never comes up (the exam trap)")
+	lag_s.exec("conf t")
+	lag_s.exec("int et2")
+	lag_s.exec("channel-group 1 mode on")
+	lag_s.exec("int et3")
+	lag_s.exec("channel-group 1 mode on")
+	lag_s.exec("end")
+	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: (bundle restored)")
 	var ros_bond := CLI.new_session(mkt_sw)
 	ros_bond.exec("/interface bonding add slaves=ether3,ether4")
 	check(mkt_sw.ifaces[2].lag > 0 and mkt_sw.ifaces[2].lag == mkt_sw.ifaces[3].lag,
@@ -2487,9 +2671,10 @@ static func run() -> int:
 	check(Game.chase_invoice(Game.invoices[0]) == "", "invoicing: an overdue invoice can be chased")
 	check(Game.reputation < rep_before_chase, "invoicing: chasing costs a little goodwill")
 	check(Game.chase_invoice(Game.invoices[0]) != "", "invoicing: chasing twice is refused")
-	Game.invoices[0]["due"] = Game.cycle - Game.WRITE_OFF_AFTER - 1
+	Game.invoices[0]["due"] = Game.cycle + 1  # keeps slipping into the future
+	Game.invoices[0]["raised"] = Game.cycle - Game.WRITE_OFF_AFTER - 12
 	Game.collect_invoices()
-	check(Game.receivables() == 0, "invoicing: a long-overdue invoice is written off")
+	check(Game.receivables() == 0, "invoicing: a long-overdue invoice is written off, measured from when it was raised, however often it slipped")
 	Game.invoices = []
 
 	# --- power distribution: A and B feeds ---
@@ -5257,7 +5442,7 @@ static func run() -> int:
 	Game.runbook_runs = []
 
 	# --- structured cabling: patch panels ---
-	Game.parts = {"patch": 60, "optic": 20, "power": 20, "blank": 20}
+	Game.parts = {"patch": 400, "optic": 100, "power": 60, "blank": 60}
 	Game.parts_auto = true
 	Game.money = 20000
 	var pp_rack := Game.add_rack(Vector2i(74, 1))
@@ -5900,6 +6085,9 @@ static func run() -> int:
 	check(Sim.ping(t_a, "192.168.31.10")["ok"], "tunnel: it recovers with the underlay")
 
 	# --- QoS under congestion ---
+	seed(20260823)  # load placement is random: this section must not depend on what ran before
+	var qos_stage := Game.stage
+	Game.stage = 0  # no field faults or attacks while congestion is being measured
 	Game.deals = []
 	var qos_rack := Game.add_rack(Vector2i(19, 1))
 	var qos_sw := Game.new_device("sw-8")   # 1 Gbit ports, and an EOS-style CLI
@@ -5933,11 +6121,12 @@ static func run() -> int:
 		i.qos = true
 	Game.sla_tick()
 	check(not bool(premium.get("degraded", true)), "qos: the strict service level is served first")
-	check(bool(cheap.get("degraded", false)), "qos: the best-effort customer absorbs the shortfall")
+	check(bool(cheap.get("degraded", false)), "qos: the best-effort customer absorbs the shortfall (cheap healthy=%s)" % str(cheap.get("healthy")))
 	var qs := CLI.new_session(qos_sw)
 	qs.exec("en")
 	check(qs.exec("show qos").contains("priority queueing"), "qos: the policy is reported")
 	Game.deals = []
+	Game.stage = qos_stage
 
 	# --- load balancing ---
 	var lb_rack := Game.add_rack(Vector2i(18, 1))
@@ -7682,9 +7871,8 @@ static func run() -> int:
 	var n64_ros := Game.new_device("rtr-lite")
 	var n64_rack3 := Game.add_rack(Vector2i(64, 1))
 	n64_rack3.slots[0] = n64_ros
-	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9") == "" \
-			and CLI.new_session(n64_ros).exec("/ipv6 nat64 print").contains("64:ff9b::"),
-		"nat64: PacketTik gear configures the same translator in its own dialect")
+	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9").contains("incomplete command"),
+		"nat64: PacketTik gear has no NAT64, exactly like RouterOS")
 
 	# the contract that only closes when both halves of the transition exist
 	var v6c_rack := Game.add_rack(Vector2i(66, 1))
@@ -9588,7 +9776,7 @@ static func run() -> int:
 		and pt.ifaces.any(func(i): return i.parent == "ether1" and i.dot1q == 60),
 		"ros: /interface vlan add makes an 802.1Q subinterface")
 	check(pts.exec("/ip address add address=10.90.60.1/24 interface=vlan60") == ""
-		and pts.exec("/ip address print").contains("ether1.60"),
+		and pts.exec("/ip address print").contains("vlan60"),
 		"ros: the RouterOS vlan name addresses the subinterface")
 	check(pts.exec("/interface vrrp add interface=ether2 vrid=1 priority=120") == ""
 		and pts.exec("/ip address add address=10.40.0.1/32 interface=vrrp1") == ""
@@ -9891,8 +10079,8 @@ static func run() -> int:
 	var nv_ros := Game.new_device("sw-lite")
 	nv_rack.slots[4] = nv_ros
 	var nvr := CLI.new_session(nv_ros)
-	nvr.exec("/interface set ether5 mode=trunk")
-	nvr.exec("/interface set ether5 pvid=10")
+	nvr.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=20 tagged=ether5")
+	nvr.exec("/interface bridge port set [find interface=ether5] pvid=10")
 	check(nv_ros.ifaces[4].mode == "trunk" and nv_ros.ifaces[4].untagged_vlan == 10
 		and "pvid=10" in nvr.exec("export"),
 		"native: RouterOS pvid on a trunk is its native VLAN, and export keeps it")
@@ -9944,6 +10132,49 @@ static func run() -> int:
 	for k in 6:
 		eos_rack.slots[k] = null
 	Game.racks.erase(eos_rack)
+
+	# --- state that must follow a device, leave with it, or start clean ---
+	var bug_rack := Game.add_rack(Vector2i(70, 1))
+	var bug_sw := Game.new_device("sw-24")
+	Game.install_device(bug_rack, 0, bug_sw)
+	bug_sw.vtep = {"src": "10.200.9.9", "peers": ["10.200.9.10"], "map": {50: 5000}, "evpn": true}
+	Game.physical_access[bug_sw.name] = Game.cycle + 5
+	var bug_licence := false
+	for ren in Game.renewals:
+		if String(ren.get("serial", "")) == bug_sw.name:
+			bug_licence = true
+	check(bug_licence, "bugs: (a new device carries a licence renewal)")
+	Game.save_game()
+	Game.load_game()
+	var bug_sw2 := _dev_named(bug_sw.name)
+	check(bug_sw2 != null and int(bug_sw2.vtep.get("map", {}).get(50, 0)) == 5000 and bool(bug_sw2.vtep.get("evpn", false)),
+		"bugs: the VXLAN VTEP survives a save and comes back with integer VLAN keys")
+	check(Game.rename_device(bug_sw2, "leafx") and Game.physical_access.has("leafx") and not Game.physical_access.has(bug_sw.name),
+		"bugs: renaming a device carries the state keyed by its name with it")
+	var bug_serials := 0
+	for ren in Game.renewals:
+		if String(ren.get("serial", "")) == "leafx":
+			bug_serials += 1
+	check(bug_serials == 1, "bugs: and its licence renewal follows the new name")
+	Game.uninstall_device(bug_sw2, false)
+	for ren in Game.renewals:
+		if String(ren.get("serial", "")) == "leafx":
+			bug_serials = 99
+	check(bug_serials == 1 and not Game.physical_access.has("leafx"), "bugs: uninstalling a device retires its licence and its per-device state")
+	var bug_rng := RandomNumberGenerator.new()
+	bug_rng.seed = 7
+	var bug_hire := Staff.make_candidate(bug_rng, Game.habits)
+	Game.hire(bug_hire)
+	var bug_member: Dictionary = Game.staff.back()
+	Game.assign_duty("parts", String(bug_member["name"]))
+	check(String(Game.duties.get("parts", "")) == String(bug_member["name"]), "bugs: (duty assigned)")
+	Game.fire(bug_member)
+	check(not Game.duties.has("parts"), "bugs: firing the duty holder drops the duty rather than leaving a ghost holding it")
+	Game.stats["earned"] = 12345
+	Game.sla_status["ghost"] = false
+	Game.reset_run_state()  # what every _apply (load, new company) now does first
+	check(int(Game.stats.get("earned", 0)) == 0 and Game.sla_status.is_empty(),
+		"bugs: a new company does not inherit the old one's earnings or breach flags")
 
 	print("---- %d failures" % fails)
 	return fails
