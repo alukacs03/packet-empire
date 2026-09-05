@@ -806,9 +806,12 @@ func exec(line: String) -> String:
 				if seen.has(nb["dev"]):
 					continue
 				seen[nb["dev"]] = true
-				var rid: String = String(nb["dev"].ospf.get("router_id", nb["via_ip"]))
-				out += " %d instance=%s area=%s address=%s router-id=%s state=\"Full\" state-changes=2 adjacency=%s\n" % [
-					n, dev.ospf.get("instance", "default"), _area_name(), nb["via_ip"], rid, "%dm" % maxi(1, Game.cycle % 60)]
+				var rid: String = Sim.ospf_router_id(nb["dev"])
+				var roles := Sim.ospf_segment_roles(dev, nb["iface"])
+				var role := "" if bool(roles.get("p2p", false)) else (" DR" if roles.get("dr") == nb["dev"]
+					else (" BDR" if roles.get("bdr") == nb["dev"] else " DROther"))
+				out += " %d instance=%s area=%s address=%s router-id=%s state=\"Full\"%s state-changes=2 adjacency=%s\n" % [
+					n, dev.ospf.get("instance", "default"), _area_name(), nb["via_ip"], rid, role, "%dm" % maxi(1, Game.cycle % 60)]
 				n += 1
 			return out
 		"routing bgp template set":

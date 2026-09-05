@@ -1352,7 +1352,22 @@ static func run() -> int:
 	os2.exec("/routing ospf area add name=backbone area-id=0.0.0.0 instance=default")
 	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone") == "",
 		"ospf: interface-template with networks and area is the v7 spelling")
-	check(os1.exec("show ip ospf neighbor").contains(o_r2.name), "ospf: adjacency comes up (EOS side)")
+	check(os1.exec("show ip ospf neighbor").contains("10.20.9.2") and os1.exec("show ip ospf neighbor").contains("FULL/  -"),
+		"ospf: adjacency comes up (EOS side), point-to-point so no DR")
+	check(os1.exec("show ip ospf neighbor").contains("Neighbor ID") and os1.exec("show ip ospf neighbor").contains("Et3"),
+		"ospf: the neighbour table has the IOS columns")
+	os1.exec("conf t")
+	os1.exec("router ospf 1")
+	check(os1.exec("router-id 1.1.1.1") == "", "ospf: router-id is accepted")
+	os1.exec("end")
+	check(os1.exec("show ip ospf database").contains("1.1.1.1") and os1.exec("show run").contains("router-id 1.1.1.1"),
+		"ospf: the database and the config carry the router-id")
+	Game.disconnect_iface(o_r1.ifaces[2])
+	Game.topology_changed.emit()
+	check(Sim.ospf_neighbors(o_r1).is_empty(), "ospf: with the cable out the configured neighbour is gone, whatever both sides agree on")
+	Game.connect_ifaces(o_r1.ifaces[2], o_r2.ifaces[1])
+	Game.topology_changed.emit()
+	check(not Sim.ospf_neighbors(o_r1).is_empty(), "ospf: (cable back)")
 	check(os2.exec("/routing ospf neighbor print").contains("state=\"Full\""), "ospf: adjacency visible from RouterOS side")
 	check(os2.exec("/export").contains("interface-template add networks=10.20.0.0/16 area=backbone"),
 		"ospf: the RouterOS export replays the three v7 steps")
@@ -6487,6 +6502,25 @@ static func run() -> int:
 	spine_a.status = "active"
 	Game.topology_changed.emit()
 	check(Game.try_complete_contract(_contract("build_a_fabric")), "fabric: the build-a-fabric contract verifies")
+	# cost decides: a dearer uplink drops out of the equal-cost set
+	var cost_cli := CLI.new_session(leaf_a)
+	cost_cli.exec("en")
+	cost_cli.exec("conf t")
+	cost_cli.exec("interface Ethernet1")
+	check(cost_cli.exec("ip ospf cost 50") == "", "ospf: ip ospf cost is accepted under an interface")
+	cost_cli.exec("end")
+	Game.topology_changed.emit()
+	var fab_paths_after := Sim._route_paths(leaf_a, "10.251.2.10")
+	check(fab_paths_after.size() == 1 and String(fab_paths_after[0]["next_hop"]) != String(leaf_a.ifaces[0].ips[0]).split("/")[0]
+		and Sim.route_via(leaf_a, "10.251.2.10") == Sim.ospf_neighbors(leaf_a).filter(func(nb): return nb["iface"] == leaf_a.ifaces[1])[0]["via_ip"],
+		"ospf: raising the cost of one uplink sends everything over the other")
+	check(cost_cli.exec("show ip ospf interface").contains("Cost: 50"), "ospf: show ip ospf interface prints the cost")
+	cost_cli.exec("conf t")
+	cost_cli.exec("interface Ethernet1")
+	cost_cli.exec("ip ospf cost 1")
+	cost_cli.exec("end")
+	Game.topology_changed.emit()
+	check(Sim._route_paths(leaf_a, "10.251.2.10").size() == 2, "ospf: equal costs restore the equal-cost pair")
 
 	# --- blackhole routes and attacks ---
 	Game.attacks = []

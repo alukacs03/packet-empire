@@ -133,18 +133,20 @@ static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		return
 	if p["op"] == "discover":
 		var svc: Dictionary = dev.services.get("dhcp", {})
-		if svc.is_empty() or svc.get("iface", "") != iface.name:
+		if svc.is_empty() or not _dhcp_serves(svc, iface):
 			return
 		var leases: Dictionary = svc["leases"]
+		if not svc.has("since"):
+			svc["since"] = {}
 		var ip: String
 		if leases.has(p["mac"]):
-			ip = leases[p["mac"]]
+			ip = leases[p["mac"]]  # a renewal keeps the address it had
 		else:
-			var next := Net.ip_to_int(svc["start"]) + leases.size()
-			if next > Net.ip_to_int(svc["end"]):
-				return  # pool exhausted
-			ip = "%d.%d.%d.%d" % [next >> 24 & 255, next >> 16 & 255, next >> 8 & 255, next & 255]
+			ip = _dhcp_free_address(dev, iface, svc)
+			if ip == "":
+				return  # pool exhausted, or every free address answered a probe
 			leases[p["mac"]] = ip
+		svc["since"][p["mac"]] = Game.cycle
 		_tx(iface, {"src": iface.mac, "dst": p["mac"], "vlan": 0, "type": "dhcp",
 			"pl": {"op": "ack", "mac": p["mac"], "ip": ip, "plen": svc["plen"],
 				"gw": svc.get("gw", ""), "dns": svc.get("dns", "")}})
@@ -152,6 +154,70 @@ static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		for i: Net.Iface in dev.ifaces:
 			if i.mac == p["mac"]:
 				_dhcp_offer = p
+
+const DHCP_LEASE := 24  # cycles a lease lasts before it can be reused
+
+static func _dhcp_serves(svc: Dictionary, iface: Net.Iface) -> bool:
+	## a Linux dhcpd is bound to an interface; a router pool serves whichever
+	## interface sits in the pool's network
+	if String(svc.get("iface", "")) != "":
+		return svc["iface"] == iface.name
+	for cidr in iface.ips:
+		if Net.same_subnet(String(cidr).split("/")[0], String(svc["start"]), int(svc["plen"])):
+			return true
+	return false
+
+static func _dhcp_free_address(dev: Net.NDevice, iface: Net.Iface, svc: Dictionary) -> String:
+	## the lowest address in the range that is not excluded, not held by a
+	## live lease, and not answering ARP already (a conflict, logged)
+	var taken := {}
+	for mac in svc["leases"]:
+		taken[String(svc["leases"][mac])] = true
+	for ex in svc.get("excluded", []):
+		taken[String(ex)] = true
+	for own in [String(svc.get("gw", "")), String(svc.get("dns", ""))]:
+		if own != "":
+			taken[own] = true
+	var first := Net.ip_to_int(svc["start"])
+	var last := Net.ip_to_int(svc["end"])
+	for n in range(first, last + 1):
+		var ip := Net.int_to_ip(n)
+		if taken.has(ip):
+			continue
+		if _arp_resolve(dev, iface, ip) != "":
+			if ip not in svc.get("conflicts", []):
+				if not svc.has("conflicts"):
+					svc["conflicts"] = []
+				svc["conflicts"].append(ip)
+				Game.device_log(dev, "DHCP: %s is already in use on the segment, skipping it" % ip)
+			continue
+		return ip
+	return ""
+
+static func dhcp_tick() -> void:
+	## Leases expire when their holder is gone. A client that still holds the
+	## address is treated as renewing, the way a real client does at T1.
+	for d in Game.all_devices():
+		var svc: Dictionary = d.services.get("dhcp", {})
+		if svc.is_empty() or not svc.has("since"):
+			continue
+		for mac in svc["leases"].keys():
+			if Game.cycle - int(svc["since"].get(mac, Game.cycle)) < DHCP_LEASE:
+				continue
+			var holder := _mac_owner(String(mac))
+			var holds := holder != null and holder.ips.any(func(c): return String(c).split("/")[0] == String(svc["leases"][mac]))
+			if holds:
+				svc["since"][mac] = Game.cycle  # renewed
+			else:
+				svc["leases"].erase(mac)
+				svc["since"].erase(mac)
+
+static func _mac_owner(mac: String) -> Net.Iface:
+	for d in Game.all_devices():
+		for i: Net.Iface in d.ifaces:
+			if i.mac == mac:
+				return i
+	return null
 
 static func reverse_lookup(dev: Net.NDevice, ip: String) -> String:
 	## PTR-style: ask the resolver which name maps to this address
@@ -381,65 +447,152 @@ static func ospf_area(dev: Net.NDevice) -> String:
 		return String(dev.ospf["areas"][a])
 	return "0.0.0.0"
 
+static var _ospf_cache := {}  # device name -> neighbours, until the topology moves
+static var _ospf_probing := false
+
 static func ospf_neighbors(dev: Net.NDevice) -> Array:
-	## -> [{dev, via_ip}] adjacent OSPF routers (shared covered subnet)
+	## -> [{dev, via_ip, iface}] adjacent OSPF routers: a shared covered
+	## subnet in the same area, and hellos that actually cross the wire
+	if _ospf_cache.has(dev.name):
+		return _ospf_cache[dev.name]
 	var out: Array = []
+	var passive: Array = dev.ospf.get("passive", [])
 	for other in Game.all_devices():
 		if other == dev or other.ospf.is_empty() or not other.ip_forwarding 				or other.status != "active":
 			continue
 		if ospf_area(other) != ospf_area(dev):
 			continue  # hellos carry the area id, and a mismatch is dropped on the floor
+		var other_passive: Array = other.ospf.get("passive", [])
 		for ia: Net.Iface in ospf_covered_ifaces(dev):
+			if ia.name in passive:
+				continue  # advertised, but no hellos leave a passive interface
+			if Game.link_at(ia) == null and not ia.name.begins_with("Vlan"):
+				continue  # nothing plugged in: a cached ARP entry is not a hello
 			for cidr_a: String in ia.ips:
 				var pa := cidr_a.split("/")
 				for ib: Net.Iface in ospf_covered_ifaces(other):
+					if ib.name in other_passive:
+						continue
 					for cidr_b: String in ib.ips:
-						if Net.same_subnet(cidr_b.split("/")[0], pa[0], int(pa[1])):
-							out.append({"dev": other, "via_ip": cidr_b.split("/")[0]})
+						var via := cidr_b.split("/")[0]
+						if not Net.same_subnet(via, pa[0], int(pa[1])):
+							continue
+						# the hello has to arrive: no cable, no adjacency, whatever
+						# the two configurations agree on
+						if not _ospf_probing:
+							_ospf_probing = true
+							var heard := _arp_resolve(dev, ia, via) != ""
+							_ospf_probing = false
+							if not heard:
+								continue
+						out.append({"dev": other, "via_ip": via, "iface": ia})
+	if not _ospf_probing:
+		_ospf_cache[dev.name] = out
 	return out
 
+static func ospf_router_id(dev: Net.NDevice) -> String:
+	## configured, else the highest IPv4 address the router owns
+	if String(dev.ospf.get("router_id", "")) != "":
+		return String(dev.ospf["router_id"])
+	var best := ""
+	var best_n := -1
+	for i: Net.Iface in dev.ifaces:
+		for cidr in i.ips:
+			if Net.is_v6(cidr):
+				continue
+			var n := Net.ip_to_int(String(cidr).split("/")[0])
+			if n > best_n:
+				best_n = n
+				best = String(cidr).split("/")[0]
+	return best if best != "" else "0.0.0.0"
+
+static func ospf_cost(iface: Net.Iface) -> int:
+	## reference bandwidth over interface bandwidth, unless somebody set it
+	var costs: Dictionary = iface.dev.ospf.get("costs", {})
+	if costs.has(iface.name):
+		return int(costs[iface.name])
+	var ref := int(iface.dev.ospf.get("ref_bw", 100))  # Mbps, the IOS default
+	return maxi(1, ref / maxi(1, Game.iface_speed(iface)))
+
+static func ospf_priority(iface: Net.Iface) -> int:
+	return int(iface.dev.ospf.get("priorities", {}).get(iface.name, 1))
+
+static func ospf_segment_roles(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
+	## DR and BDR on the segment this interface sits on: highest priority,
+	## then highest router-id; a /30 or /31 is point-to-point and has neither
+	var plen := 0
+	for cidr in iface.ips:
+		if not Net.is_v6(cidr):
+			plen = int(String(cidr).split("/")[1])
+	if plen >= 30:
+		return {"p2p": true}
+	var members: Array = [[ospf_priority(iface), Net.ip_to_int(ospf_router_id(dev)), dev]]
+	for nb in ospf_neighbors(dev):
+		if nb["iface"] == iface:
+			var far: Net.NDevice = nb["dev"]
+			var far_if: Net.Iface = null
+			for fi: Net.Iface in far.ifaces:
+				if fi.ips.any(func(c): return String(c).split("/")[0] == String(nb["via_ip"])):
+					far_if = fi
+			members.append([ospf_priority(far_if) if far_if else 1, Net.ip_to_int(ospf_router_id(far)), far])
+	members = members.filter(func(m): return int(m[0]) > 0)  # priority 0 never becomes DR
+	members.sort_custom(func(x, y): return x[0] > y[0] or (x[0] == y[0] and x[1] > y[1]))
+	return {"p2p": false, "dr": members[0][2] if members.size() > 0 else null,
+		"bdr": members[1][2] if members.size() > 1 else null}
+
+static func ospf_neighbor_state(dev: Net.NDevice, nb: Dictionary) -> String:
+	## the State column of show ip ospf neighbor, from this router's seat
+	var roles := ospf_segment_roles(dev, nb["iface"])
+	if bool(roles.get("p2p", false)):
+		return "FULL/  -"
+	var far: Net.NDevice = nb["dev"]
+	if roles.get("dr") == far:
+		return "FULL/DR"
+	if roles.get("bdr") == far:
+		return "FULL/BDR"
+	# both DROTHER: they only ever reach two-way with each other
+	return "FULL/DROTHER" if roles.get("dr") == dev or roles.get("bdr") == dev else "2WAY/DROTHER"
+
 static func _ospf_learned(dev: Net.NDevice) -> Array:
-	## BFS shortest-path: every reachable OSPF router's covered subnets,
-	## via the first-hop neighbor toward it. -> [{prefix, plen, via}]
+	## Shortest paths by interface cost (Dijkstra): every reachable OSPF
+	## router's covered subnets, via the first-hop neighbour(s) toward it.
+	## Equal cost keeps every first hop. -> [{prefix, plen, via, cost}]
 	var out: Array = []
 	if dev.ospf.is_empty() or not dev.ip_forwarding:
 		return out
+	var dist := {dev: 0}
 	var first_hop := {}  # router -> [via_ip, ...] equal-cost first hops
-	var hops := {}  # router -> distance in hops, so nearer wins
-	var frontier: Array = []
-	for nb in ospf_neighbors(dev):
-		if not first_hop.has(nb["dev"]):
-			first_hop[nb["dev"]] = []
-			hops[nb["dev"]] = 1
-			frontier.append(nb["dev"])
-		if nb["via_ip"] not in first_hop[nb["dev"]]:
-			first_hop[nb["dev"]].append(nb["via_ip"])
-	var visited := {dev: true}
-	while not frontier.is_empty():
-		var cur: Net.NDevice = frontier.pop_front()
-		if visited.has(cur):
-			continue
-		visited[cur] = true
-		for i: Net.Iface in ospf_covered_ifaces(cur):
-			for cidr: String in i.ips:
-				var netw := Net.network_of(cidr)
-				for via in first_hop[cur]:
-					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via,
-						"cost": 10 * int(hops.get(cur, 1))})
+	var done := {}
+	while true:
+		var cur: Net.NDevice = null
+		for d in dist:
+			if not done.has(d) and (cur == null or int(dist[d]) < int(dist[cur])):
+				cur = d
+		if cur == null:
+			break
+		done[cur] = true
 		for nb in ospf_neighbors(cur):
-			if not visited.has(nb["dev"]):
-				var next_cost: int = int(hops.get(cur, 1)) + 1
-				if not first_hop.has(nb["dev"]):
-					first_hop[nb["dev"]] = first_hop[cur].duplicate()
-					hops[nb["dev"]] = next_cost
-				elif next_cost < int(hops.get(nb["dev"], 1 << 30)):
-					first_hop[nb["dev"]] = first_hop[cur].duplicate()
-					hops[nb["dev"]] = next_cost
-				elif next_cost == int(hops.get(nb["dev"], 1 << 30)):
-					for via in first_hop[cur]:
-						if via not in first_hop[nb["dev"]]:
-							first_hop[nb["dev"]].append(via)
-				frontier.append(nb["dev"])
+			var far: Net.NDevice = nb["dev"]
+			var next_cost: int = int(dist[cur]) + ospf_cost(nb["iface"])
+			var hops_here: Array = [nb["via_ip"]] if cur == dev else first_hop.get(cur, []).duplicate()
+			if not dist.has(far) or next_cost < int(dist[far]):
+				dist[far] = next_cost
+				first_hop[far] = hops_here
+			elif next_cost == int(dist[far]):
+				for via in hops_here:
+					if via not in first_hop[far]:
+						first_hop[far].append(via)
+	for router in dist:
+		if router == dev:
+			continue
+		for i: Net.Iface in ospf_covered_ifaces(router):
+			for cidr: String in i.ips:
+				if Net.is_v6(cidr):
+					continue
+				var netw := Net.network_of(cidr)
+				for via in first_hop.get(router, []):
+					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via,
+						"cost": int(dist[router]) + ospf_cost(i)})
 	return out
 
 static func snmp_poll(station: Net.NDevice, target_ip: String, community: String) -> Dictionary:
@@ -578,6 +731,7 @@ static func static_port(dev: Net.NDevice, vlan: int, mac: String) -> Net.Iface:
 	return null
 
 static func flush_learned_state() -> void:
+	_ospf_cache.clear()
 	## everything learned ages out: the world was rebuilt, or a cycle passed
 	_stp_dirty = true
 	for d in Game.all_devices():
@@ -602,6 +756,7 @@ static func arp_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
 	return null
 
 static func topology_change() -> void:
+	_ospf_cache.clear()
 	## a link came or went: spanning tree tells every bridge to forget what it
 	## learned, exactly so that a moved host is found again by flooding
 	for d in Game.all_devices():
@@ -622,6 +777,7 @@ static func forget_ip(ip: String) -> void:
 				d.arp.erase(key)
 
 static func prune_learned_state() -> void:
+	_ospf_cache.clear()  # an adjacency is a fact about cables and configuration, both of which just moved
 	## A configuration changed somewhere. Real gear does not forget the whole
 	## world for that: it drops only what can no longer be true, and the rest
 	## ages out or is relearned when the host next speaks.

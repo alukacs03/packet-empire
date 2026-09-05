@@ -270,6 +270,10 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "bgp"], "h": _show_bgp_table},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
+			{"m": EP, "p": ["show", "ip", "ospf", "interface"], "h": _show_ospf_interface},
+			{"m": EP, "p": ["show", "ip", "ospf", "database"], "h": _show_ospf_database},
+			{"m": ["if"], "p": ["ip", "ospf", "cost"], "h": func(r): return _if_ospf("costs", r, 1, 65535)},
+			{"m": ["if"], "p": ["ip", "ospf", "priority"], "h": func(r): return _if_ospf("priorities", r, 0, 255)},
 			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
 			{"m": EP, "p": ["show", "interfaces", "trunk"], "h": _show_int_trunk},
 			{"m": EP, "p": ["show", "port-channel"], "h": _show_lag},
@@ -363,6 +367,10 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "dhcp", "pool"], "h": _show_dhcp_pool},
 			{"m": EP, "p": ["show", "ip", "dhcp", "conflict"], "h": _show_dhcp_conflict},
 			{"m": ["ospf"], "p": ["network"], "h": _ospf_network},
+			{"m": ["ospf"], "p": ["router-id"], "h": _ospf_router_id},
+			{"m": ["ospf"], "p": ["passive-interface"], "h": func(r): return _ospf_passive(r, true)},
+			{"m": ["ospf"], "p": ["no", "passive-interface"], "h": func(r): return _ospf_passive(r, false)},
+			{"m": ["ospf"], "p": ["auto-cost", "reference-bandwidth"], "h": _ospf_ref_bw},
 			{"m": ["ospf"], "p": ["no", "network"], "h": _ospf_no_network},
 			{"m": ["router"], "p": ["neighbor"], "h": _bgp_neighbor},
 			{"m": ["router"], "p": ["no", "neighbor"], "h": _bgp_no_neighbor},
@@ -1628,15 +1636,95 @@ class EOS extends Session:
 			return "% OSPF not running: 'router ospf' in config mode\n"
 		var nbs := Sim.ospf_neighbors(dev)
 		if nbs.is_empty():
-			return "  (no neighbors: check network statements on both sides)\n"
-		var out := "%-14s %-8s %s\n" % ["Neighbor", "State", "Address"]
-		var seen := {}
+			return "  (no neighbors: check network statements, areas and cables on both sides)\n"
+		var out := "%-16s %-4s %-14s %-10s %-16s %s\n" % ["Neighbor ID", "Pri", "State", "Dead Time", "Address", "Interface"]
 		for nb in nbs:
-			if seen.has(nb["dev"]):
-				continue
-			seen[nb["dev"]] = true
-			out += "%-14s %-8s %s\n" % [nb["dev"].name, "FULL", nb["via_ip"]]
+			var far: Net.NDevice = nb["dev"]
+			var far_if: Net.Iface = null
+			for fi: Net.Iface in far.ifaces:
+				if fi.ips.any(func(c): return String(c).split("/")[0] == String(nb["via_ip"])):
+					far_if = fi
+			out += "%-16s %-4d %-14s %-10s %-16s %s\n" % [Sim.ospf_router_id(far),
+				Sim.ospf_priority(far_if) if far_if else 1, Sim.ospf_neighbor_state(dev, nb),
+				"00:00:%02d" % (31 + (Game.cycle * 7 + nbs.find(nb)) % 9), nb["via_ip"], EOS._short(nb["iface"].name)]
 		return out
+
+	func _show_ospf_interface(_r: Array) -> String:
+		if dev.ospf.is_empty():
+			return "% OSPF not running: 'router ospf' in config mode\n"
+		var out := "Router ID %s, area %s, reference bandwidth %d Mbps\n" % [Sim.ospf_router_id(dev), Sim.ospf_area(dev),
+			int(dev.ospf.get("ref_bw", 100))]
+		for i: Net.Iface in Sim.ospf_covered_ifaces(dev):
+			var roles := Sim.ospf_segment_roles(dev, i)
+			var state := "P2P" if bool(roles.get("p2p", false)) else ("DR" if roles.get("dr") == dev
+				else ("BDR" if roles.get("bdr") == dev else "DROTHER"))
+			var nbrs := 0
+			for nb in Sim.ospf_neighbors(dev):
+				if nb["iface"] == i:
+					nbrs += 1
+			out += "%s is up, line protocol is %s\n  Internet Address %s, Area %s\n  Cost: %d, State %s, Priority %d%s\n  Neighbor Count is %d\n" % [
+				i.name, "up" if i.enabled else "down", i.ips[0] if not i.ips.is_empty() else "-", Sim.ospf_area(dev),
+				Sim.ospf_cost(i), state, Sim.ospf_priority(i),
+				"  (passive)" if i.name in dev.ospf.get("passive", []) else "", nbrs]
+		return out
+
+	func _show_ospf_database(_r: Array) -> String:
+		if dev.ospf.is_empty():
+			return "% OSPF not running: 'router ospf' in config mode\n"
+		var out := "            OSPF Router with ID (%s)\n\n                Router Link States (Area %s)\n\n%-16s %-16s %-8s %s\n" % [
+			Sim.ospf_router_id(dev), Sim.ospf_area(dev), "Link ID", "ADV Router", "Age", "Link count"]
+		var routers: Array = [dev]
+		for nb in Sim.ospf_neighbors(dev):
+			if nb["dev"] not in routers:
+				routers.append(nb["dev"])
+		for r in routers:
+			out += "%-16s %-16s %-8d %d\n" % [Sim.ospf_router_id(r), Sim.ospf_router_id(r),
+				(Game.cycle * 37) % 1800, Sim.ospf_covered_ifaces(r).size()]
+		return out
+
+	func _ospf_router_id(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_ip_address():
+			return "usage: router-id <a.b.c.d>\n"
+		dev.ospf["router_id"] = String(r[0])
+		Game.topology_changed.emit()
+		return ""
+
+	func _ospf_passive(r: Array, on: bool) -> String:
+		if r.size() != 1:
+			return "usage: [no] passive-interface <interface>\n"
+		var target: Net.Iface = null
+		for i: Net.Iface in dev.ifaces:
+			if i.name.to_lower() == String(r[0]).to_lower() or EOS._short(i.name).to_lower() == String(r[0]).to_lower():
+				target = i
+		if target == null:
+			return "% no interface %s\n" % r[0]
+		if not dev.ospf.has("passive"):
+			dev.ospf["passive"] = []
+		if on and target.name not in dev.ospf["passive"]:
+			dev.ospf["passive"].append(target.name)
+		elif not on:
+			dev.ospf["passive"].erase(target.name)
+		Game.topology_changed.emit()
+		return ""
+
+	func _ospf_ref_bw(r: Array) -> String:
+		if r.size() != 1 or not String(r[0]).is_valid_int() or int(r[0]) < 1:
+			return "usage: auto-cost reference-bandwidth <Mbps>   (100 by default: 1G and 10G both cost 1 until you raise it)\n"
+		dev.ospf["ref_bw"] = int(r[0])
+		Game.topology_changed.emit()
+		return ""
+
+	func _if_ospf(table: String, r: Array, lo: int, hi: int) -> String:
+		if dev.ospf.is_empty():
+			return "% OSPF not running: 'router ospf' in config mode\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int() or int(r[0]) < lo or int(r[0]) > hi:
+			return "usage: ip ospf %s <%d-%d>\n" % ["cost" if table == "costs" else "priority", lo, hi]
+		if not dev.ospf.has(table):
+			dev.ospf[table] = {}
+		for i: Net.Iface in ctx_ifs:
+			dev.ospf[table][i.name] = int(r[0])
+		Game.topology_changed.emit()
+		return ""
 
 	func _cfg_router_bgp(r: Array) -> String:
 		if dev.type != "router":
@@ -2572,6 +2660,12 @@ class EOS extends Session:
 				out += "ip nat inside source static %s %s\n" % [rule["inside"], rule["outside"]]
 		if not dev.ospf.is_empty():
 			out += "router ospf 1\n"
+			if String(dev.ospf.get("router_id", "")) != "":
+				out += "   router-id %s\n" % dev.ospf["router_id"]
+			if int(dev.ospf.get("ref_bw", 100)) != 100:
+				out += "   auto-cost reference-bandwidth %d\n" % int(dev.ospf["ref_bw"])
+			for pif in dev.ospf.get("passive", []):
+				out += "   passive-interface %s\n" % pif
 			for net in dev.ospf["networks"]:
 				out += "   network %s area %s\n" % [net, Sim.ospf_area(dev)]
 			out += "!\n"
@@ -2605,6 +2699,10 @@ class EOS extends Session:
 				out += "   ip address %s\n" % cidr
 			if i.nat != "":
 				out += "   ip nat %s\n" % i.nat
+			if dev.ospf.get("costs", {}).has(i.name):
+				out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
+			if dev.ospf.get("priorities", {}).has(i.name):
+				out += "   ip ospf priority %d\n" % int(dev.ospf["priorities"][i.name])
 			if i.helper != "":
 				out += "   ip helper-address %s\n" % i.helper
 			if not i.vrrp.is_empty():
