@@ -1,0 +1,25 @@
+# model: srv-2
+ip addr add 10.20.1.10/24 dev eth1
+ip route add default via 10.20.1.1
+ip addr
+ip -br addr
+ip route
+ip route get 10.20.2.10
+ip -6 route
+ip neigh
+ping -c 3 10.20.1.1
+ping -c 2 10.20.2.10
+ping -c 1 10.20.9.9
+ping -M do -s 1400 -c 1 10.20.2.10
+traceroute -n 10.20.2.10
+tracepath 10.20.2.10
+tcpdump -i eth1 -n icmp -c 4
+echo nameserver 10.20.1.1 > /etc/resolv.conf
+cat /etc/resolv.conf
+nslookup 10.20.2.10
+dig 10.20.2.10
+ss -tlnp
+sysctl net.ipv4.ip_forward
+ip link add wg0 type wireguard
+wg show
+uname -a

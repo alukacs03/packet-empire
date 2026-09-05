@@ -38,38 +38,40 @@ static func probe() -> void:
 	Game.parts = {"patch": 400, "fiber": 100, "sfp": 100, "psu": 20}
 	var rk := Game.add_rack(Vector2i(2, 2))
 	var r1 := Game.new_device("rtr-lite")
-	var r2 := Game.new_device("rtr-lite")
-	var sw := Game.new_device("sw-lite")
+	var s1 := Game.new_device("srv-2")
+	var s2 := Game.new_device("srv-2")
 	rk.slots[0] = r1
-	rk.slots[1] = r2
-	rk.slots[2] = sw
-	Game.connect_ifaces(r1.ifaces[0], r2.ifaces[0])
-	Game.connect_ifaces(r1.ifaces[1], sw.ifaces[0])
-	Game.connect_ifaces(r2.ifaces[1], sw.ifaces[1])
+	rk.slots[1] = s1
+	rk.slots[2] = s2
+	Game.connect_ifaces(r1.ifaces[0], s1.ifaces[0])
+	Game.connect_ifaces(r1.ifaces[1], s2.ifaces[0])
 	var a := CLI.new_session(r1)
-	var b := CLI.new_session(r2)
-	var c := CLI.new_session(sw)
-	for line in ["/ip address add address=10.0.0.1/24 interface=ether1", "/ip address add address=10.1.0.1/24 interface=ether2",
-			"/ip route add dst-address=10.2.0.0/24 gateway=10.0.0.2", "/ip route add gateway=10.0.0.2 distance=5",
-			"/interface vlan add name=vlan-guest vlan-id=60 interface=ether2", "/ip address add address=10.60.0.1/24 interface=vlan-guest",
-			"/ip address add addres=1.1.1.1/24 interface=ether1", "/interface set ether1 mtu=abc", "/ip addres print",
-			"/interface print foo", "/ip address", "print", "..", "print", "/",
-			"/ip/address/print", "/interface print", "/interface print detail", "/interface print where name=ether2",
-			"/interface ethernet print", "/interface ethernet monitor ether1", "/ip route print", "/ip route print detail",
-			"/ping 10.0.0.2 count=2", "/ping 10.9.9.9 count=2", "/tool traceroute 10.0.0.2", "/system resource print",
-			"/system clock print", "/ip service print", "/ip dns print", "/log print", "/user print",
-			"/ip firewall filter print", "/ip dhcp-server lease print", "/export", "/system reboot",
-			"/system backup save", "/file print", "/system backup load name=r1-x", "/ipv6 address add address=2001:db8::1/64 interface=ether1",
-			"/ipv6 address print", "/interface bridge port print", "/tool torch ether1", "/tool sniffer quick", "?", "/routing/bgp", "?", "/"]:
-		var out := a.exec(line)
-		print("%s %s\n%s" % [a.prompt(), line, out])
-	b.exec("/ip address add address=10.0.0.2/24 interface=ether1")
-	for line in ["/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether1 untagged=ether2", "/interface bridge vlan add vlan-ids=20",
-			"/interface bridge port set [find interface=ether3] pvid=20", "/interface print", "/interface bridge port print",
-			"/interface bridge vlan print", "/interface bridge vlan print detail", "/interface bridge port monitor ether1",
-			"/interface bridge print", "/interface disable ether4", "/interface print", "/export"]:
-		print("%s %s\n%s" % [c.prompt(), line, c.exec(line)])
-	print("dirty r1: ", Game.config_dirty(r1), " prompt a: ", a.prompt())
+	a.exec("/ip address add address=10.0.0.1/24 interface=ether1")
+	a.exec("/ip address add address=10.1.0.1/24 interface=ether2")
+	var x := CLI.new_session(s1)
+	var y := CLI.new_session(s2)
+	y.exec("ip addr add 10.1.0.10/24 dev eth0")
+	y.exec("ip route add default via 10.1.0.1")
+	y.exec("subnet 10.1.0.0 netmask 255.255.255.0 { range 10.1.0.50 10.1.0.99; option routers 10.1.0.1; option domain-name-servers 10.1.0.10; }")
+	y.exec("dns add www.example.hu 10.1.0.10")
+	for line in ["ip", "ip addr", "ip -br addr", "ip addr add 10.0.0.10/24 dev eth0", "ip addr add 10.0.0.10/24 dev eth0", "ip addr add 10.0.0.300/24 dev eth0",
+			"ip addr add 10.0.0.11/24", "ip route", "ip route add default via 10.9.9.9", "ip route add default via 10.0.0.1 dev eth0", "ip route add default via 10.0.0.1",
+			"ip route show", "ip r s", "ip route get 10.1.0.10", "ip -6 route", "ip -6 addr", "ip link set dev eth0 mtu 1400", "ip link", "ip -s link show eth0",
+			"ping -c 2 10.1.0.10", "ping 10.1.0.99 -c 1", "ping -c 1 10.7.0.1", "ip route del default", "ping -c 1 10.1.0.10", "ip route add default via 10.0.0.1",
+			"ping -s 1400 -c 1 10.1.0.10", "ping -M do -s 1400 -c 1 10.1.0.10", "ip link set dev eth0 mtu 1500",
+			"ip neigh", "ip neigh flush", "ip neigh flush all", "traceroute -n 10.1.0.10", "tracepath 10.1.0.10",
+			"tcpdump -i eth0 -n icmp -c 3", "tcpdump -i eth0 -n arp", "tcpdump -i any -c 2", "tcpdump -i eth9",
+			"cat /etc/resolv.conf", "echo nameserver 10.1.0.10 > /etc/resolv.conf", "cat /etc/resolv.conf", "nslookup www.example.hu", "dig www.example.hu", "dig +short www.example.hu", "host www.example.hu", "host nope.example.hu",
+			"resolvectl status", "ss -tlnp", "sysctl net.ipv4.ip_forward", "systemctl status ssh", "uname -a", "ifconfig", "foo", "sudo ip route get 10.1.0.10",
+			"curl http://www.example.hu", "curl -I http://www.example.hu", "nc -zv 10.1.0.10 22", "nc -zv 10.1.0.10 80", "telnet 10.1.0.10 22",
+			"wg genkey | tee privatekey | wg pubkey > publickey", "ls", "cat publickey", "ip link add wg0 type wireguard", "ip addr add 10.99.0.1/24 dev wg0",
+			"wg set wg0 listen-port 51820 private-key ./privatekey peer abc= endpoint 10.1.0.10:51820 allowed-ips 10.99.0.0/24", "ip link set wg0 up", "wg show", "cat /etc/wireguard/wg0.conf",
+			"lldpcli show neighbors", "dhclient -v eth1", "dhclient eth1", "ip addr show eth1", "ip route", "dhclient -r eth1", "ip addr show eth1", "help"]:
+		print("%s %s\n%s" % [x.prompt(), line, x.exec(line)])
+	for line in ["cat /etc/dhcp/dhcpd.conf", "systemctl status isc-dhcp-server", "dhcpd eth0", "ss -ulnp", "cat /etc/dnsmasq.conf"]:
+		print("%s %s\n%s" % [y.prompt(), line, y.exec(line)])
+	Game.connect_ifaces(r1.ifaces[2], s1.ifaces[1]) if s1.ifaces.size() > 1 else null
+	print("srv1 ifaces: ", s1.ifaces.map(func(i): return i.name))
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
@@ -776,6 +778,44 @@ static func run() -> int:
 	var ping_out := ls.exec("ping 10.0.0.1")
 	check(ping_out.contains(" 3 received"), "Linux: ping via CLI succeeds end-to-end (got: %s)" % ping_out.replace("\n", " | "))
 	check(ls.exec("ip route").contains("default via 10.1.0.254"), "Linux: ip route shows default")
+	check(ls.exec("ip addr add 192.168.9.1/24 dev eth0") == "" and ls.exec("ip addr add 192.168.9.1/24 dev eth0") == "RTNETLINK answers: File exists\n",
+		"Linux: a duplicate address gets the kernel's answer")
+	check(ls.exec("ip addr add 192.168.9.300/24 dev eth0").begins_with("Error: any valid prefix is expected rather than"),
+		"Linux: a bad prefix gets iproute2's wording")
+	check(ls.exec("ip addr add 192.168.9.2/24").begins_with("Not enough information: \"dev\" argument is required."),
+		"Linux: dev is required, in the words the tool uses")
+	check(ls.exec("ip link set dev eth0 up") == "" and ls.exec("ip route show").contains("default via 10.1.0.254")
+			and ls.exec("ip r s") == ls.exec("ip route"),
+		"Linux: ip link set dev, ip route show and ip r s are the grammar people type")
+	check(ls.exec("ip route add default via 10.77.0.1") == "RTNETLINK answers: Network is unreachable\n",
+		"Linux: a gateway outside every connected subnet is refused, not stored")
+	check(ls.exec("ip route del 10.77.0.0/24") == "RTNETLINK answers: No such process\n",
+		"Linux: deleting a route that is not there says so")
+	check(ls.exec("ip addr").begins_with("1: lo: <LOOPBACK,UP,LOWER_UP>") and "inet6 fe80::" in ls.exec("ip addr"),
+		"Linux: ip addr starts with lo and shows the link-local")
+	check(ls.exec("ip -6 route").contains("fe80::/64 dev eth0 proto kernel metric 256 pref medium"),
+		"Linux: ip -6 route shows the kernel link-local route")
+	check(ls.exec("ip route get 10.0.0.1").begins_with("10.0.0.1 via 10.1.0.254 dev eth0 src "),
+		"Linux: ip route get answers with the egress the kernel would use")
+	ls.exec("ip addr del 192.168.9.1/24 dev eth0")
+	var ping_c := ls.exec("ping -c 2 10.0.0.1")
+	check(ping_c.begins_with("PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.") and "2 packets transmitted, 2 received" in ping_c
+			and "\n--- 10.0.0.1 ping statistics ---" in ping_c,
+		"Linux: ping -c counts probes and prints the iputils header and trailer")
+	check(ls.exec("ping -s 1400 -c 1 10.0.0.1").contains("1400(1428) bytes of data.") and "1408 bytes from" in ls.exec("ping -s 1400 -c 1 10.0.0.1"),
+		"Linux: -s is the payload, the way iputils counts it")
+	check(ls.exec("foo") == "bash: foo: command not found\n" and ls.exec("ifconfig").contains("sudo apt install net-tools"),
+		"Linux: unknown commands and net-tools get the shell's own words")
+	check(ls.exec("echo nameserver 10.0.0.5 > /etc/resolv.conf") == "" and ls.exec("cat /etc/resolv.conf") == "nameserver 10.0.0.5\n",
+		"Linux: the resolver is a file")
+	var td := ls.exec("tcpdump -i eth0 -n icmp")
+	check(td.begins_with("tcpdump: verbose output suppressed") and "listening on eth0, link-type EN10MB (Ethernet)" in td
+			and "packets received by filter" in td and "ICMP echo request" in td and "ARP" not in td,
+		"Linux: tcpdump prints its banner and trailer, filters by BPF word, and sees what the host sent")
+	check(ls.exec("ss -tlnp").contains("0.0.0.0:22") and ls.exec("sysctl net.ipv4.ip_forward") == "net.ipv4.ip_forward = 0\n",
+		"Linux: ss and sysctl answer like the real ones")
+	check(ls.exec("ip neigh flush") == "Flush requires arguments.\n", "Linux: ip neigh flush wants all or dev")
+	check(ls.exec("sudo ip route get 10.0.0.1") == ls.exec("ip route get 10.0.0.1"), "Linux: sudo is accepted and stripped")
 
 	# --- save / load roundtrip ---
 	Game.racks[0].blanked[6] = true
@@ -917,11 +957,11 @@ static func run() -> int:
 	dls.exec("dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.5 10.2.0.5")
 	dls.exec("dns add www.delta.hu 10.2.0.10")
 	var cls_ := CLI.new_session(client)
-	var lease_out: String = cls_.exec("dhclient eth0")
+	var lease_out: String = cls_.exec("dhclient -v eth0")
 	check("bound to 10.2.0.10 --" in lease_out and "DHCPOFFER of 10.2.0.10 from 10.2.0.5" in lease_out, "dhcp: client got the first lease (got: %s)" % lease_out.strip_edges())
 	check(client.resolver == "10.2.0.5", "dhcp: lease delivered the DNS resolver")
 	check(Sim.ping(client, "10.2.0.5")["ok"], "dhcp: leased address is routable")
-	check(cls_.exec("dhclient eth0").contains("10.2.0.10"), "dhcp: same MAC keeps its lease")
+	check(cls_.exec("dhclient -v eth0").contains("10.2.0.10"), "dhcp: same MAC keeps its lease")
 	# leases have a clock: a holder that is gone frees the address, a live one renews
 	var dh_svc: Dictionary = dhcp_srv.services["dhcp"]
 	dh_svc["since"][client.ifaces[0].mac] = Game.cycle - Sim.DHCP_LEASE - 1
@@ -959,10 +999,10 @@ static func run() -> int:
 	check(pool_cli.exec("network 10.4.0.0 255.255.255.0") == "", "dhcp: the pool takes an IOS network and mask")
 	check(pool_cli.exec("default-router 10.4.0.1") == "" and pool_cli.exec("dns-server 10.4.0.1") == "", "dhcp: option 3 and option 6")
 	pool_cli.exec("end")
-	var pool_lease := CLI.new_session(pool_c1).exec("dhclient eth0")
+	var pool_lease := CLI.new_session(pool_c1).exec("dhclient -v eth0")
 	check("bound to 10.4.0.12 --" in pool_lease and "DHCPACK of 10.4.0.12 from 10.4.0.1" in pool_lease,
 		"dhcp: the first lease skips the excluded block and the address that answered an ARP probe (got %s)" % pool_lease.strip_edges())
-	check(CLI.new_session(pool_c2).exec("dhclient eth0").contains("10.4.0.13"), "dhcp: the next client gets the next free address")
+	check(CLI.new_session(pool_c2).exec("dhclient -v eth0").contains("10.4.0.13"), "dhcp: the next client gets the next free address")
 	check(Sim.ping(pool_c1, "10.4.0.1")["ok"] and pool_c1.static_routes.size() == 1, "dhcp: a router-served lease carries the gateway")
 	var binding := pool_cli.exec("show ip dhcp binding")
 	check(binding.contains("10.4.0.12") and binding.contains(pool_c1.ifaces[0].mac) and binding.contains("cycle(s)"),
@@ -1512,7 +1552,7 @@ static func run() -> int:
 	check(blocked_after == 1, "mgmt: mgmt link doesn't disturb spanning tree")
 	var ssh_ls := CLI.new_session(a2)
 	var ssh_out: String = ssh_ls.exec("ssh 10.0.0.99")
-	check("Connected to" in ssh_out and ssh_ls.pending_ssh == sw_a, "ssh: server reaches switch mgmt")
+	check("Last login:" in ssh_out and ssh_ls.pending_ssh == sw_a, "ssh: server reaches switch mgmt")
 	var inner := CLI.new_session(ssh_ls.pending_ssh)
 	check(inner.prompt().begins_with(sw_a.name), "ssh: nested session lands on the switch")
 	inner.exec("exit")
@@ -2178,7 +2218,7 @@ static func run() -> int:
 	rel_es.exec("int et1")
 	rel_es.exec("ip helper-address 10.61.0.5")
 	rel_es.exec("end")
-	var rel_out: String = CLI.new_session(rel_cli).exec("dhclient eth0")
+	var rel_out: String = CLI.new_session(rel_cli).exec("dhclient -v eth0")
 	check("bound to 10.60.0.50 --" in rel_out, "relay: client leased across the router (got: %s)" % rel_out.strip_edges())
 	check(Sim.ping(rel_cli, "10.61.0.5")["ok"], "relay: leased client routes to the central DHCP server")
 
@@ -6213,7 +6253,7 @@ static func run() -> int:
 	CLI.new_session(sn_srv).exec("dhcpd eth0 10.170.0.10 10.170.0.99 24 10.170.0.1")
 	CLI.new_session(sn_rogue).exec("dhcpd eth0 10.170.0.200 10.170.0.240 24 10.170.0.66")
 	var honest := CLI.new_session(sn_cli)
-	var lease1: String = honest.exec("dhclient eth0")
+	var lease1: String = honest.exec("dhclient -v eth0")
 	check(lease1.contains("bound to"), "snooping: without protection a lease is handed out")
 	# turn on snooping, trust only the port facing the real server
 	var sn_s := CLI.new_session(sn_sw)
@@ -6227,7 +6267,7 @@ static func run() -> int:
 	sn_s.exec("end")
 	for cidr in sn_cli.ifaces[0].ips.duplicate():
 		Game.remove_ip(sn_cli.ifaces[0], cidr)
-	var lease2: String = honest.exec("dhclient eth0")
+	var lease2: String = honest.exec("dhclient -v eth0")
 	check(lease2.contains("10.170.0."), "snooping: the trusted server still serves leases")
 	check(not lease2.contains("10.170.0.2"), "snooping: the rogue server's range is not used")
 	check(sn_sw.bindings.size() >= 1, "snooping: a binding is recorded for the lease")
@@ -7814,14 +7854,14 @@ static func run() -> int:
 	var aa_swcli := CLI.new_session(aa_sw)
 	aa_swcli.exec("enable")
 	aa_swcli.exec("configure terminal")
-	check(aa_acli.exec("ssh 10.250.0.1").contains("Connected"),
+	check(aa_acli.exec("ssh 10.250.0.1").contains("Last login:"),
 		"aaa: with no server configured, local login works")
 	aa_acli.exec("exit")
 	check(aa_scli.exec("aaad s3cret").contains("listening"), "aaa: a server can be started")
 	check(aa_swcli.exec("aaa authentication login radius 10.250.0.10 key s3cret").is_empty(),
 		"aaa: a device can be pointed at it")
 	aa_swcli.exec("end")
-	check(aa_acli.exec("ssh 10.250.0.1").contains("Connected"),
+	check(aa_acli.exec("ssh 10.250.0.1").contains("Last login:"),
 		"aaa: a reachable server with the right secret admits you")
 	aa_acli.exec("exit")
 	# the wrong secret is refused, which is not the same as the server being down
@@ -7869,7 +7909,7 @@ static func run() -> int:
 	Game.add_ip(ob_jump.ifaces[0], "10.240.0.10/24")
 	Sim.flush_learned_state()
 	var ob_jcli := CLI.new_session(ob_jump)
-	check(ob_jcli.exec("ssh 10.240.0.1").contains("Connected"),
+	check(ob_jcli.exec("ssh 10.240.0.1").contains("Last login:"),
 		"oob: while the network works, ssh reaches the switch")
 	ob_jcli.exec("exit")
 	var ob_ccli := CLI.new_session(ob_con)
@@ -8007,8 +8047,13 @@ static func run() -> int:
 	check(Sim.last_mtu_drop.contains(mt_sw.name),
 		"mtu: the drop names the device and port responsible")
 	var mt_cli := CLI.new_session(mt_a)
-	check(mt_cli.exec("ping -s 9000 10.230.0.11").contains("will not fit"),
-		"mtu: ping -s reproduces it from the console")
+	var mt_big := mt_cli.exec("ping -s 9000 10.230.0.11")
+	check("100% packet loss" in mt_big and "From" not in mt_big,
+		"mtu: ping -s reproduces it from the console, and a switch drops in silence, as real ones do")
+	check(mt_cli.exec("ping -M do -s 9000 -c 1 10.230.0.11").contains("100% packet loss"),
+		"mtu: DF changes nothing when the dropper is a switch")
+	check(mt_cli.exec("tcpdump -i eth0 icmp").contains("ICMP echo request"),
+		"mtu: the request left the host, which is where tcpdump earns its keep")
 	check(mt_cli.exec("ping 10.230.0.11").contains("0% packet loss"),
 		"mtu: and a normal ping still looks perfectly healthy")
 

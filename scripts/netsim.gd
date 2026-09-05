@@ -120,6 +120,10 @@ static func dhcp_request(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
 	Game.add_ip(iface, "%s/%d" % [_dhcp_offer["ip"], int(_dhcp_offer["plen"])])
 	if _dhcp_offer.get("gw", "") != "":
 		Game.add_static_route(dev, "0.0.0.0", 0, _dhcp_offer["gw"])
+		for r in dev.static_routes:  # iproute2 shows where a route came from
+			if int(r["plen"]) == 0 and String(r["via"]) == String(_dhcp_offer["gw"]):
+				r["proto"] = "dhcp"
+				r["src"] = String(_dhcp_offer["ip"])
 	if _dhcp_offer.get("dns", "") != "":
 		dev.resolver = _dhcp_offer["dns"]
 	return _dhcp_offer
@@ -133,8 +137,8 @@ static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		return
 	if p["op"] == "discover":
 		var svc: Dictionary = dev.services.get("dhcp", {})
-		if svc.is_empty() or not _dhcp_serves(svc, iface):
-			return
+		if svc.is_empty() or not bool(svc.get("running", true)) or not _dhcp_serves(svc, iface):
+			return  # a written dhcpd.conf serves nothing until the daemon is started
 		var leases: Dictionary = svc["leases"]
 		if not svc.has("since"):
 			svc["since"] = {}
@@ -1471,6 +1475,8 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	rtt_ms += Game.link_latency_ms(l)
 	if last_trace.size() < 300:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
+	if iface.dev.type not in ["switch", "ap"]:
+		_cap(iface.dev, iface, frame)  # tcpdump on the sender sees what it sent
 	_cap(peer.dev, peer, frame)
 	_depth += 1
 	if peer.dev.type in ["switch", "ap"] and not peer.name.begins_with("Management") and peer.mode != "routed":
@@ -2115,8 +2121,8 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	var desc := ""
 	match frame["type"]:
 		"dhcp":
-			desc = "IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, %s from %s, length 300" % [
-				"Request" if p["op"] == "discover" else "Reply", String(p.get("mac", "")).to_lower()]
+			desc = ("IP 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request from %s, length 300" % String(p.get("mac", "")).to_lower()) \
+				if p["op"] == "discover" else "IP %s.67 > 255.255.255.255.68: BOOTP/DHCP, Reply, length 300" % String(p.get("server", "0.0.0.0"))
 		"arp":
 			desc = ("ARP, Request who-has %s tell %s, length 28" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
 				else ("ARP, Reply %s is-at %s, length 28" % [p["spa"], String(p["sha"]).to_lower()])
@@ -2130,10 +2136,17 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 			match proto:
 				"icmp":
 					var kind := String(l4.get("type", ""))
-					var words := {"echo": "echo request", "reply": "echo reply", "ttl-exceeded": "time exceeded in-transit",
-						"unreachable": "%s unreachable" % String(l4.get("code", "net"))}
-					desc = "%s %s > %s: ICMP%s %s, id %d, seq 1, length 64" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
-						"6" if v6 else "", words.get(kind, kind), int(l4.get("id", 0))]
+					if kind in ["echo", "reply"]:
+						desc = "%s %s > %s: ICMP%s %s, id %d, seq 1, length %d" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
+							"6" if v6 else "", "echo request" if kind == "echo" else "echo reply", int(l4.get("id", 0)), int(l4.get("size", 64))]
+					elif kind == "ttl-exceeded":
+						desc = "%s %s > %s: ICMP%s time exceeded in-transit, length 92" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"], "6" if v6 else ""]
+					else:
+						# an error quotes the address it is about, never an id/seq
+						var code := String(l4.get("code", "net"))
+						var about := String(l4.get("orig_dst", p["dst_ip"]))
+						desc = "%s %s > %s: ICMP %s, length 92" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
+							("%s unreachable - admin prohibited filter" % about) if code == "admin" else ("%s %s unreachable" % [code, about])]
 				"dns":
 					desc = "IP %s.%d > %s.53: %d+ %s? %s. (%d)" % [p["src_ip"], 30000 + int(l4.get("id", 0)) % 30000, p["dst_ip"],
 						int(l4.get("id", 0)) % 65536, "AAAA" if bool(l4.get("v6", false)) else "A", l4.get("q", ""), 30]
@@ -2142,7 +2155,9 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 						int(l4.get("id", 0)) % 65536, ("1/0/0 A %s" % l4.get("answer", "")) if String(l4.get("answer", "")) != "" else "NXDomain 0/0/0", 46]
 				_:
 					desc = "%s %s > %s: %s, length 64" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"], proto.to_upper()]
-	var vl := ("vlan %d, p 0, ethertype %s (0x%s), " % [frame["vlan"], "ARP" if frame["type"] == "arp" else "IPv4", "0806" if frame["type"] == "arp" else "0800"]) if frame["vlan"] != 0 else ""
+	var v6_frame: bool = frame["type"] == "ndp" or (frame["type"] not in ["arp", "dhcp"] and Net.is_v6(String(p.get("src_ip", ""))))
+	var vl := ("vlan %d, p 0, ethertype %s (0x%s), " % [frame["vlan"], "ARP" if frame["type"] == "arp" else ("IPv6" if v6_frame else "IPv4"),
+		"0806" if frame["type"] == "arp" else ("86dd" if v6_frame else "0800")]) if frame["vlan"] != 0 else ""
 	var stamp := "%02d:%02d:%02d.%06d" % [(Game.cycle * 7) % 24, (Game.cycle * 13) % 60, (dev.capture.size() * 3) % 60, (dev.capture.size() * 104729) % 1000000]
 	dev.capture.append("%s %-8s %s%s" % [stamp, iface.name, vl, desc])
 	if dev.capture.size() > 50:
@@ -2221,7 +2236,7 @@ static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf
 	if l4.get("proto", "") == "icmp" and l4.get("type", "") in ["ttl-exceeded", "unreachable"]:
 		return
 	_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "unreachable", "code": code,
-		"id": l4.get("id", 0)}, vrf)
+		"id": l4.get("id", 0), "orig_dst": p["dst_ip"]}, vrf)
 
 static func nat_rules(dev: Net.NDevice) -> Array:
 	return dev.services.get("nat", {}).get("rules", [])

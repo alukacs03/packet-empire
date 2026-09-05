@@ -16,7 +16,10 @@ for f in scripts/*.txt; do
   grep -v '^#' "$f" | while IFS= read -r line; do
     [ -z "$line" ] && continue
     echo "> $line" >> "$out"
-    sshpass -p "$pass" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user@$host" "$line" >> "$out" 2>&1
+    case "$node" in
+      h*) docker exec "$host" sh -c "$line" >> "$out" 2>&1 ;;  # plain linux nodes have no sshd
+      *)  sshpass -p "$pass" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$user@$host" "$line" >> "$out" 2>&1 ;;
+    esac
   done
   echo "$node: $(wc -l < "$out") lines"
 done

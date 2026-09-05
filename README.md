@@ -140,7 +140,7 @@ The CLI depends on what you buy, like real life:
 |---|---|
 | PacketTik (budget) | RouterOS 7: the menu prompt (`[admin@r1] /ip/address>`), `print detail`, `print where`, `[find …]`, `disable`/`enable`/`set`/`remove` in every menu, the real error texts (`syntax error (line 1 column 17)`, `no such command or directory`), `/ping` and `/tool traceroute` in RouterOS shape, a grouped `/export`, and configuration that is written to flash as you type (a reboot forgets nothing; `/system backup save` writes a file). The syntax and the output are the real ones, so it transfers to a CHR |
 | OpenRack / Arivista / Junivista / PacketSense | EOS/IOS-style (`conf t`, `show run`, abbreviations) |
-| Dill servers | Linux (`ip addr`, `ping`, `dhclient`, `tcpdump`, …) |
+| Dill servers | Debian-shaped Linux: iproute2 grammar and kernel error texts (`ip route add default via X dev eth0`, `RTNETLINK answers: File exists`), iputils `ping -c/-s/-M do` with fragmentation modelled, `tcpdump -i eth0 -n icmp` with banner and trailer, `dhclient -v`, a `dhcpd.conf` subnet block plus `systemctl start isc-dhcp-server`, `/etc/resolv.conf`, `resolvectl`, `dig`, `wg genkey`/`wg set`/`wg show`, `ss -tlnp`, `sysctl`, `curl`, `nc -zv`, `lldpcli`. Game-only verbs are listed apart in `help` |
 
 ## Architecture
 
@@ -149,7 +149,7 @@ The CLI depends on what you buy, like real life:
 | `scripts/net.gd` | Data model (NetBox-style: racks → devices → interfaces; cables terminate on interfaces) |
 | `scripts/game.gd` | Autoload: single source of truth, money/stages, save/load, revenue cycle |
 | `scripts/netsim.gd` | The packet simulation (frames, ARP, ICMP, STP, BGP, OSPF, NAT, DHCP, DNS) |
-| `scripts/cli.gd` / `cli_ros.gd` | EOS + Linux sessions / RouterOS sessions |
+| `scripts/cli.gd` / `cli_ros.gd` / `cli_linux.gd` | EOS sessions / RouterOS sessions / Linux sessions |
 | `scripts/contracts.gd` / `market.gd` | Campaign missions / generated customer offers |
 | `scripts/ui.gd` / `ui_widgets.gd` | All UI / custom-drawn rack & faceplate widgets |
 | `scripts/pack.gd` / `loc.gd` / `challenge.gd` | Authored content, localisation catalogue, reproducible drills |

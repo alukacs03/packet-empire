@@ -97,7 +97,7 @@ const DIALECT_HINTS := {
 		"linux": [
 			"ip addr add 10.2.0.5/24 dev eth0",
 			"dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1",
-			"dhclient eth0        (on the new machine)",
+			"dhclient -v eth0     (on the new machine)",
 			"ip addr",
 		],
 	},
@@ -475,7 +475,7 @@ const DIALECT_HINTS := {
 	"the_home_router": {
 		"device_type": "switch",
 		"intro": "Snooping drops DHCP answers from every port but the trusted one, and ARP inspection believes only the bindings it learned that way.",
-		"after": "Trust exactly the port your real server is on; a client then re-runs 'dhclient eth0'.",
+		"after": "Trust exactly the port your real server is on; a client then re-runs 'dhclient -v eth0'.",
 		"eos": [
 			"enable",
 			"configure terminal",

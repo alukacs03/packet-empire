@@ -29,7 +29,12 @@ sudo containerlab destroy -t packet-lab.clab.yml
 ```
 
 `replay.sh` needs `sshpass` (`apt install sshpass`). Default logins: RouterOS
-`admin` with an empty password, cEOS `admin`/`admin`.
+`admin` with an empty password, cEOS `admin`/`admin`. The Linux host `h1` is
+reached with `docker exec`; its script speaks to `eth1` because containerlab
+keeps `eth0` for management. Give the container a Debian image with
+iproute2, iputils-ping, tcpdump, dnsutils, traceroute and wireguard-tools
+installed (`image: debian:12` plus an `apt install` in `exec`) or the
+comparison stops at the first missing tool.
 
 ## Scripts
 

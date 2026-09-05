@@ -14,6 +14,7 @@ about outages), you can take the whole of it and supply your own economy.
 | `scripts/netsim.gd` | ~1600 | The simulation: frames, MAC learning, VLAN tagging, spanning tree (STP/RSTP/MST), LACP and MLAG, ARP/NDP, ICMP with TTL, routing with longest-prefix, local-pref and ECMP, NAT, VRFs, DHCP, DNS with delegation and TTLs, BGP with policy and RPKI, OSPF, VRRP, tunnels, WireGuard, 802.1X, QoS, MTU, multicast, BFD, SNMP. |
 | `scripts/cli.gd` | ~2100 | Two dialects: EOS/IOS-style (modes, abbreviation, interface ranges) and Linux (`ip`, `ping`, `tcpdump`, `dhclient`, …). |
 | `scripts/cli_ros.gd` | ~1300 | The RouterOS dialect: menus, universal verbs, print shapes, `export`. |
+| `scripts/cli_linux.gd` | ~1100 | The Linux host shell: iproute2, iputils, tcpdump, ISC DHCP, resolver files, wireguard-tools. |
 | `scripts/pedia.gd` | ~70 | The encyclopedia articles. Text only; keep the ones that suit your game. |
 
 That is roughly 4500 lines with no tycoon coupling.

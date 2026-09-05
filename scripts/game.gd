@@ -8623,7 +8623,9 @@ func run_playbook(pb: Dictionary, targets: Array) -> Dictionary:
 			var out := String(session.exec(line))
 			# a real console answers an unusable command with a % or an error
 			if out.begins_with("%") or out.begins_with("usage:") or "nvalid" in out \
-					or out.contains("not known") or out.begins_with("ssh:"):
+					or out.contains("not known") or out.begins_with("ssh:") or out.begins_with("bash:") \
+					or out.contains("command not found") or out.begins_with("syntax error") \
+					or out.begins_with("no such command") or out.begins_with("bad command"):
 				bad += 1
 				trail.append("%s: %s -> %s" % [d.name, line, out.strip_edges()])
 		ran += 1
