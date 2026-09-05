@@ -3614,9 +3614,13 @@ func _build_menu() -> void:
 		var opts: Array = []
 		for i in Game.SLOTS:
 			var info := Game.slot_info(i)
-			opts.append("Slot %d: %s" % [i + 1, "empty" if info.get("empty", true)
+			opts.append("Slot %d: %s" % [i + 1, "damaged (delete it from the title screen first)"
+				if info.get("broken", false) else "empty" if info.get("empty", true)
 				else "%s, cycle %d" % [info["company"], int(info["cycle"])]])
 		_menu(save_as, opts, func(id: int) -> void:
+			if Game.slot_info(id).get("broken", false):
+				hud_toast("Slot %d holds a damaged save. Delete it from the title screen before reusing it." % (id + 1), false)
+				return
 			Game.current_slot = id
 			Game.save_game()
 			hud_toast("Saved to slot %d." % (id + 1), true)))

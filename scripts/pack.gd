@@ -5,7 +5,7 @@ class_name Pack
 ## is a predicate this file knows how to evaluate against the live simulation.
 
 const SCHEMA_VERSION := 1
-const USER_DIR := "user://packs"
+static var USER_DIR := "user://packs"  # tests point this somewhere harmless
 const BUNDLED_DIR := "res://packs"
 const MAX_PROBES := 40  # a pack cannot make the game hang by asking for the world
 
@@ -105,6 +105,10 @@ static func _validate_predicate(pred: Variant, where: String) -> Array:
 		"all", "any", "not":
 			if not (pred.get("of") is Array):
 				errors.append("%s: '%s' needs a list in 'of'" % [where, kind])
+			elif (pred["of"] as Array).is_empty():
+				errors.append("%s: '%s' needs at least one requirement in 'of'" % [where, kind])
+			elif kind == "not" and (pred["of"] as Array).size() != 1:
+				errors.append("%s: 'not' takes exactly one requirement in 'of'" % where)
 			else:
 				for i in (pred["of"] as Array).size():
 					errors.append_array(_validate_predicate(pred["of"][i], "%s.of[%d]" % [where, i]))
@@ -441,9 +445,12 @@ static func workshop_rows() -> Array:
 			"scenarios": scenarios,
 			"detail": pack.get("description", "")})
 	for problem: String in problems:
-		rows.append({"id": problem.split(":")[0], "name": "(did not load)", "ok": false,
-			"author": "", "source": problem.split(":")[0], "scenarios": [],
-			"detail": problem})
+		# the problem string starts with the path, and every path has a colon in it
+		var at := problem.find(".json: ")
+		var ppath := problem.substr(0, at + 5) if at >= 0 else problem
+		rows.append({"id": ppath.get_file(), "name": "(did not load)", "ok": false,
+			"author": "", "source": ppath, "scenarios": [],
+			"detail": problem.substr(at + 7) if at >= 0 else problem})
 	return rows
 
 static func preview(pack: Dictionary, scenario: Dictionary) -> Array:
@@ -479,6 +486,8 @@ static func import_text(text: String, name := "imported") -> String:
 	var errors := validate(parsed)
 	if not errors.is_empty():
 		return "that pack is not valid: %s" % errors[0]
+	if not name.is_valid_filename() or name.strip_edges() == "" or name.contains(" "):
+		return "the pack name must be a plain file name (letters, digits, - and _)"
 	DirAccess.make_dir_recursive_absolute(USER_DIR)
 	var f := FileAccess.open("%s/%s.json" % [USER_DIR, name], FileAccess.WRITE)
 	if f == null:

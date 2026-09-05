@@ -2,7 +2,7 @@ extends Node
 ## Autoload "Prefs": display and accessibility options, kept outside the save
 ## so they follow the player rather than the game.
 
-const PATH := "user://settings.json"
+static var PATH := "user://settings_test.json" if OS.get_environment("PACKET_TEST") == "1" else "user://settings.json"  # tests keep their hands off the player's settings
 
 signal changed
 
@@ -22,22 +22,24 @@ func load_prefs() -> void:
 	if not FileAccess.file_exists(PATH):
 		return
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(PATH))
-	if data == null:
+	if typeof(data) != TYPE_DICTIONARY:
 		return
-	ui_scale = float(data.get("ui_scale", 1.0))
+	ui_scale = clampf(float(data.get("ui_scale", 1.0)), 0.75, 2.0)
+	if ui_scale == 0.0 or is_nan(ui_scale):
+		ui_scale = 1.0
 	fullscreen = bool(data.get("fullscreen", false))
 	colourblind = bool(data.get("colourblind", false))
 	sound = bool(data.get("sound", true))
 	reduced_motion = bool(data.get("reduced_motion", false))
 	show_everything = bool(data.get("show_everything", false))
 	language = String(data.get("language", "en"))
+	if language not in Loc.languages():
+		language = "en"
 
 func save_prefs() -> void:
-	var f := FileAccess.open(PATH, FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
-			"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion,
-			"show_everything": show_everything, "language": language}))
+	Game.write_text_atomic(PATH, JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
+		"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion,
+		"show_everything": show_everything, "language": language}))
 
 func apply() -> void:
 	if DisplayServer.get_name() != "headless":

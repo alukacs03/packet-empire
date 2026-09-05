@@ -813,11 +813,38 @@ static func run() -> int:
 	Game.set_note(Game.racks[0], "Temporary patch during the migration")
 	Game.set_note(a, "Do not reboot before the handover")
 	Game.set_note(a.ifaces[0], "Customer handoff — do not repatch")
+	Game.inject_grey_fault(sw.ifaces[1], "dirty_optic")
 	Game.save_game()
 	var money_before := Game.money
 	Game.money = 1
 	check(Game.load_game(), "save: load_game returns true")
 	check(Game.money == money_before, "save: money restored")
+	# --- save integrity: atomic writes, backup fallback, validation ---
+	var sp := Game.slot_path(Game.current_slot)
+	check(FileAccess.file_exists(sp) and not FileAccess.file_exists(sp + ".tmp"), "save: no temp file is left behind")
+	Game.save_game()
+	check(FileAccess.file_exists(sp + ".bak"), "save: the previous copy is kept as .bak")
+	var good_raw := FileAccess.get_file_as_string(sp)
+	var trunc := FileAccess.open(sp, FileAccess.WRITE)
+	trunc.store_string(good_raw.substr(0, 200))
+	trunc.close()
+	check(not Game.slot_info(Game.current_slot).get("empty", true), "save: a truncated primary falls back to the .bak")
+	Game.money = 1
+	check(Game.load_slot(Game.current_slot) and Game.money == money_before, "save: load falls back to the .bak and restores money")
+	var parsed: Dictionary = JSON.parse_string(good_raw)
+	check(int(parsed.get("save_version", 0)) == Game.SAVE_VERSION, "save: payload carries save_version")
+	check(Game.validate_save(parsed) == "", "save: a real save validates clean")
+	var bad: Dictionary = parsed.duplicate(true)
+	bad["racks"][0]["slots"][0] = "ghost-device"
+	check(Game.validate_save(bad).contains("ghost-device"), "save: a rack slot naming an unknown device is rejected")
+	bad = parsed.duplicate(true)
+	bad["save_version"] = Game.SAVE_VERSION + 1
+	check(Game.validate_save(bad).contains("newer"), "save: a newer save_version is refused")
+	bad = parsed.duplicate(true)
+	bad["links"] = [["nobody", "eth0", "nobody", "eth1", ""]]
+	check(Game.validate_save(bad) != "", "save: a cable to an unknown device is rejected")
+	check(Game.validate_save([1, 2]) == "not a save file", "save: a non-dictionary is not a save")
+	Game.save_game()  # restore a clean primary for the checks below
 	check(Game.all_devices().size() == 6 and Game.links.size() == 5, "save: devices and links restored")
 	check(Game.racks[0].blanked.has(6), "save: fitted rack blanking panels restored")
 	check(Game.racks[0].note.get("text", "") == "Temporary patch during the migration",
@@ -827,6 +854,10 @@ static func run() -> int:
 		if d.name == sw.name:
 			sw_l = d
 	check(sw_l != null and sw_l.vlans.has(30), "save: per-switch vlan database restored")
+	check(sw_l != null and sw_l.ifaces[1].light_dbm < -15.0, "save: a dirty optic still reads dim after a load")
+	Game.grey_faults.clear()
+	if sw_l != null:
+		sw_l.ifaces[1].light_dbm = -6.0
 	var a_l: Net.NDevice = null
 	for d in Game.all_devices():
 		if d.name == a.name:
@@ -2197,6 +2228,28 @@ static func run() -> int:
 	check(cs.exec("reload").contains("Proceed with reload? [confirm]"), "cfg: reload asks, then restores the startup config")
 	check(cfg_sw.vlans.has(77) and not cfg_sw.vlans.has(88),
 		"cfg: saved VLAN survived the reload, the unsaved one did not")
+	# every field write memory keeps must come back on reload
+	cfg_sw.snooping = true
+	cfg_sw.dai = true
+	cfg_sw.stp_priority = 4096
+	cfg_sw.snmp = "public"
+	cfg_sw.log_host = "10.0.0.9"
+	cfg_sw.ntp_server = "10.0.0.8"
+	cfg_sw.aaa = {"secret": "s3", "server": "10.0.0.7"}
+	cfg_sw.ifaces[2].dot1x = true
+	cfg_sw.ifaces[2].portfast = true
+	cfg_sw.ifaces[2].bpduguard = true
+	cfg_sw.ifaces[2].storm_limit = 20
+	cfg_sw.ifaces[2].dhcp_trusted = true
+	cfg_sw.ifaces[2].port_security = 2
+	var full_cfg := Game.device_config(cfg_sw)
+	cfg_sw.snooping = false
+	cfg_sw.stp_priority = 32768
+	cfg_sw.ifaces[2].dot1x = false
+	cfg_sw.ifaces[2].storm_limit = 0
+	Game.apply_device_config(cfg_sw, full_cfg)
+	check(Game.device_config(cfg_sw) == full_cfg,
+		"cfg: apply_device_config restores every field device_config writes (snooping, dai, stp, snmp, aaa, syslog, ntp, dot1x, portfast, bpduguard, storm, trust, port-security)")
 	var blank_sw := Game.new_device("sw-8")
 	r10.slots[1] = blank_sw
 	var bs := CLI.new_session(blank_sw)
@@ -9142,6 +9195,22 @@ static func run() -> int:
 			"requirements": [{"kind": "reachable", "from": "not-an-address", "to": "10.0.0.1"}]}]})
 	check(not bad_pred.is_empty() and String(bad_pred[0]).contains("scenarios[0].requirements[0]"),
 		"packs: errors name the exact field, so an author can fix the file")
+	check(String(Pack.validate({"id": "x", "name": "x", "schema": 1, "scenarios": [
+		{"id": "s", "title": "t", "brief": "b", "requirements": [{"kind": "not", "of": []}]}]})[0]).contains("at least one"),
+		"packs: a combinator with an empty list is rejected before it can crash the checklist")
+	check(String(Pack.validate({"id": "x", "name": "x", "schema": 1, "scenarios": [
+		{"id": "s", "title": "t", "brief": "b", "requirements": [{"kind": "not", "of": [
+			{"kind": "reachable", "from": "10.0.0.1", "to": "10.0.0.2"}, {"kind": "reachable", "from": "10.0.0.1", "to": "10.0.0.3"}]}]}]})[0]).contains("exactly one"),
+		"packs: not takes exactly one requirement")
+	check(Pack.USER_DIR == "user://packs_test", "packs: the suite never writes into the player's packs directory")
+	check(Pack.import_text("{}", "../evil") != "" and Pack.import_text("{}", "a b") != "",
+		"packs: an import name must be a plain file name")
+	Pack.problems = ["user://packs/broken.json: missing field 'id'"]
+	var broken_row: Dictionary = Pack.workshop_rows().back()
+	check(broken_row["source"] == "user://packs/broken.json" and broken_row["id"] == "broken.json"
+		and String(broken_row["detail"]) == "missing field 'id'",
+		"packs: a failed pack's workshop row names the file, not the scheme")
+	Pack.problems = []
 	check(Pack.validate({"id": "x", "name": "x", "schema": 1, "scenarios": [
 		{"id": "s", "title": "t", "brief": "b", "requirements": [],
 			"future_field": {"anything": true}}]}).is_empty(),

@@ -31,6 +31,8 @@ func _ready() -> void:
 			fails = SimTests.ui_smoke(self)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
+	if OS.get_environment("PACKET_SHOT") == "" and not Film.active():
+		_undo_stray_override()
 	ui = UILayer.new()
 	add_child(ui)
 	var crew_node := Techs.new()
@@ -50,6 +52,7 @@ func _ready() -> void:
 	show_title()
 
 func show_title() -> void:
+	Game.in_world = false
 	## the front door: the world keeps running behind it but nobody can touch it
 	if title != null:
 		title.visible = true
@@ -67,6 +70,7 @@ func show_title() -> void:
 
 
 func _leave_title() -> void:
+	Game.in_world = true
 	title.visible = false
 	ui.visible = true
 	Game.set_speed(1)
@@ -87,6 +91,7 @@ func _start_new(slot: int, company: String, diff: int, is_demo: bool) -> void:
 
 func _continue(slot: int) -> void:
 	if not Game.load_slot(slot):
+		title.show_error("Could not load: %s" % Game.last_load_error)
 		return
 	_leave_title()
 
@@ -827,15 +832,31 @@ func rebuild_racks() -> void:
 
 var _shown_site := 0
 
+func _undo_stray_override() -> void:
+	## the capture harnesses write an override.cfg that parks the window off
+	## screen without focus; if one of them died before its trap ran, the next
+	## real launch would open an invisible window. Put it back and delete the file.
+	var path := "res://override.cfg"
+	if not FileAccess.file_exists(path) or DisplayServer.get_name() == "headless":
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_NO_FOCUS, false)
+	var screen := DisplayServer.screen_get_size()
+	var win := DisplayServer.window_get_size()
+	DisplayServer.window_set_position(DisplayServer.screen_get_position() + (screen - win) / 2)
+	push_warning("removed a stray override.cfg left by a capture run")
+
 func _site_watch() -> void:
 	if Game.current_site != _shown_site:
 		_shown_site = Game.current_site
 		rebuild_racks()
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST and ui and Game.in_world:
 		if Game.drill_active:
 			Drill.finish(false)  # abandon: restore the real datacenter before saving
+		if Puzzle.active():
+			Puzzle.close()  # the puzzle is scratch; the player's own world is what gets saved
 		Game.save_game()
 
 func _process(dt: float) -> void:

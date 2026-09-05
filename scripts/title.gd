@@ -204,6 +204,12 @@ func _clear_pane() -> void:
 	for c in panel_box.get_children():
 		c.queue_free()
 
+func show_error(msg: String) -> void:
+	_clear_pane()
+	pane_title.text = "Something went wrong"
+	panel_box.add_child(_lbl(msg, 14, Color(0.9, 0.5, 0.45)))
+	panel_box.add_child(_para("The file was left as it is. The .bak next to it is the previous save, if there was one."))
+
 func show_intro() -> void:
 	_clear_pane()
 	pane_title.text = "What this is"
@@ -393,6 +399,15 @@ func _slot_row(i: int) -> Control:
 	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
 	var head := "Autosave" if i >= Game.SLOTS else "Slot %d" % (i + 1)
+	if info.get("broken", false):
+		v.add_child(_lbl("%s: damaged (kept on disk, delete it to reuse the slot)" % head, 14, Color(0.9, 0.5, 0.45)))
+		var del_broken := Button.new()
+		del_broken.text = "Delete"
+		del_broken.pressed.connect(func() -> void:
+			Game.delete_slot(i)
+			show_slots())
+		v.add_child(del_broken)
+		return pc
 	if info.get("empty", true):
 		v.add_child(_lbl("%s: empty" % head, 14, MUTED))
 		return pc

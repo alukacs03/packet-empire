@@ -80,6 +80,10 @@ static func import_state(text: String) -> String:
 	world["invoices"] = []
 	world["events"] = []
 	world["sandbox"] = true  # nothing here costs anything, and nothing breaks on its own
+	var problem := Game.validate_save(world)
+	if problem != "":
+		_home = ""
+		return "that puzzle export is damaged: %s" % problem
 	Game.restore(JSON.stringify(world))
 	loaded = data
 	_before = _port_state()

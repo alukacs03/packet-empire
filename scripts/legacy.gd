@@ -20,9 +20,7 @@ static func load_file() -> void:
 	offered = data.get("offered", [])
 
 static func save_file() -> void:
-	var f := FileAccess.open(path, FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify({"epitaph": epitaph, "offered": offered}))
+	Game.write_text_atomic(path, JSON.stringify({"epitaph": epitaph, "offered": offered}))
 
 static func harvest(why: String) -> void:
 	## Read the run that is ending for the few things worth keeping. Everything

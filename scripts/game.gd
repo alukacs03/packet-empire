@@ -1873,6 +1873,15 @@ func grey_drops(from_if: Net.Iface, to_if: Net.Iface, bytes: int) -> bool:
 					return true
 	return false
 
+func iface_by_key(key: String) -> Net.Iface:
+	var parts := key.split("|")
+	if parts.size() != 2:
+		return null
+	for d in all_devices():
+		if d.name == parts[0]:
+			return _find_iface(d, parts[1])
+	return null
+
 func inject_grey_fault(i: Net.Iface, kind: String) -> String:
 	if not GREY_KINDS.has(kind):
 		return "there is no such fault"
@@ -5346,9 +5355,7 @@ func run_history() -> Array:
 	return out
 
 func _write_history(rows: Array) -> void:
-	var f := FileAccess.open(history_path, FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(rows))
+	write_text_atomic(history_path, JSON.stringify(rows))
 
 func record_run(snap: Dictionary) -> Dictionary:
 	## One compact row per finished run. Nothing here is a save, so deleting
@@ -6259,6 +6266,7 @@ func _ready() -> void:
 	_scale_rival_aggression()
 	if OS.get_environment("PACKET_TEST") == "1":
 		save_path = "user://save_test.json"  # never touch the real save from tests
+		Pack.USER_DIR = "user://packs_test"  # nor the player's own content packs
 		slot_prefix = "user://slot_test"
 		Legacy.path = "user://legacy_test.json"
 		history_path = "user://run_history_test.json"
@@ -8934,7 +8942,7 @@ func _deal_path_links(deal: Dictionary) -> Array:
 
 func autosave_due() -> void:
 	## a quiet safety net every few cycles, so a crash costs minutes not hours
-	if drill_active or cycle == 0 or cycle % 5 != 0:
+	if drill_active or Puzzle.active() or cycle == 0 or cycle % 5 != 0:
 		return
 	save_game(SLOTS)
 
@@ -9343,8 +9351,6 @@ func sla_tick() -> void:
 		if board_targets and not sandbox and not drill_active:
 			settle_quarter_goals()
 		maintenance_used = 0  # a new quarter, a fresh allowance
-	if cycle % 5 == 0:
-		save_game()
 	# a cycle is long enough for every MAC and ARP entry to age out; what is
 	# still true is relearned the moment a host speaks
 	Sim.flush_learned_state()
@@ -9940,6 +9946,61 @@ func remove_static_route(dev: Net.NDevice, prefix: String, plen: int, vrf := "")
 # ---------- save / load ----------
 
 var drill_active := false
+var in_world := false  # a slot was loaded or started; the title screen never saves
+var last_load_error := ""
+const SAVE_VERSION := 1
+
+static func write_text_atomic(path: String, text: String) -> bool:
+	## write next to the target, then rename over it, keeping the previous copy
+	## as .bak: a crash or a full disk mid-write never leaves a half file
+	var real := ProjectSettings.globalize_path(path)
+	var f := FileAccess.open(path + ".tmp", FileAccess.WRITE)
+	if f == null:
+		return false
+	f.store_string(text)
+	f.close()
+	if FileAccess.file_exists(path):
+		DirAccess.rename_absolute(real, real + ".bak")
+	return DirAccess.rename_absolute(real + ".tmp", real) == OK
+
+static func read_json_with_backup(path: String) -> Variant:
+	## the primary file, or the .bak when the primary does not parse
+	for p in [path, path + ".bak"]:
+		if FileAccess.file_exists(p):
+			var j := JSON.new()  # parse quietly: a damaged primary is expected, not an error to log
+			if j.parse(FileAccess.get_file_as_string(p)) == OK and typeof(j.data) == TYPE_DICTIONARY:
+				return j.data
+	return null
+
+func validate_save(data: Variant) -> String:
+	## "" when the save can be applied, else the reason it cannot
+	if typeof(data) != TYPE_DICTIONARY:
+		return "not a save file"
+	var d: Dictionary = data
+	if int(d.get("save_version", 0)) > SAVE_VERSION:
+		return "this save was written by a newer build of the game"
+	for key in ["devices", "racks", "links"]:
+		if d.has(key) and typeof(d[key]) != (TYPE_DICTIONARY if key == "devices" else TYPE_ARRAY):
+			return "field '%s' has the wrong shape" % key
+	var devs: Dictionary = d.get("devices", {})
+	for dname in devs:
+		var sd: Variant = devs[dname]
+		if typeof(sd) != TYPE_DICTIONARY or not sd.has("type") or not sd.has("name"):
+			return "device '%s' is missing its type or name" % dname
+		if not TYPE_DEFAULTS.has(String(sd["type"])):
+			return "device '%s' has unknown type '%s'" % [dname, sd["type"]]
+		if typeof(sd.get("ifaces", [])) != TYPE_ARRAY:
+			return "device '%s' has a malformed interface list" % dname
+	for rd in d.get("racks", []):
+		if typeof(rd) != TYPE_DICTIONARY or not rd.has("name") or typeof(rd.get("tile")) != TYPE_ARRAY or rd["tile"].size() != 2:
+			return "a rack is missing its name or tile"
+		for slot_name in rd.get("slots", []):
+			if slot_name != null and not devs.has(slot_name):
+				return "rack '%s' holds unknown device '%s'" % [rd["name"], slot_name]
+	for ld in d.get("links", []):
+		if typeof(ld) != TYPE_ARRAY or ld.size() < 4 or not devs.has(ld[0]) or not devs.has(ld[2]):
+			return "a cable joins a device that is not in the save"
+	return ""
 
 func snapshot() -> String:
 	return JSON.stringify(_serialize())
@@ -9955,7 +10016,7 @@ func slot_info(i: int) -> Dictionary:
 	var path := slot_path(i)
 	if not FileAccess.file_exists(path):
 		return {"empty": true, "auto": i >= SLOTS}
-	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var data: Variant = read_json_with_backup(path)
 	if typeof(data) != TYPE_DICTIONARY:
 		return {"empty": true, "auto": i >= SLOTS, "broken": true}
 	var d: Dictionary = data
@@ -9976,37 +10037,41 @@ func import_legacy_save() -> void:
 	## loses the game they were in the middle of
 	if not FileAccess.file_exists(save_path) or FileAccess.file_exists(slot_path(0)):
 		return
-	var raw := FileAccess.get_file_as_string(save_path)
-	var f := FileAccess.open(slot_path(0), FileAccess.WRITE)
-	if f != null:
-		f.store_string(raw)
+	write_text_atomic(slot_path(0), FileAccess.get_file_as_string(save_path))
 
 func delete_slot(i: int) -> void:
 	var path := slot_path(i)
-	if FileAccess.file_exists(path):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	for suffix in ["", ".bak", ".tmp"]:
+		if FileAccess.file_exists(path + suffix):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(path + suffix))
 
 func load_slot(i: int) -> bool:
 	var path := slot_path(i)
-	if not FileAccess.file_exists(path):
+	last_load_error = ""
+	if not FileAccess.file_exists(path) and not FileAccess.file_exists(path + ".bak"):
+		last_load_error = "that slot is empty"
 		return false
-	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var data: Variant = read_json_with_backup(path)
 	if typeof(data) != TYPE_DICTIONARY:
+		last_load_error = "the save file does not parse (%s)" % ProjectSettings.globalize_path(path)
+		return false
+	last_load_error = validate_save(data)
+	if last_load_error != "":
 		return false
 	current_slot = i
 	_apply(data)
+	in_world = true
 	return true
 
 func save_game(slot := -1) -> void:
-	if drill_active:
-		return  # never write drill state over the real save
+	if drill_active or Puzzle.active():
+		return  # never write drill or puzzle state over the real save
 	if slot < 0:
 		slot = current_slot
 	var payload := _serialize()
 	payload["saved_at"] = Time.get_datetime_string_from_system(false, true)
-	var f := FileAccess.open(slot_path(slot), FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify(payload, "  "))
+	payload["save_version"] = SAVE_VERSION
+	write_text_atomic(slot_path(slot), JSON.stringify(payload, "  "))
 
 func _serialize() -> Dictionary:
 	var devs := {}  # name -> serialized (names are unique)
@@ -10264,6 +10329,21 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	d.services = cfg.get("services", {}).duplicate(true)
 	d.resolver = cfg.get("resolver", "")
 	d.ip_forwarding = cfg.get("ip_forwarding", d.ip_forwarding)
+	# everything _ser_device writes into startup comes back, or reload lies
+	d.vrfs = cfg.get("vrfs", []).duplicate(true)
+	d.snooping = bool(cfg.get("snooping", false))
+	d.dai = bool(cfg.get("dai", false))
+	d.stp_mode = String(cfg.get("stp_mode", d.stp_mode))
+	d.stp_priority = int(cfg.get("stp_priority", d.stp_priority))
+	d.mst_instances = cfg.get("mst_instances", {}).duplicate(true)
+	d.igmp_snooping = bool(cfg.get("igmp_snooping", false))
+	d.mlag_peer = cfg.get("mlag_peer", "")
+	d.snmp = String(cfg.get("snmp", ""))
+	d.aaa = cfg.get("aaa", {}).duplicate(true)
+	d.radius = cfg.get("radius", "")
+	d.ssids = cfg.get("ssids", d.ssids).duplicate(true) if cfg.has("ssids") else d.ssids
+	d.log_host = cfg.get("log_host", "")
+	d.ntp_server = cfg.get("ntp_server", "")
 	var saved := {}
 	for si in cfg.get("ifaces", []):
 		saved[si["name"]] = si
@@ -10300,6 +10380,21 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.ra = bool(si.get("ra", false))
 		target.mlag_peerlink = bool(si.get("mlag_peerlink", false))
 		target.helper = si.get("helper", "")
+		target.lag_mode = String(si.get("lag_mode", "on"))
+		target.vrf = si.get("vrf", "")
+		target.qos = bool(si.get("qos", false))
+		target.dot1x = bool(si.get("dot1x", false))
+		target.port_security = si.get("port_security", false)
+		target.secure_mac = si.get("secure_mac", "")
+		target.storm_limit = int(si.get("storm_limit", 0))
+		target.pvlan = si.get("pvlan", "")
+		target.dhcp_trusted = bool(si.get("dhcp_trusted", false))
+		target.portfast = bool(si.get("portfast", false))
+		target.bpduguard = bool(si.get("bpduguard", false))
+		target.tunnel_src = si.get("tunnel_src", "")
+		target.tunnel_dst = si.get("tunnel_dst", "")
+		target.wg_key = si.get("wg_key", "")
+		target.wg_peers = si.get("wg_peers", []).duplicate(true)
 	topology_changed.emit()
 
 func _ser_device(d: Net.NDevice) -> Dictionary:
@@ -10512,10 +10607,10 @@ func _apply(data: Dictionary) -> void:
 	deals = data.get("deals", [])
 	for k in _counter.keys():
 		_counter[k] = 0  # a new company numbers its first switch sw1 again
-	for k in data["counters"]:
+	for k in data.get("counters", {}):
 		_counter[k] = int(data["counters"][k])
 	var by_name := {}
-	for dname in data["devices"]:
+	for dname in data.get("devices", {}):
 		var sd: Dictionary = data["devices"][dname]
 		var d := Net.NDevice.new(sd["type"], sd["name"])
 		d.model = sd.get("model", TYPE_DEFAULTS[sd["type"]])
@@ -10636,6 +10731,11 @@ func _apply(data: Dictionary) -> void:
 	while stage < STAGES.size() - 1 and _rack_outside_grid():
 		stage += 1  # grandfather old saves placed on the bigger legacy floor
 		log_event("Legacy floor grandfathered: you keep the %s you already built on." % STAGES[stage]["name"])
+	for gk in grey_faults:  # the fault's visible side effects live on the interface, which was just rebuilt
+		if String(grey_faults[gk].get("kind", "")) == "dirty_optic":
+			var gi := iface_by_key(gk)
+			if gi != null:
+				gi.light_dbm = -18.5
 	money_changed.emit()
 	topology_changed.emit()
 
