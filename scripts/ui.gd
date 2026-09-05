@@ -693,9 +693,21 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(min_w, 0)
 	scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("md"))
-	# a card that clips a button must look scrollable: a bar you can see
+	# a card that clips a button must look scrollable: a bar you can see,
+	# and a "more below" hint that sits over the bottom edge until the end
 	scroll.get_v_scroll_bar().custom_minimum_size.x = 10
 	panel.add_child(scroll)
+	var more := _label("▾  more below", 11, UIW.colour("accent"))
+	more.size_flags_vertical = Control.SIZE_SHRINK_END
+	more.size_flags_horizontal = Control.SIZE_SHRINK_END
+	more.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	more.visible = false
+	panel.add_child(more)
+	var bar := scroll.get_v_scroll_bar()
+	var update_more := func() -> void:
+		more.visible = bar.max_value - bar.page > 1.0 and bar.value + bar.page < bar.max_value - 1.0
+	bar.value_changed.connect(func(_v: float) -> void: update_more.call())
+	bar.changed.connect(update_more)
 	_card_scrolls.append(scroll)
 	var content_margin := MarginContainer.new()
 	content_margin.add_theme_constant_override("margin_right", UIW.space("lg"))
