@@ -215,6 +215,9 @@ class Session:
 class EOS extends Session:
 	var mode := "exec"  # exec | priv | config | if | vlan | router | ospf | dhcp | acl | dhcpsrv | dhcpsub
 	var ctx_acl := ""  # the named access list being edited
+	var ctx_po := 0  # the Port-Channel being configured: its members are ctx_ifs
+	var ctx_rmap := ""  # the route-map being edited
+	var ctx_rmap_seq := 10
 	var ctx_subnet := ""  # the dhcp server subnet being edited
 	var ctx_if: Net.Iface  # the first of ctx_ifs, for single-interface commands
 	var ctx_ifs: Array = []  # every interface the current context applies to
@@ -237,6 +240,8 @@ class EOS extends Session:
 			"config":
 				return dev.name + "(config)#"
 			"if":
+				if ctx_po > 0:
+					return "%s(config-if-Po%d)#" % [dev.name, ctx_po]
 				return "%s(config-if-%s)#" % [dev.name, _range_label()]
 			"vlan":
 				return "%s(config-vlan-%d)#" % [dev.name, ctx_vlan]
@@ -254,6 +259,12 @@ class EOS extends Session:
 				return "%s(config-dhcp-server-subnet-%s)#" % [dev.name, ctx_subnet]
 			"mlag":
 				return dev.name + "(config-mlag)#"
+			"mst":
+				return dev.name + "(config-mst)#"
+			"rmap":
+				return "%s(config-route-map-%s)#" % [dev.name, ctx_rmap]
+			"af":
+				return dev.name + "(config-router-bgp-af)#"
 			"vxlan":
 				return dev.name + "(config-if-Vx1)#"
 		return dev.name + ">"
@@ -289,7 +300,7 @@ class EOS extends Session:
 
 	# ---- command table: {m: modes, p: path tokens, h: handler(rest)->String, dyn: Callable|null}
 	func _build_cmds() -> void:
-		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"]  # show/ping work everywhere via 'do'-free shortcut
+		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
 			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
@@ -368,11 +379,45 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["spanning-tree", "bpduguard"], "h": func(r): return _stp_edge("bpduguard", r.is_empty() or String(r[0]) != "disable")},
 			{"m": ["if"], "p": ["no", "spanning-tree", "bpduguard"], "h": func(_r): return _stp_edge("bpduguard", false)},
 			{"m": ["config"], "p": ["spanning-tree", "priority"], "h": _stp_priority},
+			{"m": ["config"], "p": ["spanning-tree", "mst", "configuration"], "h": func(_r):
+				if dev.type != "switch":
+					return "% Invalid input\n"
+				mode = "mst"
+				return ""},
+			{"m": ["mst"], "p": ["instance"], "h": func(r): return _stp_mst(["instance"] + r)},
+			{"m": ["mst"], "p": ["name"], "h": func(r):
+				var mc: Dictionary = dev.services.get("mst", {})
+				mc["name"] = " ".join(PackedStringArray(r))
+				dev.services["mst"] = mc
+				return ""},
+			{"m": ["mst"], "p": ["revision"], "h": func(r):
+				if r.size() != 1 or not String(r[0]).is_valid_int():
+					return "% Incomplete command\n"
+				var mc: Dictionary = dev.services.get("mst", {})
+				mc["revision"] = int(r[0])
+				dev.services["mst"] = mc
+				return ""},
+			{"m": EP, "p": ["show", "spanning-tree", "mst", "configuration"], "h": _show_mst_config},
+			{"m": ["config"], "p": ["route-map"], "h": _cfg_route_map},
+			{"m": ["config"], "p": ["no", "route-map"], "h": func(r):
+				var maps: Dictionary = dev.services.get("route_maps", {})
+				if r.size() >= 1:
+					maps.erase(String(r[0]))
+				return ""},
+			{"m": ["rmap"], "p": ["set", "local-preference"], "h": func(r): return _rmap_set("local_pref", r)},
+			{"m": ["rmap"], "p": ["set", "as-path", "prepend"], "h": func(r): return _rmap_set("prepend", [str(r.size())] if not r.is_empty() else [])},
+			{"m": ["rmap"], "p": ["set", "community"], "h": func(_r): return ""},
+			{"m": ["rmap"], "p": ["set", "metric"], "h": func(_r): return ""},
+			{"m": ["rmap"], "p": ["match", "ip", "address", "prefix-list"], "h": func(r): return _rmap_set("prefix_list", r)},
+			{"m": ["rmap"], "p": ["description"], "h": func(_r): return ""},
+			{"m": EP, "p": ["show", "route-map"], "h": _show_route_maps},
+			{"m": ["router"], "p": ["address-family", "ipv4"], "h": func(_r): mode = "af"; return ""},
+			{"m": ["af"], "p": ["neighbor"], "h": _af_neighbor},
 			{"m": ["config"], "p": ["spanning-tree", "mst"], "h": _stp_mst},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
 			{"m": EP, "p": ["show", "ip", "route", "for"], "h": _show_route_for},
 			{"m": EP, "p": ["show", "ip", "interface", "brief"], "h": _show_ip_brief},
-			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["show", "running-config"], "h": _show_run},
+			{"m": ["priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["show", "running-config"], "h": _show_run},
 			{"m": EP, "p": ["show", "running-config", "interfaces"], "h": _show_run_interfaces},
 			{"m": EP, "p": ["show", "running-config", "section"], "h": _show_run_section},
 			{"m": EP, "p": ["show", "running-config", "diffs"], "h": func(_r): return _show_diff([])},
@@ -387,8 +432,8 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["interface", "range"], "h": _cfg_if_range},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
 			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
 			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source},
@@ -657,7 +702,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
 			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
 			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
-			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["end"], "h": func(_r): mode = "priv"; return ""},
 			{"m": EP, "p": ["exit"], "h": _exit},
 			{"m": EP, "p": ["help"], "h": _help},
 		]
@@ -681,7 +726,7 @@ class EOS extends Session:
 			toks.pop_front()  # IOS needs 'do' for a show inside config; EOS tolerates it
 			line = " ".join(PackedStringArray(toks))
 		Sim.aaa_account(dev, line.strip_edges())  # the audit trail, before anything runs
-		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"]:
+		if mode in ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"]:
 			Challenge.note_change()  # a challenge counts what you changed, not what you typed
 		if mode == "acl" and toks.size() >= 2 and String(toks[0]).is_valid_int():
 			_acl_seq = int(toks[0])  # 10 permit ip any any: the sequence number leads
@@ -694,8 +739,10 @@ class EOS extends Session:
 		# A global configuration command typed inside a sub-mode (interface,
 		# router) is accepted and switches mode, exactly as IOS does.
 		var modes: Array = [mode]
-		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan"]:
+		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"]:
 			modes.append("config")
+		if mode == "af":
+			modes.append("router")  # the address family inherits the BGP commands
 		if mode != "exec":
 			modes.append("priv")  # EOS runs exec-level commands from any configuration mode
 		var full: Array = []
@@ -815,8 +862,10 @@ class EOS extends Session:
 
 	func _exit(_r: Array) -> String:
 		match mode:
-			"if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "mlag", "vxlan":
+			"if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "mlag", "vxlan", "mst", "rmap":
 				mode = "config"
+			"af":
+				mode = "router"
 			"dhcpsub":
 				mode = "dhcpsrv"
 			"config":
@@ -914,6 +963,7 @@ class EOS extends Session:
 	func _select_ifaces(list: Array) -> void:
 		ctx_ifs = list
 		ctx_if = list[0] if not list.is_empty() else null
+		ctx_po = 0
 		mode = "if"
 
 	func _range_only(what: String) -> String:
@@ -973,8 +1023,19 @@ class EOS extends Session:
 		if r.size() != 1:
 			return "% Incomplete command\n"
 		var want := String(r[0]).to_lower()
-		if "-" in want or "," in want:
+		if ("-" in want or "," in want) and not want.begins_with("po"):
 			return _cfg_if_range([want])  # Ethernet1-3, Ethernet1,3,5-6: no 'range' keyword on EOS
+		if (want.begins_with("po") or want.begins_with("port-channel")) and want.lstrip("abcdefghijklmnopqrstuvwxyz-").is_valid_int():
+			# a Port-Channel is its members: what is typed here lands on all of them
+			if dev.type != "switch":
+				return "% Invalid input\n"
+			var group := int(want.lstrip("abcdefghijklmnopqrstuvwxyz-"))
+			var members: Array = dev.ifaces.filter(func(i): return i.lag == group)
+			if members.is_empty():
+				return "% Invalid input\n"  # channel-group N on a member creates it
+			_select_ifaces(members)
+			ctx_po = group
+			return ""
 		if want.begins_with("vx") and want.lstrip("abcdefghijklmnopqrstuvwxyz") == "1":
 			if dev.type != "switch":
 				return "% Invalid input\n"
@@ -1368,6 +1429,123 @@ class EOS extends Session:
 				keep = needle in line
 			if keep and line != "":
 				out += line + "\n"
+		return out
+
+	func _show_mst_config(_r: Array) -> String:
+		var mc: Dictionary = dev.services.get("mst", {})
+		var mapped := {}
+		for inst in dev.mst_instances:
+			for v in dev.mst_instances[inst]:
+				mapped[int(v)] = int(inst)
+		var out := "Name  [%s]\nRevision  %d   Instances configured %d\n\nInstance  Vlans mapped\n--------  ---------------------------------------------------------------------\n" % [
+			String(mc.get("name", "")), int(mc.get("revision", 0)), dev.mst_instances.size() + 1]
+		var rest: Array = []
+		for v in range(1, 4095):
+			if not mapped.has(v):
+				rest.append(v)
+		out += "%-9s %s\n" % ["0", Net.compress_ports(rest.map(func(v): return "v%d" % v)).replace("v", "")]
+		for inst in dev.mst_instances:
+			out += "%-9s %s\n" % [str(inst), ",".join(PackedStringArray(dev.mst_instances[inst].map(func(v): return str(v))))]
+		return out + "-------------------------------------------------------------------------------\n"
+
+	func _cfg_route_map(r: Array) -> String:
+		## route-map NAME [permit|deny] [seq]
+		if r.is_empty():
+			return "% Incomplete command\n"
+		ctx_rmap = String(r[0])
+		var action := "permit"
+		ctx_rmap_seq = 10
+		if r.size() >= 2 and String(r[1]) in ["permit", "deny"]:
+			action = String(r[1])
+		if r.size() >= 3 and String(r[2]).is_valid_int():
+			ctx_rmap_seq = int(r[2])
+		var maps: Dictionary = dev.services.get("route_maps", {})
+		if not maps.has(ctx_rmap):
+			maps[ctx_rmap] = {}
+		if not maps[ctx_rmap].has(str(ctx_rmap_seq)):
+			maps[ctx_rmap][str(ctx_rmap_seq)] = {"action": action}
+		dev.services["route_maps"] = maps
+		mode = "rmap"
+		return ""
+
+	func _rmap_set(key: String, r: Array) -> String:
+		if r.is_empty():
+			return "% Incomplete command\n"
+		var entry: Dictionary = dev.services["route_maps"][ctx_rmap][str(ctx_rmap_seq)]
+		match key:
+			"local_pref", "prepend":
+				if not String(r[0]).is_valid_int():
+					return "% Invalid input\n"
+				entry[key] = int(r[0])
+			"prefix_list":
+				if not dev.services.get("prefix_lists", {}).has(String(r[0])):
+					return "% Invalid input\n"
+				entry[key] = String(r[0])
+		return ""
+
+	func _show_route_maps(_r: Array) -> String:
+		var out := ""
+		for name in dev.services.get("route_maps", {}):
+			for seq in dev.services["route_maps"][name]:
+				var e: Dictionary = dev.services["route_maps"][name][seq]
+				out += "route-map %s %s %s\n" % [name, e.get("action", "permit"), seq]
+				if e.has("prefix_list"):
+					out += "  Match clauses:\n    match ip address prefix-list %s\n" % e["prefix_list"]
+				out += "  Set clauses:\n"
+				if e.has("local_pref"):
+					out += "    set local-preference %d\n" % int(e["local_pref"])
+				if e.has("prepend"):
+					out += "    set as-path prepend %s\n" % " ".join(PackedStringArray(_asn_repeat(int(e["prepend"]))))
+		return out
+
+	func _asn_repeat(n: int) -> Array:
+		var out: Array = []
+		for k in n:
+			out.append(str(int(dev.bgp.get("asn", 0))))
+		return out
+
+	func _apply_route_map(nb: Dictionary, name: String, dir: String) -> void:
+		## the route-map's set and match clauses become this world's neighbour policy
+		var entries: Dictionary = dev.services.get("route_maps", {}).get(name, {})
+		for seq in entries:
+			var e: Dictionary = entries[seq]
+			if e.has("local_pref") and dir == "in":
+				nb["local_pref"] = int(e["local_pref"])
+			if e.has("prepend") and dir == "out":
+				nb["prepend"] = clampi(int(e["prepend"]), 0, 10)
+			if e.has("prefix_list"):
+				nb["prefix_%s" % dir] = dev.services.get("prefix_lists", {}).get(String(e["prefix_list"]), []).duplicate()
+		nb["rmap_%s" % dir] = name
+
+	func _af_neighbor(r: Array) -> String:
+		## address-family ipv4: neighbor X activate, and the same neighbor commands as outside it
+		if r.size() == 2 and String(r[1]) == "activate":
+			return "" if not _find_nb(String(r[0])).is_empty() else "% Invalid input\n"
+		return _bgp_neighbor(r)
+
+	func _show_port_channel_if(group: int) -> String:
+		var members: Array = dev.ifaces.filter(func(i): return i.lag == group)
+		if members.is_empty():
+			return "% Invalid input\n"
+		var up_members: Array = members.filter(func(i): return Sim.lag_bundled(i))
+		var first: Net.Iface = members[0]
+		var speed := 0
+		var rx := 0
+		var tx := 0
+		for m: Net.Iface in up_members:
+			speed += Game.iface_speed(m)
+			rx += m.rx_frames
+			tx += m.tx_frames
+		var desc := String(first.note.get("text", "")) if first.note is Dictionary else ""
+		var out := "Port-Channel%d is %s, line protocol is %s (%s)\n" % [group, "up" if not up_members.is_empty() else "down",
+			"up" if not up_members.is_empty() else "lowerlayerdown", "connected" if not up_members.is_empty() else "notconnect"]
+		if desc != "":
+			out += "  Description: %s\n" % desc
+		out += "  Hardware is Port-Channel, address is %s\n  Ethernet MTU %d bytes\n  Full-duplex, %s\n  Active members in this channel: %d\n" % [
+			Net.mac_dotted(first.mac), first.mtu, ("%dGb/s" % (speed / 1000)) if speed >= 1000 else "%dMb/s" % speed, up_members.size()]
+		for m: Net.Iface in members:
+			out += "  ... %s, %s\n" % [m.name, "Full-duplex, %s" % (("%dGb/s" % (Game.iface_speed(m) / 1000)) if Game.iface_speed(m) >= 1000 else "%dMb/s" % Game.iface_speed(m)) if Sim.lag_bundled(m) else "down"]
+		out += "     %d packets input, %d input errors\n     %d packets output, 0 output errors\n" % [rx, first.rx_errors, tx]
 		return out
 
 	func _no_switchport(_r: Array) -> String:
@@ -2634,6 +2812,17 @@ class EOS extends Session:
 			nb["prepend"] = clampi(int(r[2]), 0, 10)  # longer path: how THEY reach us
 			Game.topology_changed.emit()
 			return ""
+		if r.size() == 4 and "route-map".begins_with(r[1]) and String(r[3]) in ["in", "out"]:
+			if not dev.services.get("route_maps", {}).has(String(r[2])):
+				return "% Invalid input\n"
+			_apply_route_map(nb, String(r[2]), String(r[3]))
+			Game.topology_changed.emit()
+			return ""
+		if r.size() >= 3 and String(r[1]) == "description":
+			nb["description"] = " ".join(PackedStringArray(r.slice(2)))
+			return ""
+		if r.size() == 3 and String(r[1]) == "maximum-routes":
+			return "" if String(r[2]).is_valid_int() else "% Invalid input\n"
 		if r.size() == 4 and "prefix-list".begins_with(r[1]) and String(r[3]) in ["in", "out"]:
 			# EOS order: neighbor X prefix-list NAME in
 			var named: Dictionary = dev.services.get("prefix_lists", {})
@@ -2911,6 +3100,8 @@ class EOS extends Session:
 		## speed and the counters that tell a grey failure from a good link
 		if r.size() >= 2 and String(r[1]).is_valid_int():
 			r = [String(r[0]) + String(r[1])] + r.slice(2)  # show interfaces ethernet 1
+		if r.size() >= 1 and (String(r[0]).to_lower().begins_with("po")) and String(r[0]).lstrip("Port-Chanelpo").is_valid_int():
+			return _show_port_channel_if(int(String(r[0]).lstrip("Port-Chanelpo")))
 		var only: Net.Iface = _find_iface(String(r[0])) if r.size() >= 1 else null
 		if r.size() >= 1 and only == null:
 			return "% Invalid input\n"
@@ -3603,6 +3794,15 @@ class EOS extends Session:
 			out += "spanning-tree mode %s\n!\n" % ("mstp" if dev.stp_mode == "mst" else "rstp")
 			if dev.stp_priority != 32768:
 				out += "spanning-tree priority %d\n!\n" % dev.stp_priority
+			if not dev.mst_instances.is_empty() or dev.services.has("mst"):
+				out += "spanning-tree mst configuration\n"
+				if String(dev.services.get("mst", {}).get("name", "")) != "":
+					out += "   name %s\n" % dev.services["mst"]["name"]
+				if int(dev.services.get("mst", {}).get("revision", 0)) != 0:
+					out += "   revision %d\n" % int(dev.services["mst"]["revision"])
+				for inst in dev.mst_instances:
+					out += "   instance %s vlan %s\n" % [inst, ",".join(PackedStringArray(dev.mst_instances[inst].map(func(v): return str(v))))]
+				out += "!\n"
 		var vids := dev.vlans.keys()
 		vids.sort()
 		for vid in vids:
@@ -3626,6 +3826,17 @@ class EOS extends Session:
 				seq += 10
 		if not plists.is_empty():
 			out += "!\n"
+		for rm_name in dev.services.get("route_maps", {}):
+			for seq in dev.services["route_maps"][rm_name]:
+				var e: Dictionary = dev.services["route_maps"][rm_name][seq]
+				out += "route-map %s %s %s\n" % [rm_name, e.get("action", "permit"), seq]
+				if e.has("prefix_list"):
+					out += "   match ip address prefix-list %s\n" % e["prefix_list"]
+				if e.has("local_pref"):
+					out += "   set local-preference %d\n" % int(e["local_pref"])
+				if e.has("prepend"):
+					out += "   set as-path prepend %s\n" % " ".join(PackedStringArray(_asn_repeat(int(e["prepend"]))))
+				out += "!\n"
 		var acl_names: Array = []
 		for rule in dev.acls:
 			var nm := String(rule.get("list", ""))
@@ -3641,8 +3852,39 @@ class EOS extends Session:
 		var nat_rules_cfg: Array = dev.services.get("nat", {}).get("rules", [])
 		var ordered: Array = dev.ifaces.filter(func(i): return i.name != "lo")
 		ordered.sort_custom(func(a, b): return _if_rank(a.name) < _if_rank(b.name) if _if_rank(a.name) != _if_rank(b.name) else dev.ifaces.find(a) < dev.ifaces.find(b))
+		# the Port-Channels first, as EOS prints them: the settings a member
+		# carries are the channel's, so they are printed once, on the channel
+		var groups: Array = []
+		for i: Net.Iface in dev.ifaces:
+			if i.lag > 0 and i.lag not in groups:
+				groups.append(i.lag)
+		groups.sort()
+		for g in groups:
+			var first: Net.Iface = dev.ifaces.filter(func(i): return i.lag == g)[0]
+			out += "interface Port-Channel%d\n" % g
+			if first.note is Dictionary and String(first.note.get("text", "")) != "":
+				out += "   description %s\n" % first.note["text"]
+			if first.mode == "trunk":
+				if first.untagged_vlan != 1:
+					out += "   switchport trunk native vlan %d\n" % first.untagged_vlan
+				if not first.tagged_vlans.is_empty():
+					out += "   switchport trunk allowed vlan %s\n" % ",".join(first.tagged_vlans.map(func(v): return str(v)))
+				out += "   switchport mode trunk\n"
+			elif first.mode == "access" and first.untagged_vlan != 1:
+				out += "   switchport access vlan %d\n" % first.untagged_vlan
+			if first.mlag > 0:
+				out += "   mlag %d\n" % first.mlag
+			out += "!\n"
 		for i: Net.Iface in ordered:
 			out += "interface %s\n" % i.name
+			if i.lag > 0:
+				# a member: its switching lives on the channel
+				if i.admin_down:
+					out += "   shutdown\n"
+				if i.mtu != 1500:
+					out += "   mtu %d\n" % i.mtu
+				out += "   channel-group %d mode %s\n!\n" % [i.lag, i.lag_mode]
+				continue
 			if i.note is Dictionary and String(i.note.get("text", "")) != "":
 				out += "   description %s\n" % i.note["text"]
 			if i.admin_down:
@@ -3799,8 +4041,12 @@ class EOS extends Session:
 			out += "router bgp %d\n" % int(dev.bgp["asn"])
 			for nb in dev.bgp["neighbors"]:
 				out += "   neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
+				if String(nb.get("description", "")) != "":
+					out += "   neighbor %s description %s\n" % [nb["ip"], nb["description"]]
 				for dir in ["in", "out"]:
-					if nb.has("prefix_%s_name" % dir):
+					if nb.has("rmap_%s" % dir):
+						out += "   neighbor %s route-map %s %s\n" % [nb["ip"], nb["rmap_%s" % dir], dir]
+					elif nb.has("prefix_%s_name" % dir):
 						out += "   neighbor %s prefix-list %s %s\n" % [nb["ip"], nb["prefix_%s_name" % dir], dir]
 			for net in dev.bgp["networks"]:
 				out += "   network %s\n" % net

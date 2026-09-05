@@ -2024,6 +2024,26 @@ static func run() -> int:
 	Game.topology_changed.emit()
 
 	check(Game.try_complete_contract(_contract("double_the_pipe")), "lag: double-the-pipe contract verifies")
+	# the Port-Channel is an interface of its own on EOS
+	lag_s.exec("conf t")
+	check(lag_s.exec("interface Port-Channel1") == "" and lag_s.prompt().ends_with("(config-if-Po1)#"),
+		"lag: interface Port-Channel1 enters the channel, prompt Po1")
+	check(lag_s.exec("switchport mode trunk") == "" and lsw1.ifaces[1].mode == "trunk" and lsw1.ifaces[2].mode == "trunk",
+		"lag: what is typed on the channel lands on every member")
+	lag_s.exec("description to sw2")
+	lag_s.exec("end")
+	var lag_run := lag_s.exec("show running-config")
+	check("interface Port-Channel1\n   description to sw2\n   switchport mode trunk\n!" in lag_run
+			and "interface Ethernet2\n   channel-group 1 mode on\n!" in lag_run,
+		"lag: the running-config prints the channel block once and the members carry only channel-group")
+	check(lag_s.exec("show interfaces Port-Channel1").begins_with("Port-Channel1 is up, line protocol is up (connected)")
+			and "Active members in this channel: 2" in lag_s.exec("show interfaces Port-Channel1"),
+		"lag: show interfaces Port-Channel1 prints the channel block")
+	lag_s.exec("conf t")
+	lag_s.exec("interface Port-Channel1")
+	lag_s.exec("switchport mode access")
+	lag_s.exec("no description")
+	lag_s.exec("end")
 	# LACP negotiation: passive never starts a conversation
 	for lacp_ses in [lag_s, lag_s2]:
 		lacp_ses.exec("conf t")
@@ -7127,6 +7147,28 @@ static func run() -> int:
 		"bgp: a permitted prefix is still accepted")
 	check(Sim.route_via(mh_edge, "8.8.8.8") == "100.71.0.1",
 		"bgp: the default route is filtered out and the other upstream carries it")
+	# the same policy in EOS spelling: a route-map that matches a prefix-list and sets local-preference
+	mh_cli.exec("configure terminal")
+	check(mh_cli.exec("ip prefix-list CUSTOMER seq 10 permit 203.0.113.0/24") == "" and mh_cli.exec("route-map FROM-A permit 10") == ""
+			and mh_cli.prompt().ends_with("(config-route-map-FROM-A)#"),
+		"bgp: ip prefix-list and route-map NAME permit 10 enter the route-map")
+	check(mh_cli.exec("match ip address prefix-list CUSTOMER") == "" and mh_cli.exec("set local-preference 150") == "",
+		"bgp: match and set clauses are accepted")
+	mh_cli.exec("exit")
+	mh_cli.exec("router bgp 65010")
+	check(mh_cli.exec("neighbor 100.70.0.1 route-map FROM-A in") == "" and int(mh_cli.dev.bgp["neighbors"][0]["local_pref"]) == 150,
+		"bgp: applying the route-map inbound sets the neighbour's local preference")
+	mh_cli.exec("address-family ipv4")
+	check(mh_cli.prompt().ends_with("(config-router-bgp-af)#") and mh_cli.exec("neighbor 100.70.0.1 activate") == "",
+		"bgp: address-family ipv4 and neighbor activate exist")
+	mh_cli.exec("end")
+	check("route-map FROM-A permit 10\n   match ip address prefix-list CUSTOMER\n   set local-preference 150" in mh_cli.exec("show running-config")
+			and "neighbor 100.70.0.1 route-map FROM-A in" in mh_cli.exec("show running-config"),
+		"bgp: the route-map and its application render in the running-config")
+	mh_cli.exec("configure terminal")
+	mh_cli.exec("router bgp 65010")
+	mh_cli.exec("neighbor 100.70.0.1 prefix-list in 203.0.113.0/24")
+	mh_cli.exec("end")
 	check(mh_cli.exec("show ip bgp neighbors").contains("Inbound prefix list: 203.0.113.0/24")
 			and "203.0.113.0/24" not in mh_cli.exec("show ip bgp summary"),
 		"bgp: show ip bgp neighbors reports the policy, the summary stays a summary")
@@ -8429,6 +8471,12 @@ static func run() -> int:
 		"stp: show spanning-tree names the root by its bridge address")
 	# MST: two instances, and the two links carry different VLANs
 	for ms_c2 in [ms_cli_a, ms_cli_b]:
+		check(ms_c2.exec("spanning-tree mst configuration") == "" and ms_c2.prompt().ends_with("(config-mst)#")
+				and ms_c2.exec("name CAMPUS") == "" and ms_c2.exec("instance 2 vlan 30") == "" and ms_c2.exec("exit") == "",
+			"mst: the configuration sub-mode takes name and instance lines")
+		check("Instance  Vlans mapped" in ms_c2.exec("show spanning-tree mst configuration")
+				and "spanning-tree mst configuration\n   name CAMPUS" in ms_c2.exec("show running-config"),
+			"mst: show spanning-tree mst configuration and the running-config print the mapping")
 		check(ms_c2.exec("spanning-tree mst instance 1 vlan 20").is_empty(),
 			"mst: an instance can be mapped to a VLAN")
 	Sim.flush_learned_state()
