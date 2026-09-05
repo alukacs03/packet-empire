@@ -200,14 +200,16 @@ static func gen_offer() -> Dictionary:
 		sla_idx = 2
 	elif roll > 55:
 		sla_idx = 1
-	var budget: int = int((spec["base"] + randi() % int(spec["spread"]))
-		* float(tier(sla_idx)["pay"]) * float(ct["pay"]))
-	budget = int(budget * (0.6 + Game.reputation / 100.0 * 0.8))  # reputation sells
+	var raw: int = spec["base"] + randi() % int(spec["spread"])
+	# the hint reads the draw itself, not the tier and type the card already shows
 	var hint := "they are watching every forint"
-	if budget >= spec["base"] + spec["spread"] * 2 / 3:
+	if raw >= spec["base"] + spec["spread"] * 2 / 3:
 		hint = "money does not seem to be their problem"
-	elif budget >= spec["base"] + spec["spread"] / 3:
+	elif raw >= spec["base"] + spec["spread"] / 3:
 		hint = "an established business, they can pay fairly"
+	var budget: int = int(raw * float(tier(sla_idx)["pay"]) * float(ct["pay"]))
+	budget = int(budget * (0.6 + Game.reputation / 100.0 * 0.8))  # reputation sells
+	budget = int(budget * Game.marketing_budget_factor())  # marketing brings people who expect to pay
 	_next_id += 1
 	return {
 		"id": "mkt_%d" % _next_id,

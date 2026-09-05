@@ -405,8 +405,22 @@ var attacks: Array = []  # live DDoS events: {target, mbps, cycles_left}
 var scrubbing := false  # upstream scrubbing service, billed per cycle
 var insured := false  # insurance against hardware failure, billed per cycle
 var marketing := 0  # spend per cycle to bring more work in
+
+func marketing_budget_factor() -> float:
+	## each step of marketing lifts what a customer arrives prepared to pay, up to a quarter
+	return 1.0 + minf(0.25, 0.05 * float(marketing) / float(MARKETING_STEP))
 var sandbox := false  # free hardware, no bills, no events: a place to try things
-const INSURANCE_FEE := 140
+const INSURANCE_RATE := 0.02  # of the estate's list value, per quarter
+
+func estate_value() -> int:
+	var total := 0
+	for d in all_devices():
+		total += int(MODELS.get(d.model, {}).get("price", 0))
+	return total
+
+func insurance_fee() -> int:
+	## per cycle: two percent of what the gear would cost to replace, per quarter
+	return maxi(15, int(round(float(estate_value()) * INSURANCE_RATE / 12.0)))
 const MARKETING_STEP := 150
 const SCRUB_FEE := 220
 var monitors: Array = []  # player-defined checks: {kind, from, target, label, failing}
@@ -595,7 +609,8 @@ func settle_quarter_goals() -> void:
 			met_n += 1
 			paid += int(g["reward"])
 	if not quarter_goals.is_empty():
-		money += paid
+		if paid > 0:
+			earn_on("board bonuses", paid)
 		reputation = clampi(reputation + met_n * 2 - (quarter_goals.size() - met_n), 0, 100)
 		stats["quarter_goals_met"] = int(stats.get("quarter_goals_met", 0)) + met_n
 		log_event("BOARD: %d of %d quarterly targets met%s." % [met_n, quarter_goals.size(),
@@ -2288,8 +2303,7 @@ func triage_ticket(t: Dictionary, area: String) -> String:
 		log_event("TICKET %s: triaged to %s, which is where it actually is.%s" % [t["id"], area,
 			"  %s" % _ticket_hint(t["cause"])])
 		return ""
-	money -= 40  # somebody's afternoon, spent looking in the wrong place
-	money_changed.emit()
+	charge_on("callouts", 40)  # somebody's afternoon, spent looking in the wrong place
 	log_event("TICKET %s: triaged to %s. That is not where it is, and the clock kept running."
 		% [t["id"], area])
 	return ""
@@ -3413,8 +3427,9 @@ func decide(id: String, option: int) -> String:
 func _apply_decision(effect: String) -> void:
 	match effect:
 		"swap_now":
-			money -= 900
-			money_changed.emit()
+			if not spend_on("decisions", 900):
+				log_event("DECISION: the swap needs $900 the account does not have; the discounted units stay on the shelf.")
+				return
 			latent_defects["sw-8"] = int(latent_defects.get("sw-8", 0)) + 1
 			schedule_consequence(10, "note", "the discounted units carry the fault the vendor admitted to")
 		"swap_wait":
@@ -3428,12 +3443,12 @@ func _apply_decision(effect: String) -> void:
 				deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.05)
 			reputation = mini(100, reputation + 2)
 		"workaround":
-			money += 400
-			money_changed.emit()
+			earn_on("decisions", 400)
 			schedule_consequence(12, "incident", "the cause you did not fix is still there")
 		"root_cause":
-			money -= 300
-			money_changed.emit()
+			if not spend_on("decisions", 300):
+				log_event("DECISION: the root-cause work needs $300 the account does not have; the workaround stays in place.")
+				return
 			reputation = mini(100, reputation + 2)
 		"carrier_sign":
 			schedule_consequence(14, "money", "the fixed carrier price is now below the market", {"amount": 1200})
@@ -3461,17 +3476,18 @@ func _apply_decision(effect: String) -> void:
 				Rivals.remember(r2, 1, "you did not take their engineer")
 				break
 		"optics_yes":
+			if not spend_on("spares", 300):
+				log_event("DECISION: no $300 for the optics; the shelf stays as it was.")
+				return
 			parts["optic"] = parts_of("optic") + 20
-			money -= 300
-			money_changed.emit()
 			schedule_consequence(9, "grey", "cheap optics are where dirty-optic faults come from")
 		"optics_no":
-			money -= 900
+			if not spend_on("spares", 900):
+				log_event("DECISION: no $900 for the branded optics; the shelf stays as it was.")
+				return
 			parts["optic"] = parts_of("optic") + 20
-			money_changed.emit()
 		"overtime_yes":
-			money += 800
-			money_changed.emit()
+			earn_on("decisions", 800)
 			schedule_consequence(4, "morale", "the week you asked for catches up with everybody", {"amount": -18})
 		"overtime_no":
 			schedule_consequence(4, "morale", "a crew that was not run into the ground", {"amount": 6})
@@ -3786,8 +3802,7 @@ func verify_audit() -> String:
 		return "%d major finding(s) are still open" % majors
 	audit["state"] = "closed"
 	trust_marker = true
-	money += int(audit["reward"])
-	money_changed.emit()
+	earn_on("audits", int(audit["reward"]))
 	reputation = mini(100, reputation + 6)
 	leads.append(Market.audit_lead(String(audit["customer"])))
 	log_event("AUDIT PASSED: $%d, a visible trust marker, and the kind of customer who asks for this now has your number."
@@ -3914,8 +3929,7 @@ func tour_tick() -> void:
 				log_event("VISIT RESULT: they will not be sending anything here. You could see them deciding it in the aisle.")
 		"investor":
 			if score >= 0.7:
-				money += 6000
-				money_changed.emit()
+				earn_on("investors", 6000)
 				log_event("VISIT RESULT: a $6000 tranche, because it looks like a business rather than a hobby.")
 			else:
 				log_event("VISIT RESULT: no money. They have seen enough rooms to know what a tidy one means.")
@@ -3925,8 +3939,7 @@ func tour_tick() -> void:
 				log_event("VISIT RESULT: no findings. Everything you claimed, you could show.")
 			else:
 				reputation = maxi(0, reputation - 6)
-				money -= 900
-				money_changed.emit()
+				charge_on("fines", 900)
 				record_incident("audit", "an audit found documentation and records wanting")
 				log_event("VISIT RESULT: findings raised and $900 of remediation. You could not show what you said you did.")
 		"press":
@@ -5258,7 +5271,7 @@ func finale_snapshot(ending: String) -> Dictionary:
 			controls_passing += 1
 	return {"ending": ending, "cycle": cycle, "company": company_name,
 		"identity": identity_label(), "difficulty": DIFFICULTIES[run_difficulty if run_difficulty >= 0 else difficulty]["name"],
-		"earned": int(stats.get("earned", 0)), "money": money, "reputation": reputation,
+		"earned": int(stats.get("earned", 0)), "net": int(stats.get("net", 0)), "money": money, "reputation": reputation,
 		"references": references.size(), "deals": deals.size(),
 		"contracts": int(stats.get("contracts", 0)), "sites": site_count(),
 		"racks": racks.filter(func(r): return r.slots.any(func(d): return d != null)).size(),  # empty cabinets are not growth
@@ -5281,7 +5294,7 @@ func finale_score(snap: Dictionary) -> Dictionary:
 	## Six categories, each capped, and the money one measured per cycle so a
 	## long idle run cannot out-score a short sharp one.
 	var cycles := maxf(1.0, float(int(snap.get("cycle", 1))))
-	var per_cycle := float(int(snap.get("earned", 0))) / cycles
+	var per_cycle := float(int(snap.get("net", snap.get("earned", 0)))) / cycles
 	var categories := {
 		# what the company earned per cycle, plus what it kept: a hoard is
 		# worth something, and a sale is worth exactly what it left in the bank
@@ -6779,7 +6792,7 @@ func try_complete_integration(a: Dictionary) -> bool:
 			return false
 	a["done"] = true
 	var bonus := 1500
-	money += bonus
+	earn_on("integration", bonus)
 	reputation = mini(100, reputation + 5)
 	stats["earned"] = int(stats.get("earned", 0)) + bonus
 	log_event("INTEGRATION complete: %s is now part of your network (+$%d)." % [a["rival"], bonus])
@@ -7922,13 +7935,12 @@ func _ageing_tick() -> void:
 		record_incident("hardware", "%s failed after %d cycles" % [d.name, age])
 		var payout := 0
 		if insured:
-			payout = int(MODELS[d.model]["price"]) / 2
+			payout = int(MODELS[d.model]["price"])  # a full replacement, which is what cover is for
 			if support_lapsed():
 				payout = payout / 2  # no maintenance agreement, no help with the bill
-			money += payout
-			money_changed.emit()
+			earn_on("insurance", payout)
 		log_event("HARDWARE: %s failed after %d cycles.%s" % [d.name, age,
-			"  Insurance paid $%d towards a replacement." % payout if insured
+			"  Insurance paid $%d for a replacement." % payout if insured
 			else "  You are not insured."])
 
 func _attack_tick() -> void:
@@ -8348,7 +8360,11 @@ const ENERGY_BASE := 0.10  # dollars per watt per cycle at the flat rate
 ## your customers are busiest, which is not a coincidence.
 const ENERGY_CURVE := [0.55, 0.6, 1.15, 1.45, 1.5, 1.25, 0.95, 0.7]
 const EFFICIENCY_STEP := 0.09  # draw removed per upgrade
-const EFFICIENCY_PRICE := 2600
+const EFFICIENCY_PRICE := 1200
+
+func efficiency_saving() -> int:
+	## dollars per cycle the next retrofit step removes at today's draw and rate
+	return int(round(float(power_draw_all()) * EFFICIENCY_STEP * energy_rate()))
 
 var buyout_offer := {}  # a rival's standing offer to buy you out
 var sold_out := false  # you took it; the game is over and the score is final
@@ -8357,18 +8373,42 @@ var pl_totals := {}  # what each system has cost or earned across the run
 var finale := {}  # the frozen ending: how it ended, and the numbers it ended on
 var accountant := false
 var fixed_tariff := false  # a flat rate: dearer on average, immune to peaks
+var spot_spike_until := -1  # the spot market has spiked; cycles it lasts until
+const SPOT_SPIKE := 2.2
+const FIXED_PREMIUM := 1.08  # the curve averages 1.02; certainty costs six points
 var efficiency := 0  # upgrades bought
 var quarter_profit := 0
 var quarter_depreciation := 0
 
 func energy_multiplier() -> float:
-	return 1.0 if fixed_tariff else ENERGY_CURVE[day_slot()]
+	if fixed_tariff:
+		return 1.0
+	return ENERGY_CURVE[day_slot()] * (SPOT_SPIKE if cycle < spot_spike_until else 1.0)
+
+func spot_spiking() -> bool:
+	return not fixed_tariff and cycle < spot_spike_until
+
+func _spot_market_tick() -> void:
+	## a few times a year the spot price goes through the roof for a while:
+	## the risk the fixed tariff is priced against
+	# its own deterministic roll (the shared business stream must not shift),
+	# and a young company gets its first two quarters on a quiet market
+	if cycle < 24 or cycle < spot_spike_until:
+		return
+	var st := rand_from_seed(absi(hash(company_name)) * 31 + cycle * 2654435761)
+	var roll := float(int(st[0]) % 10000) / 10000.0
+	if roll > 0.025:
+		return
+	var length := 3 + int(st[1]) % 4
+	spot_spike_until = cycle + 1 + length
+	log_event("ENERGY: the spot market has spiked. Power costs %.1fx for the next %d cycles%s."
+		% [SPOT_SPIKE, length, "; your fixed tariff does not care" if fixed_tariff else ""])
 
 func energy_rate() -> float:
 	## the flat contract is priced above the average of the spot curve, which
 	## is what you pay for not having to think about it
 	var green := 0.75 if identity_is("green") else 1.0
-	return ENERGY_BASE * (1.18 if fixed_tariff else energy_multiplier()) * green
+	return ENERGY_BASE * (FIXED_PREMIUM if fixed_tariff else energy_multiplier()) * green
 
 func efficiency_factor() -> float:
 	return maxf(0.55, 1.0 - EFFICIENCY_STEP * float(efficiency))
@@ -9125,8 +9165,10 @@ func sla_tick() -> void:
 		last_pl["scrubbing"] = -SCRUB_FEE
 		earned -= SCRUB_FEE
 	if insured:
-		last_pl["insurance"] = -INSURANCE_FEE
-		earned -= INSURANCE_FEE
+		var premium := insurance_fee()
+		last_pl["insurance"] = -premium
+		earned -= premium
+	_spot_market_tick()
 	if marketing > 0:
 		last_pl["marketing"] = -marketing
 		earned -= marketing
@@ -9316,8 +9358,6 @@ func sla_tick() -> void:
 		reputation = mini(100, reputation + 1)
 	for deal_peak in deals:
 		peak_tick(deal_peak)  # the night they warned you about, judged on live delivery
-	for pl_key: String in last_pl:
-		pl_totals[pl_key] = int(pl_totals.get(pl_key, 0)) + int(last_pl[pl_key])
 	_update_reliability_streak(customer_outage_now)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
@@ -9344,8 +9384,10 @@ func sla_tick() -> void:
 		earned -= IXP_PORT_FEE
 	earned += collect_invoices()
 	last_cycle_delta = earned
-	if earned > 0:
-		stats["earned"] += earned
+	# "earned" is what customers paid, gross; "net" is what was left after the
+	# bills, and a loss counts against it: steady profit beats volatility
+	stats["earned"] = int(stats.get("earned", 0)) + maxi(0, int(last_business.get("collected", 0)))
+	stats["net"] = int(stats.get("net", 0)) + earned
 	if earned != 0:
 		money += earned
 		money_changed.emit()
@@ -9381,6 +9423,8 @@ func sla_tick() -> void:
 		if board_targets and not sandbox and not drill_active:
 			settle_quarter_goals()
 		maintenance_used = 0  # a new quarter, a fresh allowance
+	for pl_key: String in last_pl:  # after the quarter settles, so tax and bonuses count
+		pl_totals[pl_key] = int(pl_totals.get(pl_key, 0)) + int(last_pl[pl_key])
 	# a cycle is long enough for every MAC and ARP entry to age out; what is
 	# still true is relearned the moment a host speaks
 	Sim.flush_learned_state()
@@ -9480,6 +9524,20 @@ func spend_on(category: String, amount: int) -> bool:
 
 func _refund(amount: int) -> void:
 	money += amount
+	money_changed.emit()
+
+func earn_on(category: String, amount: int) -> void:
+	## money in, with a line in the cycle's profit and loss so the Business
+	## panel and the run totals both see it
+	money += amount
+	last_pl[category] = int(last_pl.get(category, 0)) + amount
+	money_changed.emit()
+
+func charge_on(category: String, amount: int) -> void:
+	## a fine or a bill that is owed whether or not the account covers it:
+	## it lands in the ledger and, if it has to, in the overdraft
+	money -= amount
+	last_pl[category] = int(last_pl.get(category, 0)) - amount
 	money_changed.emit()
 
 # ---------- racks ----------
@@ -10128,7 +10186,7 @@ func _serialize() -> Dictionary:
 		"runbook_runs": runbook_runs,
 		"buyout_offer": buyout_offer, "sold_out": sold_out, "references": references,
 		"leads": leads, "timeline": timeline,
-		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff,
+		"ipv4_blocks": ipv4_blocks, "accountant": accountant, "fixed_tariff": fixed_tariff, "spot_spike_until": spot_spike_until,
 		"efficiency": efficiency, "quarter_profit": quarter_profit,
 		"quarter_depreciation": quarter_depreciation,
 		"invoices": invoices,
@@ -10500,6 +10558,7 @@ func _apply(data: Dictionary) -> void:
 	timeline = data.get("timeline", [])
 	accountant = bool(data.get("accountant", false))
 	fixed_tariff = bool(data.get("fixed_tariff", false))
+	spot_spike_until = int(data.get("spot_spike_until", -1))
 	efficiency = int(data.get("efficiency", 0))
 	quarter_profit = int(data.get("quarter_profit", 0))
 	quarter_depreciation = int(data.get("quarter_depreciation", 0))

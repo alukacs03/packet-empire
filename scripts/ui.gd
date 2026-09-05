@@ -4600,14 +4600,18 @@ func _build_business_tab() -> void:
 		var tariff_btn := Button.new()
 		tariff_btn.text = "Switch to a spot tariff" if Game.fixed_tariff \
 			else "Switch to a fixed tariff"
-		tariff_btn.tooltip_text = "Fixed costs more on average and does not care what time it is."
+		tariff_btn.tooltip_text = "Fixed costs about %d%% over the spot average and does not care what time it is, or what the spot market is doing." % int(round((Game.FIXED_PREMIUM - 1.02) * 100.0))
 		tariff_btn.pressed.connect(func() -> void:
 			Game.set_fixed_tariff(not Game.fixed_tariff)
 			_refresh_contracts())
 		e_row.add_child(tariff_btn)
 		var eff_btn := Button.new()
 		eff_btn.text = "Efficiency retrofit  ($%d)" % (Game.EFFICIENCY_PRICE + Game.efficiency * 800)
-		eff_btn.tooltip_text = "Removes %d%% of your draw, permanently." % int(Game.EFFICIENCY_STEP * 100.0)
+		var eff_price := Game.EFFICIENCY_PRICE + Game.efficiency * 800
+		var eff_save := Game.efficiency_saving()
+		eff_btn.tooltip_text = "Removes %d%% of your draw, permanently: about $%d per cycle at today's draw and rate, so it pays back in %s." % [
+			int(Game.EFFICIENCY_STEP * 100.0), eff_save,
+			"%d cycles" % int(ceil(float(eff_price) / float(eff_save))) if eff_save > 0 else "never, there is nothing drawing power"]
 		eff_btn.pressed.connect(func() -> void:
 			var err := Game.buy_efficiency()
 			if err != "":
@@ -4728,7 +4732,9 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("MARKETING AND COVER"))
 	var mk_row := HBoxContainer.new()
 	contracts_box.add_child(mk_row)
-	mk_row.add_child(_label("  Marketing $%d/cycle   ·   more and better enquiries" % Game.marketing,
+	mk_row.add_child(_label("  Marketing $%d/cycle   ·   budgets +%d%%, up to %d open offers, %d%% chance of one per cycle" % [Game.marketing,
+		int(round((Game.marketing_budget_factor() - 1.0) * 100.0)), 2 + int(Game.marketing / Game.MARKETING_STEP),
+		int(round((0.7 + 0.06 * float(Game.marketing) / float(Game.MARKETING_STEP)) * 100.0))],
 		13, Color(0.8, 0.85, 0.7) if Game.marketing > 0 else Color(0.75, 0.75, 0.8)))
 	var mk_up := Button.new()
 	mk_up.text = "Spend more"
@@ -4745,8 +4751,8 @@ func _build_business_tab() -> void:
 		mk_row.add_child(mk_down)
 	var ins_row := HBoxContainer.new()
 	contracts_box.add_child(ins_row)
-	ins_row.add_child(_label("  Hardware insurance: %s   ($%d/cycle, pays half a replacement)" % [
-		"ON" if Game.insured else "off", Game.INSURANCE_FEE], 13,
+	ins_row.add_child(_label("  Hardware insurance: %s   ($%d/cycle, 2%% of the $%d estate per quarter, pays a full replacement)" % [
+		"ON" if Game.insured else "off", Game.insurance_fee(), Game.estate_value()], 13,
 		Color(0.7, 0.9, 0.7) if Game.insured else Color(0.75, 0.75, 0.8)))
 	var ins_btn := Button.new()
 	ins_btn.text = "Cancel" if Game.insured else "Take cover"

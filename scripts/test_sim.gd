@@ -3412,8 +3412,34 @@ static func run() -> int:
 	old_sw.status = "active"
 	old_sw.installed_cycle = Game.cycle
 	Game.insured = false
+	# money that moves outside the cycle's earnings still lands in the ledger
+	var led_money := Game.money
+	Game.earn_on("board bonuses", 250)
+	check(Game.money == led_money + 250 and int(Game.last_pl.get("board bonuses", 0)) == 250,
+		"ledger: a bonus is money in and a line in the P&L")
+	Game.charge_on("fines", 50)
+	check(Game.money == led_money + 200 and int(Game.last_pl.get("fines", 0)) == -50,
+		"ledger: a fine is money out and a line in the P&L")
+	Game.money = 100
+	Game._apply_decision("swap_now")
+	check(Game.money == 100, "ledger: a decision the account cannot cover is refused rather than overdrawn")
+	Game.money = led_money
+	check(Game.insurance_fee() >= 15 and Game.insurance_fee() == maxi(15, int(round(float(Game.estate_value()) * Game.INSURANCE_RATE / 12.0))),
+		"insurance: the premium is priced off the estate")
+	# the spot market can spike; the fixed tariff is priced against that risk
+	var sp_fixed := Game.fixed_tariff
+	Game.fixed_tariff = false
+	Game.spot_spike_until = Game.cycle + 3
+	check(Game.spot_spiking() and is_equal_approx(Game.energy_multiplier(), Game.ENERGY_CURVE[Game.day_slot()] * Game.SPOT_SPIKE),
+		"energy: a spike multiplies the spot curve")
+	Game.fixed_tariff = true
+	check(is_equal_approx(Game.energy_multiplier(), 1.0) and not Game.spot_spiking(), "energy: the fixed tariff does not see the spike")
+	Game.spot_spike_until = -1
+	Game.fixed_tariff = sp_fixed
+	check(Game.FIXED_PREMIUM < 1.18 and Game.FIXED_PREMIUM > 1.02, "energy: fixed is priced a few points over the curve average, not eighteen")
 	# marketing widens the funnel
 	Game.marketing = 3 * Game.MARKETING_STEP
+	check(is_equal_approx(Game.marketing_budget_factor(), 1.15), "marketing: three steps lift budgets by fifteen percent")
 	Game.sla_tick()
 	check(Game.last_pl.has("marketing"), "marketing: the spend shows in the cycle P&L")
 	Game.marketing = 0
