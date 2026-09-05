@@ -946,7 +946,7 @@ static func run() -> int:
 	Game.connect_ifaces(client.ifaces[0], sw_c.ifaces[5])
 	var dls := CLI.new_session(dhcp_srv)
 	dls.exec("ip addr add 10.2.0.5/24 dev eth0")
-	dls.exec("dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.5 10.2.0.5")
+	dls.exec("dhcp-quick eth0 10.2.0.10 10.2.0.99 24 10.2.0.5 10.2.0.5")
 	dls.exec("dns add www.delta.hu 10.2.0.10")
 	var cls_ := CLI.new_session(client)
 	var lease_out: String = cls_.exec("dhclient -v eth0")
@@ -2259,7 +2259,7 @@ static func run() -> int:
 	Game.add_ip(rel_srv.ifaces[0], "10.61.0.5/24")
 	Game.add_static_route(rel_srv, "0.0.0.0", 0, "10.61.0.1")
 	var rel_ss := CLI.new_session(rel_srv)
-	rel_ss.exec("dhcpd eth0 10.60.0.50 10.60.0.99 24 10.60.0.1 10.61.0.5")
+	rel_ss.exec("dhcp-quick eth0 10.60.0.50 10.60.0.99 24 10.60.0.1 10.61.0.5")
 	var rel_es := CLI.new_session(rel_r)
 	rel_es.exec("en")
 	rel_es.exec("conf t")
@@ -3219,7 +3219,7 @@ static func run() -> int:
 	Game.add_ip(dx_known.ifaces[0], "10.115.0.10/24")
 	Game.add_ip(dx_stranger.ifaces[0], "10.115.0.11/24")
 	var auth_cli := CLI.new_session(dx_auth)
-	check(auth_cli.exec("radiusd add %s" % dx_known.ifaces[0].mac).contains("may join"),
+	check(auth_cli.exec("radius-users add %s" % dx_known.ifaces[0].mac).contains("may join"),
 		"dot1x: a machine can be authorised on the server")
 	var dx_cli := CLI.new_session(dx_sw)
 	dx_cli.exec("en")
@@ -3243,7 +3243,7 @@ static func run() -> int:
 	check(dx_cli.exec("show dot1x").contains("10.115.0.5"), "dot1x: the state is reported")
 	# the server can also decide which VLAN a machine belongs in
 	Game.add_vlan(dx_sw, 45, "trusted")
-	auth_cli.exec("radiusd add %s 45" % dx_stranger.ifaces[0].mac)
+	auth_cli.exec("radius-users add %s 45" % dx_stranger.ifaces[0].mac)
 	dx_sw.ifaces[2].dot1x_ok = ""
 	Sim.flush_learned_state()
 	Sim.ping(dx_stranger, "10.115.0.5")
@@ -6298,8 +6298,8 @@ static func run() -> int:
 	Game.connect_ifaces(sn_rogue.ifaces[0], sn_sw.ifaces[2])
 	Game.add_ip(sn_srv.ifaces[0], "10.170.0.5/24")
 	Game.add_ip(sn_rogue.ifaces[0], "10.170.0.66/24")
-	CLI.new_session(sn_srv).exec("dhcpd eth0 10.170.0.10 10.170.0.99 24 10.170.0.1")
-	CLI.new_session(sn_rogue).exec("dhcpd eth0 10.170.0.200 10.170.0.240 24 10.170.0.66")
+	CLI.new_session(sn_srv).exec("dhcp-quick eth0 10.170.0.10 10.170.0.99 24 10.170.0.1")
+	CLI.new_session(sn_rogue).exec("dhcp-quick eth0 10.170.0.200 10.170.0.240 24 10.170.0.66")
 	var honest := CLI.new_session(sn_cli)
 	var lease1: String = honest.exec("dhclient -v eth0")
 	check(lease1.contains("bound to"), "snooping: without protection a lease is handed out")
@@ -6634,7 +6634,7 @@ static func run() -> int:
 			Game.connect_ifaces(i, log_sw.ifaces[6])  # management patched into the same LAN
 			Game.add_ip(i, "10.26.0.2/24")
 	var log_cli := CLI.new_session(log_srv)
-	check(log_cli.exec("syslogd").contains("collecting"), "syslog: a server can collect logs")
+	check(log_cli.exec("log-collect").contains("collecting"), "syslog: a server can collect logs")
 	var sw_cli := CLI.new_session(log_sw)
 	sw_cli.exec("en")
 	sw_cli.exec("conf t")

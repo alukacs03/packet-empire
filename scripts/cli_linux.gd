@@ -134,6 +134,12 @@ func exec(line: String) -> String:
 		"dhclient":
 			return _dhclient(t.slice(1))
 		"dhcpd":
+			# the real daemon takes flags and interface names only; the six-word
+			# shorthand of this world is dhcp-quick
+			if t.size() >= 4 and String(t[2]).is_valid_ip_address():
+				return "Usage: dhcpd [-p <UDP port #>] [-f] [-d] [-q] [-t|-T] [-4|-6]\n             [-cf config-file] [-lf lease-file] [-pf pid-file] [--no-pid]\n             [-tf trace-output-file] [-play trace-input-file]\n             [-s server] [if0 [...ifN]]\n# this world's shorthand for a pool is: dhcp-quick <if> <first> <last> <plen> [gw] [dns]\n"
+			return _dhcpd(t.slice(1))
+		"dhcp-quick":
 			return _dhcpd(t.slice(1))
 		"subnet":
 			return _dhcpd_conf_line(t)
@@ -259,12 +265,17 @@ func exec(line: String) -> String:
 			Game.topology_changed.emit()
 			return "aaa service listening (shared secret set)\n"
 		"snmpd":
+			# the real daemon reads /etc/snmp/snmpd.conf; the community is a line in it
+			if t.size() == 1 or String(t[1]).begins_with("-"):
+				return "" if dev.snmp != "" else "Error opening specified endpoint \"\"\n# no community configured: echo rocommunity public > /etc/snmp/snmpd.conf, or this world's shorthand snmp-quick <community>\n"
+			return "Usage:  snmpd [OPTIONS] [LISTENING ADDRESSES]\n# the community is a line in /etc/snmp/snmpd.conf (rocommunity public); this world's shorthand is snmp-quick <community>\n"
+		"snmp-quick":
 			if t.size() >= 2 and t[1] == "off":
 				dev.snmp = ""
 				Game.topology_changed.emit()
 				return "snmp agent stopped\n"
 			if t.size() < 2:
-				return "usage: snmpd <community> | snmpd off   (rocommunity <community> in /etc/snmp/snmpd.conf)\n"
+				return "usage: snmp-quick <community> | snmp-quick off   (rocommunity <community> in /etc/snmp/snmpd.conf)\n"
 			dev.snmp = String(t[1])
 			Game.topology_changed.emit()
 			return "snmp agent listening, community %s\n" % t[1]
@@ -295,6 +306,8 @@ func exec(line: String) -> String:
 					if not dev.mcast_groups.is_empty() else "(no groups joined)\n"
 			return "usage: igmp join <group> | igmp send <group> | igmp groups   (ip maddr show lists them)\n"
 		"radiusd":
+			return "Usage: radiusd [options]\n  -C            Check configuration and exit.\n  -d <raddb>    Set configuration directory (defaults to /etc/freeradius).\n  -f            Run as a foreground process, not a daemon.\n  -X            Turn on full debugging.\n# authorised machines are FreeRADIUS users files; this world's shorthand is radius-users add <mac> [vlan]\n"
+		"radius-users":
 			if not dev.services.has("radius"):
 				dev.services["radius"] = {"users": {}}
 			if t.size() >= 3 and t[1] == "add":
@@ -315,18 +328,22 @@ func exec(line: String) -> String:
 		"wifi", "nmcli":
 			return _wifi(t)
 		"syslogd":
+			return "-bash: syslogd: command not found\n# Debian ships rsyslogd; to receive from other hosts uncomment the imudp module in /etc/rsyslog.conf. This world's shorthand is log-collect\n"
+		"log-collect":
 			dev.services["syslog"] = dev.services.get("syslog", {"messages": []})
-			return "syslogd: collecting logs on this host\n"
+			return "rsyslogd: collecting logs on this host\n"
 		"logging":
 			if t.size() == 2 and (t[1].is_valid_ip_address() or Net.is_v6(t[1])):
 				dev.log_host = t[1]
 				return ""
 			return "usage: logging <collector-ip>   (*.* @<ip> in /etc/rsyslog.d/remote.conf)\n"
 		"ntpd":
+			return "-bash: ntpd: command not found\n# Debian keeps time with chrony: echo \"server <ip> iburst\" > /etc/chrony/chrony.conf; this world's shorthand is ntp-quick <ip>\n"
+		"ntp-quick":
 			if t.size() == 2 and (t[1].is_valid_ip_address() or Net.is_v6(t[1])):
 				dev.ntp_server = t[1]
-				return "ntpd: syncing to %s\n" % t[1]
-			return "usage: ntpd <server-ip>   (server <ip> iburst in /etc/chrony/chrony.conf)\n"
+				return "chronyd: syncing to %s\n" % t[1]
+			return "usage: ntp-quick <server-ip>   (server <ip> iburst in /etc/chrony/chrony.conf)\n"
 		"logs":
 			return _journalctl([])
 		"dns64":
@@ -394,14 +411,14 @@ func _help() -> String:
 		+ "  journalctl -u isc-dhcp-server   cat /var/lib/dhcp/dhcpd.leases   ss -tlnp   sysctl net.ipv4.ip_forward\n"
 		+ "  wg genkey   ip link add wg0 type wireguard   wg set wg0 ...   wg show   lldpcli show neighbors\n"
 		+ "  hostname   hostnamectl   uname -a   curl <url>   nc -zv <host> <port>   ssh <host>   exit\n"
-		+ "\nGame-only verbs (this world's services, spelled short; not Linux commands):\n"
+		+ "\nGame-only verbs (this world's services, spelled short; no distro ships these names):\n"
 		+ "  subnet ... { ... }   paste a dhcpd.conf subnet block on one line\n"
-		+ "  dhcpd <if> <first> <last> <plen> [gw] [dns]   shorthand for the block above\n"
+		+ "  dhcp-quick <if> <first> <last> <plen> [gw] [dns]   shorthand for the block above\n"
 		+ "  dns add <name> <ip> [ttl] | dns delegate <zone> <ns> | dns list | dns64 <prefix>   host records\n"
 		+ "  vm create|addr|migrate|list   bond <if> <if>   autoconf <if>   cert issue|renew|auto|list\n"
-		+ "  aaad <secret>   radiusd add <mac> [vlan]   snmpd <community>   snmpwalk <addr> <community>\n"
+		+ "  aaad <secret>   radius-users add <mac> [vlan]   snmp-quick <community>   snmpwalk -v2c -c <community> <addr>\n"
 		+ "  igmp join|send|groups   wifi join|leave|status   console list|<device>   flows   logs\n"
-		+ "  syslogd   logging <ip>   ntpd <ip>   nameserver <ip>\n")
+		+ "  log-collect   logging <ip>   ntp-quick <ip>   nameserver <ip>\n")
 
 func _apt_hint(cmd: String, _pkg: String) -> String:
 	## Debian has no command-not-found handler: net-tools is simply absent
@@ -1283,6 +1300,29 @@ func _redirect(t: Array) -> String:
 			return ""
 		"/etc/hostname":
 			return "" if Game.rename_device(dev, text.strip_edges()) else "hostname: the specified hostname is invalid\n"
+		"/etc/snmp/snmpd.conf":
+			var parts := text.split(" ", false)
+			if parts.size() >= 2 and String(parts[0]) in ["rocommunity", "rwcommunity"]:
+				dev.snmp = String(parts[1])
+				Game.topology_changed.emit()
+				return ""
+			return ""
+		"/etc/chrony/chrony.conf":
+			var parts := text.split(" ", false)
+			if parts.size() >= 2 and String(parts[0]) in ["server", "pool"] and String(parts[1]).is_valid_ip_address():
+				dev.ntp_server = String(parts[1])
+				return ""
+			return ""
+		"/etc/rsyslog.d/remote.conf", "/etc/rsyslog.conf":
+			var at2 := text.find("@")
+			if at2 >= 0:
+				var host := text.substr(at2).lstrip("@").split(" ")[0].split(":")[0]
+				if host.is_valid_ip_address():
+					dev.log_host = host
+					return ""
+			if "imudp" in text:
+				dev.services["syslog"] = dev.services.get("syslog", {"messages": []})
+			return ""
 		"/etc/dhcp/dhcpd.conf":
 			return _dhcpd_conf_line(Array(text.split(" ", false)))
 		"publickey", "privatekey":
@@ -1661,7 +1701,7 @@ func _nslookup(args: Array) -> String:
 		if s.begins_with("-type=") or s.begins_with("-query=") or s.begins_with("-q="):
 			qtype = s.split("=")[1].to_upper()
 		elif s == "-6":
-			qtype = "AAAA"  # not a real flag; tolerated, taught as -type=AAAA
+			return "*** Invalid option: 6\n# the IPv6 record is asked for with -type=AAAA\n"
 		elif s.begins_with("-"):
 			pass
 		elif name == "":
@@ -1975,29 +2015,8 @@ func _wg(args: Array) -> String:
 				_wg_add_peer(wi, peer)
 			Game.topology_changed.emit()
 			return ""
-		# ---- the old short verbs, kept for saved worlds ----
-		"up":
-			if args.size() < 2:
-				return "wg up <n>: the real steps are ip link add wg0 type wireguard, wg set wg0 ..., ip link set wg0 up\n"
-			var w := Game.add_wireguard(dev, int(args[1]))
-			return "wg%s up with public key %s\n" % [args[1], w.wg_key] if w else "wg: failed\n"
-		"addr":
-			var wi := _iface("wg%s" % args[1]) if args.size() > 2 else null
-			if wi == null:
-				return "wg: no such interface\n"
-			return "" if Game.add_ip(wi, String(args[2])) else "wg: invalid address\n"
-		"peer":
-			if args.size() != 5:
-				return "wg peer <n> <key> <endpoint> <allowed>   (real: wg set wg0 peer KEY endpoint IP:51820 allowed-ips P)\n"
-			var wi2 := _iface("wg%s" % args[1])
-			if wi2 == null:
-				return "wg: no such interface\n"
-			var allowed2: Array = []
-			for c in String(args[4]).split(",", false):
-				allowed2.append(String(c).strip_edges())
-			_wg_add_peer(wi2, {"key": String(args[2]), "endpoint": String(args[3]), "allowed": allowed2})
-			Game.topology_changed.emit()
-			return ""
+		"up", "addr", "peer":
+			return "Invalid subcommand: `%s'\n# the real steps: ip link add wg0 type wireguard; ip addr add <cidr> dev wg0; wg set wg0 listen-port 51820 private-key ./privatekey peer <key> endpoint <ip>:51820 allowed-ips <prefix>; ip link set wg0 up\n" % args[0]
 	return "Invalid subcommand: `%s'\nUsage: wg <cmd> [<args>]\n\nAvailable subcommands:\n  show: Shows the current configuration and device information\n  showconf: Shows the current configuration of a given WireGuard interface, for use with `setconf'\n  set: Change the current configuration, add peers, remove peers, or change peers\n  setconf: Applies a configuration file to a WireGuard interface\n  addconf: Appends a configuration file to a WireGuard interface\n  syncconf: Synchronizes a configuration file to a WireGuard interface\n  genkey: Generates a new private key and writes it to stdout\n  genpsk: Generates a new preshared key and writes it to stdout\n  pubkey: Reads a private key from stdin and writes a public key to stdout\n" % args[0]
 
 func _wg_add_peer(wi: Net.Iface, peer: Dictionary) -> void:
@@ -2245,7 +2264,7 @@ func complete(line: String) -> Array:
 	var opts: Array = []
 	match toks.size():
 		0:
-			opts = ["ip", "ping", "ping6", "traceroute", "tracepath", "hostname", "hostnamectl", "tcpdump", "dhclient", "dhcpd",
+			opts = ["ip", "ping", "ping6", "traceroute", "tracepath", "hostname", "hostnamectl", "tcpdump", "dhclient", "dhcpd", "dhcp-quick", "radius-users", "snmp-quick", "ntp-quick", "log-collect",
 				"dns", "nslookup", "dig", "host", "cat", "echo", "resolvectl", "ss", "sysctl", "systemctl", "journalctl",
 				"curl", "nc", "telnet", "lldp", "lldpcli", "ssh", "syslogd", "logging", "logs", "ntpd", "chronyc", "vm", "wg", "wg-quick",
 				"wifi", "nmcli", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "cert", "autoconf",

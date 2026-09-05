@@ -96,7 +96,7 @@ const DIALECT_HINTS := {
 		"after": "Both machines must sit in one broadcast domain: same switch and same VLAN, or the broadcast never reaches the server.",
 		"linux": [
 			"ip addr add 10.2.0.5/24 dev eth0",
-			"dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1",
+			"dhcp-quick eth0 10.2.0.10 10.2.0.99 24 10.2.0.1",
 			"dhclient -v eth0     (on the new machine)",
 			"ip addr",
 		],
@@ -473,7 +473,7 @@ const DIALECT_HINTS := {
 	"only_the_badged": {
 		"device_type": "switch",
 		"intro": "An authentication server holds the list of allowed MACs; the switch is pointed at it from an address that can reach it, and every customer port demands authentication.",
-		"after": "On the server: 'radiusd add <mac>' per allowed machine. The switch's Management address must reach the server.",
+		"after": "On the server: 'radius-users add <mac>' per allowed machine. The switch's Management address must reach the server.",
 		"eos": [
 			"enable",
 			"configure terminal",
@@ -742,7 +742,7 @@ static func _campaign() -> Array:
 			"title": "Plug and play",
 			"customer": "Delta Web Kft",
 			"reward": 1500,
-			"brief": "Delta keeps adding machines and refuses to type IP addresses. Give them DHCP: on one of their servers run a DHCP service: 'dhcpd eth0 10.2.0.10 10.2.0.99 24 10.2.0.1' (that's: interface, first and last lease, prefix length, gateway): the DHCP server itself needs a static IP in that subnet (e.g. 10.2.0.5/24). Then install a NEW server on the same switch/VLAN and just type 'dhclient eth0' on it: it must receive a lease automatically. DHCP works by broadcast, so both must share a broadcast domain.",
+			"brief": "Delta keeps adding machines and refuses to type IP addresses. Give them DHCP: on one of their servers run a DHCP service: 'dhcp-quick eth0 10.2.0.10 10.2.0.99 24 10.2.0.1' (that's: interface, first and last lease, prefix length, gateway): the DHCP server itself needs a static IP in that subnet (e.g. 10.2.0.5/24). Then install a NEW server on the same switch/VLAN and just type 'dhclient eth0' on it: it must receive a lease automatically. DHCP works by broadcast, so both must share a broadcast domain.",
 			"reqs": [
 				{"d": "A server runs a DHCP service", "t": func() -> bool: return _dhcp_server() != null},
 				{"d": "At least one lease has been handed out", "t": func() -> bool: return _lease_count() >= 1},
@@ -913,7 +913,7 @@ static func _campaign() -> Array:
 			"title": "Only badged machines",
 			"customer": "Epsilon Bank",
 			"reward": 3400,
-			"brief": "Epsilon's auditors want the wall jacks in the branch to refuse anything the bank does not own. 802.1X: an authentication server on a Linux box ('radiusd add <mac> [vlan]' for each allowed machine), the switch pointed at it ('radius-server host <ip>', from a Management address that can reach it) and 'dot1x' under every customer-facing port. A known machine must get on and reach the server; an unknown one plugged into the same jack gets nothing.",
+			"brief": "Epsilon's auditors want the wall jacks in the branch to refuse anything the bank does not own. 802.1X: an authentication server on a Linux box ('radius-users add <mac> [vlan]' for each allowed machine), the switch pointed at it ('radius-server host <ip>', from a Management address that can reach it) and 'dot1x' under every customer-facing port. A known machine must get on and reach the server; an unknown one plugged into the same jack gets nothing.",
 			"reqs": [
 				{"d": "An authentication server with at least one authorised machine", "t": func() -> bool: return _radius_server() != null},
 				{"d": "A switch pointed at it with 802.1X on its ports", "t": func() -> bool: return _dot1x_switch() != null},
