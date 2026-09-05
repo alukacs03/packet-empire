@@ -2366,6 +2366,10 @@ func _export() -> String:
 			out += line + "\n"
 	return out
 
+func describe(line: String) -> String:
+	## the '?' key from the console: the same help exec prints for "line ?"
+	return exec(line.strip_edges() + " ?" if line.strip_edges() != "" else "?")
+
 func complete(line: String) -> Array:
 	var raw := line.lstrip(" ")
 	var absolute := raw.begins_with("/")

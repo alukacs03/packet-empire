@@ -766,6 +766,7 @@ static func run() -> int:
 	# --- Linux CLI ---
 	var ls := CLI.new_session(c)
 	check(ls.prompt().begins_with("root@"), "Linux: prompt")
+	check(ls.exec("# a comment from a pasted script") == "", "Linux: a # comment line prints nothing")
 	ls.exec("ip addr add 192.168.9.1/24 dev eth0")
 	check("192.168.9.1/24" in c.ifaces[0].ips, "Linux: ip addr add")
 	ls.exec("ip addr del 192.168.9.1/24 dev eth0")
@@ -1315,6 +1316,9 @@ static func run() -> int:
 	r3.slots[3] = mkt_sw
 	r3.slots[4] = mkt_rtr
 	var rs := CLI.new_session(mkt_sw)
+	if rs.has_method("describe"):
+		check(rs.describe("/ip address").contains("add") and rs.describe("/ip address").contains("--"),
+			"help: the RouterOS ? key reaches the menu help with a word about each child")
 	check(rs is ROS and rs.prompt().begins_with("[admin@"), "ros: PacketTik gear speaks RouterOS")
 	check(mkt_sw.ifaces[0].name == "ether1", "ros: PacketTik ports are etherN")
 	check(rs.exec("/interface bridge vlan add vlan-ids=50 comment=lab").begins_with("value of bridge must be specified"),
@@ -2223,6 +2227,10 @@ static func run() -> int:
 	cs.exec("vlan 77")
 	cs.exec("end")
 	check(cs.exec("show startup-config").contains("No startup-config was found"), "cfg: nothing saved yet")
+	check(cs.exec("! a comment from a pasted config") == "" and cs.exec("!") == "", "cfg: EOS ignores ! comment lines the way a pasted running-config carries them")
+	check("ip dhcp pool" not in cs.describe("ip ") and "ip vrf" not in cs.describe("ip ")
+		and "rollback" not in cs.describe("") and "acl permit" not in " ".join(PackedStringArray(cs.complete("acl "))),
+		"help: EOS ? and Tab list only real EOS syntax, the IOS and game-only aliases stay hidden")
 	check(cs.exec("write memory").contains("Copy completed"), "cfg: write memory saves")
 	cs.exec("conf t")
 	cs.exec("vlan 88")

@@ -368,13 +368,13 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "hostname"], "h": func(_r): return "Hostname: %s\nFQDN:     %s\n" % [dev.name, dev.name]},
 			{"m": ["priv"], "p": ["copy", "running-config", "startup-config"], "h": _write_mem},
 			{"m": ["priv"], "p": ["reload"], "h": _reload},
-			{"m": ["priv"], "p": ["copy", "running-config", "template"], "h": _save_template},
-			{"m": ["priv"], "p": ["copy", "template"], "h": _apply_template},
-			{"m": EP, "p": ["show", "templates"], "h": _show_templates},
+			{"m": ["priv"], "p": ["copy", "running-config", "template"], "h": _save_template, "hidden": true},
+			{"m": ["priv"], "p": ["copy", "template"], "h": _apply_template, "hidden": true},
+			{"m": EP, "p": ["show", "templates"], "h": _show_templates, "hidden": true},
 			{"m": EP, "p": ["show", "startup-config"], "h": _show_startup},
-			{"m": EP, "p": ["show", "config", "versions"], "h": _show_versions},
+			{"m": EP, "p": ["show", "config", "versions"], "h": _show_versions, "hidden": true},
 			{"m": EP, "p": ["show", "config", "diff"], "h": _show_diff},
-			{"m": ["priv"], "p": ["rollback"], "h": _rollback},
+			{"m": ["priv"], "p": ["rollback"], "h": _rollback, "hidden": true},
 			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
 			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping},
 			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
@@ -393,10 +393,10 @@ class EOS extends Session:
 			{"m": ["priv"], "p": ["clear", "arp-cache"], "h": func(_r):
 				dev.arp.clear()
 				return ""},
-			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
-			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
+			{"m": EP, "p": ["show", "capture"], "h": _show_capture, "hidden": true},
+			{"m": EP, "p": ["show", "acl"], "h": _show_acl, "hidden": true},
 			{"m": EP, "p": ["show", "ip", "access-lists"], "h": _show_acl},
-			{"m": EP, "p": ["show", "access-lists"], "h": _show_acl},
+			{"m": EP, "p": ["show", "access-lists"], "h": _show_acl, "hidden": true},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "bgp"], "h": _show_bgp_table},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
@@ -409,7 +409,7 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "interfaces", "trunk"], "h": _show_int_trunk},
 			{"m": EP, "p": ["show", "port-channel"], "h": _show_lag},
 			{"m": EP, "p": ["show", "port-channel", "summary"], "h": _show_lag},
-			{"m": EP, "p": ["show", "etherchannel", "summary"], "h": _show_lag},
+			{"m": EP, "p": ["show", "etherchannel", "summary"], "h": _show_lag, "hidden": true},
 			{"m": EP, "p": ["show", "lldp", "neighbors"], "h": _show_lldp},
 			{"m": EP, "p": ["show", "interfaces", "counters"], "h": _show_counters},
 			{"m": EP, "p": ["show", "interfaces", "counters", "errors"], "h": _show_counter_errors},
@@ -489,31 +489,31 @@ class EOS extends Session:
 			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
 			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["interface", "range"], "h": _cfg_if_range},
 			{"m": ["config"], "p": ["ip", "route"], "h": _cfg_ip_route},
-			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64},
-			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source},
-			{"m": ["config"], "p": ["vxlan", "vlan"], "h": _cfg_vxlan_vlan},
-			{"m": ["config"], "p": ["vxlan", "peer"], "h": _cfg_vxlan_peer},
-			{"m": ["config"], "p": ["vxlan", "evpn"], "h": _cfg_vxlan_evpn},
+			{"m": ["config"], "p": ["nat64", "prefix"], "h": _cfg_nat64, "hidden": true},
+			{"m": ["config"], "p": ["vxlan", "source"], "h": _cfg_vxlan_source, "hidden": true},
+			{"m": ["config"], "p": ["vxlan", "vlan"], "h": _cfg_vxlan_vlan, "hidden": true},
+			{"m": ["config"], "p": ["vxlan", "peer"], "h": _cfg_vxlan_peer, "hidden": true},
+			{"m": ["config"], "p": ["vxlan", "evpn"], "h": _cfg_vxlan_evpn, "hidden": true},
 			{"m": ["config"], "p": ["no", "vxlan"], "h": func(_r):
 				dev.vtep = {}
 				dev.remote_macs = {}
 				Game.topology_changed.emit()
-				return ""},
+				return "", "hidden": true},
 			{"m": EP, "p": ["show", "vxlan"], "h": _show_vxlan},
 			{"m": ["config"], "p": ["no", "nat64"], "h": func(_r):
 				dev.services.erase("nat64")
 				dev.nat64_flows.clear()
 				Game.topology_changed.emit()
-				return ""},
-			{"m": EP, "p": ["show", "nat64"], "h": _show_nat64},
-			{"m": ["config"], "p": ["ip", "vrf"], "h": _cfg_vrf},
-			{"m": ["config"], "p": ["ssid"], "h": _cfg_ssid},
-			{"m": EP, "p": ["show", "ssid"], "h": _show_ssid},
-			{"m": ["config"], "p": ["virtual-server"], "h": _cfg_vip},
-			{"m": ["config"], "p": ["no", "virtual-server"], "h": _cfg_no_vip},
-			{"m": EP, "p": ["show", "virtual-server"], "h": _show_vip},
-			{"m": ["if"], "p": ["ip", "vrf", "forwarding"], "h": _if_vrf},
-			{"m": EP, "p": ["show", "ip", "vrf"], "h": _show_vrf},
+				return "", "hidden": true},
+			{"m": EP, "p": ["show", "nat64"], "h": _show_nat64, "hidden": true},
+			{"m": ["config"], "p": ["ip", "vrf"], "h": _cfg_vrf, "hidden": true},
+			{"m": ["config"], "p": ["ssid"], "h": _cfg_ssid, "hidden": true},
+			{"m": EP, "p": ["show", "ssid"], "h": _show_ssid, "hidden": true},
+			{"m": ["config"], "p": ["virtual-server"], "h": _cfg_vip, "hidden": true},
+			{"m": ["config"], "p": ["no", "virtual-server"], "h": _cfg_no_vip, "hidden": true},
+			{"m": EP, "p": ["show", "virtual-server"], "h": _show_vip, "hidden": true},
+			{"m": ["if"], "p": ["ip", "vrf", "forwarding"], "h": _if_vrf, "hidden": true},
+			{"m": EP, "p": ["show", "ip", "vrf"], "h": _show_vrf, "hidden": true},
 			{"m": ["config"], "p": ["firewall", "stateful"], "h": func(_r): return _set_stateful(true)},
 			{"m": ["config"], "p": ["no", "firewall", "stateful"], "h": func(_r): return _set_stateful(false)},
 			{"m": ["config"], "p": ["ip", "access-list"], "h": _cfg_ip_acl},
@@ -557,13 +557,13 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["vrf"], "h": _if_vrf},
 			{"m": ["if"], "p": ["no", "vrf"], "h": func(_r): return _if_vrf([""])},
 			{"m": EP, "p": ["show", "vrf"], "h": _show_vrf},
-			{"m": ["config"], "p": ["acl", "permit"], "h": func(r): return _cfg_acl(r, "permit", "")},
-			{"m": ["config"], "p": ["acl", "deny"], "h": func(r): return _cfg_acl(r, "deny", "")},
-			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl},
+			{"m": ["config"], "p": ["acl", "permit"], "h": func(r): return _cfg_acl(r, "permit", ""), "hidden": true},
+			{"m": ["config"], "p": ["acl", "deny"], "h": func(r): return _cfg_acl(r, "deny", ""), "hidden": true},
+			{"m": ["config"], "p": ["no", "acl"], "h": _cfg_no_acl, "hidden": true},
 			{"m": ["config"], "p": ["no", "ip", "route"], "h": _cfg_no_ip_route},
 			{"m": ["config"], "p": ["router", "bgp"], "h": _cfg_router_bgp},
 			{"m": ["config"], "p": ["router", "ospf"], "h": _cfg_router_ospf},
-			{"m": ["config"], "p": ["ip", "dhcp", "pool"], "h": _cfg_dhcp_pool},
+			{"m": ["config"], "p": ["ip", "dhcp", "pool"], "h": _cfg_dhcp_pool, "hidden": true},
 			{"m": ["config"], "p": ["ip", "proxy-arp"], "h": func(_r):
 				dev.services.erase("proxy_arp")  # on, the IOS default
 				return ""},
@@ -727,10 +727,10 @@ class EOS extends Session:
 					return _snmp(r[0] if r.size() > 0 else "")},
 			{"m": ["config"], "p": ["no", "snmp-server"], "h": func(_r): return _snmp("")},
 			{"m": EP, "p": ["show", "snmp"], "h": _show_snmp},
-			{"m": EP, "p": ["show", "flows"], "h": _show_flows},
+			{"m": EP, "p": ["show", "flows"], "h": _show_flows, "hidden": true},
 			{"m": ["config"], "p": ["clear", "flows"], "h": func(_r):
 				dev.talkers.clear()
-				return ""},
+				return "", "hidden": true},
 			{"m": ["config"], "p": ["ip", "igmp", "snooping"], "h": func(_r): return _igmp(true)},
 			{"m": ["config"], "p": ["no", "ip", "igmp", "snooping"], "h": func(_r): return _igmp(false)},
 			{"m": EP, "p": ["show", "ip", "igmp", "snooping"], "h": _show_igmp},
@@ -745,13 +745,13 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["ipv6", "address"], "h": _if_ip},
 			{"m": EP, "p": ["show", "ipv6", "interface", "brief"], "h": _show_v6_brief},
 			{"m": EP, "p": ["show", "ipv6", "neighbors"], "h": _show_neighbors},
-			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"]},
-			{"m": ["config"], "p": ["ip", "nat", "inside", "source"], "h": _cfg_nat_source},
-			{"m": ["config"], "p": ["no", "ip", "nat", "inside", "source"], "h": _cfg_no_nat_source},
-			{"m": ["config"], "p": ["access-list"], "h": _cfg_std_acl},
-			{"m": ["config"], "p": ["no", "access-list"], "h": _cfg_no_std_acl},
-			{"m": EP, "p": ["show", "ip", "nat", "translations"], "h": _show_nat},
-			{"m": EP, "p": ["show", "ip", "nat", "statistics"], "h": _show_nat_stats},
+			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"], "hidden": true},
+			{"m": ["config"], "p": ["ip", "nat", "inside", "source"], "h": _cfg_nat_source, "hidden": true},
+			{"m": ["config"], "p": ["no", "ip", "nat", "inside", "source"], "h": _cfg_no_nat_source, "hidden": true},
+			{"m": ["config"], "p": ["access-list"], "h": _cfg_std_acl, "hidden": true},
+			{"m": ["config"], "p": ["no", "access-list"], "h": _cfg_no_std_acl, "hidden": true},
+			{"m": EP, "p": ["show", "ip", "nat", "translations"], "h": _show_nat, "hidden": true},
+			{"m": EP, "p": ["show", "ip", "nat", "statistics"], "h": _show_nat_stats, "hidden": true},
 			{"m": ["priv"], "p": ["clear", "ip", "nat", "translation"], "h": func(_r):
 				dev.nat_flows.clear()
 				dev.nat_xlate.clear()
@@ -762,7 +762,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "ip", "helper-address"], "h": func(_r): ctx_if.helper = ""; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "channel-group"], "h": func(_r): ctx_if.lag = 0; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["no", "vrrp"], "h": _if_no_vrrp},
-			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return ""},
+			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return "", "hidden": true},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): return _each(func(i):
 				i.admin_down = true
@@ -779,9 +779,9 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "qos", "priority-queueing"], "h": func(_r): return _qos(false)},
 			{"m": EP, "p": ["show", "qos"], "h": _show_qos},
 			{"m": ["if"], "p": ["encapsulation", "dot1q"], "h": _if_encap},
-			{"m": ["if"], "p": ["wireguard", "peer"], "h": _wg_peer},
-			{"m": ["if"], "p": ["no", "wireguard", "peer"], "h": _wg_no_peer},
-			{"m": EP, "p": ["show", "wireguard"], "h": _show_wg},
+			{"m": ["if"], "p": ["wireguard", "peer"], "h": _wg_peer, "hidden": true},
+			{"m": ["if"], "p": ["no", "wireguard", "peer"], "h": _wg_no_peer, "hidden": true},
+			{"m": EP, "p": ["show", "wireguard"], "h": _show_wg, "hidden": true},
 			{"m": ["if"], "p": ["tunnel", "source"], "h": _tunnel_src},
 			{"m": ["if"], "p": ["tunnel", "destination"], "h": _tunnel_dst},
 			{"m": EP, "p": ["show", "tunnels"], "h": _show_tunnels},
@@ -801,8 +801,8 @@ class EOS extends Session:
 				filter = " ".join(PackedStringArray(Array(parts).slice(1)))
 				line = line.substr(0, pipe).strip_edges()
 		var toks := Array(line.strip_edges().split(" ", false))
-		if toks.is_empty():
-			return ""
+		if toks.is_empty() or String(toks[0]).begins_with("!"):
+			return ""  # a comment line, the way a pasted running-config carries them
 		if filter != "":
 			return CLI.filter_output(exec(line), filter)
 		if toks.size() > 1 and String(toks[0]) == "do" and mode not in ["exec", "priv"]:

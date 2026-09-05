@@ -6410,6 +6410,18 @@ func _cli_key(e: InputEvent) -> void:
 		cli_in.text = "" if cli_hist_idx == cli_history.size() else cli_history[cli_hist_idx]
 		cli_in.caret_column = cli_in.text.length()
 		return
+	if e is InputEventKey and e.pressed and e.keycode == KEY_V and (e.ctrl_pressed or e.meta_pressed):
+		# a pasted block runs line by line, the way copying a config between boxes works
+		var clip := DisplayServer.clipboard_get()
+		if clip.contains("\n"):
+			cli_in.accept_event()
+			for pasted_line in clip.split("\n"):
+				var pl := String(pasted_line).strip_edges()
+				if pl != "":
+					_cli_submit(pl)
+			return
+	if e is InputEventKey and e.pressed and e.unicode == 63 and cli_session is LinuxCLI:
+		return  # bash has no ? help: the character is typed, like any other
 	if e is InputEventKey and e.pressed and e.unicode == 63:  # '?'
 		cli_in.accept_event()
 		if cli_session.has_method("describe"):

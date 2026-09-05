@@ -22,8 +22,8 @@ func exec(line: String) -> String:
 		var left := exec(line.substr(0, pipe).strip_edges())
 		return _pipe(left, tail)
 	var t := Array(line.strip_edges().split(" ", false))
-	if t.is_empty():
-		return ""
+	if t.is_empty() or String(t[0]).begins_with("#"):
+		return ""  # a comment line, the way a pasted script carries them
 	if String(t[0]) == "sudo":
 		t = t.slice(1)
 		if t.is_empty():
