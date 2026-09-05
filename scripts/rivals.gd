@@ -191,6 +191,8 @@ static func would_buy_player(r: Dictionary) -> bool:
 static func maybe_offer_for_player() -> void:
 	if Game.buyout_offer != null and not Game.buyout_offer.is_empty():
 		return
+	if Game.cycle < int(Game.stats.get("buyout_cooldown", 0)):
+		return  # they were told no; they wait two quarters before asking again
 	if Game.contracts_done.size() < 4 or _roll() > 0.05:
 		return
 	for r in Game.rivals:
@@ -211,7 +213,16 @@ static func tick() -> void:
 	for r in Game.rivals:
 		if not alive(r):
 			continue
-		r["cash"] = int(r["cash"]) + int(r["deals"]) * 90
+		# a grudge from a refused buyout wears off after a quarter
+		if r.has("grudge_until") and Game.cycle >= int(r["grudge_until"]):
+			r["aggression"] = float(r.get("grudge_base", r["aggression"]))
+			r.erase("grudge_until")
+			r.erase("grudge_base")
+		# revenue from the book, less what the book costs them to run, and the
+		# odd customer who leaves: a full rival stays in the market
+		r["cash"] = maxi(0, int(r["cash"]) + int(r["deals"]) * 90 - int(r["deals"]) * 30 - r["racks"].size() * 40)
+		if int(r["deals"]) > 0 and _roll() < 0.03:
+			r["deals"] = int(r["deals"]) - 1
 		# they win business on their own too
 		if int(r["deals"]) < int(r["capacity"]) and _roll() < 0.06:
 			r["deals"] = int(r["deals"]) + 1

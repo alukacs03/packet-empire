@@ -7740,6 +7740,19 @@ static func run() -> int:
 	check(Game.decline_buyout() == "", "buyout: an offer can be turned down")
 	check(Game.buyout_offer.is_empty(), "buyout: which takes it off the table")
 	check(Game.decline_buyout() != "", "buyout: and there is nothing left to decline")
+	check(int(Game.stats.get("buyout_cooldown", 0)) == Game.cycle + 24, "buyout: a refusal buys two quiet quarters")
+	var grudge_ok := true
+	for rv_g in Game.rivals:
+		if rv_g.has("grudge_until") and int(rv_g["grudge_until"]) != Game.cycle + 12:
+			grudge_ok = false
+	check(grudge_ok, "buyout: the grudge is dated, so it wears off")
+	check(Game.contract_fee({"reward": 9000}) == 120 and Game.contract_fee({"reward": 100}) == 40 and Game.contract_fee({"reward": 800}) == 80,
+		"fees: a campaign job's recurring fee is held between $40 and $120")
+	var grown := {"ctype": "startup", "fee": 60, "load": 200, "customer": "Tiny Kft", "healthy": true}
+	for gi in 400:
+		Game.customer_growth(grown)
+	check(int(grown["fee"]) <= 180 and int(grown["load"]) <= Game.GROWTH_LOAD_CAP,
+		"growth: a startup grows to three times its signed fee and a port's worth of traffic, then stops")
 	Game.buyout_offer = {"rival": String(rv_pred["name"]), "price": 50000, "ttl": 3,
 		"cycle": Game.cycle}
 	check(Game.accept_buyout() == "", "buyout: or accepted")
@@ -7854,6 +7867,16 @@ static func run() -> int:
 	for st_i in Staff.COURSES["switching"]["cycles"]:
 		Staff.morale_tick(0)
 	check(int(st_a["skill"]) == st_skill + 1, "staff: they come back one better")
+	var st_tech := Staff.make_candidate(st_rng)
+	st_tech["role"] = "tech"
+	st_tech["skill"] = 2
+	st_tech["training_left"] = 0
+	Game.staff.append(st_tech)
+	var off_role_money := Game.money
+	check(Staff.start_course(st_tech, "routing") == "" and Game.money == off_role_money - int(Staff.COURSES["routing"]["cost"]) * 3 / 2
+		and int(st_tech["training_left"]) == int(Staff.COURSES["routing"]["cycles"]) + 1,
+		"staff: a course written for another role costs half as much again and takes a cycle longer")
+	Game.staff.erase(st_tech)
 	check("switching" in st_a.get("certs", []), "staff: with the certification recorded")
 	# quitting
 	st_a["morale"] = 0
@@ -9065,6 +9088,7 @@ static func run() -> int:
 	Game.sold_out = false
 	Game.money = 12000
 	Game.reputation = 70
+	Game.stats["net"] = 9000  # a run that made money, so the per-cycle test has something to halve
 	check(Game.end_run("nonsense") != "" and Game.finale.is_empty(),
 		"finale: a run ends one of the three ways it can end")
 	check(Game.end_run("retired") == "" and not Game.finale.is_empty() \

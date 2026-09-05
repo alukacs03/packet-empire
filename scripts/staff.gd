@@ -93,9 +93,13 @@ static func start_course(member: Dictionary, course: String) -> String:
 		return "%s is already on a course" % member["name"]
 	if int(member["skill"]) >= 5:
 		return "%s has nothing left to learn here" % member["name"]
-	if not Game.try_spend(int(c["cost"])):
-		return "the course costs $%d" % int(c["cost"])
-	member["training_left"] = int(c["cycles"])
+	# a course written for another role still teaches, but it costs half as
+	# much again and takes a cycle longer: the material is not theirs
+	var off_role := String(c.get("role", "")) != "" and String(c["role"]) != String(member["role"])
+	var cost := int(c["cost"]) * 3 / 2 if off_role else int(c["cost"])
+	if not Game.spend_on("training", cost):
+		return "the course costs $%d%s" % [cost, " for a %s" % ROLES[member["role"]]["label"] if off_role else ""]
+	member["training_left"] = int(c["cycles"]) + (1 if off_role else 0)
 	member["training"] = course
 	member["morale"] = mini(100, int(member.get("morale", 70)) + 10)  # being invested in helps
 	Game.log_event("TRAINING: %s starts %s. Off the floor for %d cycles."
@@ -218,7 +222,13 @@ static func work_cycle() -> void:
 				continue  # not everything gets fixed in one cycle
 			Game.link_restore(ifc)
 			attempts -= 1
-			var who: Dictionary = Game.staff[rng.randi() % Game.staff.size()]
+			var crew: Array = []
+			for m: Dictionary in Game.staff:
+				if on_shift(m) and int(m.get("training_left", 0)) == 0:
+					crew.append(m)
+			if crew.is_empty():
+				crew = Game.staff
+			var who: Dictionary = crew[rng.randi() % crew.size()]
 			Game.log_event("STAFF: %s restored %s %s." % [who["name"], ifc.dev.name, ifc.name])
 			say(who, "repair")
 			if float(habits_of(who).get("tidy", 0.5)) > 0.65 and ifc.note.is_empty():
