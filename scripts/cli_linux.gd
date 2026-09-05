@@ -15,15 +15,21 @@ func prompt() -> String:
 	return "root@%s:~#" % dev.name
 
 func exec(line: String) -> String:
+	# a pipe into grep, head, tail or wc filters the left side's output
+	var pipe := line.find("|")
+	if pipe > 0 and not line.begins_with("wg genkey"):
+		var tail := Array(line.substr(pipe + 1).strip_edges().split(" ", false))
+		var left := exec(line.substr(0, pipe).strip_edges())
+		return _pipe(left, tail)
 	var t := Array(line.strip_edges().split(" ", false))
 	if t.is_empty():
 		return ""
 	if String(t[0]) == "sudo":
 		t = t.slice(1)
 		if t.is_empty():
-			return "usage: sudo -h | -K | -k | -V\nusage: sudo [command]\n"
+			return "usage: sudo -h | -K | -k | -V\nusage: sudo -v [-ABkNnS] [-g group] [-h host] [-p prompt] [-u user]\nusage: sudo -l [-ABkNnS] [-g group] [-h host] [-p prompt] [-U user] [-u user] [command [arg ...]]\nusage: sudo [-ABbEHkNnPS] [-r role] [-t type] [-C num] [-D directory] [-g group] [-h host] [-p prompt] [-R directory] [-T timeout] [-u user] [VAR=value] [-i | -s] [command [arg ...]]\nusage: sudo -e [-ABkNnS] [-r role] [-t type] [-C num] [-D directory] [-g group] [-h host] [-p prompt] [-R directory] [-T timeout] [-u user] file ...\n"
 	# the one shell redirect a network engineer types: writing a config file
-	if ">" in t:
+	if ">" in t or ">>" in t:
 		if String(t[0]) == "wg" and "genkey" in t:
 			return _wg(["genkey", "|"])
 		return _redirect(t)
@@ -35,6 +41,8 @@ func exec(line: String) -> String:
 				return dev.name + "\n"
 			return "" if Game.rename_device(dev, t[1]) else "hostname: the specified hostname is invalid\n"
 		"hostnamectl":
+			if t.size() >= 3 and String(t[1]) == "set-hostname":
+				return "" if Game.rename_device(dev, String(t[2])) else "Could not set static hostname: Invalid argument\n"
 			return "   Static hostname: %s\n         Icon name: computer-server\n           Chassis: server\n        Machine ID: 8c5e2d1f4a3b4c6d9e0f1a2b3c4d5e6f\n           Boot ID: 1a2b3c4d5e6f4a7b8c9d0e1f2a3b4c5d\n  Operating System: Debian GNU/Linux 12 (bookworm)\n            Kernel: Linux %s\n      Architecture: x86-64\n" % [dev.name, KERNEL]
 		"uname":
 			if "-a" in t:
@@ -44,7 +52,38 @@ func exec(line: String) -> String:
 			return "Linux\n"
 		"pwd":
 			return "/root\n"
+		"whoami":
+			return "root\n"
+		"id":
+			return "uid=0(root) gid=0(root) groups=0(root)\n"
+		"date":
+			return _when() + "\n"
+		"which":
+			return ("/usr/sbin/%s\n" % t[1]) if t.size() > 1 and String(t[1]) in ["ip", "tcpdump", "dhclient", "dhcpd", "ss", "sysctl", "wg", "nft"] else (("/usr/bin/%s\n" % t[1]) if t.size() > 1 and String(t[1]) in ["ping", "traceroute", "dig", "host", "nslookup", "curl", "nc", "ssh", "cat", "echo", "grep", "systemctl", "journalctl", "hostnamectl"] else "")
+		"cd":
+			return "" if t.size() == 1 or String(t[1]) in ["/", "~", "/root", "/etc", "/etc/dhcp", "/var/log", "/etc/wireguard", ".."] else "-bash: cd: %s: No such file or directory\n" % t[1]
+		"grep", "less", "tail", "head":
+			if t.size() >= 2 and String(t[-1]).begins_with("/"):
+				var text := _cat([String(t[-1])])
+				return _pipe(text, t.slice(0, t.size() - 1)) if String(t[0]) != "less" else text
+			return "Usage: %s [OPTION]... [FILE]...\n" % t[0]
+		"nano", "vi", "vim", "apt", "apt-get":
+			return "-bash: %s: command not found\n# this shell has no editor or package manager: write a file with echo ... > /path (a game limitation, not Linux)\n" % t[0]
 		"ls":
+			var path := ""
+			for a in t.slice(1):
+				if not String(a).begins_with("-"):
+					path = String(a)
+			match path:
+				"/etc/dhcp":
+					return "dhclient.conf  dhclient-enter-hooks.d  dhclient-exit-hooks.d%s\n" % ("  dhcpd.conf" if dev.services.has("dhcp") else "")
+				"/etc/wireguard":
+					var confs: Array = dev.ifaces.filter(func(i): return i.name.begins_with("wg")).map(func(i): return i.name + ".conf")
+					return ("  ".join(PackedStringArray(confs)) + "\n") if not confs.is_empty() else ""
+				"/var/log":
+					return "auth.log  btmp  daemon.log  dpkg.log  kern.log  lastlog  messages  syslog  wtmp\n"
+				"/etc":
+					return "default  dhcp  hostname  hosts  network  resolv.conf  ssh  systemd  wireguard\n"
 			var files: Array = []
 			if dev.services.has("wg_keys"):
 				files += ["privatekey", "publickey"]
@@ -107,6 +146,12 @@ func exec(line: String) -> String:
 		"host":
 			if t.size() < 2:
 				return "Usage: host [-aCdilrTvVw] [-c class] [-N ndots] [-t type] [-W time]\n            [-R number] [-m flag] [-p port] hostname [server]\n"
+			if String(t[1]).is_valid_ip_address():
+				var oct := String(t[1]).split(".")
+				oct.reverse()
+				var arpa := ".".join(oct) + ".in-addr.arpa"
+				var pname := Sim.reverse_lookup(dev, String(t[1]))
+				return ("%s domain name pointer %s.\n" % [arpa, pname]) if pname != "" else "Host %s not found: 3(NXDOMAIN)\n" % arpa
 			var hip := Sim.resolve(dev, String(t[1]))
 			if hip == "":
 				return "Host %s not found: 3(NXDOMAIN)\n" % t[1]
@@ -125,21 +170,35 @@ func exec(line: String) -> String:
 		"iptables":
 			return "Chain INPUT (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination\n\nChain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination\n\nChain OUTPUT (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination\n"
 		"nft":
-			return "table inet filter {\n}\n" if "list" in t else "nft: command requires an argument\n"
+			return "" if "list" in t else "nft: command requires an argument\n"
 		"ufw":
-			return "Status: inactive\n"
+			return "-bash: ufw: command not found\n"
 		"wg":
 			return _wg(t.slice(1))
 		"wg-quick":
 			if t.size() == 3 and String(t[1]) in ["up", "down"]:
 				var wq := _iface(String(t[2]))
-				if wq == null and String(t[1]) == "up":
-					return "wg-quick: `/etc/wireguard/%s.conf' does not exist\n" % t[2]
-				if wq != null:
-					wq.enabled = String(t[1]) == "up"
+				if String(t[1]) == "up":
+					if wq != null:
+						return "wg-quick: `%s' already exists\n" % t[2]
+					var conf: Dictionary = dev.services.get("wg_conf", {}).get(String(t[2]), {})
+					if conf.is_empty():
+						return "wg-quick: `/etc/wireguard/%s.conf' does not exist\n" % t[2]
+					var made := Game.add_wireguard(dev, int(String(t[2]).trim_prefix("wg")))
+					if made == null:
+						return "wg-quick: `%s' could not be created\n" % t[2]
+					for cidr in conf.get("address", []):
+						Game.add_ip(made, String(cidr))
+					for pr in conf.get("peers", []):
+						_wg_add_peer(made, pr)
 					Game.topology_changed.emit()
-				return ("[#] ip link add %s type wireguard\n[#] wg setconf %s /dev/fd/63\n[#] ip -4 address add %s dev %s\n[#] ip link set mtu 1420 up dev %s\n" % [t[2], t[2],
-					" ".join(PackedStringArray(wq.ips)), t[2], t[2]]) if String(t[1]) == "up" else "[#] ip link delete dev %s\n" % t[2]
+					return "[#] ip link add %s type wireguard\n[#] wg setconf %s /dev/fd/63\n[#] ip -4 address add %s dev %s\n[#] ip link set mtu 1420 up dev %s\n" % [t[2], t[2],
+						" ".join(PackedStringArray(made.ips)), t[2], t[2]]
+				if wq == null:
+					return "wg-quick: `%s' is not a WireGuard interface\n" % t[2]
+				dev.ifaces.erase(wq)
+				Game.topology_changed.emit()
+				return "[#] ip link delete dev %s\n" % t[2]
 			return "Usage: wg-quick [ up | down | save | strip ] [ CONFIG_FILE | INTERFACE ]\n"
 		"lldpcli":
 			return _lldpcli()
@@ -284,7 +343,46 @@ func exec(line: String) -> String:
 					any = true
 					out += "%-8s %-14s %s\n" % [i.name, l.other(i).dev.name, l.other(i).name]
 			return out if any else "(no neighbors detected)\n"
-	return "bash: %s: command not found\n" % t[0]
+	return "-bash: %s: command not found\n" % t[0]
+
+func _pipe(text: String, tail: Array) -> String:
+	## grep, grep -v, head, tail, wc -l: the filters people put after a command
+	if tail.is_empty():
+		return text
+	var cmd := String(tail[0])
+	var lines := Array(text.split("\n", false))
+	match cmd:
+		"grep", "egrep":
+			var invert := "-v" in tail
+			var needles: Array = tail.slice(1).filter(func(w): return not String(w).begins_with("-"))
+			if needles.is_empty():
+				return "Usage: grep [OPTION]... PATTERNS [FILE]...\nTry 'grep --help' for more information.\n"
+			var needle := String(needles[0]).replace("\"", "").replace("'", "")
+			var out := ""
+			for l in lines:
+				var hit := needle in String(l) if "-i" not in tail else needle.to_lower() in String(l).to_lower()
+				if hit != invert:
+					out += String(l) + "\n"
+			return out
+		"head", "tail":
+			var n := 10
+			for k in tail.size():
+				if String(tail[k]) == "-n" and k + 1 < tail.size():
+					n = int(tail[k + 1])
+				elif String(tail[k]).begins_with("-") and String(tail[k]).substr(1).is_valid_int():
+					n = int(String(tail[k]).substr(1))
+			var picked: Array = lines.slice(0, n) if cmd == "head" else lines.slice(maxi(0, lines.size() - n))
+			return ("\n".join(PackedStringArray(picked)) + "\n") if not picked.is_empty() else ""
+		"wc":
+			if "-l" in tail:
+				return "%d\n" % lines.size()
+			var words := 0
+			for l in lines:
+				words += String(l).split(" ", false).size()
+			return "%7d %7d %7d\n" % [lines.size(), words, text.length()]
+		"less", "more", "cat":
+			return text
+	return "-bash: %s: command not found\n" % cmd
 
 func _help() -> String:
 	return ("Linux tools (they work the same on a real host):\n"
@@ -305,8 +403,9 @@ func _help() -> String:
 		+ "  igmp join|send|groups   wifi join|leave|status   console list|<device>   flows   logs\n"
 		+ "  syslogd   logging <ip>   ntpd <ip>   nameserver <ip>\n")
 
-func _apt_hint(cmd: String, pkg: String) -> String:
-	return "Command '%s' not found, but can be installed with:\nsudo apt install %s\n" % [cmd, pkg]
+func _apt_hint(cmd: String, _pkg: String) -> String:
+	## Debian has no command-not-found handler: net-tools is simply absent
+	return "-bash: %s: command not found\n" % cmd
 
 func _iface(name: String) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
@@ -391,6 +490,13 @@ func _ip_cmd(args: Array) -> String:
 	return "Object \"%s\" is unknown, try \"ip help\".\n" % obj
 
 func _addr_block(i: Net.Iface, n: int, family: int, link_only: bool) -> String:
+	if i.name.begins_with("wg"):
+		var wout := "%d: %s: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420 qdisc noqueue state UNKNOWN%s group default qlen 1000\n    link/none \n" % [n, i.name, " mode DEFAULT" if link_only else ""]
+		if not link_only:
+			for cidr in i.ips:
+				if family != 6 and not Net.is_v6(cidr):
+					wout += "    inet %s scope global %s\n       valid_lft forever preferred_lft forever\n" % [cidr, i.name]
+		return wout
 	var out := "%d: %s: <%s> mtu %d qdisc fq_codel state %s%s group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [
 		n, i.name, _link_flags(i), i.mtu, "UP" if _up(i) else "DOWN", " mode DEFAULT" if link_only else "", i.mac.to_lower()]
 	if link_only:
@@ -400,7 +506,11 @@ func _addr_block(i: Net.Iface, n: int, family: int, link_only: bool) -> String:
 			if family != 4:
 				out += "    inet6 %s scope global\n       valid_lft forever preferred_lft forever\n" % cidr
 		elif family != 6:
-			out += "    inet %s brd %s scope global %s\n       valid_lft forever preferred_lft forever\n" % [cidr, _bcast(cidr), i.name]
+			var lease: Dictionary = dev.services.get("dhcp_lease", {})
+			var dyn: bool = String(lease.get("cidr", "")) == String(cidr)
+			var brd: String = (" brd %s" % _bcast(cidr)) if dyn or String(cidr) in dev.services.get("brd", []) else ""
+			out += "    inet %s%s scope global%s %s\n       valid_lft %s preferred_lft %s\n" % [cidr, brd, " dynamic" if dyn else "", i.name,
+				"1789sec" if dyn else "forever", "1789sec" if dyn else "forever"]
 	if family != 4 and _up(i) and not i.name.begins_with("wg"):
 		out += "    inet6 %s/64 scope link\n       valid_lft forever preferred_lft forever\n" % _fe80(i)
 	return out
@@ -438,7 +548,7 @@ func _ip_addr(rest: Array, family: int, brief: bool) -> String:
 					addrs.append(cidr)
 				if family != 4 and _up(i) and not i.name.begins_with("wg"):
 					addrs.append(_fe80(i) + "/64")
-				out += "%-16s %-14s %s\n" % [i.name, "UP" if _up(i) else "DOWN", " ".join(PackedStringArray(addrs))]
+				out += "%-16s %-14s %s\n" % [i.name, "UNKNOWN" if i.name.begins_with("wg") else ("UP" if _up(i) else "DOWN"), " ".join(PackedStringArray(addrs))]
 			return out
 		var out := ""
 		if only == "" or only == "lo":
@@ -458,12 +568,20 @@ func _ip_addr(rest: Array, family: int, brief: bool) -> String:
 		var ifc := _iface(String(kv["dev"]))
 		if ifc == null:
 			return "Cannot find device \"%s\"\n" % kv["dev"]
+		if "/" not in cidr and cidr.is_valid_ip_address():
+			cidr += "/128" if Net.is_v6(cidr) else "/32"  # the classic trap: no length means a host route
 		if not Net.valid_cidr(cidr):
 			return "Error: any valid prefix is expected rather than \"%s\".\n" % cidr
 		if verb.begins_with("a") or verb == "replace":
 			if cidr in ifc.ips:
 				return "" if verb == "replace" else "RTNETLINK answers: File exists\n"
-			return "" if Game.add_ip(ifc, cidr) else "RTNETLINK answers: File exists\n"
+			if not Game.add_ip(ifc, cidr):
+				return "RTNETLINK answers: File exists\n"
+			if kv.has("brd") or "brd" in words:
+				var brds: Array = dev.services.get("brd", [])
+				brds.append(cidr)
+				dev.services["brd"] = brds
+			return ""
 		if cidr in ifc.ips:
 			Game.remove_ip(ifc, cidr)
 			return ""
@@ -548,6 +666,8 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 
 func _enslave(ifc: Net.Iface, master: String) -> String:
 	## ip link set eth1 master bond0: the bond is whatever ports share it
+	if ifc.enabled and not ifc.admin_down:
+		return "Error: Device can not be enslaved while up.\n"
 	var gid := 1
 	var first: Net.Iface = null
 	for i2: Net.Iface in dev.ifaces:
@@ -575,6 +695,9 @@ func _ip_neigh(rest: Array, family: int) -> String:
 		return ""
 	if verb in ["show", "list", "ls", "s", "sh"]:
 		var out := ""
+		for ip in dev.services.get("arp_failed", []):
+			if not dev.arp.has(ip):
+				out += "%s dev %s FAILED\n" % [ip, dev.ifaces[0].name if not dev.ifaces.is_empty() else "eth0"]
 		for ip in dev.arp:
 			if (family == 4 and Net.is_v6(String(ip))) or (family == 6 and not Net.is_v6(String(ip))):
 				continue
@@ -600,31 +723,56 @@ func _ip_maddr() -> String:
 
 func _route_line(r: Dictionary, v6: bool) -> String:
 	var dst := "default" if int(r["plen"]) == 0 else "%s/%d" % [r["prefix"], int(r["plen"])]
+	if String(r.get("via", "")) == "":
+		return "%s dev %s scope link\n" % [dst, r.get("dev", "eth0")]
+	var egress := Sim._connected_iface(dev, String(r["via"]))
 	var line := "%s via %s%s" % [dst, r["via"], CLI.dev_suffix(dev, String(r["via"]))]
-	if String(r.get("proto", "")) == "dhcp":
-		line += " proto dhcp src %s metric 100" % r.get("src", _first_v4())
-	elif v6:
+	if v6:
 		line += " metric 1024 pref medium"
+	if egress != null and Game.link_at(egress) == null:
+		line += " linkdown"
 	return line + "\n"
 
 func _ip_route_show(family: int) -> String:
-	var out := ""
+	## the kernel's order: default first, then by prefix; a route through a
+	## downed interface is gone, one through a dead cable says linkdown
 	var v6 := family == 6
+	var rows: Array = []
+	if v6:
+		rows.append(["::1", "::1 dev lo proto kernel metric 256 pref medium\n"])
 	for r in dev.static_routes:
-		if String(r.get("vrf", "")) != "" or Net.is_v6(String(r["via"])) != v6:
+		if String(r.get("vrf", "")) != "":
 			continue
-		out += _route_line(r, v6)
+		var via := String(r.get("via", ""))
+		if via != "" and Net.is_v6(via) != v6:
+			continue
+		if via == "" and Net.is_v6(String(r["prefix"])) != v6:
+			continue
+		var egress := Sim._connected_iface(dev, via) if via != "" else _iface(String(r.get("dev", "")))
+		if egress != null and not egress.enabled:
+			continue
+		var key := ("~" if v6 else "") + ("" if int(r["plen"]) == 0 else String(r["prefix"]))
+		if v6 and int(r["plen"]) == 0:
+			key = "~~~"  # v6 default last
+		rows.append([key, _route_line(r, v6)])
 	for i: Net.Iface in dev.ifaces:
+		if not i.enabled:
+			continue
 		for cidr: String in i.ips:
 			if Net.is_v6(cidr) != v6:
 				continue
 			var netw := Net.network_of(cidr)
+			var down := " linkdown" if Game.link_at(i) == null and not i.name.begins_with("wg") else ""
 			if v6:
-				out += "%s/%d dev %s proto kernel metric 256 pref medium\n" % [netw["prefix"], int(netw["plen"]), i.name]
+				rows.append([String(netw["prefix"]), "%s/%d dev %s proto kernel metric 256 pref medium%s\n" % [netw["prefix"], int(netw["plen"]), i.name, down]])
 			else:
-				out += "%s/%d dev %s proto kernel scope link src %s\n" % [netw["prefix"], int(netw["plen"]), i.name, String(cidr).split("/")[0]]
+				rows.append([String(netw["prefix"]), "%s/%d dev %s proto kernel scope link src %s%s\n" % [netw["prefix"], int(netw["plen"]), i.name, String(cidr).split("/")[0], down]])
 		if v6 and _up(i) and not i.name.begins_with("wg"):
-			out += "fe80::/64 dev %s proto kernel metric 256 pref medium\n" % i.name
+			rows.append(["fe80::", "fe80::/64 dev %s proto kernel metric 256 pref medium\n" % i.name])
+	rows.sort_custom(func(a, b): return String(a[0]) < String(b[0]))
+	var out := ""
+	for row in rows:
+		out += String(row[1])
 	return out
 
 func _ip_route(rest: Array, family: int) -> String:
@@ -639,9 +787,9 @@ func _ip_route(rest: Array, family: int) -> String:
 		if words.size() < 2:
 			return "Command line is not complete. Try option \"help\"\n"
 		var target := String(words[1])
-		var ip := Sim.resolve(dev, target)
-		if ip == "":
+		if not target.is_valid_ip_address():
 			return "Error: any valid address is expected rather than \"%s\".\n" % target
+		var ip := target
 		var best := {}
 		for e in Sim.rib(dev):
 			if String(e["vrf"]) != "" or Net.is_v6(String(e["prefix"])) != Net.is_v6(ip):
@@ -666,17 +814,29 @@ func _ip_route(rest: Array, family: int) -> String:
 		if not Net.valid_cidr(pfx):
 			return "Error: any valid prefix is expected rather than \"%s\".\n" % dst
 		if not kv.has("via"):
-			if kv.has("dev"):
-				return "RTNETLINK answers: Operation not supported\n"  # ponytail: on-link routes need a next hop here
-			return "RTNETLINK answers: No such device\n" if not kv.has("dev") else ""
+			if not kv.has("dev"):
+				return "RTNETLINK answers: No such device\n"
+			var onlink := _iface(String(kv["dev"]))
+			if onlink == null:
+				return "Cannot find device \"%s\"\n" % kv["dev"]
+			# an on-link route: the prefix is reachable through the wire itself
+			var parts0 := pfx.split("/")
+			for r in dev.static_routes:
+				if String(r["prefix"]) == parts0[0] and int(r["plen"]) == int(parts0[1]) and String(r.get("vrf", "")) == "":
+					if verb == "add":
+						return "RTNETLINK answers: File exists\n"
+					Game.remove_static_route(dev, parts0[0], int(parts0[1]))
+			dev.static_routes.append({"prefix": parts0[0], "plen": int(parts0[1]), "via": "", "ad": 1, "dev": onlink.name})
+			Game.topology_changed.emit()
+			return ""
 		var gw := String(kv["via"])
 		if not gw.is_valid_ip_address():
 			return "Error: any valid address is expected rather than \"%s\".\n" % gw
 		var egress := _on_link(gw)
 		if egress == null:
-			return "RTNETLINK answers: Network is unreachable\n"
+			return "Error: Nexthop has invalid gateway.\n"
 		if kv.has("dev") and String(kv["dev"]) != egress.name:
-			return "RTNETLINK answers: Network is unreachable\n" if _iface(String(kv["dev"])) != null else "Cannot find device \"%s\"\n" % kv["dev"]
+			return "Error: Nexthop has invalid gateway.\n" if _iface(String(kv["dev"])) != null else "Cannot find device \"%s\"\n" % kv["dev"]
 		var parts := pfx.split("/")
 		for r in dev.static_routes:
 			if String(r["prefix"]) == parts[0] and int(r["plen"]) == int(parts[1]) and String(r.get("vrf", "")) == "":
@@ -769,12 +929,19 @@ func _ping(args: Array, force6: bool) -> String:
 	if ip == "":
 		return "ping: %s: Name or service not known\n" % target
 	var reply_bytes := payload + 8
-	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, payload, payload + 28]
+	var from_if := ""
+	for k2 in args.size():
+		if String(args[k2]) == "-I" and k2 + 1 < args.size():
+			from_if = String(args[k2 + 1])
+	var out := "PING %s (%s) %s%d(%d) bytes of data.\n" % [target, ip,
+		("from %s %s: " % [Sim._first_ip(_iface(from_if)) if _iface(from_if) != null else from_if, from_if]) if from_if != "" else "", payload, payload + 28]
+	var rname := Sim.reverse_lookup(dev, ip) if "-n" not in args else ""
 	var received := 0
 	var errors := 0
 	var rtts: Array = []
+	var run_id := Sim.next_echo_id()
 	for seq in count:
-		var r := Sim.ping(dev, ip, 64, "", reply_bytes)
+		var r := Sim.ping(dev, ip, 64, "", reply_bytes, run_id, seq + 1)
 		var detail := String(r.get("detail", ""))
 		var frag_line := ""
 		if not bool(r["ok"]) and detail.begins_with("dropped:"):
@@ -802,16 +969,23 @@ func _ping(args: Array, force6: bool) -> String:
 			received += 1
 			var rtt := maxf(0.04, float(r.get("rtt", 0.1))) * (1.0 + 0.04 * seq)
 			rtts.append(rtt)
-			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n" % [reply_bytes, r["from"], seq + 1, int(r.get("ttl", 64)), rtt]
+			var who := ("%s (%s)" % [rname, r["from"]]) if rname != "" and String(r["from"]) == ip else String(r["from"])
+			out += "%d bytes from %s: icmp_seq=%d ttl=%d%s\n" % [reply_bytes, who, seq + 1, int(r.get("ttl", 64)),
+				(" time=%s ms" % _ping_time(rtt)) if payload >= 16 else ""]
 			continue
 		if detail == "no route to host" or detail == "device is offline":
 			return "ping: connect: Network is unreachable\n"
 		if detail == "blackholed by a discard route":
-			return "ping: sendmsg: Invalid argument\n" if seq == 0 else out
+			return "ping: connect: Invalid argument\n" if seq == 0 else out
 		errors += 1
 		if frag_line != "":
 			out += frag_line
 		elif detail.begins_with("host unreachable"):
+			var failed: Array = dev.services.get("arp_failed", [])
+			var who_failed := detail.trim_prefix("host unreachable (no ARP reply for ").trim_suffix(")")
+			if who_failed not in failed:
+				failed.append(who_failed)
+			dev.services["arp_failed"] = failed
 			out += "From %s icmp_seq=%d Destination Host Unreachable\n" % [_first_v4(), seq + 1]
 		elif detail == "ttl-exceeded":
 			out += "From %s icmp_seq=%d Time to live exceeded\n" % [r["from"], seq + 1]
@@ -820,10 +994,13 @@ func _ping(args: Array, force6: bool) -> String:
 		else:
 			errors -= 1  # a plain timeout prints nothing per probe
 	var lost := count - received
-	out += "\n--- %s ping statistics ---\n%d packets transmitted, %d received, %s%d%% packet loss, time %dms\n" % [
+	var loss := 100.0 * float(lost) / float(count)
+	var loss_text := str(int(loss)) if absf(loss - roundf(loss)) < 0.0001 else ("%.4f" % loss)
+	var last_rtt: float = float(rtts[rtts.size() - 1]) if not rtts.is_empty() else 0.0
+	out += "\n--- %s ping statistics ---\n%d packets transmitted, %d received, %s%s%% packet loss, time %dms\n" % [
 		target, count, received, ("+%d errors, " % errors) if errors > 0 else "",
-		int(round(100.0 * float(lost) / float(count))), (count - 1) * 1000 + 3 + count]
-	if received > 0:
+		loss_text, (count - 1) * 1000 + int(last_rtt)]
+	if received > 0 and payload >= 16:
 		var best := 9999.0
 		var worst := 0.0
 		var total := 0.0
@@ -832,8 +1009,24 @@ func _ping(args: Array, force6: bool) -> String:
 			worst = maxf(worst, float(v))
 			total += float(v)
 		var avg := total / float(rtts.size())
-		out += "rtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms\n" % [best, avg, worst, (worst - best) / 2.0]
+		var sq := 0.0
+		for v in rtts:
+			sq += (float(v) - avg) * (float(v) - avg)
+		out += "rtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms%s\n" % [best, avg, worst, sqrt(sq / float(rtts.size())),
+			(", pipe %d" % mini(count, 3)) if errors > 0 else ""]
+	elif errors > 0:
+		out += "pipe %d\n" % mini(count, 3)
 	return out
+
+static func _ping_time(ms: float) -> String:
+	## iputils keeps three significant digits: 0.312, 1.23, 12.3, 123
+	if ms < 1.0:
+		return "%.3f" % ms
+	if ms < 10.0:
+		return "%.2f" % ms
+	if ms < 100.0:
+		return "%.1f" % ms
+	return "%d" % int(round(ms))
 
 func _device_type(name: String) -> String:
 	for d: Net.NDevice in Game.all_devices():
@@ -867,9 +1060,14 @@ func _tracepath(args: Array) -> String:
 			out += "%2d:  no reply\n" % n
 		else:
 			var probe := Sim.ping(dev, String(hop))
-			out += "%2d:  %-32s %.3fms%s\n" % [n, hop, maxf(0.04, float(probe.get("rtt", 0.1))), " reached" if String(hop) == ip else ""]
+			var rtt := maxf(0.04, float(probe.get("rtt", 0.1)))
+			var name := Sim.reverse_lookup(dev, String(hop))
+			var shown := name if name != "" else String(hop)
+			if n == 1:
+				out += "%2d:  %-52s %.3fms \n" % [n, shown, rtt * 1.15]  # the first hop answers twice: two probes at ttl 1
+			out += "%2d:  %-52s %.3fms%s\n" % [n, shown, rtt, " reached" if String(hop) == ip else " "]
 		n += 1
-	return out + "     Resume: pmtu 1500 hops %d back %d\n" % [n - 1, n - 1]
+	return out + "     Resume: pmtu 1500 hops %d back %d \n" % [n - 1, n - 1]
 
 # ---------- tcpdump ----------
 
@@ -911,30 +1109,59 @@ func _tcpdump(args: Array) -> String:
 		var line := String(l)
 		var stamp := line.substr(0, 15)
 		var on := line.substr(16, 8).strip_edges()
-		var desc := line.substr(25)
+		var rest := line.substr(25)
+		# "Out|src>dst|desc" carries the direction and the link header
+		var dir := "In"
+		var link := ""
+		if rest.begins_with("Out|") or rest.begins_with("In|"):
+			var bits := rest.split("|", true, 2)
+			dir = String(bits[0])
+			link = String(bits[1])
+			rest = String(bits[2])
+		var desc := rest
 		if iface != "any" and on != iface:
 			continue
 		var tagged := desc.begins_with("vlan ")
-		if tagged and not show_link:
-			desc = desc.substr(desc.find("), ") + 3)
 		if not _bpf_match(filt, desc):
 			continue
 		seen += 1
 		if limit > 0 and shown >= limit:
 			continue
 		shown += 1
-		out += ("%s %s %s\n" % [stamp, on.rpad(5), desc]) if iface == "any" else ("%s %s\n" % [stamp, desc])
-	return out + "\n%d packets captured\n%d packets received by filter\n0 packets dropped by kernel\n" % [shown, seen]
+		var body := desc
+		if show_link and link != "":
+			# with -e the link header leads and the IP token goes
+			var proto_len := 98 if "ICMP" in desc else (42 if desc.begins_with("ARP") else 74)
+			if tagged:
+				body = "%s, ethertype 802.1Q (0x8100), length %d: %s" % [link, proto_len + 4, desc.replace("IP ", "").replace("IP6 ", "")]
+			else:
+				var ethertype := "ARP (0x0806)" if desc.begins_with("ARP") else ("IPv6 (0x86dd)" if desc.begins_with("IP6") else "IPv4 (0x0800)")
+				body = "%s, ethertype %s, length %d: %s" % [link, ethertype, proto_len, desc.replace("IP ", "").replace("IP6 ", "")]
+		out += ("%s %s %-3s %s\n" % [stamp, on.rpad(5), dir, body]) if iface == "any" else ("%s %s\n" % [stamp, body])
+	return out + "%s%d packets captured\n%d packets received by filter\n0 packets dropped by kernel\n" % ["" if limit > 0 else "\n", shown, seen]
 
 static func _bpf_match(filt: Array, desc: String) -> bool:
-	## the handful of BPF words people type, ANDed together
+	## the handful of BPF words people type: 'or' splits alternatives, the
+	## words inside an alternative are ANDed
+	var alternatives: Array = [[]]
+	for w in filt:
+		if String(w).to_lower() in ["or", "||"]:
+			alternatives.append([])
+		else:
+			alternatives[alternatives.size() - 1].append(w)
+	for alt in alternatives:
+		if _bpf_match_all(alt, desc):
+			return true
+	return false
+
+static func _bpf_match_all(filt: Array, desc: String) -> bool:
 	var k := 0
 	var negate := false
 	while k < filt.size():
 		var w := String(filt[k]).to_lower()
 		var hit := true
 		match w:
-			"and", "&&", "or", "||":
+			"and", "&&":
 				k += 1
 				continue
 			"not", "!":
@@ -980,7 +1207,7 @@ func _cat(args: Array) -> String:
 	var path := String(args[0])
 	match path:
 		"/etc/resolv.conf":
-			return ("nameserver %s\n" % dev.resolver) if dev.resolver != "" else "# Generated by NetworkManager\n"
+			return ("nameserver %s\n" % dev.resolver) if dev.resolver != "" else ""
 		"/etc/hosts":
 			var out := "127.0.0.1\tlocalhost\n127.0.1.1\t%s\n\n::1     localhost ip6-localhost ip6-loopback\nff02::1 ip6-allnodes\nff02::2 ip6-allrouters\n" % dev.name
 			for h in dev.services.get("hosts", []):
@@ -988,6 +1215,21 @@ func _cat(args: Array) -> String:
 			return out
 		"/etc/hostname":
 			return dev.name + "\n"
+		"/etc/os-release":
+			return "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n"
+		"/etc/network/interfaces":
+			var out := "# This file describes the network interfaces available on your system\n# and how to activate them. For more information, see interfaces(5).\n\nsource /etc/network/interfaces.d/*\n\n# The loopback network interface\nauto lo\niface lo inet loopback\n"
+			for i: Net.Iface in dev.ifaces:
+				if i.name.begins_with("wg"):
+					continue
+				var v4: Array = i.ips.filter(func(c): return not Net.is_v6(c))
+				if v4.is_empty():
+					continue
+				out += "\n# The primary network interface\nauto %s\niface %s inet static\n    address %s\n" % [i.name, i.name, v4[0]]
+				for r in dev.static_routes:
+					if int(r["plen"]) == 0 and String(r.get("via", "")) != "" and Sim._connected_iface(dev, String(r["via"])) == i:
+						out += "    gateway %s\n" % r["via"]
+			return out
 		"/proc/sys/net/ipv4/ip_forward":
 			return "1\n" if dev.ip_forwarding else "0\n"
 		"/proc/net/bonding/bond0":
@@ -1015,8 +1257,10 @@ func _cat(args: Array) -> String:
 	return "cat: %s: No such file or directory\n" % path
 
 func _redirect(t: Array) -> String:
-	## echo <words> > <file>: the few files a network engineer writes by hand
-	var at := t.find(">")
+	## echo <words> > <file>: the few files a network engineer writes by hand.
+	## > replaces the file, >> appends to it, as on any shell.
+	var append := ">>" in t
+	var at := t.find(">>") if append else t.find(">")
 	var target := String(t[at + 1]) if at + 1 < t.size() else ""
 	var content: Array = t.slice(1 if String(t[0]) == "echo" else 0, at)
 	var text := " ".join(PackedStringArray(content)).replace("\"", "").replace("'", "")
@@ -1033,7 +1277,7 @@ func _redirect(t: Array) -> String:
 			Game.topology_changed.emit()
 			return ""
 		"/etc/hosts":
-			var hosts: Array = dev.services.get("hosts", [])
+			var hosts: Array = dev.services.get("hosts", []) if append else []
 			hosts.append(text)
 			dev.services["hosts"] = hosts
 			return ""
@@ -1043,6 +1287,36 @@ func _redirect(t: Array) -> String:
 			return _dhcpd_conf_line(Array(text.split(" ", false)))
 		"publickey", "privatekey":
 			return ""
+	if target.begins_with("/etc/wireguard/") and target.ends_with(".conf"):
+		# the whole file on one line: [Interface] Address = X ListenPort = N [Peer] PublicKey = K Endpoint = E AllowedIPs = P
+		var name := target.get_file().trim_suffix(".conf")
+		var confs: Dictionary = dev.services.get("wg_conf", {})
+		var conf: Dictionary = confs.get(name, {"address": [], "peers": []}) if append else {"address": [], "peers": []}
+		var words := text.replace("=", " = ").split(" ", false)
+		var k := 0
+		var peer := {}
+		while k < words.size():
+			var w := String(words[k])
+			var v := String(words[k + 2]) if k + 2 < words.size() and String(words[k + 1]) == "=" else ""
+			match w:
+				"[Peer]":
+					if not peer.is_empty():
+						conf["peers"].append(peer)
+					peer = {"key": "", "endpoint": "", "allowed": []}
+				"Address":
+					conf["address"].append(v.trim_suffix(","))
+				"PublicKey":
+					peer["key"] = v
+				"Endpoint":
+					peer["endpoint"] = v.split(":")[0] if v.count(":") == 1 else v
+				"AllowedIPs":
+					peer["allowed"] = Array(v.split(",", false))
+			k += 3 if v != "" else 1
+		if not peer.is_empty():
+			conf["peers"].append(peer)
+		confs[name] = conf
+		dev.services["wg_conf"] = confs
+		return ""
 	if target == "":
 		return "bash: syntax error near unexpected token `newline'\n"
 	return "bash: %s: Permission denied\n" % target
@@ -1077,10 +1351,12 @@ func _services() -> Array:
 		["chronyd", "chrony", dev.ntp_server != "", "udp", 123]]
 
 func _ss(args: Array) -> String:
+	## Netid only when more than one family is asked for; sshd also on [::]:22
 	var flags := " ".join(PackedStringArray(args))
 	var want_tcp := "t" in flags or not ("u" in flags)
 	var want_udp := "u" in flags or not ("t" in flags)
-	var out := "%-6s %-7s %-7s %-7s %26s %21s %s\n" % ["Netid", "State", "Recv-Q", "Send-Q", "Local Address:Port", "Peer Address:Port", "Process"]
+	var netid := want_tcp and want_udp
+	var out := ("%-6s " % "Netid" if netid else "") + "%-7s %-7s %-7s %26s %21s %s\n" % ["State", "Recv-Q", "Send-Q", "Local Address:Port", "Peer Address:Port", "Process"]
 	var pid := 600
 	for s in _services():
 		pid += 37
@@ -1088,15 +1364,23 @@ func _ss(args: Array) -> String:
 			continue
 		if (s[3] == "tcp" and not want_tcp) or (s[3] == "udp" and not want_udp):
 			continue
-		out += "%-6s %-7s %-7d %-7d %26s %21s %s\n" % [s[3], "LISTEN" if s[3] == "tcp" else "UNCONN", 0, 128 if s[3] == "tcp" else 0,
-			"0.0.0.0:%d" % int(s[4]), "0.0.0.0:*", "users:((\"%s\",pid=%d,fd=3))" % [s[0], pid]]
+		var locals: Array = [["0.0.0.0:%d" % int(s[4]), "0.0.0.0:*", 3]]
+		if s[0] == "sshd":
+			locals.append(["[::]:%d" % int(s[4]), "[::]:*", 4])
+		for loc in locals:
+			out += ("%-6s " % s[3] if netid else "") + "%-7s %-7d %-7d %26s %21s %s\n" % ["LISTEN" if s[3] == "tcp" else "UNCONN", 0, 128 if s[3] == "tcp" else 0,
+				loc[0], loc[1], "users:((\"%s\",pid=%d,fd=%d))" % [s[0], pid, int(loc[2])]]
 	return out
 
 func _systemctl(args: Array) -> String:
 	if args.is_empty():
 		return "  UNIT                       LOAD   ACTIVE SUB     DESCRIPTION\n  ssh.service                loaded active running OpenBSD Secure Shell server\n"
 	var verb := String(args[0])
-	var unit := String(args[1]).trim_suffix(".service") if args.size() > 1 else ""
+	var unit := ""
+	for a in args.slice(1):
+		if not String(a).begins_with("-"):
+			unit = String(a).trim_suffix(".service")
+			break
 	if verb == "daemon-reload":
 		return ""
 	if unit == "":
@@ -1112,13 +1396,21 @@ func _systemctl(args: Array) -> String:
 	match verb:
 		"status":
 			var running: bool = bool(svc[2])
-			return "%s %s.service - %s\n     Loaded: loaded (/lib/systemd/system/%s.service; enabled; preset: enabled)\n     Active: %s\n" % [
-				"●" if running else "○", unit, _unit_desc(unit), unit,
-				"active (running) since %s" % Time.get_datetime_string_from_system(false, true) if running else "inactive (dead)"]
+			var failed: bool = String(dev.services.get("failed_unit", "")) == unit and not running
+			var stamp := _when().replace("CEST ", "").replace(" %d" % Time.get_datetime_dict_from_system().get("year", 2026), " %d CEST" % Time.get_datetime_dict_from_system().get("year", 2026))
+			var out := "%s %s.service - %s\n     Loaded: loaded (/lib/systemd/system/%s.service; enabled; preset: enabled)\n     Active: %s\n" % [
+				"×" if failed else ("●" if running else "○"), unit, _unit_desc(unit), unit,
+				("active (running) since %s; %dmin ago" % [stamp, 1 + Game.cycle % 59]) if running else (("failed (Result: exit-code) since %s; 1min ago" % stamp) if failed else "inactive (dead)")]
+			if failed:
+				out += "    Process: 812 ExecStart=/usr/sbin/dhcpd -4 -q -cf /etc/dhcp/dhcpd.conf (code=exited, status=1/FAILURE)\n   Main PID: 812 (code=exited, status=1/FAILURE)\n        CPU: 12ms\n\n%s %s dhcpd[812]: Can't open /etc/dhcp/dhcpd.conf: No such file or directory\n%s %s systemd[1]: %s.service: Failed with result 'exit-code'.\n" % [
+					stamp.substr(4, 6), dev.name, stamp.substr(4, 6), dev.name, unit]
+			return out
 		"start", "restart", "reload":
 			if unit == "isc-dhcp-server":
 				if not dev.services.has("dhcp"):
+					dev.services["failed_unit"] = unit
 					return "Job for isc-dhcp-server.service failed because the control process exited with error code.\nSee \"systemctl status isc-dhcp-server.service\" and \"journalctl -xeu isc-dhcp-server.service\" for details.\n"
+				dev.services.erase("failed_unit")
 				dev.services["dhcp"]["running"] = true
 				Game.topology_changed.emit()
 			return ""
@@ -1128,7 +1420,10 @@ func _systemctl(args: Array) -> String:
 				Game.topology_changed.emit()
 			return ""
 		"enable", "disable":
-			return "" if verb == "disable" else "Created symlink /etc/systemd/system/multi-user.target.wants/%s.service → /lib/systemd/system/%s.service.\n" % [unit, unit]
+			var out := "" if verb == "disable" else "Created symlink /etc/systemd/system/multi-user.target.wants/%s.service → /lib/systemd/system/%s.service.\n" % [unit, unit]
+			if verb == "enable" and "--now" in args:
+				out += _systemctl(["start", unit])
+			return out
 	return "Unknown command verb %s.\n" % verb
 
 static func _unit_desc(unit: String) -> String:
@@ -1139,8 +1434,11 @@ static func _unit_desc(unit: String) -> String:
 func _journalctl(args: Array) -> String:
 	var unit := ""
 	for k in args.size():
-		if String(args[k]) == "-u" and k + 1 < args.size():
-			unit = String(args[k + 1]).trim_suffix(".service")
+		var a := String(args[k])
+		if a.begins_with("--unit="):
+			unit = a.substr(7).trim_suffix(".service")
+		elif a.begins_with("-") and not a.begins_with("--") and a.ends_with("u") and k + 1 < args.size():
+			unit = String(args[k + 1]).trim_suffix(".service")  # -u, -xeu, -fu
 	var stamp := "Sep %02d %02d:%02d:%02d" % [1 + Game.cycle % 28, (Game.cycle * 3) % 24, (Game.cycle * 7) % 60, (Game.cycle * 11) % 60]
 	if unit == "isc-dhcp-server":
 		var svc: Dictionary = dev.services.get("dhcp", {})
@@ -1186,7 +1484,7 @@ func _dhclient(args: Array) -> String:
 			if String(lease.get("gw", "")) != "":
 				Game.remove_static_route(dev, "0.0.0.0", 0)
 			dev.services.erase("dhcp_lease")
-			return head + ("DHCPRELEASE of %s on %s to %s port 67\n" % [cidr.split("/")[0], ifn, lease.get("server", "")] if verbose else "")
+			return head + ("DHCPRELEASE of %s on %s to %s port 67 (xid=0x%08x)\n" % [cidr.split("/")[0], ifn, lease.get("server", ""), (Game.cycle * 2654435761 + ifc.mac.hash()) % 0xFFFFFFFF] if verbose else "")
 		return head
 	var xid := "0x%08x" % ((Game.cycle * 2654435761 + ifc.mac.hash()) % 0xFFFFFFFF)
 	var got := Sim.dhcp_request(dev, ifc)
@@ -1219,8 +1517,17 @@ func _dhcpd(args: Array) -> String:
 		return "Internet Systems Consortium DHCP Server 4.4.3-P1\nCopyright 2004-2022 Internet Systems Consortium.\nAll rights reserved.\nFor info, please visit https://www.isc.org/software/dhcp/\nCan't open /etc/dhcp/dhcpd.conf: No such file or directory\n\nIf you think you have received this message due to a bug rather\nthan a configuration issue please read the section on submitting\nbugs on either our web page at www.isc.org or in the README file\nbefore submitting a bug.  These pages explain the proper\nprocess and the information we find helpful for debugging.\n\nexiting.\n"
 	if ifn == "":
 		ifn = String(svc.get("iface", "eth0"))
-	if _iface(ifn) == null:
+	var listen := _iface(ifn)
+	if listen == null:
 		return "Cannot find device \"%s\"\n" % ifn
+	var netw := Net.network_of(String(svc.get("start", "0.0.0.0")) + "/" + str(int(svc.get("plen", 24))))
+	var covered := false
+	for cidr in listen.ips:
+		if not Net.is_v6(cidr) and Net.same_net(String(cidr).split("/")[0], String(netw["prefix"]), int(svc.get("plen", 24))):
+			covered = true
+	if not covered:
+		return "Internet Systems Consortium DHCP Server 4.4.3-P1\nCopyright 2004-2022 Internet Systems Consortium.\nAll rights reserved.\nFor info, please visit https://www.isc.org/software/dhcp/\nConfig file: /etc/dhcp/dhcpd.conf\nDatabase file: /var/lib/dhcp/dhcpd.leases\nPID file: /var/run/dhcpd.pid\nWrote 0 leases to leases file.\n\nNo subnet declaration for %s (%s).\n** Ignoring requests on %s.  If this is not what\n   you want, please write a subnet declaration\n   in your dhcpd.conf file for the network segment\n   to which interface %s is attached. **\n\n\nNot configured to listen on any interfaces!\n\nIf you think you have received this message due to a bug rather\nthan a configuration issue please read the section on submitting\nbugs on either our web page at www.isc.org or in the README file\nbefore submitting a bug.  These pages explain the proper\nprocess and the information we find helpful for debugging.\n\nexiting.\n" % [
+			ifn, String(listen.ips[0]).split("/")[0] if not listen.ips.is_empty() else "no address", ifn, ifn]
 	svc["iface"] = ifn
 	svc["running"] = true
 	Game.topology_changed.emit()
@@ -1230,8 +1537,8 @@ func _dhcpd_banner(ifn: String) -> String:
 	var svc: Dictionary = dev.services.get("dhcp", {})
 	var ifc := _iface(ifn)
 	var net := "%s/%d" % [Net.network_of(String(svc.get("start", "0.0.0.0")) + "/" + str(int(svc.get("plen", 24))))["prefix"], int(svc.get("plen", 24))]
-	return "Internet Systems Consortium DHCP Server 4.4.3-P1\nCopyright 2004-2022 Internet Systems Consortium.\nAll rights reserved.\nFor info, please visit https://www.isc.org/software/dhcp/\nWrote 0 leases to leases file.\nListening on LPF/%s/%s/%s\nSending on   LPF/%s/%s/%s\nSending on   Socket/fallback/fallback-net\n" % [
-		ifn, ifc.mac.to_lower(), net, ifn, ifc.mac.to_lower(), net]
+	return "Internet Systems Consortium DHCP Server 4.4.3-P1\nCopyright 2004-2022 Internet Systems Consortium.\nAll rights reserved.\nFor info, please visit https://www.isc.org/software/dhcp/\nConfig file: /etc/dhcp/dhcpd.conf\nDatabase file: /var/lib/dhcp/dhcpd.leases\nPID file: /var/run/dhcpd.pid\nWrote %d leases to leases file.\nListening on LPF/%s/%s/%s\nSending on   LPF/%s/%s/%s\nSending on   Socket/fallback/fallback-net\n" % [
+		svc.get("leases", {}).size(), ifn, ifc.mac.to_lower(), net, ifn, ifc.mac.to_lower(), net]
 
 func _dhcpd_conf_line(t: Array) -> String:
 	## subnet A netmask M { range F L; option routers G; option domain-name-servers D; }
@@ -1286,16 +1593,28 @@ func _dhcpd_conf() -> String:
 
 func _leases_file() -> String:
 	var svc: Dictionary = dev.services.get("dhcp", {})
-	var out := "# The format of this file is documented in the dhcpd.leases(5) manual page.\n# This lease file was written by isc-dhcp-4.4.3-P1\n\n# authoring-byte-order entry is generated, DO NOT DELETE\nauthoring-byte-order little-endian;\n\n"
+	var out := "# The format of this file is documented in the dhcpd.leases(5) manual page.\n# This lease file was written by isc-dhcp-4.4.3-P1\n\n# authoring-byte-order entry is generated, DO NOT DELETE\nauthoring-byte-order little-endian;\n\nserver-duid \"\\000\\001\\000\\001-\\247\\032\\214\\002PE\\000\\000\\001\";\n\n"
+	var d := Time.get_datetime_dict_from_system()
+	var wday := int(d.get("weekday", 6))
 	for mac in svc.get("leases", {}):
 		var since := int(svc.get("since", {}).get(mac, Game.cycle))
-		out += "lease %s {\n  starts 5 2026/09/05 %02d:00:00;\n  ends 5 2026/09/05 %02d:00:00;\n  cltt 5 2026/09/05 %02d:00:00;\n  binding state active;\n  next binding state free;\n  rewind binding state free;\n  hardware ethernet %s;\n}\n" % [
-			svc["leases"][mac], since % 24, (since + 1) % 24, since % 24, String(mac).to_lower()]
+		var hh := since % 24
+		var mm := (since * 7) % 50
+		out += "lease %s {\n  starts %d %d/%02d/%02d %02d:%02d:00;\n  ends %d %d/%02d/%02d %02d:%02d:00;\n  cltt %d %d/%02d/%02d %02d:%02d:00;\n  binding state active;\n  next binding state free;\n  rewind binding state free;\n  hardware ethernet %s;\n  uid \"\\001%s\";\n}\n" % [
+			svc["leases"][mac], wday, int(d.get("year", 2026)), int(d.get("month", 9)), int(d.get("day", 5)), hh, mm,
+			wday, int(d.get("year", 2026)), int(d.get("month", 9)), int(d.get("day", 5)), hh, mm + 10,
+			wday, int(d.get("year", 2026)), int(d.get("month", 9)), int(d.get("day", 5)), hh, mm, String(mac).to_lower(),
+			String(mac).to_lower().replace(":", "")]
 	return out
 
 # ---------- DNS ----------
 
 func _resolvectl(args: Array) -> String:
+	## plain Debian: no systemd-resolved, the resolver is the file
+	if not dev.services.has("resolved"):
+		if args.size() >= 3 and String(args[0]) == "dns" and String(args[2]).is_valid_ip_address():
+			return "Failed to set DNS configuration: Unit dbus-org.freedesktop.resolve1.service not found.\n"
+		return "Failed to get global data: Unit dbus-org.freedesktop.resolve1.service not found.\n"
 	if args.is_empty() or String(args[0]) == "status":
 		var out := "Global\n         Protocols: -LLMNR -mDNS -DNSOverTLS DNSSEC=no/unsupported\n  resolv.conf mode: stub\n"
 		if dev.resolver != "":
@@ -1352,7 +1671,7 @@ func _nslookup(args: Array) -> String:
 	if name == "":
 		return "Usage:\n   nslookup [-opt ...]             # interactive mode using default server\n   nslookup [-opt ...] - server    # interactive mode using 'server'\n   nslookup [-opt ...] host        # just look up 'host' using default server\n   nslookup [-opt ...] host server # just look up 'host' using 'server'\n"
 	if server == "":
-		return ";; connection timed out; no servers could be reached\n"
+		return ";; communications error to 127.0.0.1#53: connection refused\n;; communications error to 127.0.0.1#53: connection refused\n;; communications error to 127.0.0.1#53: connection refused\n;; no servers could be reached\n\n"
 	var head := "Server:\t\t%s\nAddress:\t%s#53\n\n" % [server, server]
 	if name.is_valid_ip_address() or qtype == "PTR":
 		var nm := Sim.reverse_lookup(dev, name)
@@ -1393,18 +1712,39 @@ func _dig(args: Array) -> String:
 	if name == "":
 		name = "."
 	if server == "":
-		return ";; communications error to 127.0.0.53#53: connection refused\n;; no servers could be reached\n\n"
+		return ";; communications error to 127.0.0.1#53: connection refused\n;; communications error to 127.0.0.1#53: connection refused\n;; communications error to 127.0.0.1#53: connection refused\n;; no servers could be reached\n\n"
+	var reverse := false
+	if "-x" in args:
+		reverse = true
+		qtype = "PTR"
+		for a in args:
+			if String(a).is_valid_ip_address():
+				name = String(a)
 	var answer := ""
-	if name != ".":
+	var qname := name
+	if reverse:
+		var oct := name.split(".")
+		oct.reverse()
+		qname = ".".join(oct) + ".in-addr.arpa"
+		answer = Sim.reverse_lookup(dev, name)
+	elif name != ".":
 		answer = Sim.resolve(dev, name, true, qtype == "AAAA") if qtype in ["A", "AAAA"] else ""
 	if short:
 		return (answer + "\n") if answer != "" else ""
 	var status := "NOERROR" if answer != "" or name == "." else "NXDOMAIN"
-	var out := "\n; <<>> DiG 9.18.24-1-Debian <<>> %s\n;; global options: +cmd\n;; Got answer:\n;; ->>HEADER<<- opcode: QUERY, status: %s, id: %d\n;; flags: qr%s rd ra; QUERY: 1, ANSWER: %d, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version: 0, flags:; udp: 1232\n;; QUESTION SECTION:\n;%s\t\t\tIN\t%s\n\n" % [
-		" ".join(PackedStringArray(args)), status, (name.hash() + Game.cycle) % 65536, " aa" if _authoritative(name) else "", 1 if answer != "" else 0, name, qtype]
+	var out := "\n; <<>> DiG 9.18.24-1-Debian <<>> %s\n;; global options: +cmd\n;; Got answer:\n;; ->>HEADER<<- opcode: QUERY, status: %s, id: %d\n;; flags: qr%s rd ra; QUERY: 1, ANSWER: %d, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version: 0, flags:; udp: 1232\n;; QUESTION SECTION:\n;%s.\t\t\tIN\t%s\n\n" % [
+		" ".join(PackedStringArray(args)), status, (name.hash() + Game.cycle) % 65536, " aa" if _authoritative(name) else "", 1 if answer != "" else 0, qname, qtype]
 	if answer != "":
-		out += ";; ANSWER SECTION:\n%s.\t\t%d\tIN\t%s\t%s\n\n" % [name, Sim.DEFAULT_TTL * 60, qtype, answer]
-	return out + ";; Query time: 1 msec\n;; SERVER: %s#53(%s) (UDP)\n;; WHEN: %s\n;; MSG SIZE  rcvd: %d\n\n" % [server, server, Time.get_datetime_string_from_system(false, true), 56 + name.length()]
+		out += ";; ANSWER SECTION:\n%s.\t\t%d\tIN\t%s\t%s%s\n\n" % [qname, Sim.DEFAULT_TTL * 60, qtype, answer, "." if reverse else ""]
+	return out + ";; Query time: 1 msec\n;; SERVER: %s#53(%s) (UDP)\n;; WHEN: %s\n;; MSG SIZE  rcvd: %d\n\n" % [server, server, _when(), 56 + qname.length()]
+
+func _when() -> String:
+	## Sat Sep 05 12:34:56 CEST 2026, the way dig and systemctl date things
+	var d := Time.get_datetime_dict_from_system()
+	var days := ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+	var months := ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+	return "%s %s %02d %02d:%02d:%02d CEST %d" % [days[int(d.get("weekday", 0))], months[int(d.get("month", 1)) - 1], int(d.get("day", 1)),
+		int(d.get("hour", 0)), int(d.get("minute", 0)), int(d.get("second", 0)), int(d.get("year", 2026))]
 
 func _dnsmasq_conf() -> String:
 	var svc: Dictionary = dev.services.get("dns", {})

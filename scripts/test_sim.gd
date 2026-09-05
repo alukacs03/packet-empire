@@ -33,41 +33,19 @@ static func replay(path: String) -> void:
 	print("--- replay end")
 
 static func probe() -> void:
-	## scratch space: whatever needs a fast, isolated look right now
 	Game.money = 100000
 	Game.parts = {"patch": 400, "fiber": 100, "sfp": 100, "psu": 20}
 	var rk := Game.add_rack(Vector2i(2, 2))
-	var sw := Game.new_device("sw-24")
-	var sw2 := Game.new_device("sw-24")
-	var rt := Game.new_device("rtr-edge")
-	rk.slots[0] = sw
-	rk.slots[1] = sw2
-	rk.slots[2] = rt
-	Game.connect_ifaces(sw.ifaces[7], sw2.ifaces[7])
-	Game.connect_ifaces(sw.ifaces[0], rt.ifaces[0])
-	var s := CLI.new_session(sw)
-	var s2 := CLI.new_session(sw2)
-	for ses in [s, s2]:
-		ses.exec("enable")
-		ses.exec("configure terminal")
-		ses.exec("vlan 4094")
-		ses.exec("interface Vlan4094")
-	s.exec("ip address 10.255.255.1/30")
-	s2.exec("ip address 10.255.255.2/30")
-	for line in ["exit", "vlan 50", "exit", "interface Ethernet8", "switchport mode trunk", "exit", "mlag configuration", "domain-id DC1", "local-interface Vlan4094", "peer-address 10.255.255.2", "peer-link Ethernet8", "exit",
-			"interface Ethernet1", "mlag 1", "exit", "interface Loopback1", "ip address 10.200.1.2/32", "exit", "interface Vxlan1", "vxlan source-interface Loopback1", "vxlan vlan 50 vni 5000", "vxlan flood vtep 10.200.2.2", "exit",
-			"dot1x system-auth-control", "interface Ethernet3", "dot1x pae authenticator", "dot1x port-control auto", "storm-control broadcast level 10", "exit", "username ops privilege 15 secret x", "banner motd Authorised access only",
-			"show mlag", "show mlag interfaces", "show vxlan vtep", "show vxlan vni", "show vxlan address-table", "show inventory", "show environment", "show users", "show running-config section mlag", "show running-config interfaces Ethernet1", "show running-config"]:
-		print("%s %s\n%s" % [s.prompt(), line, s.exec(line)])
-	s2.exec("exit")
-	s2.exec("mlag configuration")
-	s2.exec("peer-address 10.255.255.1")
-	s2.exec("end")
-	print("peer a: ", sw.mlag_peer, " peer b: ", sw2.mlag_peer)
-	var r := CLI.new_session(rt)
-	for line in ["enable", "configure terminal", "interface Ethernet1", "ip address 10.0.0.1/24", "exit", "ip prefix-list ONLYDEF seq 10 permit 0.0.0.0/0", "router bgp 65001", "neighbor 10.0.0.2 remote-as 64500", "neighbor 10.0.0.2 prefix-list ONLYDEF in", "network 10.30.0.0/24", "exit",
-			"show ip prefix-list", "show ip bgp summary", "show ip bgp", "show ip bgp neighbors", "configure checkpoint save before", "show configuration checkpoints", "show running-config section bgp", "show ntp status", "show hosts", "show ip route vrf nope"]:
-		print("%s %s\n%s" % [r.prompt(), line, r.exec(line)])
+	var r1 := Game.new_device("rtr-lite")
+	var s1 := Game.new_device("srv-2")
+	rk.slots[0] = r1
+	rk.slots[1] = s1
+	Game.connect_ifaces(r1.ifaces[0], s1.ifaces[0])
+	CLI.new_session(r1).exec("/ip address add address=10.0.0.1/24 interface=ether1")
+	var x := CLI.new_session(s1)
+	for line in ["ip addr add 10.0.0.10/24 dev eth0", "ping -c 2 10.0.0.1", "tcpdump -i eth0 -n icmp", "tcpdump -i eth0 -e -c 2", "tcpdump -i any icmp or arp", "ip neigh", "ping -c 1 10.0.0.77", "ip neigh", "ip route", "ip link set eth0 down", "ip route", "ip link set eth0 up", "ip addr add 10.0.0.11 dev eth0", "ip addr", "ip route add 10.9.0.0/24 dev eth0", "ip route", "ss -tlnp", "dig -x 10.0.0.1", "host 10.0.0.1", "systemctl start isc-dhcp-server", "systemctl status isc-dhcp-server", "journalctl -xeu isc-dhcp-server", "ifconfig", "resolvectl status"]:
+		print("%s %s\n%s" % [x.prompt(), line, x.exec(line)])
+	print("raw capture: ", s1.capture.slice(0, 3))
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
@@ -786,8 +764,8 @@ static func run() -> int:
 	check(ls.exec("ip link set dev eth0 up") == "" and ls.exec("ip route show").contains("default via 10.1.0.254")
 			and ls.exec("ip r s") == ls.exec("ip route"),
 		"Linux: ip link set dev, ip route show and ip r s are the grammar people type")
-	check(ls.exec("ip route add default via 10.77.0.1") == "RTNETLINK answers: Network is unreachable\n",
-		"Linux: a gateway outside every connected subnet is refused, not stored")
+	check(ls.exec("ip route add default via 10.77.0.1") == "Error: Nexthop has invalid gateway.\n",
+		"Linux: a gateway outside every connected subnet is refused with the kernel's extack message")
 	check(ls.exec("ip route del 10.77.0.0/24") == "RTNETLINK answers: No such process\n",
 		"Linux: deleting a route that is not there says so")
 	check(ls.exec("ip addr").begins_with("1: lo: <LOOPBACK,UP,LOWER_UP>") and "inet6 fe80::" in ls.exec("ip addr"),
@@ -803,8 +781,8 @@ static func run() -> int:
 		"Linux: ping -c counts probes and prints the iputils header and trailer")
 	check(ls.exec("ping -s 1400 -c 1 10.0.0.1").contains("1400(1428) bytes of data.") and "1408 bytes from" in ls.exec("ping -s 1400 -c 1 10.0.0.1"),
 		"Linux: -s is the payload, the way iputils counts it")
-	check(ls.exec("foo") == "bash: foo: command not found\n" and ls.exec("ifconfig").contains("sudo apt install net-tools"),
-		"Linux: unknown commands and net-tools get the shell's own words")
+	check(ls.exec("foo") == "-bash: foo: command not found\n" and ls.exec("ifconfig") == "-bash: ifconfig: command not found\n",
+		"Linux: unknown commands and net-tools get the login shell's own words, and Debian has no apt hint")
 	check(ls.exec("echo nameserver 10.0.0.5 > /etc/resolv.conf") == "" and ls.exec("cat /etc/resolv.conf") == "nameserver 10.0.0.5\n",
 		"Linux: the resolver is a file")
 	var td := ls.exec("tcpdump -i eth0 -n icmp")
@@ -1106,7 +1084,7 @@ static func run() -> int:
 	Game.add_static_route(app, "0.0.0.0", 0, "172.16.3.1")
 	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: default permit forwards")
 	var fw_arp := CLI.new_session(fw)
-	check(fw_arp.exec("show arp").contains("Age (min)"), "arp: show arp has an age column")
+	check(fw_arp.exec("show arp").contains("Age (sec)"), "arp: show arp has an age column, in seconds as EOS prints it")
 	fw_arp.exec("en")
 	fw_arp.exec("conf t")
 	check(fw_arp.exec("no ip proxy-arp") == "", "arp: Cisco-style gear proxies by default and can be told not to")
@@ -1116,7 +1094,7 @@ static func run() -> int:
 	fw_arp.exec("ip proxy-arp")
 	fw_arp.exec("end")
 	Game.cycle += 3
-	check(fw_arp.exec("show arp").contains("   3   "), "arp: an entry learned three cycles ago says so")
+	check(fw_arp.exec("show arp").contains("0:03:"), "arp: an entry learned three cycles ago says so")
 	Game.cycle -= 3
 	var fs := CLI.new_session(fw)
 	fs.exec("en")
@@ -1518,7 +1496,7 @@ static func run() -> int:
 		"ospf: the export carries the RouterOS header")
 	check(Sim.ping(t1, "10.20.2.10")["ok"] and Sim.ping(t2, "10.20.1.10")["ok"],
 		"ospf: cross-office ping with zero static routes on routers")
-	check(os1.exec("sh ip route").contains("O      10.20.2.0/24"), "ospf: O route in show ip route")
+	check(os1.exec("sh ip route").contains(" O        10.20.2.0/24"), "ospf: O route in show ip route")
 	check(Game.try_complete_contract(_contract("dynamic_routing")), "ospf: contract verifies")
 	os1.exec("conf t")
 	os1.exec("router ospf 1")
@@ -1661,11 +1639,11 @@ static func run() -> int:
 	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: client pings the virtual gateway")
 	check(String(vcl.arp.get("10.40.0.1", "")) == "00:00:5e:00:01:01",
 		"vrrp: the client learned the virtual MAC for the virtual address, not a router's own")
-	check(v1.exec("show vrrp").contains("Virtual MAC address is 0000.5e00.0101") and v1.exec("show vrrp").contains("Preemption is enabled")
-		and v1.exec("show vrrp brief").contains("Grp"),
+	check(v1.exec("show vrrp").contains("Virtual MAC address: 0000.5e00.0101") and v1.exec("show vrrp").contains("Preempt: enabled")
+		and v1.exec("show vrrp brief").contains("VRID"),
 		"vrrp: show vrrp prints the virtual MAC and the preempt flag")
-	check(v1.exec("show vrrp").contains("Master"), "vrrp: show vrrp reports Master")
-	check(v2.exec("show vrrp").contains("Backup"), "vrrp: show vrrp reports Backup")
+	check(v1.exec("show vrrp").contains("State master"), "vrrp: show vrrp reports master")
+	check(v2.exec("show vrrp").contains("State backup"), "vrrp: show vrrp reports backup")
 	check(Game.try_complete_contract(_contract("no_spof")), "vrrp: no-SPOF contract verifies")
 	vr1.status = "offline"
 	Game.topology_changed.emit()
@@ -9783,10 +9761,10 @@ static func run() -> int:
 	check(rtr_cli.exec("ip route 10.197.0.0 255.255.255.0 10.198.0.12 250") == "", "routes: (floating static setup)")
 	rtr_cli.exec("end")
 	var rib_out := rtr_cli.exec("show ip route")
-	check(rib_out.contains("S      10.199.0.0/24 [1/0] via 10.198.0.11") and not rib_out.contains("10.199.0.0/24 [250/0]"),
+	check(rib_out.contains(" S        10.199.0.0/24 [1/0] via 10.198.0.11") and not rib_out.contains("10.199.0.0/24 [250/0]"),
 		"routes: the floating static (distance 250) stays out of the table while the primary is installed")
-	check(rib_out.contains("S      10.197.0.0/24 [250/0]"), "routes: a floating static with no rival is installed")
-	check(rib_out.count("10.198.0.0/24") == 1 and rib_out.contains("C      10.198.0.0/24 is directly connected"),
+	check(rib_out.contains(" S        10.197.0.0/24 [250/0]"), "routes: a floating static with no rival is installed")
+	check(rib_out.count("10.198.0.0/24") == 1 and rib_out.contains(" C        10.198.0.0/24 is directly connected, Ethernet"),
 		"routes: one line per prefix, the connected route wins its own subnet")
 	check(rtr_cli.exec("show ip route for 10.199.0.5").contains("distance 1 beats 250"),
 		"routes: the lookup explains that distance decided, not just prefix length")
@@ -10482,8 +10460,8 @@ static func run() -> int:
 			sm_line20 = sm_l
 		if sm_l.begins_with("10 "):
 			sm_line10 = sm_l
-	check("Et8" not in sm_line10 and "Et8" not in sm_line20 and sms.exec("show interfaces trunk").contains("Et8 "),
-		"show vlan: access ports only, the way real gear prints it; trunks live in show interfaces trunk")
+	check("Et8" in sm_line10 and "Et8" not in sm_line20 and sms.exec("show interfaces trunk").contains("Et8 "),
+		"show vlan: every port carrying the VLAN, trunks included, the way EOS prints it")
 	Game.disconnect_iface(sm_h1.ifaces[0])
 	Game.disconnect_iface(sm_h2.ifaces[0])
 	for sm_i in 3:

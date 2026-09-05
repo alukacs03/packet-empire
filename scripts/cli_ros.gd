@@ -430,7 +430,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			# the capture ring, one line per frame, as tcpdump would print it
 			var out := ""
 			for l in dev.capture:
-				out += String(l) + "\n"
+				out += Sim.capture_line(String(l)) + "\n"
 			return out
 		"system ssh":
 			return CLI.try_ssh(self, args[0]) if args.size() >= 1 else "value of address must be specified\n"

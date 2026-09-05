@@ -40,7 +40,12 @@ static var _dhcp_offer := {}
 
 # ---------- public operations ----------
 
-static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size := 64) -> Dictionary:
+static func next_echo_id() -> int:
+	## one id for a whole ping run, so its probes share it and count seq up
+	_echo_id += 1
+	return _echo_id
+
+static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size := 64, run_id := 0, seq := 1) -> Dictionary:
 	## -> {ok: bool, from: String (replier), detail: String}
 	## Re-entrant: a ping can happen inside another one (a tunnel checking its
 	## underlay while carrying traffic), so the outer results are preserved.
@@ -48,7 +53,10 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 	var outer_trace := last_trace
 	var outer_rtt := rtt_ms
 	rtt_ms = 0.0
-	_echo_id += 1
+	if run_id > 0:
+		_echo_id = run_id
+	else:
+		_echo_id += 1
 	_echo_results = []
 	if _depth == 0:
 		last_trace = []
@@ -61,7 +69,7 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 	if _depth == 0:
 		last_mtu_drop = ""
 	var err := _send_ip(dev, dst_ip, ttl,
-		{"proto": "icmp", "type": "echo", "id": my_id, "size": size}, vrf)
+		{"proto": "icmp", "type": "echo", "id": my_id, "size": size, "seq": seq}, vrf)
 	var result := {"ok": false, "from": "", "detail":
 		last_mtu_drop if last_mtu_drop != "" else "timeout"}
 	if err != "":
@@ -1476,7 +1484,7 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if last_trace.size() < 300:
 		last_trace.append({"a": iface, "b": peer, "kind": frame["type"]})
 	if iface.dev.type not in ["switch", "ap"]:
-		_cap(iface.dev, iface, frame)  # tcpdump on the sender sees what it sent
+		_cap(iface.dev, iface, frame, true)  # tcpdump on the sender sees what it sent
 	_cap(peer.dev, peer, frame)
 	_depth += 1
 	if peer.dev.type in ["switch", "ap"] and not peer.name.begins_with("Management") and peer.mode != "routed":
@@ -1943,7 +1951,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		if l4["proto"] == "icmp":
 			match l4["type"]:
 				"echo":
-					_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "reply", "id": l4["id"]},
+					_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "reply", "id": l4["id"], "seq": int(l4.get("seq", 1))},
 						iface.vrf)
 				"reply", "ttl-exceeded", "unreachable":
 					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"],
@@ -2115,7 +2123,21 @@ static func _too_big(iface: Net.Iface, frame: Dictionary) -> bool:
 			return true
 	return false
 
-static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
+static func capture_line(l: String) -> String:
+	## a capture ring entry without its direction and link-header fields
+	var rest := l.substr(25)
+	if rest.begins_with("Out|") or rest.begins_with("In|"):
+		rest = String(rest.split("|", true, 2)[2])
+	return l.substr(0, 25) + rest
+
+static func _solicited_node(addr: String) -> String:
+	## ff02::1:ff plus the low 24 bits of the target
+	var h := Net.v6_hextets(addr)
+	if h.size() != 8:
+		return "ff02::1:ff00:0"
+	return Net.v6_compress("ff02::1:ff%02x:%04x" % [int(h[6]) & 0xff, int(h[7])])
+
+static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary, outbound := false) -> void:
 	## tcpdump-style one-liner for the device's capture ring
 	var p: Dictionary = frame["pl"]
 	var desc := ""
@@ -2127,7 +2149,7 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 			desc = ("ARP, Request who-has %s tell %s, length 28" % [p["tpa"], p["spa"]]) if p["op"] == "req" \
 				else ("ARP, Reply %s is-at %s, length 28" % [p["spa"], String(p["sha"]).to_lower()])
 		"ndp":
-			desc = ("IP6 %s > ff02::1:ff00:0: ICMP6, neighbor solicitation, who has %s, length 32" % [p["spa"], p["tpa"]]) if p["op"] == "req" \
+			desc = ("IP6 %s > %s: ICMP6, neighbor solicitation, who has %s, length 32" % [p["spa"], _solicited_node(String(p["tpa"])), p["tpa"]]) if p["op"] == "req" \
 				else ("IP6 %s > %s: ICMP6, neighbor advertisement, tgt is %s, length 32" % [p["spa"], p["tpa"], p["spa"]])
 		_:
 			var l4: Dictionary = p.get("l4", {})
@@ -2137,8 +2159,8 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 				"icmp":
 					var kind := String(l4.get("type", ""))
 					if kind in ["echo", "reply"]:
-						desc = "%s %s > %s: ICMP%s %s, id %d, seq 1, length %d" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
-							"6" if v6 else "", "echo request" if kind == "echo" else "echo reply", int(l4.get("id", 0)), int(l4.get("size", 64))]
+						desc = "%s %s > %s: ICMP%s%s, id %d, seq %d, length %d" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
+							"6, " if v6 else " ", "echo request" if kind == "echo" else "echo reply", int(l4.get("id", 0)), int(l4.get("seq", 1)), int(l4.get("size", 64))]
 					elif kind == "ttl-exceeded":
 						desc = "%s %s > %s: ICMP%s time exceeded in-transit, length 92" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"], "6" if v6 else ""]
 					else:
@@ -2146,7 +2168,7 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 						var code := String(l4.get("code", "net"))
 						var about := String(l4.get("orig_dst", p["dst_ip"]))
 						desc = "%s %s > %s: ICMP %s, length 92" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
-							("%s unreachable - admin prohibited filter" % about) if code == "admin" else ("%s %s unreachable" % [code, about])]
+							("host %s unreachable - admin prohibited filter" % about) if code == "admin" else ("%s %s unreachable" % [code, about])]
 				"dns":
 					desc = "IP %s.%d > %s.53: %d+ %s? %s. (%d)" % [p["src_ip"], 30000 + int(l4.get("id", 0)) % 30000, p["dst_ip"],
 						int(l4.get("id", 0)) % 65536, "AAAA" if bool(l4.get("v6", false)) else "A", l4.get("q", ""), 30]
@@ -2159,7 +2181,8 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	var vl := ("vlan %d, p 0, ethertype %s (0x%s), " % [frame["vlan"], "ARP" if frame["type"] == "arp" else ("IPv6" if v6_frame else "IPv4"),
 		"0806" if frame["type"] == "arp" else ("86dd" if v6_frame else "0800")]) if frame["vlan"] != 0 else ""
 	var stamp := "%02d:%02d:%02d.%06d" % [(Game.cycle * 7) % 24, (Game.cycle * 13) % 60, (dev.capture.size() * 3) % 60, (dev.capture.size() * 104729) % 1000000]
-	dev.capture.append("%s %-8s %s%s" % [stamp, iface.name, vl, desc])
+	var link := "%s > %s" % [String(frame.get("src", iface.mac)).to_lower(), String(frame.get("dst", "")).to_lower()]
+	dev.capture.append("%s %-8s %s|%s|%s%s" % [stamp, iface.name, "Out" if outbound else "In", link, vl, desc])
 	if dev.capture.size() > 50:
 		dev.capture.pop_front()
 
