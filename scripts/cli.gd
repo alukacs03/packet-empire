@@ -1274,35 +1274,37 @@ class EOS extends Session:
 		return "% Invalid input\n"
 
 	func _show_lag(_r: Array) -> String:
+		## the EOS summary: the flag legend, the counts, then Port-Channel /
+		## Protocol / Ports with the per-member flags
 		var groups := {}
 		for i: Net.Iface in dev.ifaces:
 			if i.lag > 0:
 				if not groups.has(i.lag):
 					groups[i.lag] = []
 				groups[i.lag].append(i)
-		if groups.is_empty():
-			return "  (no port-channels: 'channel-group <n> mode active' on member interfaces)\n"
-		var out := "Flags:  S - Layer2   U - in use   D - down   P - bundled in Po   I - individual/suspended\n"
-		out += "%-6s %-14s %-9s %-28s %s\n" % ["Group", "Port-Channel", "Protocol", "Ports", "Peer"]
+		var out := "Flags\n------------------------ ---------------------------- -------------------------\n  a - LACP Active          p - LACP Passive           * - static fallback\n  F - Fallback enabled     f - Fallback configured    ^ - individual fallback\n  U - In Use               D - Down\n  + - In-Sync              - - Out-of-Sync            i - incompatible with agg\n  P - bundled in Po        s - suspended              G - Aggregable\n  I - Individual           S - ShortTimeout           w - wait for agg\n\n"
+		var in_use := 0
+		var rows := ""
 		var gids := groups.keys()
 		gids.sort()
 		for g in gids:
 			var names: Array = []
-			var peer := "-"
 			var up := false
-			var proto := "-"
+			var proto := "Static"
 			for i: Net.Iface in groups[g]:
 				var bundled := Sim.lag_bundled(i)
 				up = up or bundled
-				if i.lag_mode != "on":
-					proto = "LACP"
-				names.append("%s(%s)" % [EOS._short(i.name), "P" if bundled else ("I" if i.enabled else "D")])
-				var l := Game.link_at(i)
-				if l:
-					peer = l.other(i).dev.name
-			out += "%-6d %-14s %-9s %-28s %s\n" % [g, "Po%d(%s)" % [g, "SU" if up else "SD"], proto,
-				" ".join(PackedStringArray(names)), peer]
-		return out
+				if i.lag_mode == "active":
+					proto = "LACP(a)"
+				elif i.lag_mode == "passive" and proto == "Static":
+					proto = "LACP(p)"
+				names.append("%s(%s)" % [EOS._short(i.name), "PG+" if bundled else ("I" if i.enabled else "D")])
+			if up:
+				in_use += 1
+			rows += "   %-18s %-14s %s\n" % ["Po%d(%s)" % [g, "U" if up else "D"], proto, " ".join(PackedStringArray(names))]
+		out += "Number of channels in use: %d\nNumber of aggregators: %d\n\n" % [in_use, groups.size()]
+		out += "   Port-Channel       Protocol       Ports\n------------------ -------------- ------------------\n"
+		return out + rows
 
 	func _if_vrrp(r: Array) -> String:
 		if ctx_ifs.size() > 1:
@@ -1796,40 +1798,48 @@ class EOS extends Session:
 		return "% Invalid input\n"
 
 	func _show_ospf(_r: Array) -> String:
+		## Neighbor ID / Instance / VRF / Pri / State / Dead Time / Address /
+		## Interface, full interface names; nothing at all when OSPF is off
 		if dev.ospf.is_empty():
-			return "% OSPF not running: 'router ospf' in config mode\n"
+			return ""
 		var nbs := Sim.ospf_neighbors(dev)
-		if nbs.is_empty():
-			return "  (no neighbors: check network statements, areas and cables on both sides)\n"
-		var out := "%-16s %-4s %-14s %-10s %-16s %s\n" % ["Neighbor ID", "Pri", "State", "Dead Time", "Address", "Interface"]
+		var out := "Neighbor ID     Instance VRF      Pri State                  Dead Time   Address         Interface\n"
 		for nb in nbs:
 			var far: Net.NDevice = nb["dev"]
 			var far_if: Net.Iface = null
 			for fi: Net.Iface in far.ifaces:
 				if fi.ips.any(func(c): return String(c).split("/")[0] == String(nb["via_ip"])):
 					far_if = fi
-			out += "%-16s %-4d %-14s %-10s %-16s %s\n" % [Sim.ospf_router_id(far),
+			out += "%-15s %-8d %-8s %-3d %-22s %-11s %-15s %s\n" % [Sim.ospf_router_id(far), 1, "default",
 				Sim.ospf_priority(far_if) if far_if else 1, Sim.ospf_neighbor_state(dev, nb),
-				"00:00:%02d" % (31 + (Game.cycle * 7 + nbs.find(nb)) % 9), nb["via_ip"], EOS._short(nb["iface"].name)]
+				"00:00:%02d" % (31 + (Game.cycle * 7 + nbs.find(nb)) % 9), nb["via_ip"], nb["iface"].name]
 		return out
 
 	func _show_ospf_interface(_r: Array) -> String:
 		if dev.ospf.is_empty():
-			return "% OSPF not running: 'router ospf' in config mode\n"
-		var out := "Router ID %s, area %s, reference bandwidth %d Mbps\n" % [Sim.ospf_router_id(dev), Sim.ospf_area(dev),
-			int(dev.ospf.get("ref_bw", 100))]
+			return ""
+		var out := ""
 		for i: Net.Iface in Sim.ospf_covered_ifaces(dev):
 			var roles := Sim.ospf_segment_roles(dev, i)
-			var state := "P2P" if bool(roles.get("p2p", false)) else ("DR" if roles.get("dr") == dev
+			var p2p: bool = bool(roles.get("p2p", false))
+			var state := "P2P" if p2p else ("DR" if roles.get("dr") == dev
 				else ("BDR" if roles.get("bdr") == dev else "DROTHER"))
 			var nbrs := 0
 			for nb in Sim.ospf_neighbors(dev):
 				if nb["iface"] == i:
 					nbrs += 1
-			out += "%s is up, line protocol is %s\n  Internet Address %s, Area %s\n  Cost: %d, State %s, Priority %d%s\n  Neighbor Count is %d\n" % [
-				i.name, "up" if i.enabled else "down", i.ips[0] if not i.ips.is_empty() else "-", Sim.ospf_area(dev),
-				Sim.ospf_cost(i), state, Sim.ospf_priority(i),
-				"  (passive)" if i.name in dev.ospf.get("passive", []) else "", nbrs]
+			var up := i.enabled and Game.link_at(i) != null
+			out += "%s is %s, line protocol is %s (%s)\n  Internet Address %s, VRF default, Area %s\n  Network Type %s, Cost: %d\n  Transmit Delay is 1 sec, State %s, Priority %d\n" % [
+				i.name, "up" if i.enabled else "administratively down", "up" if up else "down", "connected" if up else "notconnect",
+				i.ips[0] if not i.ips.is_empty() else "unassigned", Sim.ospf_area(dev),
+				"Point-To-Point" if p2p else "Broadcast", Sim.ospf_cost(i), state, Sim.ospf_priority(i)]
+			if not p2p:
+				var dr = roles.get("dr")
+				var bdr = roles.get("bdr")
+				out += "  Designated Router is %s\n  Backup Designated Router is %s\n" % [
+					Sim.ospf_router_id(dr) if dr != null else "0.0.0.0", Sim.ospf_router_id(bdr) if bdr != null else "0.0.0.0"]
+			out += "  Timer intervals configured, Hello 10, Dead 40, Retransmit 5\n  Neighbor Count is %d\n%s" % [nbrs,
+				"  Passive interface: no routing updates sent or received\n" if i.name in dev.ospf.get("passive", []) else ""]
 		return out
 
 	func _show_ospf_database(_r: Array) -> String:
@@ -2168,25 +2178,45 @@ class EOS extends Session:
 	# ---- show ----
 
 	func _show_version(_r: Array) -> String:
-		return "PacketOS EOS 0.3\nHardware: %s (%s), %d interfaces\n" % [dev.name, dev.type, dev.ifaces.size()]
+		## the Arista block, with this model's name in the first line
+		var mac := Net.mac_dotted(dev.ifaces[0].mac) if not dev.ifaces.is_empty() else "0000.0000.0000"
+		var secs := Game.cycle * 3600
+		return "%s\nHardware version:    01.02\nSerial number:       %s\nHardware MAC address: %s\nSystem MAC address:  %s\n\nSoftware image version: 4.28.3M (PacketOS EOS 0.3)\nArchitecture:           x86_64\nInternal build version: 4.28.3M-28837868.4283M\nInternal build ID:      %08x-packetos\n\nUptime:                 %d days, %d hours and %d minutes\nTotal memory:           3953860 kB\nFree memory:            2452768 kB\n" % [
+			Game.MODELS[dev.model]["label"], "JPE%08d" % (dev.name.hash() % 100000000), mac, mac, dev.name.hash() % 0xFFFFFFFF,
+			secs / 86400, (secs / 3600) % 24, (secs / 60) % 60]
 
 	func _show_int_trunk(_r: Array) -> String:
-		## the two things a trunk mismatch is diagnosed from: which ports are
-		## trunking, and which VLANs each of them will actually carry
+		## the four EOS sections: mode/status/native, allowed, active, forwarding
 		var trunks: Array = []
 		for i: Net.Iface in dev.ifaces:
 			if i.mode == "trunk":
 				trunks.append(i)
 		if trunks.is_empty():
-			return "(no trunking interfaces: 'switchport mode trunk' makes one)\n"
-		var out := "%-11s %-8s %-13s %-12s %s\n" % ["Port", "Mode", "Encapsulation", "Status", "Native vlan"]
+			return ""
+		var out := "%-11s %-8s %-14s %s\n" % ["Port", "Mode", "Status", "Native vlan"]
 		for i: Net.Iface in trunks:
 			var status := "not-trunking" if not i.enabled or Game.peer_label(i) == "" else "trunking"
-			out += "%-11s %-8s %-13s %-12s %d\n" % [i.name, "on", "802.1q", status, i.untagged_vlan]
-		out += "\n%-11s %s\n" % ["Port", "Vlans allowed on trunk"]
+			out += "%-11s %-8s %-14s %d\n" % [EOS._short(i.name), "on", status, i.untagged_vlan]
+		out += "\n%-11s %s\n" % ["Port", "Vlans allowed"]
 		for i: Net.Iface in trunks:
-			out += "%-11s %s\n" % [i.name, "1-4094" if i.tagged_vlans.is_empty()
+			out += "%-11s %s\n" % [EOS._short(i.name), "1-4094" if i.tagged_vlans.is_empty()
 				else ",".join(i.tagged_vlans.map(func(v): return str(v)))]
+		var vids := dev.vlans.keys()
+		vids.sort()
+		out += "\n%-11s %s\n" % ["Port", "Vlans allowed and active in management domain"]
+		for i: Net.Iface in trunks:
+			var active: Array = []
+			for vid in vids:
+				if i.tagged_vlans.is_empty() or vid in i.tagged_vlans:
+					active.append(str(vid))
+			out += "%-11s %s\n" % [EOS._short(i.name), ",".join(PackedStringArray(active))]
+		out += "\n%-11s %s\n" % ["Port", "Vlans in spanning tree forwarding state and not pruned"]
+		for i: Net.Iface in trunks:
+			var fwd: Array = []
+			for vid in vids:
+				if (i.tagged_vlans.is_empty() or vid in i.tagged_vlans) and not Sim.stp_blocked_for(i, int(vid)):
+					fwd.append(str(vid))
+			out += "%-11s %s\n" % [EOS._short(i.name), ",".join(PackedStringArray(fwd))]
 		return out
 
 	func _show_interfaces(r: Array) -> String:
@@ -2363,9 +2393,11 @@ class EOS extends Session:
 		if dev.type != "switch":
 			return "% spanning tree runs on switches\n"
 		var want: String = String(r[0]).to_lower() if r.size() > 0 else ""
-		if want not in ["stp", "rstp", "mst"]:
-			return "% Invalid input\n"
-		dev.stp_mode = want
+		# EOS keywords first; the older spellings still land where they meant
+		var map := {"mstp": "mst", "rstp": "rstp", "rapid-pvst": "rstp", "none": "rstp", "stp": "stp", "mst": "mst"}
+		if not map.has(want):
+			return "% Incomplete command\n" if want == "" else "% Invalid input\n"
+		dev.stp_mode = map[want]
 		Sim.flush_learned_state()
 		Game.topology_changed.emit()
 		return ""
@@ -2401,35 +2433,46 @@ class EOS extends Session:
 		return ""
 
 	func _show_stp(_r: Array) -> String:
+		## the EOS block per instance: Root ID, Bridge ID, timers, then the
+		## Interface / Role / State / Cost / Prio.Nbr / Type table
 		if dev.type != "switch":
-			return "% spanning tree runs on switches\n"
+			return "% Invalid input\n"
 		var root := Sim.stp_root_of(dev)
-		var out := "Mode: %s   priority %d\n" % [dev.stp_mode.to_upper(), dev.stp_priority]
-		out += "Root bridge: %s%s\n" % [root.name if root else "-",
-			"  (this switch)" if root == dev else ""]
-		if dev.stp_mode == "mst" and not dev.mst_instances.is_empty():
-			for inst in dev.mst_instances:
-				out += "  instance %s: vlans %s\n" % [inst,
-					",".join(PackedStringArray(dev.mst_instances[inst].map(func(v): return str(v))))]
-		out += "Bridge ID:   priority %d  address %s\n" % [dev.stp_priority, dev.ifaces[0].mac if not dev.ifaces.is_empty() else "-"]
-		if root and root != dev:
-			out += "Root ID:     priority %d  address %s\n" % [root.stp_priority, root.ifaces[0].mac if not root.ifaces.is_empty() else "-"]
-		out += "%-11s %-11s %-12s %-8s %-6s %s\n" % ["Port", "Role", "State", "Cost", "Type", "Instances"]
-		var any := false
-		for i: Net.Iface in dev.ifaces:
-			var l := Game.link_at(i)
-			if l == null or i.name.begins_with("Management"):
-				continue
-			any = true
-			var per: Array = []
-			for inst2 in Sim.mst_instances():
-				per.append("%s:%s" % [inst2,
-					"disc" if Sim._stp_blocked_inst.get(inst2, {}).has(i) else "fwd"])
-			var role := Sim.stp_role(i) if i.enabled else "disabled"
-			var state := "discarding" if role in ["alternate", "disabled"] else "forwarding"
-			out += "%-11s %-11s %-12s %-8d %-6s %s\n" % [EOS._short(i.name), role, state, Sim.stp_port_cost(i),
-				"Edge" if i.portfast else "P2p", " ".join(PackedStringArray(per))]
-		return out if any else out + "  (no cabled ports)\n"
+		var proto := "mstp" if dev.stp_mode == "mst" else "rstp"
+		var out := ""
+		var instances: Array = Sim.mst_instances() if dev.stp_mode == "mst" else [0]
+		for inst in instances:
+			out += "MST%d\n  Spanning tree enabled protocol %s\n" % [int(inst), proto]
+			out += "  Root ID    Priority    %d\n             Address     %s\n" % [root.stp_priority if root else dev.stp_priority,
+				Net.mac_dotted(root.ifaces[0].mac) if root and not root.ifaces.is_empty() else "0000.0000.0000"]
+			if root == null or root == dev:
+				out += "             This bridge is the root\n"
+			else:
+				var root_port: Net.Iface = null
+				for i: Net.Iface in dev.ifaces:
+					if i.enabled and Game.link_at(i) != null and Sim.stp_role(i) == "root":
+						root_port = i
+				out += "             Cost        %d\n             Port        %d (%s)\n" % [
+					Sim.stp_port_cost(root_port) if root_port else 0,
+					dev.ifaces.find(root_port) + 1 if root_port else 0, root_port.name if root_port else "none"]
+			out += "  Bridge ID  Priority    %d  (priority %d sys-id-ext %d)\n             Address     %s\n             Hello Time  2.000 sec  Max Age 20 sec  Forward Delay 15 sec\n\n" % [
+				dev.stp_priority + int(inst), dev.stp_priority, int(inst), Net.mac_dotted(dev.ifaces[0].mac) if not dev.ifaces.is_empty() else "0000.0000.0000"]
+			out += "Interface        Role       State      Cost      Prio.Nbr Type\n---------------- ---------- ---------- --------- -------- --------------------\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				n += 1
+				var l := Game.link_at(i)
+				if l == null or i.name.begins_with("Management"):
+					continue
+				var role := Sim.stp_role(i) if i.enabled else "disabled"
+				var blocked_here: bool = Sim._stp_blocked_inst.get(inst, {}).has(i) if dev.stp_mode == "mst" else role == "alternate"
+				var state := "discarding" if blocked_here or role == "disabled" else "forwarding"
+				if role != "disabled" and blocked_here:
+					role = "alternate"
+				out += "%-16s %-10s %-10s %-9d %-8s %s\n" % [EOS._short(i.name), role, state, Sim.stp_port_cost(i),
+					"128.%d" % n, "P2p Edge" if i.portfast else "P2p"]
+			out += "\n"
+		return out
 
 	func _vtep() -> Dictionary:
 		if dev.vtep.is_empty():
@@ -2512,12 +2555,13 @@ class EOS extends Session:
 				cfg.get("last_error", "") if String(cfg.get("last_error", "")) != "" else "none"])
 
 	func _show_counters(_r: Array) -> String:
-		# input errors and receive light are where a grey failure shows itself
-		var out := "%-11s %12s %12s %10s %9s\n" % ["Port", "InFrames", "OutFrames",
-			"InErrors", "Rx(dBm)"]
+		## the In block and the Out block, the way EOS splits them
+		var out := "Port      InOctets     InUcastPkts   InMcastPkts   InBcastPkts\n"
 		for i: Net.Iface in dev.ifaces:
-			out += "%-11s %12d %12d %10d %9.1f\n" % [EOS._short(i.name), i.rx_frames,
-				i.tx_frames, i.rx_errors, i.light_dbm]
+			out += "%-9s %-12d %-13d %-13d %d\n" % [EOS._short(i.name), i.rx_frames * 148, i.rx_frames, i.rx_frames / 50, i.rx_frames / 20]
+		out += "\nPort      OutOctets    OutUcastPkts  OutMcastPkts  OutBcastPkts\n"
+		for i: Net.Iface in dev.ifaces:
+			out += "%-9s %-12d %-13d %-13d %d\n" % [EOS._short(i.name), i.tx_frames * 148, i.tx_frames, i.tx_frames / 50, i.tx_frames / 20]
 		return out
 
 	func _clear_counters(_r: Array) -> String:
@@ -2532,12 +2576,12 @@ class EOS extends Session:
 		return ""
 
 	func _show_counter_errors(_r: Array) -> String:
-		## the read that separates the cable from the configuration: CRCs are
-		## the wire, giants are an MTU, drops are a full pipe, collisions a duplex
-		var out := "%-11s %8s %8s %8s %10s %10s\n" % ["Port", "InErrors", "CRC", "Giants", "OutDrops", "Collisions"]
+		## the read that separates the cable from the configuration: FCS errors
+		## are the wire, FrameTooLongs an MTU, TxErr a full pipe
+		var out := "Port      FCSErr   AlignErr   SymbolErr   RxErr   FrameTooShorts   FrameTooLongs   TxErr\n"
 		for i: Net.Iface in dev.ifaces:
-			out += "%-11s %8d %8d %8d %10d %10d\n" % [EOS._short(i.name), i.rx_errors, i.rx_crc,
-				i.rx_giants, i.out_drops, i.collisions]
+			out += "%-9s %-8d %-10d %-11d %-7d %-16d %-15d %d\n" % [EOS._short(i.name), i.rx_crc, i.collisions, 0,
+				i.rx_errors, 0, i.rx_giants, i.out_drops]
 		return out
 
 	func _if_duplex(r: Array) -> String:
@@ -2548,15 +2592,20 @@ class EOS extends Session:
 			return "")
 
 	func _show_lldp(_r: Array) -> String:
-		var out := "%-11s %-14s %s\n" % ["Port", "Neighbor", "Neighbor Port"]
-		var any := false
+		## the EOS table: the five summary lines, then Port / Neighbor Device
+		## ID / Neighbor Port ID / TTL, the far port unabbreviated
+		var rows := ""
+		var n := 0
 		for i: Net.Iface in dev.ifaces:
 			var peer := Game.effective_peer(i)
 			if peer != null:
-				any = true
+				n += 1
 				# LLDP hears the device at the far end, not the panel in between
-				out += "%-11s %-14s %s\n" % [EOS._short(i.name), peer.dev.name, EOS._short(peer.name)]
-		return out if any else "  (no neighbors detected)\n"
+				rows += "%-13s %-24s %-22s %d\n" % [EOS._short(i.name), peer.dev.name, peer.name, 120]
+		var out := "Last table change time   : %d:%02d:%02d ago\nNumber of table inserts  : %d\nNumber of table deletes  : 0\nNumber of table drops    : 0\nNumber of table age-outs : 0\n\n" % [
+			(Game.cycle * 3) / 60, (Game.cycle * 3) % 60, (Game.cycle * 17) % 60, n]
+		out += "Port          Neighbor Device ID       Neighbor Port ID       TTL\n---------- ------------------------ ---------------------- ---\n"
+		return out + rows
 
 	func _show_arp(_r: Array) -> String:
 		if dev.arp.is_empty():
@@ -2568,16 +2617,26 @@ class EOS extends Session:
 				CLI.arp_iface_name(dev, String(ip))]
 		return out
 
-	func _show_ip_route(_r: Array) -> String:
+	func _show_ip_route(r: Array) -> String:
 		## Only installed routes: one winner per prefix (or several of equal
 		## cost), chosen by longest prefix then administrative distance.
-		var out := "Codes: C - connected, S - static, O - OSPF, B - BGP\n"
+		## With an address after it, only the entry that address would use.
+		var want := String(r[0]) if r.size() == 1 and String(r[0]).is_valid_ip_address() else ""
+		var chosen := {}
+		if want != "":
+			for e in Sim.rib(dev):
+				if String(e["vrf"]) == "" and Net.same_net(want, String(e["prefix"]), int(e["plen"])) \
+						and (chosen.is_empty() or int(e["plen"]) > int(chosen["plen"])):
+					chosen = e
+		var out := "VRF: default\nCodes: C - connected, S - static, K - kernel,\n       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,\n       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,\n       N2 - OSPF NSSA external type2, B - Other BGP Routes,\n       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,\n       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,\n       A O - OSPF Summary, NG - Nexthop Group Static Route,\n       V - VXLAN Control Service, M - Martian,\n       DH - DHCP client installed default route,\n       DP - Dynamic Policy Route, L - VRF Leaked,\n       G  - gRIBI, RC - Route Cache Route,\n       CL - CBF Leaked Route\n\n"
 		var any := false
 		var gateway := ""
 		var rows := ""
 		for e in Sim.rib(dev):
 			if String(e["vrf"]) != "":
 				continue  # a VRF's table is 'show ip route vrf <name>'
+			if want != "" and e != chosen:
+				continue
 			any = true
 			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
 			if int(e["plen"]) == 0 and gateway == "" and e["src"] != "C":
@@ -2590,7 +2649,7 @@ class EOS extends Session:
 				rows += "%-7s%s [%d/%d] via %s, %s\n" % [e["src"], pfx, int(e["ad"]),
 					int(e["cost"]) if e["src"] == "O" else 0, e["next_hop"], EOS._short(e["iface"].name)]
 		out += ("Gateway of last resort is %s to network 0.0.0.0\n\n" % gateway) if gateway != "" else "Gateway of last resort is not set\n\n"
-		return out + rows if any else out + "  (no routes: configure ip addresses)\n"
+		return out + rows
 
 	func _show_v6_brief(_r: Array) -> String:
 		var out := "%-11s %-30s %-8s\n" % ["Interface", "IPv6 Address", "Status"]
@@ -2612,10 +2671,22 @@ class EOS extends Session:
 		return out if any else "  (no neighbors discovered yet)\n"
 
 	func _show_ip_brief(_r: Array) -> String:
-		var out := "%-11s %-18s %-8s\n" % ["Interface", "IP Address", "Status"]
+		var out := "                                                                              Address\nInterface         IP Address           Status       Protocol           MTU    Owner\n----------------- -------------------- ------------ -------------- ----------- -------\n"
 		for i: Net.Iface in dev.ifaces:
-			var ip: String = i.ips[0] if not i.ips.is_empty() else "unassigned"
-			out += "%-11s %-18s %-8s\n" % [EOS._short(i.name), ip, "up" if i.enabled else "admin-down"]
+			if i.name == "lo":
+				continue
+			# a switchport has no IP interface: only routed ports, SVIs and the management port appear
+			if dev.type == "switch" and i.mode != "routed" and i.ips.is_empty() \
+					and not i.name.begins_with("Management") and not i.name.begins_with("Vlan"):
+				continue
+			var ip := "unassigned"
+			for cidr in i.ips:
+				if not Net.is_v6(cidr):
+					ip = String(cidr)
+					break
+			var up := i.enabled and Game.link_at(i) != null
+			out += "%-17s %-20s %-12s %-14s %11d\n" % [i.name, ip, "admin down" if i.admin_down else ("up" if i.enabled else "down"),
+				"up" if up else "down", i.mtu]
 		return out
 
 	func _write_mem(_r: Array) -> String:
@@ -2706,22 +2777,18 @@ class EOS extends Session:
 		return out
 
 	func _show_transceiver(_r: Array) -> String:
-		## The optic, and whether its receive level is where it should be.
-		var out := "%-11s %-9s %-9s %s\n" % ["Port", "Rx(dBm)", "State", "Note"]
+		## numbers only, the way the real one prints them; copper ports are
+		## simply absent. Whether a level is bad is for the LEARN panel.
+		var out := "                                                        Temp    Voltage  Bias    Optical   Optical\nPort        Vendor      Type                                (C)     (V)      (mA)    Tx Power  Rx Power   Last Update\n----------- ----------- ----------------------------------- ------- -------- ------- --------- ---------- ------------\n"
 		var any := false
 		for i: Net.Iface in dev.ifaces:
 			if Game.link_at(i) == null or i.name.begins_with("Management"):
 				continue
 			any = true
-			var state := "ok"
-			var note := ""
-			if i.light_dbm < -14.0:
-				state = "LOW"
-				note = "receive level is falling: a contaminated or dying optic looks like this"
-			elif i.rx_errors > 0:
-				note = "%d input error(s) since the counters were cleared" % i.rx_errors
-			out += "%-11s %-9.1f %-9s %s\n" % [EOS._short(i.name), i.light_dbm, state, note]
-		return out if any else "  (no cabled ports on this device)\n"
+			out += "%-11s %-11s %-35s %-7.2f %-8.2f %-7.2f %-9.2f %-10.2f %d:%02d:%02d ago\n" % [EOS._short(i.name), "Arista",
+				"10GBASE-SR" if Game.iface_speed(i) >= 10000 else "1000BASE-SX",
+				38.29 + (i.rx_frames % 7) * 0.1, 3.27, 6.12, -2.53, i.light_dbm, 0, 0, (Game.cycle * 3) % 60]
+		return out if any else ""
 
 	func _show_tech_support(_r: Array) -> String:
 		## What a vendor asks for, collected once, read-only, and safe to run
@@ -2747,23 +2814,27 @@ class EOS extends Session:
 		return out
 
 	func _show_logging(_r: Array) -> String:
-		var out := ""
+		## the EOS header, then the buffer in syslog shape
+		var out := "Syslog logging: enabled\n    Buffer logging: level debugging\n    Console logging: level errors\n    Monitor logging: level errors\n    Synchronous logging: disabled\n    Trap logging: level informational\n"
+		if dev.log_host != "":
+			out += "        Logging to '%s' port 514 in VRF default via udp\n" % dev.log_host
+		out += "    Sequence numbers: disabled\n    Syslog facility: local4\n    Hostname format: Hostname only\n    Repeat logging interval: disabled\n\nLog Buffer:\n"
+		var n := 0
+		for l in dev.logs.slice(maxi(0, dev.logs.size() - 15)):
+			out += "Sep %2d %02d:%02d:%02d %s Aaa: %%SYS-5-LOGMSG: %s\n" % [1 + Game.cycle % 28, (Game.cycle * 3) % 24, (n * 7) % 60, (n * 13) % 60, dev.name, l]
+			n += 1
 		if dev.services.has("syslog"):
 			var msgs: Array = dev.services["syslog"]["messages"]
-			out += "Collector: %d message(s) received\n" % msgs.size()
 			for m in msgs.slice(maxi(0, msgs.size() - 20)):
-				out += "  %s\n" % m
-			out += "--\n"
-		out += "Local buffer%s:\n" % ("" if dev.log_host == "" else " (shipping to %s)" % dev.log_host)
-		if dev.logs.is_empty():
-			out += "  (empty)\n"
-		for l in dev.logs.slice(maxi(0, dev.logs.size() - 15)):
-			out += "  %s\n" % l
+				out += "Sep %2d %02d:%02d:%02d %s Rsyslog: %%SYS-6-COLLECTED: %s\n" % [1 + Game.cycle % 28, (Game.cycle * 3) % 24, (n * 7) % 60, (n * 13) % 60, dev.name, m]
+				n += 1
 		return out
 
 	func _show_clock(_r: Array) -> String:
-		var sync := "synchronised to %s" % dev.ntp_server if dev.ntp_server != "" else "free running"
-		return "cycle %d (device believes %d, %s)\n" % [Game.cycle, Game.cycle + dev.clock_skew, sync]
+		var believed := Game.cycle + dev.clock_skew
+		return "%s Sep %2d %02d:%02d:%02d 2026\nTimezone: UTC\nClock source: %s\n" % [
+			["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][believed % 7], 1 + believed % 28, (believed * 3) % 24, (believed * 7) % 60, (believed * 11) % 60,
+			("NTP server (%s)" % dev.ntp_server) if dev.ntp_server != "" else "local"]
 
 	func _show_versions(_r: Array) -> String:
 		if dev.versions.is_empty():

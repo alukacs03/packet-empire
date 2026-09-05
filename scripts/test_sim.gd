@@ -38,21 +38,51 @@ static func probe() -> void:
 	Game.parts = {"patch": 400, "fiber": 100, "sfp": 100, "psu": 20}
 	var rk := Game.add_rack(Vector2i(2, 2))
 	var sw := Game.new_device("sw-24")
+	var sw2 := Game.new_device("sw-24")
 	var rt := Game.new_device("rtr-edge")
+	var rt2 := Game.new_device("rtr-edge")
 	rk.slots[0] = sw
-	rk.slots[1] = rt
-	Game.connect_ifaces(sw.ifaces[0], rt.ifaces[0])
+	rk.slots[1] = sw2
+	rk.slots[2] = rt
+	rk.slots[3] = rt2
+	Game.connect_ifaces(sw.ifaces[0], sw2.ifaces[0])
+	Game.connect_ifaces(sw.ifaces[1], sw2.ifaces[1])
+	Game.connect_ifaces(sw.ifaces[2], rt.ifaces[0])
+	Game.connect_ifaces(rt.ifaces[1], rt2.ifaces[1])
 	var s := CLI.new_session(sw)
-	for line in ["show running-config", "configure terminal", "enable", "conf", "interface Ethernet1-3", "description uplinks to core", "switchport mode trunk", "exit",
-			"interface Ethernet5,7", "shutdown", "exit", "interface ethernet 2", "switchport access vlan 30", "exit", "vlan 30", "name servers", "exit",
-			"vlan 40", "exit", "interface Vlan40", "ip address 10.40.0.1/24", "exit", "interface Ethernet9", "channel-group 1", "channel-group 1 mode active", "mtu 9000", "mtu 9214",
-			"show running-config", "show interfaces description", "show interfaces ethernet 1", "show vlan", "write", "show startup-config", "end", "clear mac address-table", "clear mac address-table dynamic",
-			"reload", "show interfaces status", "hostname sw-x", "router ospf"]:
+	s.exec("enable")
+	s.exec("configure terminal")
+	s.exec("interface Ethernet1-2")
+	s.exec("channel-group 1 mode active")
+	s.exec("end")
+	var s2 := CLI.new_session(sw2)
+	s2.exec("enable")
+	s2.exec("configure terminal")
+	s2.exec("interface Ethernet1-2")
+	s2.exec("channel-group 1 mode active")
+	s2.exec("end")
+	for line in ["show lldp neighbors", "show spanning-tree", "show port-channel summary", "show version", "show ip interface brief",
+			"show interfaces counters", "show interfaces counters errors", "show interfaces transceiver", "show logging", "show clock", "show interfaces trunk"]:
 		print("%s %s\n%s" % [s.prompt(), line, s.exec(line)])
-	print(s.describe("show ip "))
-	print(s.describe("show interfaces "))
 	var r := CLI.new_session(rt)
-	for line in ["enable", "configure terminal", "interface Ethernet1", "ip address 10.0.0.1/24", "vrrp 1 ipv4 10.0.0.254", "vrrp 1 priority-level 120", "exit", "router ospf", "router ospf 1", "network 10.0.0.0/24 area 0", "exit", "router bgp 65000", "show running-config", "end"]:
+	var r2 := CLI.new_session(rt2)
+	for ses in [r, r2]:
+		ses.exec("enable")
+		ses.exec("configure terminal")
+	r.exec("interface Ethernet1")
+	r.exec("ip address 10.0.0.1/24")
+	r.exec("interface Ethernet2")
+	r.exec("ip address 10.9.0.1/30")
+	r.exec("router ospf 1")
+	r.exec("network 10.0.0.0/8 area 0")
+	r.exec("end")
+	r2.exec("interface Ethernet2")
+	r2.exec("ip address 10.9.0.2/30")
+	r2.exec("router ospf 1")
+	r2.exec("network 10.0.0.0/8 area 0")
+	r2.exec("end")
+	Game.topology_changed.emit()
+	for line in ["show ip ospf neighbor", "show ip ospf interface", "show ip route", "show ip route 10.0.0.5", "show ip interface brief"]:
 		print("%s %s\n%s" % [r.prompt(), line, r.exec(line)])
 
 static func _describe_widest(row: Control) -> String:
@@ -866,15 +896,16 @@ static func run() -> int:
 			blocked_n += 1
 	check(blocked_n == 1, "stp: exactly one port of the loop is discarding (got %d)" % blocked_n)
 	var ses := CLI.new_session(sw_a)
-	check(ses.exec("show spanning-tree").contains("Root bridge"), "stp: show spanning-tree renders")
+	check(ses.exec("show spanning-tree").contains("Spanning tree enabled protocol rstp"), "stp: show spanning-tree renders the EOS block")
 	var stp_root_sw: Net.NDevice = Sim.stp_root_of(sw_a)
 	var stp_other: Net.NDevice = sw_b if stp_root_sw == sw_a else sw_a
 	var stp_other_cli := CLI.new_session(stp_other)
 	var stp_view := stp_other_cli.exec("show spanning-tree")
-	check(stp_view.contains(" root ") and stp_view.contains("Root ID"),
-		"stp: the non-root switch shows exactly one root port and the root's bridge id")
-	check(not CLI.new_session(stp_root_sw).exec("show spanning-tree").contains(" root "),
-		"stp: the root bridge has no root port")
+	check(stp_view.contains(" root       forwarding") and stp_view.contains("Root ID") and "Cost        " in stp_view,
+		"stp: the non-root switch shows exactly one root port and the root's bridge id with the cost to it")
+	check(CLI.new_session(stp_root_sw).exec("show spanning-tree").contains("This bridge is the root")
+			and not CLI.new_session(stp_root_sw).exec("show spanning-tree").contains(" root       forwarding"),
+		"stp: the root bridge says so and has no root port")
 	var guard_port: Net.Iface = null
 	for gp: Net.Iface in stp_other.ifaces:
 		var gl := Game.link_at(gp)
@@ -889,7 +920,7 @@ static func run() -> int:
 	check(stp_other_cli.exec("spanning-tree portfast") == "" and stp_other_cli.exec("spanning-tree bpduguard enable") == "",
 		"stp: portfast and bpduguard are accepted on an edge port")
 	stp_other_cli.exec("end")
-	check(stp_other_cli.exec("show spanning-tree").contains("Edge") and stp_other_cli.exec("show run").contains("spanning-tree bpduguard enable"),
+	check(stp_other_cli.exec("show spanning-tree").contains("P2p Edge") and stp_other_cli.exec("show run").contains("spanning-tree bpduguard enable"),
 		"stp: an edge port is marked Edge and the config keeps both settings")
 	var guard_peer: Net.Iface = Game.link_at(guard_port).other(guard_port)
 	Game.disconnect_iface(guard_port)
@@ -1460,7 +1491,7 @@ static func run() -> int:
 		"ospf: interface-template with networks and area is the v7 spelling")
 	check(os1.exec("show ip ospf neighbor").contains("10.20.9.2") and os1.exec("show ip ospf neighbor").contains("FULL/  -"),
 		"ospf: adjacency comes up (EOS side), point-to-point so no DR")
-	check(os1.exec("show ip ospf neighbor").contains("Neighbor ID") and os1.exec("show ip ospf neighbor").contains("Et3"),
+	check(os1.exec("show ip ospf neighbor").contains("Neighbor ID     Instance VRF") and os1.exec("show ip ospf neighbor").contains("Ethernet3"),
 		"ospf: the neighbour table has the Neighbor ID column")
 	os1.exec("conf t")
 	os1.exec("router ospf 1")
@@ -1510,7 +1541,7 @@ static func run() -> int:
 	s_cnt.exec("clear counters")
 	Sim.ping(a2, "10.0.0.2")
 	check(sw_a.ifaces[0].rx_frames > 0, "counters: switch port counted rx frames")
-	check(s_cnt.exec("show interfaces counters").contains("InFrames"), "counters: EOS table renders")
+	check(s_cnt.exec("show interfaces counters").contains("InUcastPkts") and "OutOctets" in s_cnt.exec("show interfaces counters"), "counters: the EOS In and Out blocks render")
 	s_cnt.exec("clear counters")
 	check(sw_a.ifaces[0].rx_frames == 0, "counters: clear counters resets")
 
@@ -1978,7 +2009,7 @@ static func run() -> int:
 	check(not post_blocked, "lag: bundled links form one logical edge, nothing blocked")
 	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: traffic flows over the bundle")
 	check(Game.link_capacity(Game.link_at(lsw1.ifaces[1])) == 2000, "lag: bundle capacity sums members")
-	check(lag_s.exec("show port-channel summary").contains("Po1(SU)") and lag_s.exec("show port-channel").contains("Et2(P) Et3(P)"),
+	check(lag_s.exec("show port-channel summary").contains("Po1(U)") and lag_s.exec("show port-channel").contains("Et2(PG+) Et3(PG+)"),
 		"lag: show port-channel summary flags the bundle up and its members bundled")
 	lsw1.ifaces[1].enabled = false
 	Game.topology_changed.emit()
@@ -1995,7 +2026,7 @@ static func run() -> int:
 		lacp_ses.exec("int et3")
 		lacp_ses.exec("channel-group 1 mode passive")
 		lacp_ses.exec("end")
-	check(not Sim.ping(lh1, "10.50.0.2")["ok"] and lag_s.exec("show port-channel summary").contains("Po1(SD)"),
+	check(not Sim.ping(lh1, "10.50.0.2")["ok"] and lag_s.exec("show port-channel summary").contains("Po1(D)"),
 		"lag: passive on both ends never bundles, and the members are suspended")
 	check(lag_s.exec("show port-channel summary").contains("Et2(I)"), "lag: a suspended member is flagged I")
 	lag_s.exec("conf t")
@@ -2004,7 +2035,7 @@ static func run() -> int:
 	lag_s.exec("int et3")
 	lag_s.exec("channel-group 1 mode active")
 	lag_s.exec("end")
-	check(Sim.ping(lh1, "10.50.0.2")["ok"] and lag_s.exec("show port-channel summary").contains("LACP"),
+	check(Sim.ping(lh1, "10.50.0.2")["ok"] and lag_s.exec("show port-channel summary").contains("LACP(a)"),
 		"lag: active on one end is enough, and the protocol column says LACP")
 	check(lag_s.exec("show run").contains("channel-group 1 mode active"), "lag: show run keeps the mode")
 	lag_s2.exec("conf t")
@@ -6585,13 +6616,13 @@ static func run() -> int:
 	check(log_cli.exec("logs").contains("test message"), "syslog: the server can read what it collected")
 	# clocks: without NTP they drift, with it they do not
 	log_sw.clock_skew = 7
-	check(sw_cli.exec("show clock").contains("free running"), "ntp: an unsynchronised clock is reported")
+	check(sw_cli.exec("show clock").contains("Clock source: local"), "ntp: an unsynchronised clock is reported")
 	sw_cli.exec("conf t")
 	sw_cli.exec("ntp server 10.26.0.5")
 	sw_cli.exec("end")
 	Game.clock_tick()
 	check(log_sw.clock_skew == 0, "ntp: a reachable server disciplines the clock")
-	check(sw_cli.exec("show clock").contains("synchronised"), "ntp: sync is reported")
+	check(sw_cli.exec("show clock").contains("Clock source: NTP server (10.26.0.5)"), "ntp: sync is reported")
 
 	# --- spine and leaf fabric with ECMP ---
 	var fab_rack := Game.add_rack(Vector2i(15, 1))
@@ -8387,8 +8418,8 @@ static func run() -> int:
 		"stp: bridge priority can be set")
 	Sim.flush_learned_state()
 	check(Sim.stp_root_of(ms_a) == ms_b, "stp: the lower priority wins the root election")
-	check(ms_cli_a.exec("show spanning-tree").contains(ms_b.name),
-		"stp: show spanning-tree names the root")
+	check(ms_cli_a.exec("show spanning-tree").contains(Net.mac_dotted(ms_b.ifaces[0].mac)),
+		"stp: show spanning-tree names the root by its bridge address")
 	# MST: two instances, and the two links carry different VLANs
 	for ms_c2 in [ms_cli_a, ms_cli_b]:
 		check(ms_c2.exec("spanning-tree mst instance 1 vlan 20").is_empty(),
@@ -9665,11 +9696,11 @@ static func run() -> int:
 		"console: show interfaces prints the block real gear prints, errors included")
 	check(sw_cli2.exec("show lldp neighbors").contains(dx_a2.name), "console: the neighbour is where lldp keeps it")
 	var optics := sw_cli2.exec("show interfaces transceiver")
-	check(optics.contains("Rx(dBm)"),
-		"console: the optics report their receive level")
+	check(optics.contains("Rx Power") and optics.contains("BASE-S"),
+		"console: the optics report their receive level in the EOS columns")
 	Game.inject_grey_fault(dx_sw2.ifaces[0], "dirty_optic")
-	check(sw_cli2.exec("show interfaces transceiver").contains("LOW"),
-		"console: and say so when it has fallen where a dying optic falls")
+	check(sw_cli2.exec("show interfaces transceiver").contains("-1") or sw_cli2.exec("show interfaces transceiver").contains("-2"),
+		"console: a dying optic shows as a receive level that has fallen, not as a word")
 	Game.grey_faults = {}
 	var filtered := sw_cli2.exec("show interfaces status | include connected")
 	check(filtered.contains("connected") and not filtered.contains("notconnect"),
@@ -10127,8 +10158,8 @@ static func run() -> int:
 	trunk_view.exec("enable")
 	for trunk_cmd in Contracts.hint_commands("stretch_vlans", "eos"):
 		trunk_view.exec(String(trunk_cmd))  # the hint builds the trunk the view should list
-	check("Ethernet8" in trunk_view.exec("show interfaces trunk")
-		and "Ethernet1 " not in trunk_view.exec("show interfaces trunk"),
+	check("Et8 " in trunk_view.exec("show interfaces trunk")
+		and "Et1 " not in trunk_view.exec("show interfaces trunk"),
 		"eos: show interfaces trunk lists the trunk and not the access ports")
 	# --- PacketTik gear can do the jobs the briefs quote EOS for ---
 	var pt := Game.new_device("rtr-lite")
@@ -10253,7 +10284,7 @@ static func run() -> int:
 	Game.inject_grey_fault(cx_sw.ifaces[0], "dirty_optic")
 	for cx_i in 12:
 		Sim.ping(cx_h1, "10.69.0.2", 64, "", 1400)
-	check(cx_sw.ifaces[0].rx_crc > 0 and "CRC" in ces.exec("show interfaces counters errors"),
+	check(cx_sw.ifaces[0].rx_crc > 0 and "FCSErr" in ces.exec("show interfaces counters errors"),
 		"counters: a dirty optic shows up as CRC errors on the receiving port")
 	Game.grey_faults.erase(Game.iface_key(cx_sw.ifaces[0]))
 	ces.exec("clear counters")
@@ -10396,7 +10427,7 @@ static func run() -> int:
 			sm_line20 = sm_l
 		if sm_l.begins_with("10 "):
 			sm_line10 = sm_l
-	check("Et8" not in sm_line10 and "Et8" not in sm_line20 and sms.exec("show interfaces trunk").contains("Ethernet8"),
+	check("Et8" not in sm_line10 and "Et8" not in sm_line20 and sms.exec("show interfaces trunk").contains("Et8 "),
 		"show vlan: access ports only, the way real gear prints it; trunks live in show interfaces trunk")
 	Game.disconnect_iface(sm_h1.ifaces[0])
 	Game.disconnect_iface(sm_h2.ifaces[0])
