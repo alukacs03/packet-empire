@@ -35,19 +35,17 @@ static func replay(path: String) -> void:
 static func probe() -> void:
 	## scratch space: whatever needs a fast, isolated look right now
 	Game.money = 100000
-	Game.parts = {"patch": 400, "optic": 100, "power": 60, "blank": 60}
-	for sd in range(1, 13):
-		Drill.start(3, sd)
-		var name := Drill.scenario
-		Drill.cheat_fix()
-		var ok := Drill.solved()
-		var probe_ping := ""
-		if not ok:
-			for pair in Drill.targets:
-				var src := Sim._ip_owner(String(pair[0]))
-				probe_ping += " %s->%s:%s" % [pair[0], pair[1], str(Sim.ping(src, String(pair[1]))) if src else "no-src"]
-		Drill.finish(false)
-		print("seed %d: %s solved=%s%s" % [sd, name.substr(0, 40), ok, probe_ping])
+	Game.staff = []
+	var ncrng := RandomNumberGenerator.new()
+	ncrng.seed = 3
+	print("hire: ", Game.hire(Staff.make_candidate(ncrng, Game.habits)), " staff ", Game.staff.size())
+	Staff.set_shift(Game.staff[0], "day")
+	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 7
+	Game.hazards = [{"kind": "smoke", "rack": "R1", "site": 0, "tile": [0, 0],
+		"severity": 2, "started": Game.cycle, "detected": true, "zone": ["R1"]}]
+	Game.night_call = {}
+	Game.night_call_tick()
+	print("slot ", Game.day_slot(), " on shift ", Staff.anyone_on_shift(), " ready ", Game.callout_ready(), " night_call ", Game.night_call)
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text

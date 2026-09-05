@@ -1129,9 +1129,15 @@ class CablePull extends Control:
 		draw_circle(reject_to, 7.0 + progress * 4.0, danger, false, 1.5)
 		draw_line(reject_to + Vector2(-4, -4), reject_to + Vector2(4, 4), danger, 1.4)
 		draw_line(reject_to + Vector2(4, -4), reject_to + Vector2(-4, 4), danger, 1.4)
-		if reject_elapsed < 0.34:
-			draw_string(_mono, reject_to + Vector2(13, -10), reject_reason,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, danger)
+		if reject_reason != "":
+			# a plate below the jack, clear of the port block, for the whole
+			# animation: nine pixels of text across a faceplate was unreadable
+			var reason_w := _mono.get_string_size(reject_reason, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+			var plate := Rect2(reject_to + Vector2(-reason_w / 2.0 - 8, 16), Vector2(reason_w + 16, 20))
+			draw_rect(plate, Color(0.03, 0.05, 0.09, fade * 0.92))
+			draw_rect(plate, Color(danger, fade), false, 1.0)
+			draw_string(_mono, plate.position + Vector2(8, 14), reject_reason,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(Prefs.bad_colour(), fade))
 
 	func _draw() -> void:
 		var positions := _port_positions()
@@ -1317,9 +1323,13 @@ class Faceplate extends Control:
 			# detached success banner.
 			draw_rect(panel.grow(-2), Color(saved, fade * 0.12), false, 3.0)
 			draw_circle(Vector2(size.x - 18, 16), 3.0 + p * 2.0, saved)
-			if config_write_elapsed < 0.56:
+			if config_write_elapsed < 0.9:
+				# a plate behind the words: 9 px green on a beige PacketTik
+				# faceplate was invisible
+				var plate := Rect2(Vector2(size.x - 142, 8), Vector2(118, 17))
+				draw_rect(plate, Color(0.03, 0.06, 0.09, fade * 0.85))
 				draw_string(_mono, Vector2(size.x - 136, 20), "CONFIG WRITTEN",
-					HORIZONTAL_ALIGNMENT_LEFT, 110, 10, saved_ink)
+					HORIZONTAL_ALIGNMENT_LEFT, 110, 10, Color(UIW.colour("success"), fade))
 
 	func _draw_vendor_mark(mark: String, p: Vector2, col: Color, ink: Color) -> void:
 		match mark:
