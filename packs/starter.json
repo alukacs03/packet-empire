@@ -3,7 +3,7 @@
   "name": "Starter jobs (authored)",
   "schema": 1,
   "author": "Packet Empire",
-  "description": "Three campaign-style jobs and one incident, written entirely as data to show what a pack can do.",
+  "description": "Campaign-style jobs and one incident, written entirely as data to show what a pack can do: from racking a switch to a service that survives a dead router.",
   "scenarios": [
     {
       "id": "rack_and_stack",
@@ -128,6 +128,90 @@
         {
           "kind": "message",
           "text": "It answers by name, and it answers with a box switched off."
+        }
+      ]
+    },
+    {
+      "id": "two_routers_one_service",
+      "title": "Either router can die (authored)",
+      "customer": "Gamma Logistics",
+      "reward": 1400,
+      "brief": "Serve 10.91.0.10 to a client at 10.92.0.10 across two routers that both carry the path, so that switching either router off leaves the client served. Two routers on the client's subnet sharing a virtual gateway is the usual answer; two separate paths with routing is another.",
+      "hint": "VRRP on both routers for the client's gateway ('vrrp 1 ip 10.92.0.1' under the client-facing interface on each), or OSPF over two transit links. The check switches each router off in turn.",
+      "requirements": [
+        {
+          "kind": "reachable",
+          "from": "10.92.0.10",
+          "to": "10.91.0.10"
+        },
+        {
+          "kind": "survives_device_loss",
+          "owner_of": "10.92.0.2",
+          "from": "10.92.0.10",
+          "to": "10.91.0.10"
+        },
+        {
+          "kind": "survives_device_loss",
+          "owner_of": "10.92.0.3",
+          "from": "10.92.0.10",
+          "to": "10.91.0.10"
+        }
+      ]
+    },
+    {
+      "id": "delegated_name",
+      "title": "A name somebody else answers for (authored)",
+      "customer": "Delta Media",
+      "reward": 1100,
+      "brief": "The client at 10.93.0.20 asks its resolver for app.media.pkt. The resolver does not know the name: it must hand the media.pkt zone to a second server at 10.93.0.53 that does, and the answer must be 10.93.0.80 and reachable.",
+      "hint": "On the resolver: 'dns delegate media.pkt 10.93.0.53'. On the second server: 'dns add app.media.pkt 10.93.0.80'. Point the client at the resolver with 'nameserver <resolver ip>'.",
+      "requirements": [
+        {
+          "kind": "has_address",
+          "ip": "10.93.0.53"
+        },
+        {
+          "kind": "has_address",
+          "ip": "10.93.0.80"
+        },
+        {
+          "kind": "resolves",
+          "from": "10.93.0.20",
+          "name": "app.media.pkt",
+          "to": "10.93.0.80"
+        }
+      ]
+    },
+    {
+      "id": "walled_tenant",
+      "title": "Same switch, no path (authored)",
+      "customer": "Epsilon Legal",
+      "reward": 800,
+      "brief": "Two tenants share one switch. Tenant A at 10.94.10.10 and 10.94.10.11 must reach each other; tenant B at 10.94.20.10 must reach neither of them, and the proof is the failed ping, not a promise.",
+      "hint": "VLAN 10 for the two A ports, VLAN 20 for B's port. Same switch, separate broadcast domains.",
+      "requirements": [
+        {
+          "kind": "vlan_access",
+          "vid": 10
+        },
+        {
+          "kind": "vlan_access",
+          "vid": 20
+        },
+        {
+          "kind": "reachable",
+          "from": "10.94.10.10",
+          "to": "10.94.10.11"
+        },
+        {
+          "kind": "not_reachable",
+          "from": "10.94.20.10",
+          "to": "10.94.10.10"
+        },
+        {
+          "kind": "not_reachable",
+          "from": "10.94.20.10",
+          "to": "10.94.10.11"
         }
       ]
     }
