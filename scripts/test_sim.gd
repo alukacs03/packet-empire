@@ -767,6 +767,14 @@ static func run() -> int:
 	var ls := CLI.new_session(c)
 	check(ls.prompt().begins_with("root@"), "Linux: prompt")
 	check(ls.exec("# a comment from a pasted script") == "", "Linux: a # comment line prints nothing")
+	check(ls.exec("ip link set dev eth0 up && hostname").strip_edges() == ls.exec("hostname").strip_edges(),
+		"Linux: && runs the right side after a successful left side")
+	var chain_fail := ls.exec("ip link set dev nope up && hostname")
+	check(("Cannot find device" in chain_fail or "does not exist" in chain_fail) and not chain_fail.contains(ls.exec("hostname")),
+		"Linux: && stops at the first failure")
+	check(ls.exec("hostname; hostname").count(ls.exec("hostname").strip_edges()) == 2, "Linux: ; runs both sides regardless")
+	ls.history.append("hostname")
+	check(ls.exec("history").contains("1  hostname"), "Linux: history lists what was typed, numbered")
 	ls.exec("ip addr add 192.168.9.1/24 dev eth0")
 	check("192.168.9.1/24" in c.ifaces[0].ips, "Linux: ip addr add")
 	ls.exec("ip addr del 192.168.9.1/24 dev eth0")
@@ -2228,6 +2236,31 @@ static func run() -> int:
 	cs.exec("end")
 	check(cs.exec("show startup-config").contains("No startup-config was found"), "cfg: nothing saved yet")
 	check(cs.exec("! a comment from a pasted config") == "" and cs.exec("!") == "", "cfg: EOS ignores ! comment lines the way a pasted running-config carries them")
+	cs.exec("conf t")
+	cs.exec("interface Ethernet3")
+	cs.exec("description uplink to core")
+	cs.exec("end")
+	var sec := cs.exec("show running-config | section interface Ethernet3")
+	check(sec.begins_with("interface Ethernet3") and "description uplink to core" in sec and "vlan 77" not in sec,
+		"pipe: | section prints the whole block whose header matches")
+	check(cs.exec("show running-config | section interface | exclude description").contains("interface Ethernet3")
+		and not cs.exec("show running-config | section interface | exclude description").contains("description"),
+		"pipe: stages chain, | section then | exclude")
+	check(cs.exec("show running-config | begin interface Ethernet3").begins_with("interface Ethernet3"), "pipe: | begin starts the output at the match")
+	check(cs.exec("show running-config | count").begins_with("Count: "), "pipe: | count prints the line count")
+	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n").begins_with("! ")
+		and "LEARN: Routing & gateways" in CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n"),
+		"hints: an EOS error gets a ! comment line with the article to read")
+	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "") == "", "hints: nothing under a command that worked")
+	check(CLI.learner_hint("linux", "ip route add 10.0.0.0/24 via 10.9.9.9", "Error: Nexthop has invalid gateway.\n").begins_with("# "),
+		"hints: a Linux error gets a # comment line")
+	check(CLI.learner_hint("ros", "/ip address add addres=1.2.3.4/24", "syntax error (line 1 column 17)\n").begins_with("# "),
+		"hints: a RouterOS error gets a # comment line")
+	check(CLI.topic_for("/ip address add address=10.0.0.1/24 interface=ether1") == "IP addresses & subnets"
+		and CLI.topic_for("show mac address-table") == "Switches & MAC learning" and CLI.topic_for("wg genkey") == "",
+		"hints: the topic map reads the command family across dialects")
+	cs.history.append("show version")
+	check(cs.exec("show history").contains("show version"), "help: show history lists the session's commands")
 	check("ip dhcp pool" not in cs.describe("ip ") and "ip vrf" not in cs.describe("ip ")
 		and "rollback" not in cs.describe("") and "acl permit" not in " ".join(PackedStringArray(cs.complete("acl "))),
 		"help: EOS ? and Tab list only real EOS syntax, the IOS and game-only aliases stay hidden")
@@ -9933,8 +9966,8 @@ static func run() -> int:
 	var filtered := sw_cli2.exec("show interfaces status | include connected")
 	check(filtered.contains("connected") and not filtered.contains("notconnect"),
 		"console: any show command can be filtered, because the tables are long now")
-	check(sw_cli2.exec("show interfaces status | include nonsense").contains("no lines matching"),
-		"console: a filter that matches nothing says so instead of printing nothing")
+	check(sw_cli2.exec("show interfaces status | include nonsense") == "",
+		"console: a filter that matches nothing prints nothing, the way EOS does")
 	var dx_rtr := Game.new_device("rtr-edge")
 	dx_rack2.slots[4] = dx_rtr
 	Game.connect_ifaces(dx_rtr.ifaces[0], dx_sw2.ifaces[2])

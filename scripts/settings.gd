@@ -12,6 +12,7 @@ var colourblind := false
 var sound := true
 var reduced_motion := false
 var show_everything := false
+var learner_hints := true  # a comment line under a console error, and the LEARN chip
 var language := "en"  # ui language; saves stay language-neutral
 
 func _ready() -> void:
@@ -32,6 +33,7 @@ func load_prefs() -> void:
 	sound = bool(data.get("sound", true))
 	reduced_motion = bool(data.get("reduced_motion", false))
 	show_everything = bool(data.get("show_everything", false))
+	learner_hints = bool(data.get("learner_hints", true))
 	language = String(data.get("language", "en"))
 	if language not in Loc.languages():
 		language = "en"
@@ -39,7 +41,7 @@ func load_prefs() -> void:
 func save_prefs() -> void:
 	Game.write_text_atomic(PATH, JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
 		"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion,
-		"show_everything": show_everything, "language": language}))
+		"show_everything": show_everything, "learner_hints": learner_hints, "language": language}))
 
 func apply() -> void:
 	if DisplayServer.get_name() != "headless":

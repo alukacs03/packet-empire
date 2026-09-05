@@ -292,7 +292,7 @@ func _children(path: String) -> Array:
 			seen[String(c.substr(path.length() + 1)).split(" ")[0]] = true
 	return seen.keys()
 
-const VERB_DESC := {"add": "Create a new item", "disable": "Disable items", "edit": "Edit value of item", "enable": "Enable items",
+const VERB_DESC := {"reset-counters": "Reset interface counters", "add": "Create a new item", "disable": "Disable items", "edit": "Edit value of item", "enable": "Enable items",
 	"export": "Print or save an export script that can be used to restore configuration", "find": "Find items by value",
 	"get": "Gets value of item's property", "print": "Print values of item properties", "remove": "Remove item", "set": "Change item properties",
 	"monitor": "Monitor interface status", "reboot": "Reboot the router", "save": "Save the configuration", "load": "Load the configuration",
@@ -1122,6 +1122,24 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					"switch1" if dev.type == "switch" else ""]
 				n += 1
 			return out
+		"interface ethernet reset-counters":
+			var targets: Array = []
+			if args.is_empty() and p.is_empty():
+				targets = dev.ifaces
+			else:
+				var one := _target(args, p)
+				if one == null:
+					return "input does not match any value of numbers\n"
+				targets = [one]
+			for ri: Net.Iface in targets:
+				ri.tx_frames = 0
+				ri.rx_frames = 0
+				ri.rx_errors = 0
+				ri.rx_crc = 0
+				ri.rx_giants = 0
+				ri.out_drops = 0
+				ri.collisions = 0
+			return ""
 		"interface ethernet monitor":
 			var i := _target(args, p)
 			if i == null:
@@ -2078,7 +2096,7 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "tool torch", "tool
 	"routing bfd configuration add", "routing bfd configuration remove", "routing bfd configuration print",
 	"routing bfd session print",
 	"interface print", "interface print stats", "interface set", "interface disable", "interface enable",
-	"interface ethernet print", "interface ethernet set", "interface ethernet monitor",
+	"interface ethernet print", "interface ethernet set", "interface ethernet monitor", "interface ethernet reset-counters",
 	"interface vlan add", "interface vlan remove", "interface vlan print",
 	"interface vrrp add", "interface vrrp remove", "interface vrrp print",
 	"interface wireguard add", "interface wireguard remove", "interface wireguard print",

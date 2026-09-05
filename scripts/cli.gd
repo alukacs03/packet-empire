@@ -122,16 +122,181 @@ static func unreachable_text(detail: String) -> String:
 		"admin": return "Packet filtered"
 	return "Destination Net Unreachable"
 
+## Learner hints: one shared table keyed by dialect and the first words of the
+## failing line. Printed by the console under the device's real error, on
+## its own line behind the dialect's comment marker, so it can never be
+## mistaken for device output; the device's exec() never prints it.
+const LEARN_HINTS := {
+	"eos": {
+		"ip address": "a switchport carries no address: 'no switchport' first, or put it on 'interface Vlan<n>'",
+		"ip route": "a switch forwards between subnets only after 'ip routing'; the next hop must be on a connected subnet",
+		"switchport": "only a switch port has switchport commands; on a router the port is routed",
+		"vlan": "'vlan <n>' is a global config command: 'configure' first, then 'vlan 10'",
+		"shutdown": "'shutdown' and 'no shutdown' live inside 'interface <name>'",
+		"no shutdown": "'shutdown' and 'no shutdown' live inside 'interface <name>'",
+		"neighbor": "'neighbor' lives inside 'router bgp <asn>'",
+		"network": "'network' lives inside 'router bgp <asn>' or 'router ospf <n>'",
+		"interface": "EOS names are Ethernet1, Vlan10, Management1, Port-Channel1; 'interface Ethernet1' or 'interface et1'",
+		"ping": "no reply: is the target in a connected subnet or reachable through a route, and is the port up?",
+	},
+	"ros": {
+		"ip address add": "address=a.b.c.d/len interface=etherN; the prefix length rides on the address",
+		"ip route add": "dst-address=0.0.0.0/0 gateway=a.b.c.d; the gateway must be on a connected subnet",
+		"interface bridge vlan add": "bridge=bridge1 vlan-ids=N tagged=etherX untagged=etherY",
+		"interface bridge port set": "[find interface=etherN] pvid=N sets the access VLAN",
+		"interface bridge port add": "bridge=bridge1 interface=etherN pvid=N",
+		"ping": "no reply: is the target in a connected subnet or reachable through /ip route, and is the port up?",
+	},
+	"linux": {
+		"ip route add": "ip route add <dst>/<len> via <gw> dev eth0; the gateway must be on a connected subnet",
+		"ip route": "ip route add <dst>/<len> via <gw> dev eth0",
+		"ip addr add": "ip addr add a.b.c.d/24 dev eth0: prefix length and the dev keyword are both needed",
+		"ip address add": "ip addr add a.b.c.d/24 dev eth0: prefix length and the dev keyword are both needed",
+		"ip link set": "ip link set dev eth0 up",
+		"ifconfig": "net-tools is not on Debian 12: ip addr, ip route, ip link",
+		"route": "net-tools is not on Debian 12: ip route",
+		"netstat": "net-tools is not on Debian 12: ss -tlnp",
+		"ping": "Network is unreachable means no route (ip route add default via <gw>); Destination Host Unreachable means no ARP reply on the connected subnet",
+	},
+}
+
+## command family -> field manual article, across dialects
+const LEARN_TOPICS := [
+	[["ip address", "ip addr", "/ip address", "ip -6 addr", "ipv6 address"], "IP addresses & subnets"],
+	[["ip route", "/ip route", "ip -6 route", "ipv6 route", "traceroute", "tracepath", "/tool traceroute"], "Routing & gateways"],
+	[["switchport mode trunk", "switchport trunk", "show interfaces trunk", "tagged="], "Trunks"],
+	[["vlan", "switchport", "/interface bridge vlan", "/interface bridge port", "type vlan", "pvid"], "@vlans"],
+	[["spanning-tree", "/interface bridge port monitor", "bpduguard", "portfast"], "Spanning tree"],
+	[["router ospf", "/routing ospf", "ospf"], "OSPF"],
+	[["router bgp", "/routing bgp", "bgp"], "BGP & the internet"],
+	[["ip nat", "/ip firewall nat", "iptables", "nft", "masquerade"], "NAT"],
+	[["dhcp", "dhclient", "/ip dhcp", "isc-dhcp-server"], "DHCP"],
+	[["arp", "ip neigh", "/ip arp", "neighbor"], "ARP"],
+	[["mac address-table", "/interface bridge host", "bridge fdb"], "Switches & MAC learning"],
+]
+
+static func dialect_of(session) -> String:
+	if session is ROS:
+		return "ros"
+	if session is LinuxCLI:
+		return "linux"
+	return "eos"
+
+static func looks_like_error(dialect: String, out: String) -> bool:
+	match dialect:
+		"eos":
+			return out.begins_with("% ")
+		"ros":
+			for mark in ["syntax error", "bad command name", "no such command", "input does not match", "invalid value", "expected end", "failure:", "no such item", "ambiguous"]:
+				if mark in out:
+					return true
+			return false
+		_:
+			for mark in ["-bash:", "RTNETLINK answers", "Error:", "Cannot ", "cannot ", "usage:", "Usage:", "No such", "not found", "unreachable", "Unreachable", "Invalid", "100% packet loss"]:
+				if mark in out:
+					return true
+			return false
+
+static func learner_hint(dialect: String, line: String, out: String) -> String:
+	## "" unless the line failed and the table knows the family; else one
+	## comment line: marker, hint, and the field manual article to read
+	if not looks_like_error(dialect, out):
+		return ""
+	var norm := line.strip_edges().to_lower().trim_prefix("/").replace("  ", " ")
+	var table: Dictionary = LEARN_HINTS.get(dialect, {})
+	var best := ""
+	for key in table:
+		if norm.begins_with(String(key)) and String(key).length() > best.length():
+			best = String(key)
+	if best == "":
+		return ""
+	var marker := "!" if dialect == "eos" else "#"
+	var topic := topic_for(line)
+	return "%s %s%s\n" % [marker, table[best], "  (LEARN: %s)" % topic if topic != "" else ""]
+
+static func topic_for(line: String) -> String:
+	## the field manual article for what was typed, or ""
+	var norm := line.strip_edges().to_lower()
+	var best := ""
+	var best_len := 0
+	for row in LEARN_TOPICS:
+		for key in row[0]:
+			var k := String(key).to_lower()
+			if (norm.begins_with(k.trim_prefix("/")) or norm.begins_with(k) or (" " + k) in (" " + norm)) and k.length() > best_len:
+				best = String(row[1])
+				best_len = k.length()
+	if best == "@vlans":
+		return Loc.t("pedia.vlans.title")
+	return best
+
 static func filter_output(text: String, needle: String) -> String:
-	## Keeps the lines that match, and says so when none do, rather than
-	## printing nothing and leaving somebody wondering.
-	var kept: Array = []
-	for line: String in text.split("\n"):
-		if needle.to_lower() in line.to_lower():
-			kept.append(line)
-	if kept.is_empty():
-		return "(no lines matching '%s')\n" % needle
-	return "\n".join(PackedStringArray(kept)) + "\n"
+	## EOS "| include": the lines that match, nothing when none do
+	return apply_pipe_stages(text, [["include", needle]])
+
+static func parse_pipe_stages(tail: String) -> Array:
+	## "section bgp | exclude neighbor" -> [["section","bgp"],["exclude","neighbor"]]
+	var stages: Array = []
+	for piece in tail.split("|"):
+		var parts := String(piece).strip_edges().split(" ", false)
+		if parts.is_empty():
+			continue
+		var verb := String(parts[0]).to_lower()
+		match verb:
+			"i", "grep":
+				verb = "include"
+			"e":
+				verb = "exclude"
+			"b":
+				verb = "begin"
+			"s":
+				verb = "section"
+			"c":
+				verb = "count"
+		stages.append([verb, " ".join(PackedStringArray(Array(parts).slice(1)))])
+	return stages
+
+static func apply_pipe_stages(text: String, stages: Array) -> String:
+	## the EOS output filters, applied in order: include, exclude, begin,
+	## section (whole config blocks whose header matches), count
+	var lines: Array = Array(text.split("\n"))
+	if not lines.is_empty() and String(lines[-1]) == "":
+		lines.pop_back()
+	for st in stages:
+		var verb := String(st[0])
+		var needle := String(st[1]).to_lower()
+		var kept: Array = []
+		match verb:
+			"include":
+				for l in lines:
+					if needle in String(l).to_lower():
+						kept.append(l)
+			"exclude":
+				for l in lines:
+					if needle not in String(l).to_lower():
+						kept.append(l)
+			"begin":
+				var started := false
+				for l in lines:
+					if not started and needle in String(l).to_lower():
+						started = true
+					if started:
+						kept.append(l)
+			"section":
+				var keep := false
+				for l in lines:
+					var ls := String(l)
+					if not ls.begins_with(" ") and not ls.begins_with("!"):
+						keep = needle in ls.to_lower()
+					if keep and ls != "":
+						kept.append(ls)
+			"count":
+				return "Count: %d lines\n" % lines.size()
+			_:
+				return "% Invalid input\n"
+		lines = kept
+	if lines.is_empty():
+		return ""
+	return "\n".join(PackedStringArray(lines)) + "\n"
 
 static func fmt_ping_eos(dev: Net.NDevice, target: String, count: int, payload: int) -> String:
 	## the ping an Arista box prints: Linux iputils with a 72-byte payload,
@@ -247,6 +412,7 @@ static func arp_iface_name(dev: Net.NDevice, ip: String) -> String:
 	return dev.ifaces[0].name if not dev.ifaces.is_empty() else "-"
 
 class Session:
+	var history: Array = []  # what was typed at this session, oldest first
 	var dev: Net.NDevice
 	var pending_ssh: Net.NDevice = null
 	var wants_exit := false
@@ -484,6 +650,11 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "interfaces", "status"], "h": _show_if_status},
 			{"m": EP, "p": ["show", "interfaces", "transceiver"], "h": _show_transceiver},
 			{"m": EP, "p": ["show", "clock"], "h": _show_clock},
+			{"m": EP, "p": ["show", "history"], "h": func(_r):
+				var out := ""
+				for h in history:
+					out += "  %s\n" % h
+				return out},
 			{"m": ["config", "if", "vlan"], "p": ["vlan"], "h": _cfg_vlan, "dyn": _vlan_ids},
 			{"m": ["config"], "p": ["no", "vlan"], "h": _cfg_no_vlan, "dyn": _vlan_ids},
 			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["interface"], "h": _cfg_interface, "dyn": _if_names},
@@ -792,19 +963,16 @@ class EOS extends Session:
 
 	func exec(line: String) -> String:
 		# output filtering, the way every real console has it
-		var filter := ""
+		var stages: Array = []
 		var pipe := line.find("|")
 		if pipe > 0:
-			var tail := line.substr(pipe + 1).strip_edges()
-			var parts := tail.split(" ", false)
-			if parts.size() >= 2 and String(parts[0]) in ["include", "i", "grep"]:
-				filter = " ".join(PackedStringArray(Array(parts).slice(1)))
-				line = line.substr(0, pipe).strip_edges()
+			stages = CLI.parse_pipe_stages(line.substr(pipe + 1))
+			line = line.substr(0, pipe).strip_edges()
 		var toks := Array(line.strip_edges().split(" ", false))
 		if toks.is_empty() or String(toks[0]).begins_with("!"):
 			return ""  # a comment line, the way a pasted running-config carries them
-		if filter != "":
-			return CLI.filter_output(exec(line), filter)
+		if not stages.is_empty():
+			return CLI.apply_pipe_stages(exec(line), stages)
 		if toks.size() > 1 and String(toks[0]) == "do" and mode not in ["exec", "priv"]:
 			toks.pop_front()  # IOS needs 'do' for a show inside config; EOS tolerates it
 			line = " ".join(PackedStringArray(toks))

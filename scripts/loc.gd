@@ -36,6 +36,7 @@ const CATALOG := {
 	"settings.colourblind": {"en": "Colourblind-friendly status colours",
 		"hu": "Színtévesztő-barát állapotszínek"},
 	"settings.motion": {"en": "Reduce motion", "hu": "Kevesebb mozgás"},
+	"settings.hints": {"en": "Learner hints under console errors", "hu": "Tanulói tippek a konzol hibái alatt"},
 	"settings.toolbox": {"en": "Show the full toolbox from the start",
 		"hu": "Mutasd a teljes eszköztárat az elejétől"},
 	"settings.language": {"en": "Language", "hu": "Nyelv"},

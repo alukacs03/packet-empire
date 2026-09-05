@@ -14,6 +14,38 @@ func banner() -> String:
 func prompt() -> String:
 	return "root@%s:~#" % dev.name
 
+func _split_chain(line: String) -> Array:
+	## "a && b; c" -> ["a", "&&", "b", ";", "c"]; quotes and the tcpdump filter are left alone
+	if line.begins_with("tcpdump") or "\"" in line or "'" in line:
+		return [line]
+	var parts: Array = []
+	var cur := ""
+	var i := 0
+	while i < line.length():
+		if line.substr(i, 2) == "&&":
+			parts.append(cur.strip_edges())
+			parts.append("&&")
+			cur = ""
+			i += 2
+			continue
+		if line[i] == ";":
+			parts.append(cur.strip_edges())
+			parts.append(";")
+			cur = ""
+			i += 1
+			continue
+		cur += line[i]
+		i += 1
+	parts.append(cur.strip_edges())
+	return parts.filter(func(p): return p != "")
+
+func _looks_failed(out: String) -> bool:
+	## the shell's idea of a non-zero exit, read off the output this world prints
+	for mark in ["-bash:", "RTNETLINK answers", "Error:", "Cannot ", "cannot ", "usage:", "Usage:", "No such", "not found", "Failed", "failed", "invalid", "Invalid"]:
+		if mark in out:
+			return true
+	return false
+
 func exec(line: String) -> String:
 	# a pipe into grep, head, tail or wc filters the left side's output
 	var pipe := line.find("|")
@@ -21,9 +53,27 @@ func exec(line: String) -> String:
 		var tail := Array(line.substr(pipe + 1).strip_edges().split(" ", false))
 		var left := exec(line.substr(0, pipe).strip_edges())
 		return _pipe(left, tail)
+	# chaining: a ; runs both, a && runs the right side only when the left succeeded
+	var chain := _split_chain(line)
+	if chain.size() > 1:
+		var out := ""
+		for k in chain.size():
+			var part: String = chain[k]
+			if part == "&&" or part == ";":
+				continue
+			var res := exec(part)
+			out += res
+			if k + 1 < chain.size() and chain[k + 1] == "&&" and _looks_failed(res):
+				break
+		return out
 	var t := Array(line.strip_edges().split(" ", false))
 	if t.is_empty() or String(t[0]).begins_with("#"):
 		return ""  # a comment line, the way a pasted script carries them
+	if t.size() == 1 and String(t[0]) == "history":
+		var hout := ""
+		for n in history.size():
+			hout += "%5d  %s\n" % [n + 1, history[n]]
+		return hout
 	if String(t[0]) == "sudo":
 		t = t.slice(1)
 		if t.is_empty():

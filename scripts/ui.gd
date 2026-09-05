@@ -175,6 +175,9 @@ var cur_dev: Net.NDevice
 var cur_if: Net.Iface
 var cli_session: CLI.Session
 var cli_stack: Array = []  # ssh nesting
+var cli_learn_btn: Button
+var _last_cli_line := ""
+var cli_sessions := {}  # device name -> {session, stack}: a console survives closing the panel, like SSH does
 var cli_history: Array = []
 var cli_hist_idx := 0
 var money_lbl: Label
@@ -1445,6 +1448,19 @@ func _build_dev_overlay() -> void:
 	cli_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cli_toggle.pressed.connect(_toggle_cli)
 	btn_row.add_child(cli_toggle)
+	cli_learn_btn = Button.new()
+	cli_learn_btn.text = "LEARN ↗"
+	cli_learn_btn.tooltip_text = "Open the field manual at the article for what you last typed"
+	cli_learn_btn.visible = false
+	cli_learn_btn.pressed.connect(func() -> void:
+		var topic := CLI.topic_for(_last_cli_line)
+		open_pedia()
+		var topics := Pedia.topics()
+		for ti in topics.size():
+			if String(topics[ti][0]) == topic:
+				_show_pedia_entry(ti)
+				return)
+	btn_row.add_child(cli_learn_btn)
 	cap_toggle = Button.new()
 	cap_toggle.text = "Packets ⇅"
 	cap_toggle.tooltip_text = "Live capture (tcpdump) of this device"
@@ -6077,6 +6093,7 @@ func _open_settings_card() -> void:
 		["settings.colourblind", func() -> bool: return Prefs.colourblind, func(on: bool) -> void: Prefs.colourblind = on, ""],
 		["settings.motion", func() -> bool: return Prefs.reduced_motion, func(on: bool) -> void: Prefs.reduced_motion = on, "Replaces traveling highlights and decorative movement with static confirmations"],
 		["settings.toolbox", func() -> bool: return Prefs.show_everything, func(on: bool) -> void: Prefs.show_everything = on, "For experienced players: reveal every navigation area without waiting for campaign unlocks"],
+		["settings.hints", func() -> bool: return Prefs.learner_hints, func(on: bool) -> void: Prefs.learner_hints = on, "A comment line under a console error that says what to try, and a LEARN chip that opens the field manual. Off for the real thing."],
 	]
 	for row in rows:
 		var cbtn := CheckButton.new()
@@ -6359,13 +6376,23 @@ func _toggle_cli() -> void:
 		cli_out.custom_minimum_size.y = clampf(room, 120.0, 220.0)  # never taller than what is left under the header
 		_ensure_visible(cli_box)  # the console opens below the fold otherwise
 		cli_toggle.text = "Close console  ▤"
-		cli_session = CLI.new_session(cur_dev)
-		cli_stack.clear()
-		cli_history.clear()
-		cli_hist_idx = 0
+		var kept: Dictionary = cli_sessions.get(cur_dev.name, {})
+		var resumed: bool = not kept.is_empty() and is_instance_valid(kept["session"].dev) and kept["session"].dev == cur_dev
+		if resumed:
+			cli_session = kept["session"]
+			cli_stack = kept["stack"]
+		else:
+			cli_session = CLI.new_session(cur_dev)
+			cli_stack = []
+			cli_sessions[cur_dev.name] = {"session": cli_session, "stack": cli_stack}
+		cli_history = cli_session.history
+		cli_hist_idx = cli_history.size()
 		cli_prompt.text = cli_session.prompt() + " "
 		cli_out.clear()
-		cli_out.append_text(cli_session.banner())
+		if resumed:
+			cli_out.append_text("(session resumed: %s)\n" % cli_session.prompt())
+		else:
+			cli_out.append_text(cli_session.banner())
 		var cli_away := Game.elsewhere(cur_dev)
 		if cli_away != "":
 			# you are typing at a machine in another building
@@ -6382,7 +6409,7 @@ func _toggle_cli() -> void:
 		cli_out.custom_minimum_size.y = 0
 		cli_toggle.text = "Open console  ▤"
 		cli_out.clear()
-		cli_session = null
+		cli_session = null  # the session object stays in cli_sessions until logout or exit
 		_fit_cards.call_deferred()
 
 func _cli_key(e: InputEvent) -> void:
@@ -6461,6 +6488,8 @@ func _cli_submit(cmd: String) -> void:
 		cli_out.append_text("% " + cur_dev.name + " is unreachable from here.\n")
 		return
 	cli_in.call_deferred("grab_focus")
+	if cmd.strip_edges() == "!!" and not cli_history.is_empty():
+		cmd = String(cli_history[-1])  # bash: the previous command again
 	if cmd.strip_edges() != "":
 		cli_history.append(cmd)
 		cli_hist_idx = cli_history.size()
@@ -6469,7 +6498,17 @@ func _cli_submit(cmd: String) -> void:
 		return
 	cli_out.append_text("%s %s\n" % [cli_session.prompt(), cmd])
 	Sim.last_trace = []
-	cli_out.append_text(cli_session.exec(cmd))
+	var cli_result: String = cli_session.exec(cmd)
+	cli_out.append_text(cli_result)
+	_last_cli_line = cmd
+	if Prefs.learner_hints:
+		var hint := CLI.learner_hint(CLI.dialect_of(cli_session), cmd, cli_result)
+		if hint != "":
+			cli_out.append_text("[color=#8da7ba]%s[/color]" % hint)
+	if cli_learn_btn != null:
+		var topic := CLI.topic_for(cmd)
+		cli_learn_btn.visible = topic != "" and Prefs.learner_hints
+		cli_learn_btn.text = "LEARN: %s ↗" % topic if topic != "" else "LEARN ↗"
 	if cli_session.pending_ssh:
 		var target: Net.NDevice = cli_session.pending_ssh
 		cli_session.pending_ssh = null
@@ -6479,7 +6518,13 @@ func _cli_submit(cmd: String) -> void:
 	elif cli_session.wants_exit:
 		cli_session.wants_exit = false
 		if cli_stack.is_empty():
-			cli_out.append_text("logout (session stays open)\n")
+			cli_out.append_text("logout\n")
+			cli_sessions.erase(cur_dev.name)  # a real logout: the next open starts fresh
+			cli_session = CLI.new_session(cur_dev)
+			cli_sessions[cur_dev.name] = {"session": cli_session, "stack": cli_stack}
+			cli_history = cli_session.history
+			cli_hist_idx = 0
+			cli_out.append_text(cli_session.banner())
 		else:
 			cli_session = cli_stack.pop_back()
 			cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)

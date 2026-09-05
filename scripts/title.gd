@@ -353,6 +353,14 @@ func show_settings() -> void:
 		Prefs.show_everything = on
 		Prefs.apply())
 	panel_box.add_child(toolbox)
+	var hints := CheckButton.new()
+	hints.text = Loc.t("settings.hints")
+	hints.tooltip_text = "A comment line under a console error that says what to try, and a LEARN chip that opens the field manual"
+	hints.button_pressed = Prefs.learner_hints
+	hints.toggled.connect(func(on: bool) -> void:
+		Prefs.learner_hints = on
+		Prefs.apply())
+	panel_box.add_child(hints)
 	# label and buttons on one line: the pane is short and the scale row was
 	# being pushed off the bottom of it
 	var lang_row := HBoxContainer.new()
