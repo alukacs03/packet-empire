@@ -27,7 +27,7 @@ static func start(n_breaks := 3, rng_seed := -1) -> void:
 		rng.seed = rng_seed
 	else:
 		rng.randomize()
-	match rng.randi() % 5:
+	match rng.randi() % 6:
 		0:
 			_build()
 		1:
@@ -36,6 +36,8 @@ static func start(n_breaks := 3, rng_seed := -1) -> void:
 			_build_services()
 		3:
 			_build_two_rooms()
+		4:
+			_build_dynamic()
 		_:
 			_build_core()
 	_break(n_breaks, rng_seed)
@@ -173,6 +175,48 @@ static func _build_core() -> void:
 	_cast = {"sw1": sw1, "a": a, "b": b, "rtr": rt1, "rtr2": rt2,
 		"access_a": sw1.ifaces[0], "route_dev": rt1}
 
+static func _build_dynamic() -> void:
+	## the same three subnets, but OSPF carries the routes and a firewall
+	## guards the far office: what breaks here is configuration, not cable
+	scenario = "Dynamic core: two routers running OSPF, a firewall in front of the second office."
+	var r1 := Game.add_rack(Vector2i(0, 0))
+	var r2 := Game.add_rack(Vector2i(1, 0))
+	var rt1 := Game.new_device("rtr-edge")
+	var rt2 := Game.new_device("rtr-edge")
+	var fw := Game.new_device("fw-1")
+	var a := Game.new_device("srv-1")
+	var b := Game.new_device("srv-1")
+	r1.slots[0] = rt1
+	r1.slots[2] = a
+	r2.slots[0] = rt2
+	r2.slots[2] = fw
+	r2.slots[3] = b
+	Game.connect_ifaces(a.ifaces[0], rt1.ifaces[0])
+	Game.connect_ifaces(rt1.ifaces[1], rt2.ifaces[1])
+	Game.connect_ifaces(rt2.ifaces[0], fw.ifaces[0])
+	Game.connect_ifaces(fw.ifaces[1], b.ifaces[0])
+	Game.add_ip(a.ifaces[0], "10.73.1.10/24")
+	Game.add_ip(rt1.ifaces[0], "10.73.1.1/24")
+	Game.add_ip(rt1.ifaces[1], "10.73.9.1/30")
+	Game.add_ip(rt2.ifaces[1], "10.73.9.2/30")
+	Game.add_ip(rt2.ifaces[0], "10.73.8.1/30")
+	Game.add_ip(fw.ifaces[0], "10.73.8.2/30")
+	Game.add_ip(fw.ifaces[1], "10.73.2.1/24")
+	Game.add_ip(b.ifaces[0], "10.73.2.10/24")
+	Game.add_static_route(a, "0.0.0.0", 0, "10.73.1.1")
+	Game.add_static_route(b, "0.0.0.0", 0, "10.73.2.1")
+	Game.add_static_route(fw, "0.0.0.0", 0, "10.73.8.1")
+	rt1.ospf = {"networks": ["10.73.0.0/16"]}
+	rt2.ospf = {"networks": ["10.73.0.0/16"]}
+	# the office behind the firewall is a static on both routers: OSPF only
+	# carries what the routers own, which is the transit and the near office
+	Game.add_static_route(rt2, "10.73.2.0", 24, "10.73.8.2")
+	Game.add_static_route(rt1, "10.73.2.0", 24, "10.73.9.2")
+	fw.acls = [{"action": "permit", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0}]
+	targets = [["10.73.1.10", "10.73.2.10"]]
+	_cast = {"a": a, "b": b, "rtr": rt1, "rtr2": rt2, "ospf_rtr": rt2, "fw": fw,
+		"route_dev": rt2, "access_a": rt1.ifaces[0]}
+
 static func _build() -> void:
 	## two switched segments joined by a trunk, plus a routed second subnet
 	scenario = "Flat LAN plus a routed subnet behind the gateway."
@@ -286,6 +330,25 @@ static func _break(n: int, rng_seed: int) -> void:
 			func() -> void:
 				trunk_if.tagged_vlans = [42]
 				_undo.append(func() -> void: trunk_if.tagged_vlans = [])])
+		pool.append(["one end of the trunk was given a different native VLAN",
+			func() -> void:
+				var was_native: int = trunk_if.untagged_vlan
+				trunk_if.untagged_vlan = 99
+				_undo.append(func() -> void: trunk_if.untagged_vlan = was_native)])
+	if _cast.has("ospf_rtr"):
+		var ospf_dev: Net.NDevice = _cast["ospf_rtr"]
+		pool.append(["%s's OSPF network statement no longer covers the transit link" % ospf_dev.name,
+			func() -> void:
+				var was_nets: Array = ospf_dev.ospf["networks"].duplicate()
+				ospf_dev.ospf["networks"] = ["10.73.2.0/24"]
+				_undo.append(func() -> void: ospf_dev.ospf["networks"] = was_nets)])
+	if _cast.has("fw"):
+		var fw_dev: Net.NDevice = _cast["fw"]
+		pool.append(["a deny was inserted above the permit on %s" % fw_dev.name,
+			func() -> void:
+				var was_acls: Array = fw_dev.acls.duplicate(true)
+				fw_dev.acls.insert(0, {"action": "deny", "src": "10.73.1.0", "splen": 24, "dst": "0.0.0.0", "dplen": 0})
+				_undo.append(func() -> void: fw_dev.acls = was_acls)])
 	if _cast.has("a"):
 		var ip_srv: Net.NDevice = _cast["a"]
 		pool.append(["%s was readdressed into the wrong subnet" % ip_srv.name,
