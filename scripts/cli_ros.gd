@@ -292,7 +292,7 @@ func _children(path: String) -> Array:
 			seen[String(c.substr(path.length() + 1)).split(" ")[0]] = true
 	return seen.keys()
 
-const VERB_DESC := {"reset-counters": "Reset interface counters", "add": "Create a new item", "disable": "Disable items", "edit": "Edit value of item", "enable": "Enable items",
+const VERB_DESC := {"reset-counters": "Reset interface counters", "move": "Move item to another position", "add": "Create a new item", "disable": "Disable items", "edit": "Edit value of item", "enable": "Enable items",
 	"export": "Print or save an export script that can be used to restore configuration", "find": "Find items by value",
 	"get": "Gets value of item's property", "print": "Print values of item properties", "remove": "Remove item", "set": "Change item properties",
 	"monitor": "Monitor interface status", "reboot": "Reboot the router", "save": "Save the configuration", "load": "Load the configuration",
@@ -805,6 +805,97 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					_ros_filter_apply()
 					return ""
 			return "no such item\n"
+		"ip firewall filter set", "ip firewall filter disable", "ip firewall filter enable", "ip firewall filter move":
+			var rules: Array = dev.services.get("ros_filter", [])
+			var err := _edit_rows(rules, path, args, p, PARAMS["ip firewall filter add"])
+			if err != "":
+				return err
+			dev.services["ros_filter"] = rules
+			_ros_filter_apply()
+			return ""
+		"ip firewall nat set", "ip firewall nat disable", "ip firewall nat enable", "ip firewall nat move":
+			var rules: Array = dev.services.get("nat", {}).get("rules", [])
+			var before: Array = rules.duplicate(true)
+			var err := _edit_rows(rules, path, args, p, PARAMS["ip firewall nat add"])
+			if err != "":
+				return err
+			# the outside mark on the port follows the rules that are in force
+			for rule in before:
+				if _iface(String(rule.get("iface", ""))) != null:
+					_iface(String(rule.get("iface", ""))).nat = ""
+			for rule in rules:
+				if rule.has("out-interface"):
+					rule["iface"] = String(rule["out-interface"])
+					rule.erase("out-interface")
+				if String(rule.get("kind", "")) == "masquerade" and String(rule.get("disabled", "no")) != "yes" and _iface(String(rule.get("iface", ""))) != null:
+					_iface(String(rule["iface"])).nat = "outside"
+			Game.topology_changed.emit()
+			return ""
+		"routing ospf instance set":
+			if dev.ospf.is_empty():
+				return "no such item\n"
+			if not (args.has("0") or args.has(String(dev.ospf.get("instance", ""))) or p.has("name")):
+				return "no such item\n"
+			if p.has("router-id"):
+				dev.ospf["router_id"] = String(p["router-id"])
+			if p.has("name"):
+				dev.ospf["instance"] = String(p["name"])
+			Game.topology_changed.emit()
+			return ""
+		"routing ospf area set":
+			var areas: Dictionary = dev.ospf.get("areas", {})
+			var keys := areas.keys()
+			var target_area := ""
+			for a in args:
+				if String(a).is_valid_int() and int(a) >= 0 and int(a) < keys.size():
+					target_area = String(keys[int(a)])
+				elif areas.has(String(a)):
+					target_area = String(a)
+			if target_area == "":
+				return "no such item\n"
+			if p.has("area-id"):
+				areas[target_area] = String(p["area-id"])
+			if p.has("name") and String(p["name"]) != target_area:
+				areas[String(p["name"])] = areas[target_area]
+				areas.erase(target_area)
+			dev.ospf["areas"] = areas
+			Game.topology_changed.emit()
+			return ""
+		"ip pool set":
+			var pools: Dictionary = dev.services.get("ros_dhcp", {}).get("pools", {})
+			var pkeys := pools.keys()
+			var pool_name := ""
+			for a in args:
+				if String(a).is_valid_int() and int(a) >= 0 and int(a) < pkeys.size():
+					pool_name = String(pkeys[int(a)])
+				elif pools.has(String(a)):
+					pool_name = String(a)
+			if pool_name == "":
+				return "no such item\n"
+			if p.has("ranges"):
+				var rng := String(p["ranges"]).split("-")
+				if rng.size() != 2 or not String(rng[0]).is_valid_ip_address() or not String(rng[1]).is_valid_ip_address():
+					return "invalid value for argument ranges\n"
+				pools[pool_name] = [String(rng[0]), String(rng[1])]
+			_ros_dhcp_assemble()
+			return ""
+		"ip dhcp-server set":
+			var rd: Dictionary = dev.services.get("ros_dhcp", {})
+			if not rd.has("server"):
+				return "no such item\n"
+			if not (args.has("0") or args.has(String(rd["server"].get("name", ""))) or p.has("name")):
+				return "no such item\n"
+			if p.has("interface"):
+				if _iface(String(p["interface"])) == null:
+					return "input does not match any value of interface\n"
+				rd["server"]["iface"] = String(p["interface"])
+			if p.has("address-pool"):
+				rd["server"]["pool"] = String(p["address-pool"])
+			if p.has("name"):
+				rd["server"]["name"] = String(p["name"])
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
 		"ip firewall filter print":
 			var out := "Flags: X - disabled, I - invalid; D - dynamic\n"
 			var n := 0
@@ -813,7 +904,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				for k in ["chain", "action", "protocol", "src-address", "dst-address", "dst-port", "src-port", "in-interface", "out-interface", "in-interface-list", "connection-state", "comment"]:
 					if rule.has(k):
 						text += " %s=%s" % [k, ("\"%s\"" % rule[k]) if k == "comment" else rule[k]]
-				out += " %d   %s log=no log-prefix=\"\"\n" % [n, text.strip_edges()]
+				out += " %d %s %s log=no log-prefix=\"\"\n" % [n, "X" if String(rule.get("disabled", "no")) == "yes" else " ", text.strip_edges()]
 				n += 1
 			return out
 		"interface list add":
@@ -1585,9 +1676,9 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"ip firewall nat print":
 			var out := "Flags: X - disabled, I - invalid; D - dynamic\n"
 			var n := 0
-			for rule in Sim.nat_rules(dev):
+			for rule in dev.services.get("nat", {}).get("rules", []):
 				if String(rule.get("kind", "")) == "masquerade":
-					out += " %d   chain=srcnat action=masquerade out-interface=%s\n" % [n, rule["iface"]]
+					out += " %d %s chain=srcnat action=masquerade out-interface=%s\n" % [n, "X" if String(rule.get("disabled", "no")) == "yes" else " ", rule["iface"]]
 					n += 1
 			return out
 		"ip firewall address-list add":
@@ -1632,8 +1723,11 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					out += "%-3d %-11s %-18s %s\n" % [n, lname, addr, Time.get_datetime_string_from_system(false, true).replace("T", " ")]
 					n += 1
 			return out if n > 0 else _empty("Flags: X - disabled, D - dynamic\n")
-		"ip route add":
-			var dst: String = p.get("dst-address", "0.0.0.0/0")
+		"ip route add", "ipv6 route add":
+			var want_v6 := path.begins_with("ipv6")
+			var dst: String = p.get("dst-address", "::/0" if want_v6 else "0.0.0.0/0")
+			if Net.is_v6(dst) != want_v6 or (p.has("gateway") and Net.is_v6(String(p["gateway"])) != want_v6):
+				return "invalid value for argument %s\n" % ("dst-address" if Net.is_v6(dst) != want_v6 else "gateway")
 			var ad := 1
 			if p.has("distance"):
 				if not String(p["distance"]).is_valid_int():
@@ -1647,12 +1741,12 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			if Game.add_static_route(dev, parts[0], int(parts[1]), p["gateway"], "", ad):
 				return ""
 			return "invalid value for argument gateway\n"
-		"ip route remove", "ip route set":
+		"ip route remove", "ip route set", "ipv6 route remove", "ipv6 route set":
 			var dst2: String = p.get("dst-address", "") if path.ends_with("remove") else ""
 			var chosen := {}
 			var n := 0
 			for e in _route_rows():
-				if e["src"] != "S":
+				if e["src"] != "S" or Net.is_v6(String(e["prefix"])) != path.begins_with("ipv6"):
 					continue
 				if str(n) in args or (dst2 != "" and dst2 == "%s/%d" % [e["prefix"], int(e["plen"])]):
 					chosen = e
@@ -1670,10 +1764,12 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					Game.add_static_route(dev, chosen["prefix"], int(chosen["plen"]), chosen["next_hop"], "", int(chosen["ad"]))
 					return "invalid value for argument gateway\n"
 			return ""
-		"ip route print":
+		"ip route print", "ipv6 route print":
 			var out := "Flags: D - DYNAMIC; A - ACTIVE; c - CONNECT, s - STATIC, o - OSPF, b - BGP\nColumns: DST-ADDRESS, GATEWAY, DISTANCE\n#      DST-ADDRESS        GATEWAY          DISTANCE\n"
 			var n := 0
 			for e in _route_rows():
+				if Net.is_v6(String(e["prefix"])) != path.begins_with("ipv6"):
+					continue
 				var flags := ("D" if e["src"] != "S" else " ") + ("A" if bool(e["active"]) else " ") + String(e["src"]).to_lower()
 				var gw: String = e["iface"].name if e["src"] == "C" else String(e["next_hop"])
 				# only what somebody added has a number; dynamic routes cannot be addressed
@@ -1915,7 +2011,7 @@ func _ros_filter_apply() -> void:
 	var seq := 10
 	var any := false
 	for rule in dev.services.get("ros_filter", []):
-		if String(rule["chain"]) != "forward":
+		if String(rule["chain"]) != "forward" or String(rule.get("disabled", "no")) == "yes":
 			continue
 		any = true
 		var entry := {"action": "permit" if String(rule["action"]) in ["accept", "fasttrack-connection", "passthrough"] else "deny",
@@ -1944,6 +2040,43 @@ func _ros_filter_apply() -> void:
 			groups.erase(i.name)
 	dev.services["acl_groups"] = groups
 	Game.topology_changed.emit()
+
+func _edit_rows(rows: Array, path: String, args: Array, p: Dictionary, allowed: Array) -> String:
+	## set / disable / enable / move on a numbered list, the way every RouterOS
+	## menu with rows works: the number is the one print shows
+	var verb := path.split(" ")[-1]
+	var idx := -1
+	for a in args:
+		if String(a).is_valid_int():
+			idx = int(a)
+			break
+	if idx < 0 or idx >= rows.size():
+		return "no such item\n"
+	match verb:
+		"set":
+			for k in p:
+				if String(k) not in allowed and String(k) != "disabled":
+					return "syntax error (line 1 column 1)\n"
+			for k in p:
+				rows[idx][String(k)] = String(p[k])
+		"disable":
+			rows[idx]["disabled"] = "yes"
+		"enable":
+			rows[idx]["disabled"] = "no"
+		"move":
+			var dest := -1
+			var seen := 0
+			for a in args:
+				if String(a).is_valid_int():
+					seen += 1
+					if seen == 2:
+						dest = int(a)
+			if dest < 0 or dest > rows.size():
+				return "invalid value for argument destination\n"
+			var row = rows[idx]
+			rows.remove_at(idx)
+			rows.insert(mini(dest, rows.size()), row)
+	return ""
 
 func _run_flag(i: Net.Iface) -> String:
 	return "X" if i.admin_down else ("R" if i.enabled and Game.link_at(i) else " ")
@@ -2081,6 +2214,10 @@ func _route_rows() -> Array:
 const PATHS := ["help", "export", "ping", "tool traceroute", "tool torch", "tool sniffer quick",
 	"ip pool add", "ip pool print", "ip dhcp-server add", "ip dhcp-server network add", "ip dhcp-server network print", "ip dhcp-server setup",
 	"ip dhcp-client add", "ip firewall filter add", "ip firewall filter remove",
+	"ip firewall filter set", "ip firewall filter disable", "ip firewall filter enable", "ip firewall filter move",
+	"ip firewall nat set", "ip firewall nat disable", "ip firewall nat enable", "ip firewall nat move",
+	"routing ospf instance set", "routing ospf area set", "ip pool set", "ip dhcp-server set",
+	"ipv6 route add", "ipv6 route remove", "ipv6 route set", "ipv6 route print",
 	"user add", "user set", "user remove", "password", "ip service set", "ip service disable", "ip service enable",
 	"interface list add", "interface list member add", "interface list print", "interface list member print",
 	"interface monitor-traffic", "system ntp client set", "system ntp client print", "system logging print",
@@ -2180,6 +2317,15 @@ const PARAMS := {
 	"ip route add": ["dst-address", "gateway", "distance", "comment", "disabled", "routing-table", "check-gateway", "scope", "target-scope", "pref-src"],
 	"ip route set": ["dst-address", "gateway", "distance", "comment", "disabled", "routing-table", "check-gateway", "scope", "target-scope", "pref-src"],
 	"ip route remove": ["dst-address", "gateway"],
+	"ipv6 route add": ["dst-address", "gateway", "distance", "comment", "disabled", "routing-table", "check-gateway", "scope", "target-scope"],
+	"ipv6 route remove": ["dst-address", "gateway"],
+	"ipv6 route set": ["dst-address", "gateway", "distance", "comment", "disabled"],
+	"ip firewall filter set": ["chain", "action", "protocol", "src-address", "dst-address", "dst-port", "src-port", "in-interface", "out-interface", "in-interface-list", "out-interface-list", "connection-state", "comment", "disabled", "log", "log-prefix", "jump-target", "src-address-list", "dst-address-list"],
+	"ip firewall nat set": ["chain", "action", "out-interface", "in-interface", "src-address", "dst-address", "to-addresses", "to-ports", "protocol", "dst-port", "comment", "disabled"],
+	"routing ospf instance set": ["name", "router-id", "version", "vrf", "redistribute", "originate-default", "comment", "disabled"],
+	"routing ospf area set": ["name", "area-id", "instance", "type", "comment", "disabled"],
+	"ip pool set": ["name", "ranges", "next-pool", "comment"],
+	"ip dhcp-server set": ["name", "interface", "address-pool", "lease-time", "disabled", "authoritative", "comment"],
 	"ip firewall nat add": ["chain", "action", "out-interface", "in-interface", "src-address", "dst-address", "to-addresses", "to-ports", "protocol", "dst-port", "comment", "disabled"],
 	"ip firewall address-list add": ["list", "address", "comment", "timeout", "disabled"],
 	"ip firewall address-list remove": ["list", "address"],

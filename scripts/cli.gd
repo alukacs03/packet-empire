@@ -914,6 +914,10 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "dhcp", "snooping"], "h": _show_snoop},
 			{"m": ["if"], "p": ["ip", "address"], "h": _if_ip},
 			{"m": ["if"], "p": ["ipv6", "address"], "h": _if_ip},
+			{"m": ["config"], "p": ["ipv6", "route"], "h": _cfg_ip_route},
+			{"m": ["config"], "p": ["no", "ipv6", "route"], "h": _cfg_no_ip_route},
+			{"m": ["config"], "p": ["ipv6", "unicast-routing"], "h": func(_r): return "" if dev.ip_forwarding else "% IP routing is not supported on this platform\n"},
+			{"m": EP, "p": ["show", "ipv6", "route"], "h": _show_ipv6_route},
 			{"m": EP, "p": ["show", "ipv6", "interface", "brief"], "h": _show_v6_brief},
 			{"m": EP, "p": ["show", "ipv6", "neighbors"], "h": _show_neighbors},
 			{"m": ["if"], "p": ["ip", "nat"], "h": _if_nat, "dyn": func(): return ["inside", "outside"], "hidden": true},
@@ -3884,6 +3888,8 @@ class EOS extends Session:
 		for e in Sim.rib(dev):
 			if String(e["vrf"]) != "":
 				continue  # a VRF's table is 'show ip route vrf <name>'
+			if Net.is_v6(String(e["prefix"])):
+				continue  # the v6 table is 'show ipv6 route'
 			if want != "" and e != chosen:
 				continue
 			any = true
@@ -3902,6 +3908,26 @@ class EOS extends Session:
 			else:
 				rows += row
 		out += ("Gateway of last resort:\n%s\n" % default_rows) if default_rows != "" else "Gateway of last resort is not set\n\n"
+		return out + rows
+
+	const ROUTE_CODES_V6 := "Codes: C - connected, S - static, K - kernel, O3 - OSPFv3,\n       B - Other BGP Routes, A B - BGP Aggregate, R - RIP,\n       I L1 - IS-IS level 1, I L2 - IS-IS level 2, DH - DHCP,\n       NG - Nexthop Group Static Route, M - Martian, DP - Dynamic Policy Route,\n       L - VRF Leaked, G - gRIBI, RC - Route Cache Route\n"
+
+	func _show_ipv6_route(_r: Array) -> String:
+		## the installed IPv6 table, in the same shape as the v4 one
+		var out := "VRF: default\n" + ROUTE_CODES_V6 + "\n"
+		var rows := ""
+		for e in Sim.rib(dev):
+			if String(e["vrf"]) != "" or not Net.is_v6(String(e["prefix"])):
+				continue
+			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
+			var code := "B E" if e["src"] == "B" else ("O3" if e["src"] == "O" else String(e["src"]))
+			if e["src"] == "C":
+				rows += " %-8s %s is directly connected, %s\n" % [code, pfx, e["iface"].name]
+			elif String(e["next_hop"]).to_lower() == "null0":
+				rows += " %-8s %s is directly connected, Null0\n" % [code, pfx]
+			else:
+				rows += " %-8s %s [%d/%d] via %s, %s\n" % [code, pfx, int(e["ad"]), 0, e["next_hop"],
+					e["iface"].name if e["iface"] != null else "Null0"]
 		return out + rows
 
 	func _show_v6_brief(_r: Array) -> String:

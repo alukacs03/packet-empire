@@ -14,6 +14,392 @@ func banner() -> String:
 func prompt() -> String:
 	return "root@%s:~#" % dev.name
 
+# ---------- the firewall: nftables, and iptables-nft on top of it ----------
+## One model: tables of chains of rules, the way nft sees them. iptables
+## writes into "ip filter" and "ip nat" with the capital chain names it
+## has always had, nft writes wherever it was told. Both are applied to
+## the same NAT and access-list engines the routers use.
+
+func _fw() -> Dictionary:
+	if not dev.services.has("lx_fw"):
+		dev.services["lx_fw"] = {"tables": {}}
+	return dev.services["lx_fw"]
+
+func _fw_chain(table: String, chain: String, hook: String, kind: String, policy := "accept") -> Dictionary:
+	var fw := _fw()
+	if not fw["tables"].has(table):
+		fw["tables"][table] = {"chains": {}}
+	var chains: Dictionary = fw["tables"][table]["chains"]
+	if not chains.has(chain):
+		chains[chain] = {"hook": hook, "type": kind, "policy": policy, "rules": []}
+	return chains[chain]
+
+func _fw_apply() -> void:
+	## what the tables say, put into force: masquerade on the outside port,
+	## forward rules as this box's access list on every port
+	var fw := _fw()
+	for i: Net.Iface in dev.ifaces:
+		if i.nat == "outside" and dev.services.get("nat", {}).get("linux", false):
+			i.nat = ""
+	var nat: Dictionary = dev.services.get("nat", {"rules": [], "acls": {}})
+	nat["rules"] = nat.get("rules", []).filter(func(r): return not bool(r.get("linux", false)))
+	nat["linux"] = true
+	dev.acls = dev.acls.filter(func(rule): return String(rule.get("list", "")) != "lx-forward")
+	var any_forward := false
+	var seq := 10
+	for tname in fw["tables"]:
+		for cname in fw["tables"][tname]["chains"]:
+			var chain: Dictionary = fw["tables"][tname]["chains"][cname]
+			if String(chain["hook"]) == "postrouting":
+				for rule in chain["rules"]:
+					if String(rule.get("action", "")) == "masquerade" and _iface(String(rule.get("oif", ""))) != null:
+						_iface(String(rule["oif"])).nat = "outside"
+						nat["rules"].append({"kind": "masquerade", "iface": String(rule["oif"]), "linux": true})
+			elif String(chain["hook"]) == "forward":
+				var policy_drop := String(chain.get("policy", "accept")) == "drop"
+				for rule in chain["rules"]:
+					any_forward = true
+					var entry := {"action": "permit" if String(rule["action"]) == "accept" else "deny",
+						"src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": "lx-forward", "seq": seq}
+					seq += 10
+					for side in [["src", "src", "splen"], ["dst", "dst", "dplen"]]:
+						if rule.has(side[0]):
+							var cidr := String(rule[side[0]])
+							if "/" not in cidr:
+								cidr += "/32"
+							if Net.valid_cidr(cidr):
+								entry[side[1]] = cidr.split("/")[0]
+								entry[side[2]] = int(cidr.split("/")[1])
+					if rule.has("proto") and String(rule["proto"]) in ["tcp", "udp", "icmp"]:
+						entry["proto"] = String(rule["proto"])
+					if rule.has("dport") and String(rule["dport"]).is_valid_int():
+						entry["port"] = int(rule["dport"])
+					if String(rule.get("state", "")).contains("established"):
+						entry["established"] = true
+					dev.acls.append(entry)
+				if policy_drop:
+					any_forward = true  # a drop policy with no rules is a wall: the implicit deny does the rest
+	dev.services["nat"] = nat
+	var groups: Dictionary = dev.services.get("acl_groups", {})
+	for i: Net.Iface in dev.ifaces:
+		if any_forward:
+			groups[i.name] = "lx-forward"
+		elif String(groups.get(i.name, "")) == "lx-forward":
+			groups.erase(i.name)
+	dev.services["acl_groups"] = groups
+	Game.topology_changed.emit()
+
+func _iptables(a: Array) -> String:
+	var table := "filter"
+	var i := 0
+	var argv: Array = []
+	while i < a.size():
+		if String(a[i]) == "-t" and i + 1 < a.size():
+			table = String(a[i + 1])
+			i += 2
+			continue
+		argv.append(String(a[i]))
+		i += 1
+	if table not in ["filter", "nat"]:
+		return "iptables v1.8.9 (nf_tables): table '%s' does not exist\nPerhaps iptables or your kernel needs to be upgraded.\n" % table
+	var tname := "ip " + table
+	if argv.is_empty():
+		return "iptables v1.8.9 (nf_tables): no command specified\nTry `iptables -h' or 'iptables --help' for more information.\n"
+	var chain_hooks := {"INPUT": ["input", "filter"], "FORWARD": ["forward", "filter"], "OUTPUT": ["output", "filter"],
+		"PREROUTING": ["prerouting", "nat"], "POSTROUTING": ["postrouting", "nat"]}
+	var cmd := String(argv[0])
+	match cmd:
+		"-L", "-S":
+			var numeric := "-n" in argv
+			var out := ""
+			var chains := ["INPUT", "FORWARD", "OUTPUT"] if table == "filter" else ["PREROUTING", "INPUT", "OUTPUT", "POSTROUTING"]
+			var only := ""
+			for x in argv.slice(1):
+				if not String(x).begins_with("-"):
+					only = String(x)
+			for cname in chains:
+				if only != "" and cname != only:
+					continue
+				var ch := _fw_chain(tname, cname, chain_hooks[cname][0], chain_hooks[cname][1])
+				if cmd == "-S":
+					out += "-P %s %s\n" % [cname, String(ch["policy"]).to_upper()]
+					for rule in ch["rules"]:
+						out += "-A %s%s\n" % [cname, _ipt_rule_args(rule)]
+					continue
+				out += "Chain %s (policy %s)\n" % [cname, String(ch["policy"]).to_upper()]
+				out += "%-10s %-4s %-3s  %-20s %-20s\n" % ["target", "prot", "opt", "source", "destination"]
+				for rule in ch["rules"]:
+					var extra := ""
+					if rule.has("dport"):
+						extra += " %s dpt:%s" % [rule.get("proto", "tcp"), rule["dport"]]
+					if rule.has("state"):
+						extra += " ctstate %s" % String(rule["state"]).to_upper()
+					out += "%-10s %-4s %-3s  %-20s %-20s%s\n" % [String(rule["action"]).to_upper(), rule.get("proto", "all"), "--",
+						rule.get("src", "0.0.0.0/0" if numeric else "anywhere"), rule.get("dst", "0.0.0.0/0" if numeric else "anywhere"), extra]
+				out += "\n"
+			return out.trim_suffix("\n")
+		"-P":
+			if argv.size() < 3 or not chain_hooks.has(String(argv[1])):
+				return "iptables: Bad built-in chain name.\n" if argv.size() >= 2 else "iptables v1.8.9 (nf_tables): -P requires a chain and a policy\n"
+			if String(argv[2]) not in ["ACCEPT", "DROP"]:
+				return "iptables: Bad policy name. Run `dmesg' for more information.\n"
+			var chn := _fw_chain(tname, String(argv[1]), chain_hooks[argv[1]][0], chain_hooks[argv[1]][1])
+			chn["policy"] = String(argv[2]).to_lower()
+			_fw_apply()
+			return ""
+		"-F":
+			var fw := _fw()
+			if fw["tables"].has(tname):
+				for cname in fw["tables"][tname]["chains"]:
+					if argv.size() < 2 or String(argv[1]) == cname:
+						fw["tables"][tname]["chains"][cname]["rules"] = []
+			_fw_apply()
+			return ""
+		"-A", "-I", "-D":
+			if argv.size() < 2 or not chain_hooks.has(String(argv[1])):
+				return "iptables: No chain/target/match by that name.\n"
+			var cname := String(argv[1])
+			var ch := _fw_chain(tname, cname, chain_hooks[cname][0], chain_hooks[cname][1])
+			if cmd == "-D" and argv.size() == 3 and String(argv[2]).is_valid_int():
+				var n := int(argv[2]) - 1
+				if n < 0 or n >= ch["rules"].size():
+					return "iptables: Index of deletion too big.\n"
+				ch["rules"].remove_at(n)
+				_fw_apply()
+				return ""
+			var rule := {}
+			var j := 2
+			while j < argv.size():
+				var opt := String(argv[j])
+				var val := String(argv[j + 1]) if j + 1 < argv.size() else ""
+				match opt:
+					"-i": rule["iif"] = val
+					"-o": rule["oif"] = val
+					"-s": rule["src"] = val
+					"-d": rule["dst"] = val
+					"-p": rule["proto"] = val
+					"--dport": rule["dport"] = val
+					"--sport": rule["sport"] = val
+					"-m":
+						j += 2
+						continue
+					"--state", "--ctstate": rule["state"] = val.to_lower()
+					"-j": rule["action"] = val.to_lower()
+					_:
+						return "iptables v1.8.9 (nf_tables): unknown option \"%s\"\nTry `iptables -h' or 'iptables --help' for more information.\n" % opt
+				j += 2
+			if not rule.has("action"):
+				return "iptables v1.8.9 (nf_tables): -A requires a target (-j)\nTry `iptables -h' or 'iptables --help' for more information.\n" if cmd != "-D" else "iptables: Bad rule (does a matching rule exist in that chain?).\n"
+			if String(rule["action"]) not in ["accept", "drop", "reject", "masquerade", "log", "return"]:
+				return "iptables v1.8.9 (nf_tables): Couldn't load target `%s':No such file or directory\n" % argv[argv.size() - 1]
+			if String(rule["action"]) == "masquerade" and (table != "nat" or cname != "POSTROUTING"):
+				return "iptables: The \"nat\" table is not intended for filtering, the use of DROP is therefore inhibited.\n" if table == "nat" else "iptables v1.8.9 (nf_tables): Couldn't load target `MASQUERADE':No such file or directory\n"
+			for k in ["iif", "oif"]:
+				if rule.has(k) and _iface(String(rule[k])) == null:
+					return "iptables v1.8.9 (nf_tables): interface name `%s' must be ... (no such device)\n" % rule[k]
+			if cmd == "-D":
+				for k in ch["rules"].size():
+					if ch["rules"][k] == rule:
+						ch["rules"].remove_at(k)
+						_fw_apply()
+						return ""
+				return "iptables: Bad rule (does a matching rule exist in that chain?).\n"
+			if cmd == "-I":
+				ch["rules"].insert(0, rule)
+			else:
+				ch["rules"].append(rule)
+			_fw_apply()
+			return ""
+	return "iptables v1.8.9 (nf_tables): unknown option \"%s\"\nTry `iptables -h' or 'iptables --help' for more information.\n" % cmd
+
+func _ipt_rule_args(rule: Dictionary) -> String:
+	var out := ""
+	for pair in [["src", "-s"], ["dst", "-d"], ["iif", "-i"], ["oif", "-o"], ["proto", "-p"]]:
+		if rule.has(pair[0]):
+			out += " %s %s" % [pair[1], rule[pair[0]]]
+	if rule.has("dport"):
+		out += " --dport %s" % rule["dport"]
+	if rule.has("state"):
+		out += " -m conntrack --ctstate %s" % String(rule["state"]).to_upper()
+	return out + " -j " + String(rule["action"]).to_upper()
+
+func _nft(a: Array) -> String:
+	var words: Array = []
+	for w in a:
+		var ws := String(w).replace("\\", "")  # the shell's \; arrives as ;
+		if ws != "":
+			words.append(ws)
+	if words.is_empty():
+		return "nft: no command specified\n"
+	var verb := String(words[0])
+	match verb:
+		"list":
+			if words.size() >= 2 and String(words[1]) == "ruleset":
+				return _nft_ruleset()
+			if words.size() >= 4 and String(words[1]) == "table":
+				return _nft_ruleset("%s %s" % [words[2], words[3]])
+			return "nft: Error: syntax error, unexpected end of file\n"
+		"flush":
+			if words.size() >= 2 and String(words[1]) == "ruleset":
+				dev.services["lx_fw"] = {"tables": {}}
+				_fw_apply()
+				return ""
+			if words.size() >= 4 and String(words[1]) == "table":
+				var tn := "%s %s" % [words[2], words[3]]
+				if _fw()["tables"].has(tn):
+					for cn in _fw()["tables"][tn]["chains"]:
+						_fw()["tables"][tn]["chains"][cn]["rules"] = []
+				_fw_apply()
+				return ""
+			return "nft: Error: syntax error, unexpected end of file\n"
+		"add", "create", "insert":
+			if words.size() < 2:
+				return "nft: Error: syntax error, unexpected end of file\n"
+			match String(words[1]):
+				"table":
+					if words.size() < 4:
+						return "nft: Error: syntax error, unexpected end of file\n"
+					var fw := _fw()
+					var tn := "%s %s" % [words[2], words[3]]
+					if not fw["tables"].has(tn):
+						fw["tables"][tn] = {"chains": {}}
+					return ""
+				"chain":
+					if words.size() < 5:
+						return "nft: Error: syntax error, unexpected end of file\n"
+					var tn := "%s %s" % [words[2], words[3]]
+					if not _fw()["tables"].has(tn):
+						return "Error: Could not process rule: No such file or directory\nadd chain %s %s %s\n          ^^^^^^^^\n" % [words[2], words[3], words[4]]
+					var spec := " ".join(PackedStringArray(words.slice(5)))
+					var hook := ""
+					var kind := "filter"
+					var policy := "accept"
+					var sw := spec.replace("{", " ").replace("}", " ").replace(";", " ").split(" ", false)
+					for k in sw.size():
+						match String(sw[k]):
+							"hook":
+								if k + 1 < sw.size():
+									hook = String(sw[k + 1])
+							"type":
+								if k + 1 < sw.size():
+									kind = String(sw[k + 1])
+							"policy":
+								if k + 1 < sw.size():
+									policy = String(sw[k + 1])
+					_fw_chain(tn, String(words[4]), hook, kind, policy)
+					_fw_apply()
+					return ""
+				"rule":
+					if words.size() < 6:
+						return "nft: Error: syntax error, unexpected end of file\n"
+					var tn := "%s %s" % [words[2], words[3]]
+					if not _fw()["tables"].has(tn) or not _fw()["tables"][tn]["chains"].has(String(words[4])):
+						return "Error: Could not process rule: No such file or directory\nadd rule %s %s %s\n         ^^^^^^^^^^^^^^^^^^^\n" % [words[2], words[3], words[4]]
+					var ch: Dictionary = _fw()["tables"][tn]["chains"][String(words[4])]
+					var rule := {}
+					var k := 5
+					while k < words.size():
+						var wd := String(words[k])
+						var nxt := String(words[k + 1]).trim_prefix("\"").trim_suffix("\"") if k + 1 < words.size() else ""
+						match wd:
+							"iifname":
+								rule["iif"] = nxt
+								k += 2
+							"oifname":
+								rule["oif"] = nxt
+								k += 2
+							"ip", "ip6":
+								if k + 2 < words.size() and String(words[k + 1]) in ["saddr", "daddr"]:
+									rule["src" if String(words[k + 1]) == "saddr" else "dst"] = String(words[k + 2])
+									k += 3
+								else:
+									return "Error: syntax error, unexpected end of file\n"
+							"tcp", "udp":
+								rule["proto"] = wd
+								if k + 2 < words.size() and String(words[k + 1]) in ["dport", "sport"]:
+									rule["dport" if String(words[k + 1]) == "dport" else "sport"] = String(words[k + 2])
+									k += 3
+								else:
+									k += 1
+							"icmp":
+								rule["proto"] = "icmp"
+								k += 1
+							"ct":
+								if k + 2 < words.size() and String(words[k + 1]) == "state":
+									rule["state"] = String(words[k + 2])
+									k += 3
+								else:
+									return "Error: syntax error, unexpected end of file\n"
+							"accept", "drop", "reject", "masquerade", "return":
+								rule["action"] = wd
+								k += 1
+							"counter":
+								k += 1
+							_:
+								return "Error: syntax error, unexpected '%s'\n" % wd
+					if not rule.has("action"):
+						return "Error: syntax error, unexpected end of file\n"
+					if String(rule["action"]) == "masquerade" and String(ch["hook"]) != "postrouting":
+						return "Error: Could not process rule: Operation not supported\n"
+					for ifk in ["iif", "oif"]:
+						if rule.has(ifk) and _iface(String(rule[ifk])) == null:
+							return ""  # nft accepts a name that does not exist yet; it just never matches
+					if verb == "insert":
+						ch["rules"].insert(0, rule)
+					else:
+						ch["rules"].append(rule)
+					_fw_apply()
+					return ""
+			return "Error: syntax error, unexpected %s\n" % words[1]
+		"delete":
+			if words.size() >= 4 and String(words[1]) == "table":
+				_fw()["tables"].erase("%s %s" % [words[2], words[3]])
+				_fw_apply()
+				return ""
+			if words.size() >= 5 and String(words[1]) == "chain":
+				var tn := "%s %s" % [words[2], words[3]]
+				if _fw()["tables"].has(tn):
+					_fw()["tables"][tn]["chains"].erase(String(words[4]))
+				_fw_apply()
+				return ""
+			return "Error: syntax error, unexpected end of file\n"
+	return "nft: Error: syntax error, unexpected %s\n" % verb
+
+func _nft_ruleset(only := "") -> String:
+	var out := ""
+	var fw := _fw()
+	for tn in fw["tables"]:
+		if only != "" and String(tn) != only:
+			continue
+		out += "table %s {\n" % tn
+		for cn in fw["tables"][tn]["chains"]:
+			var ch: Dictionary = fw["tables"][tn]["chains"][cn]
+			out += "\tchain %s {\n" % cn
+			if String(ch.get("hook", "")) != "":
+				var prio := "srcnat" if String(ch["type"]) == "nat" and String(ch["hook"]) == "postrouting" else ("dstnat" if String(ch["type"]) == "nat" else "filter")
+				out += "\t\ttype %s hook %s priority %s; policy %s;\n" % [ch["type"], ch["hook"], prio, ch.get("policy", "accept")]
+			for rule in ch["rules"]:
+				var parts: Array = []
+				if rule.has("iif"):
+					parts.append("iifname \"%s\"" % rule["iif"])
+				if rule.has("oif"):
+					parts.append("oifname \"%s\"" % rule["oif"])
+				if rule.has("src"):
+					parts.append("ip saddr %s" % rule["src"])
+				if rule.has("dst"):
+					parts.append("ip daddr %s" % rule["dst"])
+				if rule.has("dport"):
+					parts.append("%s dport %s" % [rule.get("proto", "tcp"), rule["dport"]])
+				elif rule.has("proto"):
+					parts.append("ip protocol %s" % rule["proto"] if String(rule["proto"]) != "icmp" else "ip protocol icmp")
+				if rule.has("state"):
+					parts.append("ct state %s" % rule["state"])
+				parts.append(String(rule["action"]))
+				out += "\t\t%s\n" % " ".join(PackedStringArray(parts))
+			out += "\t}\n"
+		out += "}\n"
+	return out
+
 func _split_chain(line: String) -> Array:
 	## "a && b; c" -> ["a", "&&", "b", ";", "c"]; quotes and the tcpdump filter are left alone
 	if line.begins_with("tcpdump") or "\"" in line or "'" in line:
@@ -28,7 +414,7 @@ func _split_chain(line: String) -> Array:
 			cur = ""
 			i += 2
 			continue
-		if line[i] == ";":
+		if line[i] == ";" and (i == 0 or line[i - 1] != "\\"):
 			parts.append(cur.strip_edges())
 			parts.append(";")
 			cur = ""
@@ -224,9 +610,9 @@ func exec(line: String) -> String:
 		"telnet":
 			return _telnet(t.slice(1))
 		"iptables":
-			return "Chain INPUT (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination\n\nChain FORWARD (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination\n\nChain OUTPUT (policy ACCEPT 0 packets, 0 bytes)\n pkts bytes target     prot opt in     out     source               destination\n"
+			return _iptables(t.slice(1))
 		"nft":
-			return "" if "list" in t else "nft: command requires an argument\n"
+			return _nft(t.slice(1))
 		"ufw":
 			return "-bash: ufw: command not found\n"
 		"wg":

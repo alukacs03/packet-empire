@@ -2268,7 +2268,7 @@ static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf
 		"id": l4.get("id", 0), "orig_dst": p["dst_ip"]}, vrf)
 
 static func nat_rules(dev: Net.NDevice) -> Array:
-	return dev.services.get("nat", {}).get("rules", [])
+	return dev.services.get("nat", {}).get("rules", []).filter(func(r): return String(r.get("disabled", "no")) != "yes")
 
 static func nat_translate_src(dev: Net.NDevice, in_if: Net.Iface, out: Net.Iface, src: String) -> String:
 	## the outside address to write over src, or "" to leave the packet alone.

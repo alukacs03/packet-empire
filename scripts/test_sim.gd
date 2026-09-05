@@ -775,6 +775,34 @@ static func run() -> int:
 	check(ls.exec("hostname; hostname").count(ls.exec("hostname").strip_edges()) == 2, "Linux: ; runs both sides regardless")
 	ls.history.append("hostname")
 	check(ls.exec("history").contains("1  hostname"), "Linux: history lists what was typed, numbered")
+	# --- a Linux NAT gateway and forward filter: iptables-nft and nft on the same engines ---
+	var fw_box := Game.new_device("srv-2")
+	fw_box.ip_forwarding = true
+	var fws := CLI.new_session(fw_box)
+	check(fws.exec("iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE") == "" and fw_box.ifaces[0].nat == "outside"
+		and Sim.nat_rules(fw_box).size() == 1 and String(Sim.nat_rules(fw_box)[0]["kind"]) == "masquerade",
+		"fw: iptables MASQUERADE on POSTROUTING marks the outside port and installs the rule")
+	check(fws.exec("iptables -t nat -L").contains("MASQUERADE") and fws.exec("nft list ruleset").contains("oifname \"eth0\" masquerade"),
+		"fw: both iptables -L and nft list ruleset show the masquerade")
+	check(fws.exec("iptables -A FORWARD -i eth1 -o eth0 -s 10.0.1.0/24 -j ACCEPT") == "" and fws.exec("iptables -P FORWARD DROP") == "",
+		"fw: a forward rule and a drop policy are accepted")
+	var fw_acls := Sim.active_acls(fw_box)
+	check(fw_acls.size() == 1 and String(fw_acls[0]["action"]) == "permit" and String(fw_acls[0]["src"]) == "10.0.1.0" and int(fw_acls[0]["splen"]) == 24,
+		"fw: the forward rule is this box's access list")
+	check(fws.exec("iptables -L FORWARD").contains("Chain FORWARD (policy DROP)") and fws.exec("iptables -S").contains("-A FORWARD -s 10.0.1.0/24 -i eth1 -o eth0 -j ACCEPT"),
+		"fw: iptables -L and -S print the chain back")
+	check(fws.exec("nft list ruleset").contains("iifname \"eth1\" oifname \"eth0\" ip saddr 10.0.1.0/24 accept"), "fw: nft list ruleset prints iptables rules in nft syntax")
+	check(fws.exec("iptables -F") == "" and Sim.active_acls(fw_box).is_empty() and fws.exec("iptables -t nat -F") == "" and fw_box.ifaces[0].nat == "" and Sim.nat_rules(fw_box).is_empty(),
+		"fw: flushing removes the access list and the masquerade")
+	check(fws.exec("nft add table ip nat") == "" and fws.exec("nft add chain ip nat postrouting { type nat hook postrouting priority 100 \\; }") == ""
+		and fws.exec("nft add rule ip nat postrouting oifname \"eth0\" masquerade") == "" and fw_box.ifaces[0].nat == "outside",
+		"fw: the nft way to masquerade works too")
+	check(fws.exec("nft add table inet filter") == "" and fws.exec("nft add chain inet filter forward { type filter hook forward priority 0 \\; policy drop \\; }") == ""
+		and fws.exec("nft add rule inet filter forward iifname \"eth1\" oifname \"eth0\" accept") == "" and Sim.active_acls(fw_box).size() == 1,
+		"fw: an nft forward chain with a drop policy filters like the iptables one")
+	check(fws.exec("nft add rule ip nat nothere oifname \"eth0\" masquerade").contains("No such file or directory"), "fw: nft names the missing chain")
+	check(fws.exec("nft flush ruleset") == "" and Sim.active_acls(fw_box).is_empty() and fw_box.ifaces[0].nat == "", "fw: nft flush ruleset clears everything")
+	check(fws.exec("iptables -t raw -L").contains("does not exist"), "fw: an unknown table is refused the iptables way")
 	ls.exec("ip addr add 192.168.9.1/24 dev eth0")
 	check("192.168.9.1/24" in c.ifaces[0].ips, "Linux: ip addr add")
 	ls.exec("ip addr del 192.168.9.1/24 dev eth0")
@@ -2248,6 +2276,56 @@ static func run() -> int:
 		"pipe: stages chain, | section then | exclude")
 	check(cs.exec("show running-config | begin interface Ethernet3").begins_with("interface Ethernet3"), "pipe: | begin starts the output at the match")
 	check(cs.exec("show running-config | count").begins_with("Count: "), "pipe: | count prints the line count")
+	# --- IPv6 static routes on EOS and RouterOS ---
+	var v6r := Game.new_device("rtr-edge")
+	var v6es := CLI.new_session(v6r)
+	v6es.exec("en")
+	v6es.exec("conf t")
+	v6es.exec("interface Ethernet1")
+	v6es.exec("ipv6 address 2001:db8:1::1/64")
+	v6es.exec("exit")
+	check(v6es.exec("ipv6 route 2001:db8:9::/48 2001:db8:1::2") == "" and v6es.exec("ipv6 unicast-routing") == "",
+		"v6: EOS takes ipv6 route and ipv6 unicast-routing")
+	v6es.exec("end")
+	check(v6es.exec("show ipv6 route").contains("2001:db8:9::/48") and v6es.exec("show ipv6 route").contains("via 2001:db8:1::2"),
+		"v6: show ipv6 route lists the static")
+	check(not v6es.exec("show ip route").contains("2001:db8") and not v6es.exec("show ip route").contains("/64"),
+		"v6: the v4 table no longer prints v6 prefixes")
+	v6es.exec("conf t")
+	check(v6es.exec("no ipv6 route 2001:db8:9::/48") == "" and not v6es.exec("show ipv6 route").contains("2001:db8:9::/48"), "v6: no ipv6 route removes it")
+	var v6ros := Game.new_device("rtr-lite")
+	var v6rs := CLI.new_session(v6ros)
+	check(v6rs.exec("/ipv6 address add address=2001:db8:2::1/64 interface=ether1") == ""
+		and v6rs.exec("/ipv6 route add dst-address=::/0 gateway=2001:db8:2::ff") == "",
+		"v6: RouterOS takes /ipv6 route add")
+	check(v6rs.exec("/ipv6 route print").contains("::/0") and not v6rs.exec("/ip route print").contains("::/0"),
+		"v6: /ipv6 route print lists it and /ip route print does not")
+	check(v6rs.exec("/ipv6 route add dst-address=10.0.0.0/8 gateway=2001:db8:2::ff").contains("invalid value"), "v6: a v4 prefix is refused on the v6 menu")
+	# --- RouterOS set / disable / enable / move on numbered rows ---
+	var rs_fw := Game.new_device("rtr-lite")
+	var rs_fws := CLI.new_session(rs_fw)
+	rs_fws.exec("/ip firewall filter add chain=forward action=accept src-address=10.0.1.0/24")
+	rs_fws.exec("/ip firewall filter add chain=forward action=drop")
+	check(rs_fws.exec("/ip firewall filter move 1 0") == "" and rs_fws.exec("/ip firewall filter print").find("action=drop") < rs_fws.exec("/ip firewall filter print").find("action=accept"),
+		"ros: move reorders firewall rules, which is the whole lesson of a firewall")
+	check(rs_fws.exec("/ip firewall filter set 0 action=reject") == "" and rs_fws.exec("/ip firewall filter print").contains("action=reject"),
+		"ros: set changes a rule in place")
+	check(rs_fws.exec("/ip firewall filter disable 0") == "" and rs_fws.exec("/ip firewall filter print").contains(" 0 X ")
+		and Sim.active_acls(rs_fw).size() == 1 and String(Sim.active_acls(rs_fw)[0]["action"]) == "permit",
+		"ros: a disabled rule shows X and is not in force")
+	check(rs_fws.exec("/ip firewall filter enable 0") == "" and Sim.active_acls(rs_fw).size() == 2, "ros: enable puts it back")
+	check(rs_fws.exec("/ip firewall filter set 9 action=drop") == "no such item (9)\n", "ros: set on a number that does not exist")
+	rs_fws.exec("/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1")
+	check(rs_fws.exec("/ip firewall nat disable 0") == "" and rs_fw.ifaces[0].nat == "" and Sim.nat_rules(rs_fw).is_empty()
+		and rs_fws.exec("/ip firewall nat print").contains(" 0 X "),
+		"ros: a disabled masquerade is not in force")
+	check(rs_fws.exec("/ip firewall nat enable 0") == "" and rs_fw.ifaces[0].nat == "outside", "ros: enabling it marks the port again")
+	rs_fws.exec("/routing ospf instance add name=ospf1")
+	check(rs_fws.exec("/routing ospf instance set ospf1 router-id=1.1.1.1") == "" and String(rs_fw.ospf.get("router_id", "")) == "1.1.1.1",
+		"ros: routing ospf instance set changes the router-id")
+	rs_fws.exec("/ip pool add name=pool1 ranges=10.5.0.10-10.5.0.20")
+	check(rs_fws.exec("/ip pool set pool1 ranges=10.5.0.50-10.5.0.60") == "" and rs_fws.exec("/ip pool print").contains("10.5.0.50-10.5.0.60"),
+		"ros: ip pool set changes the range")
 	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n").begins_with("! ")
 		and "LEARN: Routing & gateways" in CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n"),
 		"hints: an EOS error gets a ! comment line with the article to read")
