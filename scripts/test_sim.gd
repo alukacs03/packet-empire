@@ -5,6 +5,37 @@ class_name SimTests
 
 static var fails := 0
 
+static func _describe_widest(row: Control) -> String:
+	## which child of an over-wide row is the wide one: class and a scrap of text
+	if row == null:
+		return "-"
+	var best: Control = row
+	var stack: Array = [row]
+	while not stack.is_empty():
+		var c: Control = stack.pop_back()
+		if c.get_combined_minimum_size().x >= best.get_combined_minimum_size().x - 1.0 and c != row:
+			best = c
+		for ch in c.get_children():
+			if ch is Control:
+				stack.append(ch)
+	# every leaf with a width, so the culprit row can be named from the log
+	var parts: Array = []
+	stack = [best]
+	while not stack.is_empty():
+		var c2: Control = stack.pop_back()
+		var t := ""
+		if c2 is Label:
+			t = (c2 as Label).text.substr(0, 24)
+		elif c2 is Button:
+			t = (c2 as Button).text.substr(0, 24)
+		if c2.get_child_count() == 0 or t != "":
+			parts.append("%s:%d'%s'" % [c2.get_class(), int(c2.get_combined_minimum_size().x), t])
+		for ch2 in c2.get_children():
+			if ch2 is Control:
+				stack.append(ch2)
+	return "%s/%s %dpx [%s]" % [row.get_class(), best.get_class(), int(best.get_combined_minimum_size().x),
+		" ".join(PackedStringArray(parts))]
+
 static func _dev_named(n: String) -> Net.NDevice:
 	for d in Game.all_devices():
 		if d.name == n:
@@ -190,13 +221,15 @@ static func ui_smoke(world: Node2D) -> int:
 		ui.open_contracts()
 		ui._refresh_contracts()
 		var widest := 0.0
+		var widest_row: Control = null
 		for row in ui.contracts_box.get_children():
-			if row is Control:
-				widest = maxf(widest, (row as Control).get_combined_minimum_size().x)
+			if row is Control and (row as Control).get_combined_minimum_size().x > widest:
+				widest = (row as Control).get_combined_minimum_size().x
+				widest_row = row
 		# the card grows with its content up to the window, so the bar is the
 		# smallest window the game is played in rather than the card minimum
-		check(widest <= 1000.0, "ui: the %s tab fits comfortably in a 1280-wide window (%d px)"
-			% [company_tab, int(widest)])
+		check(widest <= 1000.0, "ui: the %s tab fits comfortably in a 1280-wide window (%d px, %s)"
+			% [company_tab, int(widest), _describe_widest(widest_row)])
 	# every panel a player opens, measured against the smallest window we claim
 	# to support: a row wider than that runs off the screen with no way back
 	for panel_case in [["operations", ui.ops_box], ["slots", ui.slot_box],
@@ -839,11 +872,21 @@ static func run() -> int:
 	Game.add_ip(fw.ifaces[1], "172.16.2.1/24")
 	Game.add_static_route(office, "0.0.0.0", 0, "172.16.1.1")
 	Game.add_static_route(vault, "0.0.0.0", 0, "172.16.2.1")
+	var app := Game.new_device("server")
+	r3.slots[5] = app
+	Game.connect_ifaces(app.ifaces[0], fw.ifaces[2])
+	Game.add_ip(app.ifaces[0], "172.16.3.10/24")
+	Game.add_ip(fw.ifaces[2], "172.16.3.1/24")
+	Game.add_static_route(app, "0.0.0.0", 0, "172.16.3.1")
 	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: default permit forwards")
 	var fs := CLI.new_session(fw)
 	fs.exec("en")
 	fs.exec("conf t")
 	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
+	check(not Sim.ping(office, "172.16.3.10")["ok"],
+		"fw: a list with only a deny drops everything else too (the implicit deny)")
+	fs.exec("acl permit any any")
+	check(Sim.ping(office, "172.16.3.10")["ok"], "fw: permit any any at the end lets the rest through")
 	var fw_deny := Sim.ping(office, "172.16.2.20")
 	check(not fw_deny["ok"] and fw_deny["detail"] == "unreachable-admin" and fw_deny["from"] == "172.16.1.1",
 		"fw: deny rule blocks office->vault and the firewall says so (Packet filtered)")
@@ -853,7 +896,26 @@ static func run() -> int:
 	fs.exec("conf t")
 	fs.exec("no acl 1")
 	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: removing the rule restores traffic")
+	fs.exec("no acl 1")
+	# protocol and port matching: the exam-style rule
+	check(fs.exec("acl deny udp 172.16.1.0/24 host 172.16.2.20 eq 53") == "", "fw: protocol, host and eq port are accepted")
+	fs.exec("acl permit any any")
+	check(Sim.ping(office, "172.16.2.20")["ok"], "fw: a udp/53 deny does not touch icmp")
+	fs.exec("no acl 1")
+	fs.exec("no acl 1")
+	check(fs.exec("acl deny icmp any host 172.16.2.20") == "", "fw: (icmp deny setup)")
+	fs.exec("acl permit any any")
+	check(not Sim.ping(office, "172.16.2.20")["ok"], "fw: an icmp deny stops the ping")
+	check(fs.exec("acl deny tcp any any eq") != "", "fw: eq without a port is refused")
+	fs.exec("end")
+	check(fs.exec("show ip access-lists").contains("deny    icmp  any -> 172.16.2.20/32")
+		and fs.exec("show acl").contains("implicit deny"), "fw: show ip access-lists prints the rule and the implicit deny")
+	check(fs.exec("show run").contains("acl deny icmp any 172.16.2.20/32"), "fw: show run prints a rule the parser takes back")
+	fs.exec("conf t")
+	fs.exec("no acl 1")
+	fs.exec("no acl 1")
 	fs.exec("acl deny 172.16.1.0/24 172.16.2.20/32")
+	fs.exec("acl permit any any")
 
 	# --- stateful firewall ---
 	var fw_ss := CLI.new_session(fw)
@@ -1213,6 +1275,7 @@ static func run() -> int:
 	fs2.exec("en")
 	fs2.exec("conf t")
 	fs2.exec("acl deny any 10.30.0.0/24")
+	fs2.exec("acl permit any any")
 	fs2.exec("end")
 	check(Game.try_complete_contract(_contract("big_client")), "capstone: the big client signs")
 

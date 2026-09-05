@@ -254,7 +254,7 @@ static func _campaign() -> Array:
 			"title": "Lock it down",
 			"customer": "Epsilon Bank",
 			"reward": 2500,
-			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console, in config mode ('enable', 'configure terminal'): 'acl deny 172.16.1.0/24 172.16.2.20/32': first match wins, everything else is permitted. Verify with 'show acl' and pings both ways.",
+			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console, in config mode ('enable', 'configure terminal'): 'acl deny 172.16.1.0/24 172.16.2.20/32' and then 'acl permit any any'. First match wins, and a packet no rule names is dropped (the implicit deny at the end of every access list), so without the permit the app server goes dark too. Verify with 'show acl' and pings both ways.",
 			"reqs": [
 				{"d": "A firewall with at least one deny rule", "t": func() -> bool: return _fw_with_deny() != null},
 				{"d": "Office 172.16.1.10 reaches app 172.16.2.10", "t": func() -> bool: return _ping("172.16.1.10", "172.16.2.10", true)},

@@ -5677,8 +5677,14 @@ func _build_jobs_tab() -> void:
 				var drow := HBoxContainer.new()
 				drow.add_theme_constant_override("separation", 8)
 				contracts_box.add_child(drow)
-				drow.add_child(_label("      they are arguing: %s" % Game.dispute_kind(
-					String(dis.get("kind", "")))["demand"], 13, Color(1.0, 0.72, 0.45)))
+				var dis_lbl := _label("      they are arguing: %s" % Game.dispute_kind(
+					String(dis.get("kind", "")))["demand"], 13, Color(1.0, 0.72, 0.45))
+				# the demand is a sentence: wrap it, or the three buttons after it
+				# walk off the right edge of the card
+				dis_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+				dis_lbl.custom_minimum_size = Vector2(420, 0)
+				dis_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				drow.add_child(dis_lbl)
 				if not bool(dis.get("warned", false)):
 					var write_btn := Button.new()
 					write_btn.text = "Put it in writing"

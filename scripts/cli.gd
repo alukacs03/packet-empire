@@ -66,6 +66,31 @@ static func mask_to_plen(mask: String) -> int:
 		plen += 1
 	return plen if v == ((0xFFFFFFFF << (32 - plen)) & 0xFFFFFFFF if plen > 0 else 0) else -1
 
+static func acl_rule_text(rule: Dictionary) -> String:
+	## one rule the way show access-lists prints it
+	var src := "any" if int(rule["splen"]) == 0 else "%s/%d" % [rule["src"], int(rule["splen"])]
+	var dst := "any" if int(rule["dplen"]) == 0 else "%s/%d" % [rule["dst"], int(rule["dplen"])]
+	var text := "%-7s %-5s %s -> %s" % [rule["action"], rule.get("proto", "ip"), src, dst]
+	if int(rule.get("port", 0)) != 0:
+		text += " eq %d" % int(rule["port"])
+	if bool(rule.get("established", false)):
+		text += " established"
+	return text
+
+static func acl_config_text(rule: Dictionary) -> String:
+	## the same rule as a config line that the parser will take back
+	var text := String(rule["action"])
+	if String(rule.get("proto", "ip")) != "ip":
+		text += " " + String(rule["proto"])
+	for side in [["src", "splen"], ["dst", "dplen"]]:
+		var plen := int(rule[side[1]])
+		text += " any" if plen == 0 else " %s/%d" % [rule[side[0]], plen]
+	if int(rule.get("port", 0)) != 0:
+		text += " eq %d" % int(rule["port"])
+	if bool(rule.get("established", false)):
+		text += " established"
+	return text
+
 static func unreachable_text(detail: String) -> String:
 	## the words a Linux ping prints for each ICMP unreachable code
 	match detail.trim_prefix("unreachable-"):
@@ -231,6 +256,8 @@ class EOS extends Session:
 				return ""},
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl},
+			{"m": EP, "p": ["show", "ip", "access-lists"], "h": _show_acl},
+			{"m": EP, "p": ["show", "access-lists"], "h": _show_acl},
 			{"m": EP, "p": ["show", "ip", "bgp", "summary"], "h": _show_bgp},
 			{"m": EP, "p": ["show", "ip", "ospf", "neighbor"], "h": _show_ospf},
 			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
@@ -1232,16 +1259,46 @@ class EOS extends Session:
 	func _cfg_acl(r: Array, action: String) -> String:
 		if dev.type != "firewall":
 			return "% ACLs need a firewall\n"
-		if r.size() != 2:
-			return "usage: acl %s <src-cidr|any> <dst-cidr|any>\n" % action
-		var src := "0.0.0.0/0" if r[0] == "any" else String(r[0])
-		var dst := "0.0.0.0/0" if r[1] == "any" else String(r[1])
-		if not Net.valid_cidr(src) or not Net.valid_cidr(dst):
-			return "% bad prefix: use a.b.c.d/len or 'any'\n"
-		var sp := src.split("/")
-		var dp := dst.split("/")
-		dev.acls.append({"action": action, "src": sp[0], "splen": int(sp[1]),
-			"dst": dp[0], "dplen": int(dp[1])})
+		var usage := "usage: acl %s [ip|tcp|udp|icmp] <src-cidr|any|host a.b.c.d> <dst-cidr|any|host a.b.c.d> [eq <port>] [established]\n" % action
+		var proto := "ip"
+		if not r.is_empty() and String(r[0]) in ["ip", "tcp", "udp", "icmp"]:
+			proto = String(r.pop_front())
+		var established := false
+		if not r.is_empty() and String(r.back()) == "established":
+			established = true
+			r.pop_back()
+		var port := 0
+		if r.size() >= 2 and String(r[r.size() - 2]) == "eq":
+			if not String(r.back()).is_valid_int() or proto not in ["tcp", "udp"]:
+				return "% a port needs tcp or udp: acl %s tcp any any eq 22\n" % action
+			port = int(r.back())
+			r = r.slice(0, r.size() - 2)
+		if established and proto not in ["ip", "tcp"]:
+			return "% established describes tcp return traffic\n"
+		# 'host a.b.c.d' is how IOS spells a /32
+		var addrs: Array = []
+		var i := 0
+		while i < r.size():
+			if String(r[i]) == "host" and i + 1 < r.size():
+				addrs.append("%s/32" % r[i + 1])
+				i += 2
+			else:
+				addrs.append("0.0.0.0/0" if String(r[i]) == "any" else String(r[i]))
+				i += 1
+		if addrs.size() != 2:
+			return usage
+		if not Net.valid_cidr(addrs[0]) or not Net.valid_cidr(addrs[1]):
+			return "% bad prefix: use a.b.c.d/len, 'host a.b.c.d' or 'any'\n"
+		var sp: PackedStringArray = String(addrs[0]).split("/")
+		var dp: PackedStringArray = String(addrs[1]).split("/")
+		var rule := {"action": action, "src": sp[0], "splen": int(sp[1]), "dst": dp[0], "dplen": int(dp[1])}
+		if proto != "ip":
+			rule["proto"] = proto
+		if port != 0:
+			rule["port"] = port
+		if established:
+			rule["established"] = true
+		dev.acls.append(rule)
 		Game.topology_changed.emit()
 		return ""
 
@@ -1254,13 +1311,13 @@ class EOS extends Session:
 
 	func _show_acl(_r: Array) -> String:
 		if dev.acls.is_empty():
-			return "  (no rules: default permit)\n"
+			return "  (no access list: nothing is filtered)\n"
 		var out := "mode: %s\n" % ("stateful (return traffic auto-permitted)" if dev.stateful else "stateless")
 		var n := 1
 		for rule in dev.acls:
-			out += "%2d  %-7s %s/%d -> %s/%d\n" % [n, rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
+			out += "%2d  %s\n" % [n, CLI.acl_rule_text(rule)]
 			n += 1
-		return out + "    (first match wins; default permit)\n"
+		return out + "    (first match wins; implicit deny any any at the end)\n"
 
 	func _cfg_router_ospf(r: Array) -> String:
 		if not dev.ip_forwarding or dev.type == "uplink":
@@ -2165,7 +2222,7 @@ class EOS extends Session:
 		if dev.stateful:
 			out += "firewall stateful\n!\n"
 		for rule in dev.acls:
-			out += "acl %s %s/%d %s/%d\n!\n" % [rule["action"], rule["src"], int(rule["splen"]), rule["dst"], int(rule["dplen"])]
+			out += "acl %s\n!\n" % CLI.acl_config_text(rule)
 		if not dev.ospf.is_empty():
 			out += "router ospf 1\n"
 			for net in dev.ospf["networks"]:

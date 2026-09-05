@@ -1725,7 +1725,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 	elif dev.ip_forwarding:
 		var flow_key := "%s|%s|%s" % [str(p["l4"].get("id", 0)), p["dst_ip"], p["src_ip"]]
 		var is_return: bool = dev.stateful and dev.flows.has(flow_key)
-		if not is_return and not _acl_permits(dev, p["src_ip"], p["dst_ip"]):
+		if not is_return and not _acl_permits(dev, p):
 			_icmp_unreachable(dev, p, "admin", iface.vrf)  # filtered by firewall policy
 			return
 		if dev.stateful:
@@ -1888,12 +1888,57 @@ static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 			return i
 	return null
 
-static func _acl_permits(dev: Net.NDevice, src_ip: String, dst_ip: String) -> bool:
-	for rule in dev.acls:  # first match wins; default permit
-		if Net.same_subnet(src_ip, rule["src"], int(rule["splen"])) \
-				and Net.same_subnet(dst_ip, rule["dst"], int(rule["dplen"])):
-			return rule["action"] == "permit"
-	return true
+static func _acl_permits(dev: Net.NDevice, p: Dictionary) -> bool:
+	## First match wins. With no list there is no policy and everything
+	## passes; once a list exists, anything it does not name is dropped:
+	## the implicit deny at the end of every real access list.
+	if dev.acls.is_empty():
+		return true
+	var l4: Dictionary = p.get("l4", {})
+	var proto := acl_proto(l4)
+	var port := acl_port(l4)
+	var reply := acl_is_reply(l4)
+	for rule in dev.acls:
+		if not _acl_addr(String(p["src_ip"]), String(rule["src"]), int(rule["splen"])) \
+				or not _acl_addr(String(p["dst_ip"]), String(rule["dst"]), int(rule["dplen"])):
+			continue
+		var want := String(rule.get("proto", "ip"))
+		if want != "ip" and want != proto:
+			continue
+		if int(rule.get("port", 0)) != 0 and int(rule["port"]) != port:
+			continue
+		if bool(rule.get("established", false)) and not reply:
+			continue
+		return rule["action"] == "permit"
+	return false
+
+static func _acl_addr(addr: String, net: String, plen: int) -> bool:
+	return plen == 0 or Net.same_net(addr, net, plen)
+
+static func acl_proto(l4: Dictionary) -> String:
+	## what an access list sees: the transport, not the game's message kind
+	match String(l4.get("proto", "")):
+		"icmp": return "icmp"
+		"dns", "dns-resp", "dhcp-relay", "udp", "vxlan": return "udp"
+		"tcp": return "tcp"
+	return "ip"
+
+static func acl_port(l4: Dictionary) -> int:
+	match String(l4.get("proto", "")):
+		"dns", "dns-resp": return 53
+		"dhcp-relay": return 67
+		"vxlan": return 4789
+	return int(l4.get("port", 0))
+
+static func acl_is_reply(l4: Dictionary) -> bool:
+	## the 'established' keyword: only the answering half of a conversation
+	if String(l4.get("proto", "")) == "icmp":
+		return String(l4.get("type", "")) in ["reply", "ttl-exceeded", "unreachable"]
+	if String(l4.get("proto", "")) == "dns-resp":
+		return true
+	if String(l4.get("proto", "")) == "dhcp-relay":
+		return String(l4.get("op", "")) == "ack"
+	return bool(l4.get("reply", false))
 
 static func bond_members(iface: Net.Iface) -> Array:
 	## every leg of the same bond on this device, itself included
