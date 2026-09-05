@@ -1017,7 +1017,7 @@ func _build_rack_overlay() -> void:
 	v.add_child(rack_airflow_lbl)
 	var info_row := HBoxContainer.new()
 	v.add_child(info_row)
-	var info := _label("Click hardware to inspect. Grab any free jack and pull it to another device.", 13, MUTED)
+	var info := _label("Click hardware to inspect, or an empty U to install something there. Grab any free jack and pull it to another device.", 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info_row.add_child(info)
 	rack_note_btn = Button.new()
@@ -1686,6 +1686,11 @@ func _build_if_overlay() -> void:
 	if_cable_lbl = _label("", 14)
 	if_cable_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cable_row.add_child(if_cable_lbl)
+	# the four actions get their own row: beside the patch text they were
+	# squeezed until every one of them read as "Physical work…"
+	var cable_btns := HBoxContainer.new()
+	cable_btns.add_theme_constant_override("separation", 8)
+	v.add_child(cable_btns)
 	var repair_btn := Button.new()
 	repair_btn.text = "Physical work…"
 	repair_btn.tooltip_text = "Reseat it, swap the optic, swap the lead. The wrong one costs the part and fixes nothing."
@@ -1696,12 +1701,12 @@ func _build_if_overlay() -> void:
 				_toast(err)
 			_refresh_ports()
 			_refresh_money()))
-	cable_row.add_child(repair_btn)
+	cable_btns.add_child(repair_btn)
 	if_note_btn = Button.new()
 	if_note_btn.text = "✎ TAG PORT"
 	if_note_btn.tooltip_text = "Leave physical handover context on this jack"
 	if_note_btn.pressed.connect(func() -> void: _open_note_card(if_note_ui))
-	cable_row.add_child(if_note_btn)
+	cable_btns.add_child(if_note_btn)
 	if_peer_btn = Button.new()
 	if_peer_btn.text = "Go to other end ⇄"
 	if_peer_btn.pressed.connect(func() -> void:
@@ -1713,10 +1718,10 @@ func _build_if_overlay() -> void:
 			_refresh_dev_header()
 			_refresh_ports()
 			open_iface(peer))
-	cable_row.add_child(if_peer_btn)
+	cable_btns.add_child(if_peer_btn)
 	if_cable_btn = Button.new()
 	if_cable_btn.pressed.connect(_cable_action)
-	cable_row.add_child(if_cable_btn)
+	cable_btns.add_child(if_cable_btn)
 
 func open_iface(i: Net.Iface) -> void:
 	cur_if = i
@@ -2889,11 +2894,26 @@ func _refresh_ops() -> void:
 			ctrl_colour = Prefs.bad_colour()
 		elif String(ctrl["status"]) != "compliant":
 			ctrl_colour = Color(1.0, 0.82, 0.5)
-		var cl3 := _label("  %-34s %-11s %s" % [ctrl["label"], ctrl["status"], ctrl["why"]], 12,
-			ctrl_colour)
-		cl3.add_theme_font_override("font", mono)
-		cl3.tooltip_text = String(ctrl["blurb"])
-		ops_box.add_child(cl3)
+		# a long label used to push the status into the next column; the
+		# columns are now real ones, and the label wraps inside its own
+		var cl3_row := HBoxContainer.new()
+		cl3_row.add_theme_constant_override("separation", 12)
+		var cl3_label := _label("  " + String(ctrl["label"]), 12, ctrl_colour)
+		cl3_label.custom_minimum_size = Vector2(300, 0)
+		cl3_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cl3_label.add_theme_font_override("font", mono)
+		cl3_row.add_child(cl3_label)
+		var cl3_status := _label(String(ctrl["status"]), 12, ctrl_colour)
+		cl3_status.custom_minimum_size = Vector2(90, 0)
+		cl3_status.add_theme_font_override("font", mono)
+		cl3_row.add_child(cl3_status)
+		var cl3_why := _label(String(ctrl["why"]), 12, ctrl_colour)
+		cl3_why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cl3_why.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cl3_why.add_theme_font_override("font", mono)
+		cl3_row.add_child(cl3_why)
+		cl3_row.tooltip_text = String(ctrl["blurb"])
+		ops_box.add_child(cl3_row)
 	if not Game.audit.is_empty():
 		var aud: Dictionary = Game.audit
 		ops_box.add_child(_wrap("  %s: a review of %s, worth $%d, sampled at cycle %d. The scope does not change once it starts."

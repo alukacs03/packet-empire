@@ -697,6 +697,7 @@ func _shoot_all() -> void:
 			func() -> void:
 				# the phone, out of hours, with the floor empty
 				Game.staff = []
+				Game.money = maxi(Game.money, 5000)  # a hire is refused with $20 in the bank
 				var ncrng := RandomNumberGenerator.new()
 				ncrng.seed = 3
 				Game.hire(Staff.make_candidate(ncrng, Game.habits))
@@ -708,7 +709,10 @@ func _shoot_all() -> void:
 				Game.night_call_tick()
 				Game.active_contract_debrief = {}
 				ui.contracts_tab = "Jobs"
-				ui.open_contracts()],
+				ui.open_contracts(),
+			func() -> void:
+				ui.contracts_tab = "Jobs"  # the phone rings on the Jobs tab, whatever was open
+				ui._refresh_contracts()],
 		["business_staff",
 			func() -> void:
 				ui.close_everything()
