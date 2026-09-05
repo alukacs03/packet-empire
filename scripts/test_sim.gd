@@ -35,17 +35,41 @@ static func replay(path: String) -> void:
 static func probe() -> void:
 	## scratch space: whatever needs a fast, isolated look right now
 	Game.money = 100000
-	Game.staff = []
-	var ncrng := RandomNumberGenerator.new()
-	ncrng.seed = 3
-	print("hire: ", Game.hire(Staff.make_candidate(ncrng, Game.habits)), " staff ", Game.staff.size())
-	Staff.set_shift(Game.staff[0], "day")
-	Game.cycle = Game.cycle - (Game.cycle % Game.DAY_CYCLES) + 7
-	Game.hazards = [{"kind": "smoke", "rack": "R1", "site": 0, "tile": [0, 0],
-		"severity": 2, "started": Game.cycle, "detected": true, "zone": ["R1"]}]
-	Game.night_call = {}
-	Game.night_call_tick()
-	print("slot ", Game.day_slot(), " on shift ", Staff.anyone_on_shift(), " ready ", Game.callout_ready(), " night_call ", Game.night_call)
+	Game.parts = {"patch": 400, "fiber": 100, "sfp": 100, "psu": 20}
+	var rk := Game.add_rack(Vector2i(2, 2))
+	var r1 := Game.new_device("rtr-lite")
+	var r2 := Game.new_device("rtr-lite")
+	var sw := Game.new_device("sw-lite")
+	rk.slots[0] = r1
+	rk.slots[1] = r2
+	rk.slots[2] = sw
+	Game.connect_ifaces(r1.ifaces[0], r2.ifaces[0])
+	Game.connect_ifaces(r1.ifaces[1], sw.ifaces[0])
+	Game.connect_ifaces(r2.ifaces[1], sw.ifaces[1])
+	var a := CLI.new_session(r1)
+	var b := CLI.new_session(r2)
+	var c := CLI.new_session(sw)
+	for line in ["/ip address add address=10.0.0.1/24 interface=ether1", "/ip address add address=10.1.0.1/24 interface=ether2",
+			"/ip route add dst-address=10.2.0.0/24 gateway=10.0.0.2", "/ip route add gateway=10.0.0.2 distance=5",
+			"/interface vlan add name=vlan-guest vlan-id=60 interface=ether2", "/ip address add address=10.60.0.1/24 interface=vlan-guest",
+			"/ip address add addres=1.1.1.1/24 interface=ether1", "/interface set ether1 mtu=abc", "/ip addres print",
+			"/interface print foo", "/ip address", "print", "..", "print", "/",
+			"/ip/address/print", "/interface print", "/interface print detail", "/interface print where name=ether2",
+			"/interface ethernet print", "/interface ethernet monitor ether1", "/ip route print", "/ip route print detail",
+			"/ping 10.0.0.2 count=2", "/ping 10.9.9.9 count=2", "/tool traceroute 10.0.0.2", "/system resource print",
+			"/system clock print", "/ip service print", "/ip dns print", "/log print", "/user print",
+			"/ip firewall filter print", "/ip dhcp-server lease print", "/export", "/system reboot",
+			"/system backup save", "/file print", "/system backup load name=r1-x", "/ipv6 address add address=2001:db8::1/64 interface=ether1",
+			"/ipv6 address print", "/interface bridge port print", "/tool torch ether1", "/tool sniffer quick", "?", "/routing/bgp", "?", "/"]:
+		var out := a.exec(line)
+		print("%s %s\n%s" % [a.prompt(), line, out])
+	b.exec("/ip address add address=10.0.0.2/24 interface=ether1")
+	for line in ["/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether1 untagged=ether2", "/interface bridge vlan add vlan-ids=20",
+			"/interface bridge port set [find interface=ether3] pvid=20", "/interface print", "/interface bridge port print",
+			"/interface bridge vlan print", "/interface bridge vlan print detail", "/interface bridge port monitor ether1",
+			"/interface bridge print", "/interface disable ether4", "/interface print", "/export"]:
+		print("%s %s\n%s" % [c.prompt(), line, c.exec(line)])
+	print("dirty r1: ", Game.config_dirty(r1), " prompt a: ", a.prompt())
 
 static func _describe_widest(row: Control) -> String:
 	## which child of an over-wide row is the wide one: class and a scrap of text
@@ -1224,11 +1248,24 @@ static func run() -> int:
 	var rs := CLI.new_session(mkt_sw)
 	check(rs is ROS and rs.prompt().begins_with("[admin@"), "ros: PacketTik gear speaks RouterOS")
 	check(mkt_sw.ifaces[0].name == "ether1", "ros: PacketTik ports are etherN")
-	rs.exec("/interface bridge vlan add vlan-ids=50 comment=lab")
+	check(rs.exec("/interface bridge vlan add vlan-ids=50 comment=lab").begins_with("value of bridge must be specified"),
+		"ros: bridge vlan add wants the bridge named, as the real one does")
+	rs.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=50 comment=lab")
 	check(mkt_sw.vlans.has(50), "ros: bridge vlan add creates vlan")
 	rs.exec("/interface bridge port set [find interface=ether2] pvid=50")
 	check(mkt_sw.ifaces[1].untagged_vlan == 50 and mkt_sw.ifaces[1].mode == "access", "ros: bridge port pvid assigns access vlan")
-	check(rs.exec("/interface set ether2 pvid=50").contains("bridge"), "ros: the old /interface set pvid form points at the bridge")
+	check(rs.exec("/interface set ether2 pvid=50").begins_with("syntax error (line 1 column 23)")
+			and "bridge" in rs.exec("/interface set ether2 pvid=50"),
+		"ros: the old /interface set pvid form is a syntax error, with a hint at the bridge")
+	check("bridge1      bridge" in rs.exec("/interface print") and "RS ether" in rs.exec("/interface print").replace(" S ether", "RS ether"),
+		"ros: the bridge is an interface of its own and its ports carry the slave flag")
+	check("INTERNAL-PATH-COST" in rs.exec("/interface bridge port print"),
+		"ros: bridge port print has the real column set")
+	check(rs.exec("/system reboot").begins_with("Reboot, yes?") and mkt_sw.vlans.has(50),
+		"ros: a reboot forgets nothing, because RouterOS wrote it to flash as it went")
+	check(not Game.config_dirty(mkt_sw), "ros: PacketTik gear is never running an unsaved configuration")
+	check(rs.exec("/export").contains("/interface bridge vlan\nadd bridge=bridge1 comment=lab untagged=ether2 vlan-ids=50"),
+		"ros: export groups lines under their menu with parameters in the product order")
 	check(rs.exec("export").contains("vlan-ids=50"), "ros: export renders config")
 	var rr := CLI.new_session(mkt_rtr)
 	rr.exec("/ip address add address=10.7.0.1/24 interface=ether1")
@@ -1342,7 +1379,22 @@ static func run() -> int:
 	check("arp" in rs2.complete("/ip a") and "address" in rs2.complete("/ip a"),
 		"cli: ROS tab lists all matching branches")
 	check("add" in rs2.complete("/ip address vlan-ids=5 "), "cli: ROS tab ignores key=value args")
-	check(rs2.exec("routing bgp").begins_with("incomplete command"), "cli: ROS partial path lists what can follow")
+	check(rs2.exec("routing bgp") == "" and rs2.prompt().ends_with("/routing/bgp>"),
+		"cli: ROS bare menu steps into it and the prompt shows where you are")
+	check(rs2.exec("..") == "" and rs2.prompt().ends_with("/routing>") and rs2.exec("/") == "" and rs2.prompt().ends_with("] >"),
+		"cli: ROS '..' goes up a menu and '/' goes home")
+	check(rs2.exec("/ip addres print").begins_with("no such command or directory (addres)"),
+		"cli: ROS names the word it did not know")
+	check(rs2.exec("/interface print foo").begins_with("expected end of command"),
+		"cli: ROS rejects a stray word after print")
+	check(rs2.exec("/ip address add addres=1.1.1.1/24 interface=ether1").begins_with("syntax error (line 1 column 17)"),
+		"cli: ROS points at the column of a misspelt parameter")
+	check("name=\"ether1\"" in rs2.exec("/interface print detail") and "type=ether" in rs2.exec("/interface print detail"),
+		"cli: ROS print detail is the key=value form")
+	check("ether2" in rs2.exec("/interface print where name=ether2") and "ether3" not in rs2.exec("/interface print where name=ether2"),
+		"cli: ROS print where filters the rows")
+	check(rs2.exec("/ip/address/print").begins_with("Columns: ADDRESS, NETWORK, INTERFACE"),
+		"cli: ROS accepts the 7.x slash spelling of a menu")
 
 	# --- OSPF dynamic routing ---
 	var r5 := Game.add_rack(Vector2i(0, 1))
@@ -1373,10 +1425,10 @@ static func run() -> int:
 	os1.exec("network 10.20.0.0/16 area 0")
 	os1.exec("end")
 	var os2 := CLI.new_session(o_r2)
-	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone").contains("no such instance"),
+	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone").contains("input does not match any value of area"),
 		"ospf: RouterOS 7 wants the instance before the template")
 	os2.exec("/routing ospf instance add name=default router-id=10.20.9.2")
-	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone").contains("no such area"),
+	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone").contains("input does not match any value of area"),
 		"ospf: and the area before the template")
 	os2.exec("/routing ospf area add name=backbone area-id=0.0.0.0 instance=default")
 	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone") == "",
@@ -1398,8 +1450,10 @@ static func run() -> int:
 	Game.topology_changed.emit()
 	check(not Sim.ospf_neighbors(o_r1).is_empty(), "ospf: (cable back)")
 	check(os2.exec("/routing ospf neighbor print").contains("state=\"Full\""), "ospf: adjacency visible from RouterOS side")
-	check(os2.exec("/export").contains("interface-template add networks=10.20.0.0/16 area=backbone"),
-		"ospf: the RouterOS export replays the three v7 steps")
+	check(os2.exec("/export").contains("/routing ospf interface-template\nadd area=backbone disabled=no networks=10.20.0.0/16"),
+		"ospf: the RouterOS export replays the three v7 steps, grouped under their menus")
+	check(os2.exec("/export").begins_with("# ") and " by RouterOS 7." in os2.exec("/export").split("\n")[0],
+		"ospf: the export carries the RouterOS header")
 	check(Sim.ping(t1, "10.20.2.10")["ok"] and Sim.ping(t2, "10.20.1.10")["ok"],
 		"ospf: cross-office ping with zero static routes on routers")
 	check(os1.exec("sh ip route").contains("O      10.20.2.0/24"), "ospf: O route in show ip route")
@@ -1773,7 +1827,9 @@ static func run() -> int:
 	w_eos.exec("end")
 	check(Game.check_contract_mastery("stretch_vlans") == "" and "stretch_vlans" in Game.mastered_contracts,
 		"mastery: pruning both real trunk ends to the intended VLANs is recognized")
-	check("vlan-ids=10 tagged=ether3" in w_ros.exec("/export") and "vlan-ids=20 tagged=ether3" in w_ros.exec("/export"),
+	var w_export_lines: Array = Array(w_ros.exec("/export").split("\n"))
+	check(w_export_lines.any(func(l): return "tagged=ether3" in String(l) and String(l).ends_with("vlan-ids=10"))
+			and w_export_lines.any(func(l): return "tagged=ether3" in String(l) and String(l).ends_with("vlan-ids=20")),
 		"routeros: PacketTik exports preserve the mastered trunk pruning")
 	Game.connect_ifaces(w_sw.ifaces[3], w_sw2.ifaces[6])  # the spare link
 	w_ros.exec("/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether4")
@@ -1836,9 +1892,20 @@ static func run() -> int:
 			and w_o2.name in String(route_debrief["proof"][1]) \
 			and String(route_debrief["practice"]) == "/tool traceroute 192.168.2.10",
 		"debrief: first routing records the actual endpoints, router legs and PacketTik command")
-	check(Game.check_contract_mastery("two_offices") != "",
-		"mastery: a live but unsaved router is not yet operationally complete")
-	w_rcli.exec("/system backup save")
+	var w_ping := w_rcli.exec("/ping 192.168.2.10 count=2")
+	check(w_ping.begins_with("  SEQ HOST") and "sent=2 received=2 packet-loss=0%" in w_ping and "min-rtt=" in w_ping,
+		"routeros: /ping prints the SEQ HOST SIZE TTL TIME STATUS rows and the sent/received summary")
+	check(w_rcli.exec("/ping 192.168.9.9 count=1").contains("timeout") and "packet-loss=100%" in w_rcli.exec("/ping 192.168.9.9 count=1"),
+		"routeros: a lost probe lands in the STATUS column, not on a line of its own")
+	check(w_rcli.exec("/tool traceroute 192.168.2.10").begins_with("Columns: ADDRESS, LOSS, SENT, LAST, AVG, BEST, WORST, STD-DEV"),
+		"routeros: /tool traceroute prints the RouterOS columns")
+	check("\n   DAc 192.168.1.0/24" in w_rcli.exec("/ip route print"),
+		"routeros: dynamic routes carry no item number")
+	check(Game.check_contract_mastery("two_offices") == "",
+		"mastery: a PacketTik router writes every command to flash, so a live router is already complete")
+	check(w_rcli.exec("/system backup save").contains("Configuration backup saved")
+			and w_rcli.exec("/file print").contains(".backup"),
+		"routeros: a backup is a file, not the way configuration persists")
 	check(Game.check_contract_mastery("two_offices") == "" and "two_offices" in Game.mastered_contracts,
 		"mastery: saving the working routed configuration completes the optional challenge")
 	Game.demo = true
@@ -8086,7 +8153,7 @@ static func run() -> int:
 	var n64_ros := Game.new_device("rtr-lite")
 	var n64_rack3 := Game.add_rack(Vector2i(64, 1))
 	n64_rack3.slots[0] = n64_ros
-	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9").contains("incomplete command"),
+	check(CLI.new_session(n64_ros).exec("/ipv6 nat64 set prefix=64:ff9b:: pool=10.64.0.9").contains("no such command or directory (nat64)"),
 		"nat64: PacketTik gear has no NAT64, exactly like RouterOS")
 
 	# the contract that only closes when both halves of the transition exist
@@ -8354,8 +8421,8 @@ static func run() -> int:
 		if String(row["pair"]) == "10.190.1.10>10.190.2.10":
 			fl_seen = true
 	check(fl_seen, "flows: the pair that actually talked is named")
-	check(CLI.new_session(fl_rtr).exec("/ip traffic-flow print").contains("10.190.2.10"),
-		"flows: RouterOS reports them too")
+	check(CLI.new_session(fl_rtr).exec("/tool torch ether1").contains("10.190.2.10"),
+		"flows: RouterOS torch reports them too")
 	Game.clear_talkers()
 	check(Game.top_talkers().is_empty(), "flows: the counters can be reset")
 

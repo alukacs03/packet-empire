@@ -20,3 +20,12 @@
 /interface vrrp print
 /ping 10.20.2.10 count=3
 /export
+/interface print detail
+/ip route print detail
+/ip address
+print where interface=ether1
+..
+/
+/tool traceroute 10.20.2.10
+/interface ethernet monitor ether1
+/system resource print

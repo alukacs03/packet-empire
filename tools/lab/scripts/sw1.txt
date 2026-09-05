@@ -13,3 +13,6 @@
 /interface set ether4 disabled=yes
 /interface print
 /export
+/interface bridge port monitor ether1
+/interface bridge vlan print detail
+/interface bridge port print

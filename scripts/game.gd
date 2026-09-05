@@ -1816,7 +1816,8 @@ func remote_hands_tick() -> void:
 					device_log(target_dev, "%s reseated by remote hands" % target_iface.name)
 			"power_cycle":
 				target_dev.status = "active"
-				apply_device_config(target_dev, target_dev.startup)
+				if not is_ros(target_dev):
+					apply_device_config(target_dev, target_dev.startup)
 				device_log(target_dev, "power cycled by remote hands")
 			"check":
 				log_event("REMOTE HANDS REPORT: %s %s: link light is %s." % [target_dev.name,
@@ -2817,7 +2818,8 @@ func apply_firmware(c: Dictionary) -> String:
 		return "that device is not here any more"
 	c["stage"] = "closed"
 	firmware_bugs.erase(dev.name)
-	apply_device_config(dev, dev.startup)
+	if not is_ros(dev):
+		apply_device_config(dev, dev.startup)
 	if not in_maintenance() and randf() < 0.3:
 		dev.status = "offline"
 		log_event("FIRMWARE UPGRADE: %s did not come back cleanly, and you did it outside a window. It is offline."
@@ -5703,9 +5705,14 @@ func next_rank() -> Array:
 			return [r[0], int(r[1]) - rank_score()]
 	return []
 
+func is_ros(d: Net.NDevice) -> bool:
+	## PacketTik gear runs RouterOS: every command is written to flash as it
+	## succeeds, so there is nothing to save and nothing a reboot forgets
+	return String(MODELS.get(d.model, {}).get("os", "")) == "ros"
+
 func config_dirty(d: Net.NDevice) -> bool:
 	## running config differs from what a reboot would restore
-	if d.type in ["server", "uplink", "cooling"]:
+	if d.type in ["server", "uplink", "cooling"] or is_ros(d):
 		return false
 	return JSON.stringify(device_config(d)) != JSON.stringify(d.startup)
 
@@ -6192,8 +6199,9 @@ func contract_mastery_met(cid: String) -> bool:
 		"two_offices":
 			var gw_a := _iface_with_ip("192.168.1.1")
 			var gw_b := _iface_with_ip("192.168.2.1")
+			# running what it would boot with: saved on PacketOS, always true on RouterOS
 			return gw_a != null and gw_b != null and gw_a.dev == gw_b.dev \
-				and not gw_a.dev.startup.is_empty()
+				and not config_dirty(gw_a.dev)
 	return false
 
 func check_contract_mastery(cid: String) -> String:
@@ -7319,7 +7327,7 @@ func swap_from_spares(dev: Net.NDevice) -> String:
 			% dev.name)
 	dev.status = "active"
 	dev.installed_cycle = cycle
-	if not dev.startup.is_empty():
+	if not dev.startup.is_empty() and not is_ros(dev):
 		apply_device_config(dev, dev.startup)
 	device_log(dev, "replaced from spares")
 	log_event("SPARES: %s was swapped for a shelf unit%s." % [dev.name,
@@ -8559,7 +8567,8 @@ func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Diction
 					pick.enabled = pick.fault == "" and not pick.admin_down
 					result["log"].append("%s: bounced %s" % [d.name, pick.name])
 			"reload_config":
-				apply_device_config(d, d.startup)
+				if not is_ros(d):
+					apply_device_config(d, d.startup)
 				result["log"].append("%s: reloaded the saved configuration" % d.name)
 			"save_config":
 				d.startup = device_config(d)
@@ -8856,8 +8865,9 @@ func _field_fault() -> void:
 		var devs := all_devices().filter(func(d): return d.type in ["switch", "router", "firewall"])
 		if not devs.is_empty():
 			var rebooted: Net.NDevice = devs[randi() % devs.size()]
-			var had_startup := not rebooted.startup.is_empty()
-			apply_device_config(rebooted, rebooted.startup)
+			var had_startup := not rebooted.startup.is_empty() or is_ros(rebooted)
+			if not is_ros(rebooted):
+				apply_device_config(rebooted, rebooted.startup)
 			device_log(rebooted, "system restarted after a power event")
 			Sfx.play("reboot")
 			stats["faults"] += 1

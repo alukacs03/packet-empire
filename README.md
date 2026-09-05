@@ -138,7 +138,7 @@ The CLI depends on what you buy, like real life:
 
 | Gear | Dialect |
 |---|---|
-| PacketTik (budget) | RouterOS 7 (`/interface bridge vlan add …`, `/routing ospf interface-template add …`, `/routing bgp connection add …`, `export`); the syntax is the real one, so it transfers to a CHR |
+| PacketTik (budget) | RouterOS 7: the menu prompt (`[admin@r1] /ip/address>`), `print detail`, `print where`, `[find …]`, `disable`/`enable`/`set`/`remove` in every menu, the real error texts (`syntax error (line 1 column 17)`, `no such command or directory`), `/ping` and `/tool traceroute` in RouterOS shape, a grouped `/export`, and configuration that is written to flash as you type (a reboot forgets nothing; `/system backup save` writes a file). The syntax and the output are the real ones, so it transfers to a CHR |
 | OpenRack / Arivista / Junivista / PacketSense | EOS/IOS-style (`conf t`, `show run`, abbreviations) |
 | Dill servers | Linux (`ip addr`, `ping`, `dhclient`, `tcpdump`, …) |
 
