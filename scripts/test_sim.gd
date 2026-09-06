@@ -11973,6 +11973,17 @@ static func run() -> int:
 	check(Market.brief_for(t40_offer).contains("10.40.4.10/24") and Market.brief_for(t40_offer).contains("alkalmazásszerver") and Market.costs_for(t40_offer).contains("Mbps"), "market: and in Hungarian when that is the language")
 	Loc.language = "en"
 	check(Market.brief_for({"brief": "Inherited from X: keep it up"}) == "Inherited from X: keep it up", "market: a deal without a kind keeps its own text")
+	# side modes and content packs
+	check(not Challenge.parse("PE1-00-abc")["ok"] and not Challenge.parse("PE1-35-abc")["ok"], "challenge: a code with no faults or an unknown difficulty is refused")
+	var t41_pred := {"kind": "device_count", "type": "swtich", "min": 0}
+	var t41_errs: Array = Pack._validate_predicate(t41_pred, "req[0]")
+	check(t41_errs.size() == 2, "pack: a mistyped type and a zero minimum are both refused")
+	check(Pack._validate_predicate({"kind": "survives_link_loss", "a": "x", "b": "y"}, "req[1]").size() == 2, "pack: survives_link_loss needs its probe addresses")
+	Game.drill_active = true
+	check(Puzzle.import_state("{}").contains("finish the drill"), "puzzle: nothing is imported over a drill")
+	Game.drill_active = false
+	Game.reset_side_modes()
+	check(not Game.drill_active and Scenarios.active.is_empty() and Challenge.active.is_empty() and not Puzzle.active(), "modes: a fresh company carries no side mode")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

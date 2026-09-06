@@ -89,6 +89,8 @@ static func all() -> Array:
 # ---------------- lifecycle ----------------
 
 static func start(sc: Dictionary) -> void:
+	if Puzzle.active():
+		return
 	_snap = Game.snapshot()
 	Game.drill_active = true  # the business pauses while you work a scenario
 	active = sc
@@ -376,7 +378,7 @@ static func _build_v6() -> void:
 	_place(rack, 2, web)
 	_place(rack, 3, legacy)
 	_place(rack, 4, dns)
-	rack.slots[6] = rtr  # two units, so it sits clear of the rest
+	_place(rack, 6, rtr)  # two units, so it sits clear of the rest
 	Game.connect_ifaces(client.ifaces[0], sw.ifaces[0])
 	Game.connect_ifaces(web.ifaces[0], sw.ifaces[1])
 	Game.connect_ifaces(legacy.ifaces[0], sw.ifaces[2])
@@ -418,6 +420,8 @@ static func _build_audit() -> void:
 	fw.acls = [{"action": "permit", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0}]  # open until the player closes it: that is the leak
 	Game.add_ip(ops_srv.ifaces[0], "10.62.0.10/24")
 	Game.add_static_route(client_srv, "0.0.0.0", 0, "10.62.9.1")
+	Game.add_static_route(ops_srv, "0.0.0.0", 0, "10.62.0.1")
+	Game.add_static_route(sw, "0.0.0.0", 0, "10.62.0.1")  # the management port can answer the customer: that is the leak
 	for mgmt: Net.Iface in sw.ifaces:
 		if mgmt.name.begins_with("Management"):
 			Game.connect_ifaces(mgmt, sw.ifaces[6])

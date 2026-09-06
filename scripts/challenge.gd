@@ -48,8 +48,11 @@ static func parse(code: String) -> Dictionary:
 	var seed_value := _from36(String(parts[2]))
 	if seed_value < 0:
 		return {"ok": false, "why": "the seed is unreadable"}
-	return {"ok": true, "faults": int(String(parts[1]).substr(0, 1)),
-		"difficulty": int(String(parts[1]).substr(1, 1)), "seed": seed_value}
+	var faults := int(String(parts[1]).substr(0, 1))
+	var difficulty := int(String(parts[1]).substr(1, 1))
+	if faults < 1 or difficulty > 2:
+		return {"ok": false, "why": "the fault count and difficulty are outside what a code can carry"}
+	return {"ok": true, "faults": faults, "difficulty": difficulty, "seed": seed_value}
 
 static func daily_code() -> String:
 	## One featured challenge a day, from UTC, so two people on the same day
@@ -153,7 +156,7 @@ static func card(result: Dictionary) -> Array:
 		return []
 	var lines: Array = [
 		"PACKET EMPIRE  ·  CHALLENGE %s" % result["code"],
-		"%s in %d cycle(s)" % ["SOLVED" if bool(result["solved"]) else "NOT SOLVED",
+		"%s in %d minute(s)" % ["SOLVED" if bool(result["solved"]) else "NOT SOLVED",
 			int(result["elapsed"])],
 		"score %d   (best here: %d)" % [int(result["total"]), int(result["previous_best"])],
 	]

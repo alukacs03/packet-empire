@@ -17,6 +17,8 @@ static var outcome := {}  # {client, name, ip} for the services drill
 static var scenario := ""
 
 static func start(n_breaks := 3, rng_seed := -1, difficulty := 2) -> void:
+	if Puzzle.active():
+		return  # a puzzle holds the real world already; two snapshots would restore the wrong one
 	_snap = Game.snapshot()
 	Game.drill_active = true
 	Game.racks = []

@@ -34,6 +34,16 @@ static func load_all() -> Array:
 			if errors.is_empty():
 				var pack: Dictionary = parsed
 				pack["source"] = path
+				var clash := -1
+				for k in loaded.size():
+					if String(loaded[k].get("id", "")) == String(pack.get("id", "")):
+						clash = k
+				if clash >= 0:
+					if dir_path == USER_DIR and not String(loaded[clash]["source"]).begins_with(USER_DIR):
+						loaded[clash] = pack  # the player's copy wins over the bundled one
+					else:
+						problems.append("%s: duplicate pack id '%s' (already loaded from %s)" % [path, pack.get("id", ""), loaded[clash]["source"]])
+					continue
 				loaded.append(pack)
 			else:
 				for e: String in errors:
@@ -138,12 +148,21 @@ static func _validate_predicate(pred: Variant, where: String) -> Array:
 			if vid < 1 or vid > 4094:
 				errors.append("%s.vid: %d is not a VLAN id" % [where, vid])
 		"device_count":
-			if String(pred.get("type", "")) == "":
+			var dtype := String(pred.get("type", ""))
+			if dtype == "":
 				errors.append("%s.type: name a device type" % where)
+			elif not Game.TYPE_DEFAULTS.has(dtype) and not Game.MODELS.has(dtype):
+				errors.append("%s.type: '%s' is neither a device type nor a model" % [where, dtype])
+			if int(pred.get("min", 1)) < 1:
+				errors.append("%s.min: must be at least 1, or the requirement is always met" % where)
 		"link_between", "survives_link_loss":
 			for field2: String in ["a", "b"]:
 				if String(pred.get(field2, "")) == "":
 					errors.append("%s.%s: name a device" % [where, field2])
+			if kind == "survives_link_loss":
+				for field3: String in ["from", "to"]:
+					if not _is_address(String(pred.get(field3, ""))):
+						errors.append("%s.%s: '%s' is not an address; the loss is proved by a ping" % [where, field3, pred.get(field3, "")])
 		"config_saved":
 			if String(pred.get("device", "")) == "":
 				errors.append("%s.device: name a device" % where)
@@ -153,6 +172,7 @@ static func _validate_predicate(pred: Variant, where: String) -> Array:
 	return errors
 
 const ACTIONS := ["message", "reward", "break_link", "restore_links"]
+const DEFAULT_REWARD := 500  # what a scenario pays when its author did not say
 
 static func _validate_action(action: Variant, where: String) -> Array:
 	if not (action is Dictionary):
@@ -164,6 +184,8 @@ static func _validate_action(action: Variant, where: String) -> Array:
 		return ["%s.text: say something" % where]
 	if kind == "reward" and not (action.get("amount") is float or action.get("amount") is int):
 		return ["%s.amount: needs a number" % where]
+	if kind == "reward" and int(action.get("amount", 0)) < 0:
+		return ["%s.amount: a reward is not negative" % where]
 	if kind in ["break_link", "restore_links"] and kind == "break_link" \
 			and String(action.get("device", "")) == "":
 		return ["%s.device: name a device" % where]
@@ -427,7 +449,7 @@ static func to_contract(pack: Dictionary, scenario: Dictionary) -> Dictionary:
 		reqs.append(req)
 	return {"id": "%s.%s" % [pack["id"], scenario["id"]], "title": scenario["title"],
 		"customer": scenario.get("customer", pack.get("name", "an author")),
-		"reward": int(scenario.get("reward", 500)), "brief": scenario["brief"],
+		"reward": int(scenario.get("reward", DEFAULT_REWARD)), "brief": scenario["brief"],
 		"hint": scenario.get("hint", ""), "reqs": reqs, "pack": pack["id"],
 		"on_complete": scenario.get("on_complete", [])}
 
@@ -466,7 +488,7 @@ static func preview(pack: Dictionary, scenario: Dictionary) -> Array:
 	## What a player is signing up for, before they start it.
 	var lines: Array = ["%s  ·  %s" % [scenario["title"], pack.get("name", "")],
 		String(scenario.get("brief", ""))]
-	lines.append("Reward: $%d" % int(scenario.get("reward", 0)))
+	lines.append("Reward: $%d" % int(scenario.get("reward", DEFAULT_REWARD)))
 	lines.append("Roughly %d step(s):" % scenario.get("requirements", []).size())
 	for pred in scenario.get("requirements", []):
 		lines.append("  · %s" % describe(pred))

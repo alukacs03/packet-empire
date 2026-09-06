@@ -58,6 +58,7 @@ static func _blind_fault(devices: Dictionary) -> Dictionary:
 		for iface: Dictionary in dev.get("ifaces", []):
 			if bool(iface.get("enabled", true)) and not String(iface.get("name", "")).begins_with("Management"):
 				iface["enabled"] = false
+				iface["admin_down"] = true  # what restore reads; the enabled flag alone is recomputed on import
 				return devices
 	return devices
 
@@ -65,6 +66,8 @@ static func import_state(text: String) -> String:
 	## Open it in a scratch session. The player's own world is put aside whole.
 	if active():
 		return "close the puzzle you already have open first"
+	if Game.drill_active:
+		return "finish the drill first"
 	var data: Variant = JSON.parse_string(text)
 	if not (data is Dictionary) or not (data as Dictionary).has("puzzle"):
 		return "that is not a puzzle export"

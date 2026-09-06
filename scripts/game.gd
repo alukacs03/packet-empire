@@ -6423,10 +6423,29 @@ func withdraw_dead_offers() -> void:
 			buyout_offer = {}
 			return
 
+func leave_side_modes() -> void:
+	## a drill, scenario or puzzle holds the real world in a snapshot; before a
+	## save that must be the world on disk
+	if not Scenarios.active.is_empty():
+		Scenarios.finish(false)
+	elif drill_active:
+		Drill.finish(false)
+	if Puzzle.active():
+		Puzzle.close()
+
+func reset_side_modes() -> void:
+	## a loaded or new company starts with no side mode: the statics of the
+	## last one must not leak into it
+	drill_active = false
+	Scenarios.active = {}
+	Challenge.active = {}
+	Puzzle.loaded = {}
+
 func reset_run_state() -> void:
 	## per-run state that is never carried over: without this a second company
 	## inherits the first one's totals, its breach flags and its ticket numbers
 	stats = {"earned": 0, "incidents": 0, "faults": 0, "contracts": 0, "deals": 0}
+	reset_side_modes()
 	reseed_business_streams()
 	sla_status = {}
 	digest = {}
@@ -10397,6 +10416,7 @@ func load_slot(i: int) -> bool:
 	if last_load_error != "":
 		return false
 	current_slot = i
+	reset_side_modes()
 	_apply(data)
 	reseed_business_streams()  # a loaded company draws from its own stream, not whatever the process used up
 	in_world = true

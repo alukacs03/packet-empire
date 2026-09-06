@@ -250,6 +250,7 @@ func show_new_game(is_demo: bool) -> void:
 	panel_box.add_child(name_in)
 
 	var diff := 1
+	var group := ButtonGroup.new()  # read back at Start: the lit toggle is the preset
 	var diff_row := VBoxContainer.new()
 	diff_row.add_theme_constant_override("separation", 6)
 	panel_box.add_child(diff_row)
@@ -257,7 +258,6 @@ func show_new_game(is_demo: bool) -> void:
 		panel_box.add_child(_para(Loc.t("title.new.demo_note")))
 	else:
 		diff_row.add_child(_lbl(Loc.t("title.new.difficulty"), 13, MUTED))
-		var group := ButtonGroup.new()
 		for i in Game.DIFFICULTIES.size():
 			var d: Dictionary = Game.DIFFICULTIES[i]
 			var b := Button.new()
@@ -267,7 +267,7 @@ func show_new_game(is_demo: bool) -> void:
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.button_pressed = i == 1
 			b.add_theme_font_size_override("font_size", 12)
-			b.pressed.connect(func() -> void: diff = i)
+			b.set_meta("diff", i)  # read back from the group at Start: a lambda would only write its own copy of a local
 			diff_row.add_child(b)
 
 	if not is_demo and not Legacy.epitaph.is_empty():
@@ -297,7 +297,9 @@ func show_new_game(is_demo: bool) -> void:
 	UIW.style_button(go, "primary")
 	go.pressed.connect(func() -> void:
 		var slot := _free_slot()
-		start_requested.emit(slot, name_in.text.strip_edges() if name_in.text.strip_edges() != "" else _generated_company(), 1 if is_demo else diff, is_demo))
+		var pressed: BaseButton = group.get_pressed_button()
+		var chosen: int = int(pressed.get_meta("diff", diff)) if pressed != null else diff
+		start_requested.emit(slot, name_in.text.strip_edges() if name_in.text.strip_edges() != "" else _generated_company(), 1 if is_demo else chosen, is_demo))
 	panel_box.add_child(go)
 	panel_box.add_child(_para(Loc.t("title.new.slot_note")))
 
@@ -461,7 +463,7 @@ func _slot_row(i: int) -> Control:
 	del_b.text = Loc.t("title.slots.delete")
 	del_b.add_theme_color_override("font_color", Color(0.9, 0.5, 0.45))
 	del_b.pressed.connect(func() -> void:
-		if del_b.text == "Delete":
+		if del_b.text == Loc.t("title.slots.delete"):
 			del_b.text = Loc.t("title.slots.delete_confirm")  # one click arms it, a second within two seconds does it
 			get_tree().create_timer(2.0).timeout.connect(func() -> void:
 				if is_instance_valid(del_b):

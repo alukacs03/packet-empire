@@ -3803,6 +3803,12 @@ func _build_menu() -> void:
 			if Game.slot_info(id).get("broken", false):
 				hud_toast(Loc.t("toast.damaged_slot") % (id + 1), false)
 				return
+			if Game.drill_active:
+				hud_toast(Loc.t("toast.not_saved_drill"), false)
+				return
+			if Puzzle.active():
+				hud_toast(Loc.t("toast.not_saved_puzzle"), false)
+				return
 			Game.current_slot = id
 			Game.save_game()
 			hud_toast(Loc.t("toast.saved_slot") % (id + 1), true)))
@@ -3810,6 +3816,7 @@ func _build_menu() -> void:
 	var title_btn := Button.new()
 	title_btn.text = Loc.t("menu.to_title")
 	title_btn.pressed.connect(func() -> void:
+		Game.leave_side_modes()  # a drill, scenario or puzzle is scratch: the real world comes back and is saved
 		Game.save_game()
 		menu_overlay.visible = false
 		get_parent().show_title())
@@ -4010,6 +4017,7 @@ func _build_menu() -> void:
 	var quit := Button.new()
 	quit.text = Loc.t("menu.quit")
 	quit.pressed.connect(func() -> void:
+		Game.leave_side_modes()
 		Game.save_game()
 		get_tree().quit())
 	v.add_child(quit)
@@ -6867,7 +6875,7 @@ func _unhandled_input(e: InputEvent) -> void:
 			else:
 				close_dev()
 				if cur_rack:
-					_show_overlay(rack_overlay)
+					open_rack(cur_rack)  # reached through Find or the map: the elevation is rebuilt for this rack
 		elif search_overlay.visible:
 			search_overlay.visible = false
 		elif ops_overlay.visible:
