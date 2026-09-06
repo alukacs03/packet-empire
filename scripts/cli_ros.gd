@@ -773,6 +773,36 @@ func _run_user(path: String, args: Array, p: Dictionary) -> Variant:
 	return null
 
 func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
+	match path.get_slice(" ", 1):
+		"service":
+			return _run_ip_service(path, args, p)
+		"dns":
+			return _run_ip_dns(path, args, p)
+		"dhcp-server":
+			return _run_ip_dhcp_server(path, args, p)
+		"vrf":
+			return _run_ip_vrf(path, args, p)
+		"dhcp-relay":
+			return _run_ip_dhcp_relay(path, args, p)
+		"pool":
+			return _run_ip_pool(path, args, p)
+		"dhcp-client":
+			return _run_ip_dhcp_client(path, args, p)
+		"firewall":
+			return _run_ip_firewall(path, args, p)
+		"neighbor":
+			return _run_ip_neighbor(path, args, p)
+		"traffic-flow":
+			return _run_ip_traffic_flow(path, args, p)
+		"address":
+			return _run_ip_address(path, args, p)
+		"arp":
+			return _run_ip_arp(path, args, p)
+		"route":
+			return _run_ip_route(path, args, p)
+	return null
+
+func _run_ip_service(path: String, args: Array, p: Dictionary) -> Variant:
 	match path:
 		"ip service set":
 			var conf: Dictionary = dev.services.get("ros_services", {})
@@ -807,6 +837,10 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 					"none" if String(svc[0]).ends_with("ssl") else ""]
 				n += 1
 			return out
+	return null
+
+func _run_ip_dns(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip dns print":
 			return _kv_block([["servers", String(dev.services.get("ros_dns_servers", dev.resolver))], ["dynamic-servers", ""], ["use-doh-server", ""],
 				["verify-doh-cert", "no"], ["allow-remote-requests", "yes" if dev.services.has("dns") else "no"], ["max-udp-packet-size", "4096"],
@@ -833,6 +867,10 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 					_dur(maxi(0, int(dev.dns_cache[name].get("expires", 0)) - Game.cycle) * 3600)]
 				n += 1
 			return out
+	return null
+
+func _run_ip_dhcp_server(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip dhcp-server print":
 			var rd: Dictionary = dev.services.get("ros_dhcp", {})
 			var svc: Dictionary = dev.services.get("dhcp", {})
@@ -842,6 +880,67 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 			if svc.is_empty():
 				return out
 			return out + "0   dhcp1  %-10s pool1         1d\n" % String(svc.get("iface", ""))
+		"ip dhcp-server add":
+			if not p.has("interface"):
+				return "value of interface must be specified\n"
+			var on := String(p["interface"])
+			if on != BRIDGE and _iface(on) == null:
+				return "input does not match any value of interface\n"
+			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
+			var lease := String(p.get("lease-time", "10m"))
+			if _dur_secs(lease) <= 0:
+				return "invalid value for argument lease-time\n"
+			rd["server"] = {"name": String(p.get("name", "dhcp1")), "iface": on, "pool": String(p.get("address-pool", "static-only")),
+				"disabled": String(p.get("disabled", "no")) == "yes", "lease": lease}
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
+		"ip dhcp-server network add":
+			if not p.has("address") or not Net.valid_cidr(String(p["address"])):
+				return "value of address must be specified\n" if not p.has("address") else "invalid value for argument address\n"
+			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
+			rd["network"] = {"address": String(p["address"]), "gw": String(p.get("gateway", "")), "dns": String(p.get("dns-server", ""))}
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
+		"ip dhcp-server network print":
+			var out := "Columns: ADDRESS, GATEWAY, DNS-SERVER\n#   ADDRESS         GATEWAY    DNS-SERVER\n"
+			var nw: Dictionary = dev.services.get("ros_dhcp", {}).get("network", {})
+			if not nw.is_empty():
+				out += "0   %-15s %-10s %s\n" % [nw["address"], nw.get("gw", ""), nw.get("dns", "")]
+			return out
+		"ip dhcp-server setup":
+			return "Select interface to run DHCP server on\n\ndhcp server interface: (this console cannot answer the wizard: use /ip pool add, /ip dhcp-server add and /ip dhcp-server network add)\n"
+		"ip dhcp-server lease print":
+			var svc: Dictionary = dev.services.get("dhcp", {})
+			var out := "Columns: ADDRESS, MAC-ADDRESS, HOST-NAME, SERVER, STATUS, LAST-SEEN\n#    ADDRESS         MAC-ADDRESS        HOST-NAME  SERVER  STATUS  LAST-SEEN\n"
+			var n := 0
+			for mac in svc.get("leases", {}):
+				out += "%d  D %-15s %-18s %-10s dhcp1   bound   %s\n" % [n, svc["leases"][mac], mac,
+					Sim.reverse_lookup(dev, String(svc["leases"][mac])), _dur(60 + (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle))) * 3600)]
+				n += 1
+			return ("Flags: D - DYNAMIC\n" + out) if n > 0 else ""
+		"ip dhcp-server set":
+			var rd: Dictionary = dev.services.get("ros_dhcp", {})
+			if not rd.has("server"):
+				return "no such item\n"
+			if not (args.has("0") or args.has(String(rd["server"].get("name", ""))) or p.has("name")):
+				return "no such item\n"
+			if p.has("interface"):
+				if _iface(String(p["interface"])) == null:
+					return "input does not match any value of interface\n"
+				rd["server"]["iface"] = String(p["interface"])
+			if p.has("address-pool"):
+				rd["server"]["pool"] = String(p["address-pool"])
+			if p.has("name"):
+				rd["server"]["name"] = String(p["name"])
+			dev.services["ros_dhcp"] = rd
+			_ros_dhcp_assemble()
+			return ""
+	return null
+
+func _run_ip_vrf(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip vrf add":
 			if not dev.ip_forwarding:
 				return "failure: vrf needs a router\n"
@@ -881,6 +980,10 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 				out += "%-3d %-5s %s\n" % [n, vname, ",".join(PackedStringArray(members))]
 				n += 1
 			return out
+	return null
+
+func _run_ip_dhcp_relay(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip dhcp-relay add":
 			if not dev.ip_forwarding:
 				return "failure: dhcp-relay needs a router\n"
@@ -918,6 +1021,10 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 				out += "%-3d %-7s %-10s %-12s %s\n" % [n, relays.get(i.name, "relay%d" % (n + 1)), _dname(i), i.helper, local]
 				n += 1
 			return out
+	return null
+
+func _run_ip_pool(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip pool add":
 			if not p.has("name") or not p.has("ranges"):
 				return "value of %s must be specified\n" % ("name" if not p.has("name") else "ranges")
@@ -939,37 +1046,28 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 				out += "%-3d %-7s %s-%s\n" % [n, name, rng[0], rng[1]]
 				n += 1
 			return out
-		"ip dhcp-server add":
-			if not p.has("interface"):
-				return "value of interface must be specified\n"
-			var on := String(p["interface"])
-			if on != BRIDGE and _iface(on) == null:
-				return "input does not match any value of interface\n"
-			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
-			var lease := String(p.get("lease-time", "10m"))
-			if _dur_secs(lease) <= 0:
-				return "invalid value for argument lease-time\n"
-			rd["server"] = {"name": String(p.get("name", "dhcp1")), "iface": on, "pool": String(p.get("address-pool", "static-only")),
-				"disabled": String(p.get("disabled", "no")) == "yes", "lease": lease}
-			dev.services["ros_dhcp"] = rd
+		"ip pool set":
+			var pools: Dictionary = dev.services.get("ros_dhcp", {}).get("pools", {})
+			var pkeys := pools.keys()
+			var pool_name := ""
+			for a in args:
+				if String(a).is_valid_int() and int(a) >= 0 and int(a) < pkeys.size():
+					pool_name = String(pkeys[int(a)])
+				elif pools.has(String(a)):
+					pool_name = String(a)
+			if pool_name == "":
+				return "no such item\n"
+			if p.has("ranges"):
+				var rng := String(p["ranges"]).split("-")
+				if rng.size() != 2 or not String(rng[0]).is_valid_ip_address() or not String(rng[1]).is_valid_ip_address():
+					return "invalid value for argument ranges\n"
+				pools[pool_name] = [String(rng[0]), String(rng[1])]
 			_ros_dhcp_assemble()
 			return ""
-		"ip dhcp-server network add":
-			if not p.has("address") or not Net.valid_cidr(String(p["address"])):
-				return "value of address must be specified\n" if not p.has("address") else "invalid value for argument address\n"
-			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
-			rd["network"] = {"address": String(p["address"]), "gw": String(p.get("gateway", "")), "dns": String(p.get("dns-server", ""))}
-			dev.services["ros_dhcp"] = rd
-			_ros_dhcp_assemble()
-			return ""
-		"ip dhcp-server network print":
-			var out := "Columns: ADDRESS, GATEWAY, DNS-SERVER\n#   ADDRESS         GATEWAY    DNS-SERVER\n"
-			var nw: Dictionary = dev.services.get("ros_dhcp", {}).get("network", {})
-			if not nw.is_empty():
-				out += "0   %-15s %-10s %s\n" % [nw["address"], nw.get("gw", ""), nw.get("dns", "")]
-			return out
-		"ip dhcp-server setup":
-			return "Select interface to run DHCP server on\n\ndhcp server interface: (this console cannot answer the wizard: use /ip pool add, /ip dhcp-server add and /ip dhcp-server network add)\n"
+	return null
+
+func _run_ip_dhcp_client(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip dhcp-client add":
 			var ci := _iface(String(p.get("interface", "")))
 			if ci == null:
@@ -980,15 +1078,6 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 				"peer-dns": String(p.get("use-peer-dns", "yes")), "default-route": String(p.get("add-default-route", "yes"))}
 			dev.services["dhcp_clients"] = clients
 			return ""
-		"ip dhcp-server lease print":
-			var svc: Dictionary = dev.services.get("dhcp", {})
-			var out := "Columns: ADDRESS, MAC-ADDRESS, HOST-NAME, SERVER, STATUS, LAST-SEEN\n#    ADDRESS         MAC-ADDRESS        HOST-NAME  SERVER  STATUS  LAST-SEEN\n"
-			var n := 0
-			for mac in svc.get("leases", {}):
-				out += "%d  D %-15s %-18s %-10s dhcp1   bound   %s\n" % [n, svc["leases"][mac], mac,
-					Sim.reverse_lookup(dev, String(svc["leases"][mac])), _dur(60 + (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle))) * 3600)]
-				n += 1
-			return ("Flags: D - DYNAMIC\n" + out) if n > 0 else ""
 		"ip dhcp-client print":
 			var out := "Columns: INTERFACE, USE-PEER-DNS, ADD-DEFAULT-ROUTE, STATUS, ADDRESS\n#  INTERFACE  USE-PEER-DNS  ADD-DEFAULT-ROUTE  STATUS  ADDRESS\n"
 			var n := 0
@@ -997,6 +1086,10 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 				out += "%d  %-10s %-13s %-18s %-7s %s\n" % [n, ifn, c.get("peer-dns", "yes"), c.get("default-route", "yes"), c.get("status", ""), c.get("address", "")]
 				n += 1
 			return out
+	return null
+
+func _run_ip_firewall(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip firewall filter add":
 			if not p.has("chain") or String(p["chain"]) not in ["input", "forward", "output"]:
 				return "value of chain must be specified\n" if not p.has("chain") else "input does not match any value of chain\n"
@@ -1047,41 +1140,6 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 					_iface(String(rule["iface"])).nat = "outside"
 			Game.topology_changed.emit()
 			return ""
-		"ip pool set":
-			var pools: Dictionary = dev.services.get("ros_dhcp", {}).get("pools", {})
-			var pkeys := pools.keys()
-			var pool_name := ""
-			for a in args:
-				if String(a).is_valid_int() and int(a) >= 0 and int(a) < pkeys.size():
-					pool_name = String(pkeys[int(a)])
-				elif pools.has(String(a)):
-					pool_name = String(a)
-			if pool_name == "":
-				return "no such item\n"
-			if p.has("ranges"):
-				var rng := String(p["ranges"]).split("-")
-				if rng.size() != 2 or not String(rng[0]).is_valid_ip_address() or not String(rng[1]).is_valid_ip_address():
-					return "invalid value for argument ranges\n"
-				pools[pool_name] = [String(rng[0]), String(rng[1])]
-			_ros_dhcp_assemble()
-			return ""
-		"ip dhcp-server set":
-			var rd: Dictionary = dev.services.get("ros_dhcp", {})
-			if not rd.has("server"):
-				return "no such item\n"
-			if not (args.has("0") or args.has(String(rd["server"].get("name", ""))) or p.has("name")):
-				return "no such item\n"
-			if p.has("interface"):
-				if _iface(String(p["interface"])) == null:
-					return "input does not match any value of interface\n"
-				rd["server"]["iface"] = String(p["interface"])
-			if p.has("address-pool"):
-				rd["server"]["pool"] = String(p["address-pool"])
-			if p.has("name"):
-				rd["server"]["name"] = String(p["name"])
-			dev.services["ros_dhcp"] = rd
-			_ros_dhcp_assemble()
-			return ""
 		"ip firewall filter print":
 			var out := "Flags: X - disabled, I - invalid; D - dynamic\n"
 			var n := 0
@@ -1093,26 +1151,6 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 				out += " %d %s %s log=no log-prefix=\"\"\n" % [n, "X" if String(rule.get("disabled", "no")) == "yes" else " ", text.strip_edges()]
 				n += 1
 			return out
-		"ip neighbor print":
-			var out := "Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY, VERSION, BOARD\n#  INTERFACE  ADDRESS         MAC-ADDRESS        IDENTITY  VERSION  BOARD\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				var peer := Game.effective_peer(i)
-				if peer == null:
-					continue
-				var pip := ""
-				for cidr in peer.ips:
-					if not Net.is_v6(cidr):
-						pip = String(cidr).split("/")[0]
-						break
-				if pip == "":
-					pip = CLI.first_ip_of(peer.dev)
-				out += "%-2d %-10s %-15s %-18s %-9s %-8s %s\n" % [n, i.name, pip if pip != "0.0.0.0" else "", peer.mac.to_upper(), peer.dev.name,
-					VERSION if Game.is_ros(peer.dev) else "4.28.3M", "CHR" if Game.is_ros(peer.dev) else String(Game.MODELS.get(peer.dev.model, {}).get("label", "")).split(" ")[0]]
-				n += 1
-			return out
-		"ip neighbor discovery-settings print":
-			return _kv_block([["discover-interface-list", "!dynamic"], ["lldp-med-net-policy-vlan", "disabled"], ["protocol", "cdp,lldp,mndp"], ["mode", "tx-and-rx"]])
 		"ip firewall connection print":
 			## the tracked connections, not the traffic accounting: what a
 			## stateful policy is judging return traffic against
@@ -1128,81 +1166,6 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 					maxi(1, 10 - (Game.cycle - int(meta.get("cycle", Game.cycle))))]
 				n += 1
 			return out
-		"ip traffic-flow print":
-			return _kv_block([["enabled", "no"], ["interfaces", "all"], ["cache-entries", "4k"],
-				["active-flow-timeout", "30m"], ["inactive-flow-timeout", "15s"], ["packet-sampling", "no"]])
-		"ip address add":
-			if dev.type == "switch" and not String(p.get("interface", "")).begins_with("Management"):
-				return "failure: PacketTik switches route nothing (only the Management port takes an address)\n"
-			if not p.has("address"):
-				return "value of address must be specified\n"
-			if _vrrp_iface(String(p.get("interface", ""))) != null:
-				# the virtual address lives on the vrrp interface, RouterOS style
-				var vi := _vrrp_iface(String(p["interface"]))
-				var vip := String(p["address"]).split("/")[0]
-				if not Net.valid_cidr(vip + "/32"):
-					return "invalid value for argument address\n"
-				vi.vrrp["vip"] = vip
-				Game.topology_changed.emit()
-				return ""
-			if not p.has("interface") or _iface(p["interface"]) == null:
-				return "input does not match any value of interface\n"
-			for i: Net.Iface in dev.ifaces:
-				if String(p["address"]) in i.ips:
-					return "failure: already have such address\n"
-			if Game.add_ip(_iface(p["interface"]), p["address"]):
-				return ""
-			return "invalid value for argument address\n"
-		"ip address remove":
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				for cidr in i.ips.duplicate():
-					if Net.is_v6(cidr):
-						continue
-					if String(p.get("address", "")) == String(cidr) or str(n) in args:
-						Game.remove_ip(i, cidr)
-						return ""
-					n += 1
-			return "no such item\n"
-		"ip address set":
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				for cidr in i.ips.duplicate():
-					if Net.is_v6(cidr):
-						continue
-					if str(n) in args:
-						var to: Net.Iface = _iface(String(p.get("interface", i.name)))
-						if to == null:
-							return "input does not match any value of interface\n"
-						Game.remove_ip(i, cidr)
-						if not Game.add_ip(to, String(p.get("address", cidr))):
-							Game.add_ip(i, cidr)
-							return "invalid value for argument address\n"
-						return ""
-					n += 1
-			return "no such item\n"
-		"ip address print":
-			var out := "Columns: ADDRESS, NETWORK, INTERFACE\n#   ADDRESS            NETWORK          INTERFACE\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				for cidr in i.ips:
-					if Net.is_v6(cidr):
-						continue
-					out += "%-3d %-18s %-16s %s\n" % [n, cidr, Net.network_of(cidr)["prefix"], _dname(i)]
-					n += 1
-				if not i.vrrp.is_empty() and String(i.vrrp.get("vip", "")) != "":
-					out += "%-3d %-18s %-16s %s\n" % [n, i.vrrp["vip"] + "/32", i.vrrp["vip"], _vrrp_name(i)]
-					n += 1
-			return out
-		"ip arp print":
-			var out := "Flags: D - DYNAMIC; C - COMPLETE\nColumns: ADDRESS, MAC-ADDRESS, INTERFACE\n#    ADDRESS         MAC-ADDRESS        INTERFACE\n"
-			var n := 0
-			var arp_keys: Array = dev.arp.keys()
-			arp_keys.sort_custom(func(a, b): return CLI.arp_sort_key(String(a)) < CLI.arp_sort_key(String(b)))
-			for ip in arp_keys:
-				out += "%d DC %-15s %-18s %s\n" % [n, ip, dev.arp[ip], CLI.arp_iface_name(dev, String(ip))]
-				n += 1
-			return out if n > 0 else _empty("Flags: D - DYNAMIC; C - COMPLETE\n")
 		"ip firewall nat add":
 			if dev.type == "switch":
 				return "failure: NAT needs a router\n"
@@ -1282,6 +1245,121 @@ func _run_ip(path: String, args: Array, p: Dictionary) -> Variant:
 					out += "%-3d %-11s %-18s %s\n" % [n, lname, addr, Time.get_datetime_string_from_system(false, true).replace("T", " ")]
 					n += 1
 			return out if n > 0 else _empty("Flags: X - disabled, D - dynamic\n")
+	return null
+
+func _run_ip_neighbor(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"ip neighbor print":
+			var out := "Columns: INTERFACE, ADDRESS, MAC-ADDRESS, IDENTITY, VERSION, BOARD\n#  INTERFACE  ADDRESS         MAC-ADDRESS        IDENTITY  VERSION  BOARD\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				var peer := Game.effective_peer(i)
+				if peer == null:
+					continue
+				var pip := ""
+				for cidr in peer.ips:
+					if not Net.is_v6(cidr):
+						pip = String(cidr).split("/")[0]
+						break
+				if pip == "":
+					pip = CLI.first_ip_of(peer.dev)
+				out += "%-2d %-10s %-15s %-18s %-9s %-8s %s\n" % [n, i.name, pip if pip != "0.0.0.0" else "", peer.mac.to_upper(), peer.dev.name,
+					VERSION if Game.is_ros(peer.dev) else "4.28.3M", "CHR" if Game.is_ros(peer.dev) else String(Game.MODELS.get(peer.dev.model, {}).get("label", "")).split(" ")[0]]
+				n += 1
+			return out
+		"ip neighbor discovery-settings print":
+			return _kv_block([["discover-interface-list", "!dynamic"], ["lldp-med-net-policy-vlan", "disabled"], ["protocol", "cdp,lldp,mndp"], ["mode", "tx-and-rx"]])
+	return null
+
+func _run_ip_traffic_flow(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"ip traffic-flow print":
+			return _kv_block([["enabled", "no"], ["interfaces", "all"], ["cache-entries", "4k"],
+				["active-flow-timeout", "30m"], ["inactive-flow-timeout", "15s"], ["packet-sampling", "no"]])
+	return null
+
+func _run_ip_address(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"ip address add":
+			if dev.type == "switch" and not String(p.get("interface", "")).begins_with("Management"):
+				return "failure: PacketTik switches route nothing (only the Management port takes an address)\n"
+			if not p.has("address"):
+				return "value of address must be specified\n"
+			if _vrrp_iface(String(p.get("interface", ""))) != null:
+				# the virtual address lives on the vrrp interface, RouterOS style
+				var vi := _vrrp_iface(String(p["interface"]))
+				var vip := String(p["address"]).split("/")[0]
+				if not Net.valid_cidr(vip + "/32"):
+					return "invalid value for argument address\n"
+				vi.vrrp["vip"] = vip
+				Game.topology_changed.emit()
+				return ""
+			if not p.has("interface") or _iface(p["interface"]) == null:
+				return "input does not match any value of interface\n"
+			for i: Net.Iface in dev.ifaces:
+				if String(p["address"]) in i.ips:
+					return "failure: already have such address\n"
+			if Game.add_ip(_iface(p["interface"]), p["address"]):
+				return ""
+			return "invalid value for argument address\n"
+		"ip address remove":
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				for cidr in i.ips.duplicate():
+					if Net.is_v6(cidr):
+						continue
+					if String(p.get("address", "")) == String(cidr) or str(n) in args:
+						Game.remove_ip(i, cidr)
+						return ""
+					n += 1
+			return "no such item\n"
+		"ip address set":
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				for cidr in i.ips.duplicate():
+					if Net.is_v6(cidr):
+						continue
+					if str(n) in args:
+						var to: Net.Iface = _iface(String(p.get("interface", i.name)))
+						if to == null:
+							return "input does not match any value of interface\n"
+						Game.remove_ip(i, cidr)
+						if not Game.add_ip(to, String(p.get("address", cidr))):
+							Game.add_ip(i, cidr)
+							return "invalid value for argument address\n"
+						return ""
+					n += 1
+			return "no such item\n"
+		"ip address print":
+			var out := "Columns: ADDRESS, NETWORK, INTERFACE\n#   ADDRESS            NETWORK          INTERFACE\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				for cidr in i.ips:
+					if Net.is_v6(cidr):
+						continue
+					out += "%-3d %-18s %-16s %s\n" % [n, cidr, Net.network_of(cidr)["prefix"], _dname(i)]
+					n += 1
+				if not i.vrrp.is_empty() and String(i.vrrp.get("vip", "")) != "":
+					out += "%-3d %-18s %-16s %s\n" % [n, i.vrrp["vip"] + "/32", i.vrrp["vip"], _vrrp_name(i)]
+					n += 1
+			return out
+	return null
+
+func _run_ip_arp(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"ip arp print":
+			var out := "Flags: D - DYNAMIC; C - COMPLETE\nColumns: ADDRESS, MAC-ADDRESS, INTERFACE\n#    ADDRESS         MAC-ADDRESS        INTERFACE\n"
+			var n := 0
+			var arp_keys: Array = dev.arp.keys()
+			arp_keys.sort_custom(func(a, b): return CLI.arp_sort_key(String(a)) < CLI.arp_sort_key(String(b)))
+			for ip in arp_keys:
+				out += "%d DC %-15s %-18s %s\n" % [n, ip, dev.arp[ip], CLI.arp_iface_name(dev, String(ip))]
+				n += 1
+			return out if n > 0 else _empty("Flags: D - DYNAMIC; C - COMPLETE\n")
+	return null
+
+func _run_ip_route(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"ip route add", "ipv6 route add":
 			var want_v6 := path.begins_with("ipv6")
 			var dst: String = p.get("dst-address", "::/0" if want_v6 else "0.0.0.0/0")
@@ -1404,6 +1482,89 @@ func _run_ipv6(path: String, args: Array, p: Dictionary) -> Variant:
 	return null
 
 func _run_interface(path: String, args: Array, p: Dictionary) -> Variant:
+	var r: Variant = null
+	match path.get_slice(" ", 1):
+		"vxlan":
+			r = _run_interface_vxlan(path, args, p)
+		"list":
+			r = _run_interface_list(path, args, p)
+		"bridge":
+			r = _run_interface_bridge(path, args, p)
+		"vlan":
+			r = _run_interface_vlan(path, args, p)
+		"vrrp":
+			r = _run_interface_vrrp(path, args, p)
+		"wireguard":
+			r = _run_interface_wireguard(path, args, p)
+		"ethernet":
+			r = _run_interface_ethernet(path, args, p)
+		"bonding":
+			r = _run_interface_bonding(path, args, p)
+	if r != null:
+		return r
+	# the menu's own verbs; an arm that also names a submenu path stays here with them
+	match path:
+		"interface monitor-traffic":
+			var mi := _target(args, p)
+			if mi == null:
+				return "input does not match any value of numbers\n"
+			return _kv_block([["name", mi.name], ["rx-packets-per-second", str(mi.rx_frames / 60)], ["rx-bits-per-second", "%dkbps" % (mi.rx_frames * 148 * 8 / 60 / 1000)],
+				["fp-rx-packets-per-second", str(mi.rx_frames / 60)], ["fp-rx-bits-per-second", "%dkbps" % (mi.rx_frames * 148 * 8 / 60 / 1000)],
+				["rx-drops-per-second", "0"], ["rx-errors-per-second", str(mi.rx_errors / 60)], ["tx-packets-per-second", str(mi.tx_frames / 60)],
+				["tx-bits-per-second", "%dkbps" % (mi.tx_frames * 148 * 8 / 60 / 1000)], ["fp-tx-packets-per-second", str(mi.tx_frames / 60)],
+				["fp-tx-bits-per-second", "%dkbps" % (mi.tx_frames * 148 * 8 / 60 / 1000)], ["tx-drops-per-second", str(mi.out_drops / 60)],
+				["tx-queue-drops-per-second", "0"], ["tx-errors-per-second", "0"]])
+		"interface print stats":
+			var out := "Columns: NAME, RX-BYTE, TX-BYTE, RX-PACKET, TX-PACKET, RX-DROP, TX-DROP, TX-QUEUE-DROP, RX-ERROR, TX-ERROR\n#   NAME       RX-BYTE     TX-BYTE  RX-PACKET  TX-PACKET  RX-DROP  TX-DROP  TX-QUEUE-DROP  RX-ERROR  TX-ERROR\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				out += "%-3d %-10s %9d  %10d  %9d  %9d  %7d  %7d  %13d  %8d  %8d\n" % [n, _dname(i), i.rx_frames * 148,
+					i.tx_frames * 148, i.rx_frames, i.tx_frames, 0, 0, 0, i.rx_errors, 0]
+				n += 1
+			return out
+		"interface print":
+			return _interface_print()
+		"interface disable", "interface enable":
+			var i := _target(args, p)
+			if i == null:
+				return "input does not match any value of numbers\n"
+			_set_disabled(i, path.ends_with("disable"))
+			return ""
+		"interface set", "interface ethernet set":
+			var i := _target(args, p)
+			if i == null:
+				return "input does not match any value of numbers\n"
+			if p.has("disabled"):
+				if String(p["disabled"]) not in ["yes", "no"]:
+					return "input does not match any value of disabled\n"
+				_set_disabled(i, p["disabled"] == "yes")
+			if p.has("mtu"):
+				if not String(p["mtu"]).is_valid_int():
+					return "invalid value for argument mtu\n"
+				i.mtu = clampi(int(p["mtu"]), 576, 9216)
+			if p.has("auto-negotiation") or p.has("full-duplex"):
+				# auto-negotiation=no full-duplex=no is the classic mismatch; the counters will say so
+				if String(p.get("auto-negotiation", "no")) == "yes":
+					i.duplex = "auto"
+				else:
+					i.duplex = "half" if String(p.get("full-duplex", "yes")) == "no" else "full"
+			if p.has("arp"):
+				if String(p["arp"]) not in ["enabled", "proxy-arp", "reply-only", "disabled"]:
+					return "input does not match any value of arp\n"
+				var proxied: Array = dev.services.get("proxy_arp_ifaces", [])
+				proxied.erase(i.name)
+				if String(p["arp"]) == "proxy-arp":
+					proxied.append(i.name)
+				dev.services["proxy_arp_ifaces"] = proxied
+			if p.has("name") and _iface(String(p["name"])) == null and i.parent != "":
+				var names: Dictionary = dev.services.get("vlan_names", {})
+				names[str(i.dot1q)] = String(p["name"])
+				dev.services["vlan_names"] = names
+			Game.topology_changed.emit()
+			return ""
+	return null
+
+func _run_interface_vxlan(path: String, args: Array, p: Dictionary) -> Variant:
 	match path:
 		"interface vxlan add":
 			if dev.type != "switch":
@@ -1478,6 +1639,10 @@ func _run_interface(path: String, args: Array, p: Dictionary) -> Variant:
 					out += "%-3d %-10s %-13s %d\n" % [n, vname, peer, int(vx[vname]["port"])]
 					n += 1
 			return out
+	return null
+
+func _run_interface_list(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"interface list add":
 			if not p.has("name"):
 				return "value of name must be specified\n"
@@ -1510,16 +1675,10 @@ func _run_interface(path: String, args: Array, p: Dictionary) -> Variant:
 					out += "%-3d %-5s %s\n" % [n, name, ifn]
 					n += 1
 			return out
-		"interface monitor-traffic":
-			var mi := _target(args, p)
-			if mi == null:
-				return "input does not match any value of numbers\n"
-			return _kv_block([["name", mi.name], ["rx-packets-per-second", str(mi.rx_frames / 60)], ["rx-bits-per-second", "%dkbps" % (mi.rx_frames * 148 * 8 / 60 / 1000)],
-				["fp-rx-packets-per-second", str(mi.rx_frames / 60)], ["fp-rx-bits-per-second", "%dkbps" % (mi.rx_frames * 148 * 8 / 60 / 1000)],
-				["rx-drops-per-second", "0"], ["rx-errors-per-second", str(mi.rx_errors / 60)], ["tx-packets-per-second", str(mi.tx_frames / 60)],
-				["tx-bits-per-second", "%dkbps" % (mi.tx_frames * 148 * 8 / 60 / 1000)], ["fp-tx-packets-per-second", str(mi.tx_frames / 60)],
-				["fp-tx-bits-per-second", "%dkbps" % (mi.tx_frames * 148 * 8 / 60 / 1000)], ["tx-drops-per-second", str(mi.out_drops / 60)],
-				["tx-queue-drops-per-second", "0"], ["tx-errors-per-second", "0"]])
+	return null
+
+func _run_interface_bridge(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
 		"interface bridge settings print":
 			if dev.type != "switch":
 				return ""  # no bridge: nothing to print, as on the box
@@ -1527,290 +1686,6 @@ func _run_interface(path: String, args: Array, p: Dictionary) -> Variant:
 				["bridge-fast-path-active", "yes"], ["bridge-fast-path-packets", str(dev.ifaces[0].rx_frames if not dev.ifaces.is_empty() else 0)],
 				["bridge-fast-path-bytes", str((dev.ifaces[0].rx_frames if not dev.ifaces.is_empty() else 0) * 148)], ["bridge-fast-forward-active", "no"],
 				["bridge-fast-forward-packets", "0"], ["bridge-fast-forward-bytes", "0"]])
-		"interface vlan add":
-			if not dev.ip_forwarding:
-				return "failure: vlan interfaces need a router\n"
-			var parent := _iface(String(p.get("interface", "")))
-			if parent == null:
-				return "input does not match any value of interface\n"
-			if not String(p.get("vlan-id", "")).is_valid_int():
-				return "value of vlan-id must be specified\n"
-			var vsub := Game.add_subiface(dev, parent.name, int(p["vlan-id"]))
-			if vsub == null:
-				return "failure: could not create the vlan interface\n"
-			if p.has("name"):
-				var names: Dictionary = dev.services.get("vlan_names", {})
-				names[str(vsub.dot1q)] = String(p["name"])
-				dev.services["vlan_names"] = names
-			return ""
-		"interface vlan remove":
-			var vi := _target(args, p)
-			if vi == null or vi.parent == "":
-				return "no such item\n"
-			dev.ifaces.erase(vi)
-			Game.topology_changed.emit()
-			return ""
-		"interface vlan print":
-			var out := "Flags: R - RUNNING\nColumns: NAME, MTU, ARP, VLAN-ID, INTERFACE\n#   NAME     MTU   ARP      VLAN-ID  INTERFACE\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				if i.parent != "":
-					out += "%d %s %-8s %-5d enabled  %-8d %s\n" % [n, "R" if Sim.iface_up(i) else " ", _dname(i), i.mtu, i.dot1q, i.parent]
-					n += 1
-			return out if n > 0 else _empty("Flags: R - RUNNING\n")
-		"interface vrrp add":
-			if not dev.ip_forwarding:
-				return "failure: vrrp needs a router\n"
-			var on := _iface(String(p.get("interface", "")))
-			if on == null:
-				return "input does not match any value of interface\n"
-			var vrid := int(p.get("vrid", "1")) if String(p.get("vrid", "1")).is_valid_int() else 1
-			var prio := int(p.get("priority", "100")) if String(p.get("priority", "100")).is_valid_int() else 100
-			var nth := 1
-			for other: Net.Iface in dev.ifaces:
-				if other != on and not other.vrrp.is_empty():
-					nth += 1
-			on.vrrp = {"group": vrid, "vip": String(on.vrrp.get("vip", "")), "priority": clampi(prio, 1, 254),
-				"preempt": String(p.get("preemption-mode", "yes")) != "no",
-				"name": String(p.get("name", on.vrrp.get("name", "vrrp%d" % nth)))}
-			Game.topology_changed.emit()
-			return ""
-		"interface vrrp remove":
-			var vi: Net.Iface = _vrrp_iface(String(p.get("name", args[0] if not args.is_empty() else "")))
-			if vi == null:
-				return "no such item\n"
-			vi.vrrp = {}
-			Game.topology_changed.emit()
-			return ""
-		"interface vrrp print":
-			var out := "Flags: R - RUNNING; M - MASTER, B - BACKUP\nColumns: NAME, INTERFACE, VRID, PRIORITY, INTERVAL\n#    NAME   INTERFACE  VRID  PRIORITY  INTERVAL\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				if i.vrrp.is_empty():
-					continue
-				var vip := String(i.vrrp.get("vip", ""))
-				var flag := " "
-				if vip != "":
-					flag = "M" if Sim.vrrp_master(vip, int(i.vrrp["group"]), i) == dev else "B"
-				out += "%d R%s %-7s %-10s %-5d %-9d 1s\n" % [n, flag, _vrrp_name(i), i.name,
-					int(i.vrrp["group"]), int(i.vrrp.get("priority", 100))]
-				n += 1
-			return out if n > 0 else _empty("Flags: R - RUNNING; M - MASTER, B - BACKUP\n")
-		"interface wireguard add":
-			var wname := String(p.get("name", "wg0"))
-			if not wname.begins_with("wg"):
-				return "invalid value for argument name\n"  # the sim tells a tunnel by its wg prefix
-			if Game.add_wireguard(dev, _wg_num(wname), wname) == null:
-				return "failure: wireguard needs a router\n"
-			return ""
-		"interface wireguard remove":
-			var wi := _target(args, p)
-			if wi == null or not wi.name.begins_with("wg"):
-				return "no such item\n"
-			dev.ifaces.erase(wi)
-			Game.topology_changed.emit()
-			return ""
-		"interface wireguard print":
-			var out := "Flags: X - disabled; R - running\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				if i.name.begins_with("wg"):
-					out += " %d  R name=\"%s\" mtu=1420 listen-port=13231 private-key=\"%s\" public-key=\"%s\"\n" % [n, i.name, i.wg_key.reverse(), i.wg_key]
-					n += 1
-			return out if n > 0 else _empty("Flags: X - disabled; R - running\n")
-		"interface wireguard peers add":
-			var wi := _iface(String(p.get("interface", "")))
-			if wi == null or not wi.name.begins_with("wg"):
-				return "input does not match any value of interface\n"
-			for need in ["public-key", "endpoint-address", "allowed-address"]:
-				if not p.has(need):
-					return "value of %s must be specified\n" % need
-			var allowed: Array = []
-			for c in String(p["allowed-address"]).split(",", false):
-				if not Net.valid_cidr(String(c).strip_edges()):
-					return "invalid value for argument allowed-address\n"
-				allowed.append(String(c).strip_edges())
-			for existing in wi.wg_peers.duplicate():
-				if String(existing.get("key", "")) == String(p["public-key"]):
-					wi.wg_peers.erase(existing)
-			wi.wg_peers.append({"key": String(p["public-key"]), "endpoint": String(p["endpoint-address"]),
-				"allowed": allowed})
-			Game.topology_changed.emit()
-			return ""
-		"interface wireguard peers remove":
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				for pr in i.wg_peers.duplicate():
-					if String(pr.get("key", "")) == String(p.get("public-key", "")) or str(n) in args:
-						i.wg_peers.erase(pr)
-						Game.topology_changed.emit()
-						return ""
-					n += 1
-			return "no such item\n"
-		"interface wireguard peers print":
-			var legend := "Flags: X - disabled; D - dynamic\n"
-			var out := legend + "Columns: INTERFACE, PUBLIC-KEY, ENDPOINT-ADDRESS, ENDPOINT-PORT, CURRENT-ENDPOINT-ADDRESS, CURRENT-ENDPOINT-PORT, ALLOWED-ADDRESS\n#   INTERFACE  PUBLIC-KEY                                    ENDPOINT-ADDRESS  ENDPOINT-PORT  CURRENT-ENDPOINT-ADDRESS  CURRENT-ENDPOINT-PORT  ALLOWED-ADDRESS\n"
-			var detail := "detail" in args
-			var dout := legend
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				for pr in i.wg_peers:
-					var up := Sim.wg_handshake(i, pr)
-					out += "%-3d %-10s %-45s %-17s %-14d %-25s %-22s %s\n" % [n, i.name, pr.get("key", ""), pr.get("endpoint", ""),
-						13231, pr.get("endpoint", "") if up else "", 13231 if up else 0,
-						",".join(PackedStringArray(pr.get("allowed", [])))]
-					dout += " %d   interface=%s public-key=\"%s\" endpoint-address=%s endpoint-port=13231 allowed-address=%s rx=%d tx=%d last-handshake=%s\n" % [
-						n, i.name, pr.get("key", ""), pr.get("endpoint", ""),
-						",".join(PackedStringArray(pr.get("allowed", []))), i.rx_frames * 148, i.tx_frames * 148,
-						"5s" if up else "never"]
-					n += 1
-			if n == 0:
-				return _empty(legend)
-			return dout if detail else out
-		"interface ethernet print":
-			var out := "Flags: R - RUNNING; S - SLAVE\nColumns: NAME, MTU, MAC-ADDRESS, ARP, SWITCH\n#    NAME     MTU   MAC-ADDRESS        ARP      SWITCH\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				if i.parent != "" or i.name.begins_with("wg"):
-					continue
-				out += "%-2d %s%s %-8s %-5d %-18s %-8s %s\n" % [n, _run_flag(i), "S" if _bridge_member(i) or i.lag > 0 else " ",
-					i.name, i.mtu, i.mac, "proxy-arp" if i.name in dev.services.get("proxy_arp_ifaces", []) else "enabled",
-					"switch1" if dev.type == "switch" else ""]
-				n += 1
-			return out
-		"interface ethernet reset-counters":
-			var targets: Array = []
-			if args.is_empty() and p.is_empty():
-				targets = dev.ifaces
-			else:
-				var one := _target(args, p)
-				if one == null:
-					return "input does not match any value of numbers\n"
-				targets = [one]
-			for ri: Net.Iface in targets:
-				ri.tx_frames = 0
-				ri.rx_frames = 0
-				ri.rx_errors = 0
-				ri.rx_crc = 0
-				ri.rx_giants = 0
-				ri.out_drops = 0
-				ri.collisions = 0
-			return ""
-		"interface ethernet monitor":
-			var i := _target(args, p)
-			if i == null:
-				return "input does not match any value of numbers\n"
-			var link := Game.link_at(i)
-			var up := i.enabled and link != null
-			var pairs: Array = [["name", i.name], ["status", "link-ok" if up else "no-link"]]
-			if up:
-				var mbps := Game.iface_speed(i)
-				pairs += [["auto-negotiation", "done"], ["rate", ("%dMbps" % mbps) if mbps < 1000 else ("%dGbps" % (mbps / 1000))],
-					["full-duplex", "no" if i.duplex == "half" else "yes"], ["tx-flow-control", "no"], ["rx-flow-control", "no"],
-					["advertising", "10M-baseT-half,10M-baseT-full,100M-baseT-half,100M-baseT-full,1G-baseT-full"],
-					["link-partner-advertising", "10M-baseT-half,10M-baseT-full,100M-baseT-half,100M-baseT-full,1G-baseT-full"]]
-			else:
-				pairs += [["auto-negotiation", "incomplete"]]
-			return _kv_block(pairs)
-		"interface print stats":
-			var out := "Columns: NAME, RX-BYTE, TX-BYTE, RX-PACKET, TX-PACKET, RX-DROP, TX-DROP, TX-QUEUE-DROP, RX-ERROR, TX-ERROR\n#   NAME       RX-BYTE     TX-BYTE  RX-PACKET  TX-PACKET  RX-DROP  TX-DROP  TX-QUEUE-DROP  RX-ERROR  TX-ERROR\n"
-			var n := 0
-			for i: Net.Iface in dev.ifaces:
-				out += "%-3d %-10s %9d  %10d  %9d  %9d  %7d  %7d  %13d  %8d  %8d\n" % [n, _dname(i), i.rx_frames * 148,
-					i.tx_frames * 148, i.rx_frames, i.tx_frames, 0, 0, 0, i.rx_errors, 0]
-				n += 1
-			return out
-		"interface print":
-			return _interface_print()
-		"interface disable", "interface enable":
-			var i := _target(args, p)
-			if i == null:
-				return "input does not match any value of numbers\n"
-			_set_disabled(i, path.ends_with("disable"))
-			return ""
-		"interface set", "interface ethernet set":
-			var i := _target(args, p)
-			if i == null:
-				return "input does not match any value of numbers\n"
-			if p.has("disabled"):
-				if String(p["disabled"]) not in ["yes", "no"]:
-					return "input does not match any value of disabled\n"
-				_set_disabled(i, p["disabled"] == "yes")
-			if p.has("mtu"):
-				if not String(p["mtu"]).is_valid_int():
-					return "invalid value for argument mtu\n"
-				i.mtu = clampi(int(p["mtu"]), 576, 9216)
-			if p.has("auto-negotiation") or p.has("full-duplex"):
-				# auto-negotiation=no full-duplex=no is the classic mismatch; the counters will say so
-				if String(p.get("auto-negotiation", "no")) == "yes":
-					i.duplex = "auto"
-				else:
-					i.duplex = "half" if String(p.get("full-duplex", "yes")) == "no" else "full"
-			if p.has("arp"):
-				if String(p["arp"]) not in ["enabled", "proxy-arp", "reply-only", "disabled"]:
-					return "input does not match any value of arp\n"
-				var proxied: Array = dev.services.get("proxy_arp_ifaces", [])
-				proxied.erase(i.name)
-				if String(p["arp"]) == "proxy-arp":
-					proxied.append(i.name)
-				dev.services["proxy_arp_ifaces"] = proxied
-			if p.has("name") and _iface(String(p["name"])) == null and i.parent != "":
-				var names: Dictionary = dev.services.get("vlan_names", {})
-				names[str(i.dot1q)] = String(p["name"])
-				dev.services["vlan_names"] = names
-			Game.topology_changed.emit()
-			return ""
-		"interface bonding add":
-			if dev.type != "switch":
-				return "failure: bonding needs a switch here\n"
-			if not p.has("slaves"):
-				return "value of slaves must be specified\n"
-			var group := 1
-			for i: Net.Iface in dev.ifaces:
-				group = maxi(group, i.lag + 1)
-			var names := String(p["slaves"]).split(",", false)
-			for nm in names:
-				if _iface(nm) == null:
-					return "input does not match any value of slaves\n"
-			for nm in names:
-				_iface(nm).lag = group
-				_iface(nm).lag_mode = "active" if String(p.get("mode", "balance-rr")) == "802.3ad" else "on"
-			if p.has("name"):
-				var bond_names: Dictionary = dev.services.get("bond_names", {})
-				bond_names[str(group)] = String(p["name"])
-				dev.services["bond_names"] = bond_names
-			Game.topology_changed.emit()
-			return ""
-		"interface bonding remove":
-			var groups := _bond_groups()
-			var which := -1
-			var wanted := String(p.get("name", args[0] if not args.is_empty() else ""))
-			var n := 0
-			for g in groups:
-				if wanted == _bond_name(g) or wanted == str(n):
-					which = int(g)
-				n += 1
-			if which < 0:
-				return "no such item\n"
-			for i: Net.Iface in dev.ifaces:
-				if i.lag == which:
-					i.lag = 0
-					i.lag_mode = "on"
-			Game.topology_changed.emit()
-			return ""
-		"interface bonding print":
-			var out := "Flags: R - RUNNING\nColumns: NAME, MTU, MAC-ADDRESS, ARP, MODE, PRIMARY, SLAVES\n#   NAME   MTU   MAC-ADDRESS        ARP      MODE        PRIMARY  SLAVES\n"
-			var groups := _bond_groups()
-			var n := 0
-			for g in groups:
-				var lacp := false
-				for i: Net.Iface in dev.ifaces:
-					if i.lag == g and i.lag_mode != "on":
-						lacp = true
-				out += "%d %s %-9s %-5d %-18s %-8s %-11s %-8s %s\n" % [n, _bond_flag(groups[g]), _bond_name(g), 1500, _iface(groups[g][0]).mac, "enabled",
-					"802.3ad" if lacp else "balance-rr", "", ",".join(PackedStringArray(groups[g]))]
-				n += 1
-			return out if not groups.is_empty() else _empty("Flags: R - RUNNING\n")
 		"interface bridge add", "interface bridge set":
 			if dev.type != "switch":
 				return "input does not match any value of bridge\n" if path.ends_with("add") else "no such item\n"
@@ -2004,6 +1879,262 @@ func _run_interface(path: String, args: Array, p: Dictionary) -> Variant:
 					out += "%-2d D %-18s %-4d %-13s %s\n" % [n, mac, vid, dev.mac_table[vid][mac].name, BRIDGE]
 					n += 1
 			return out if n > 0 else _empty("Flags: D - DYNAMIC\n")
+	return null
+
+func _run_interface_vlan(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"interface vlan add":
+			if not dev.ip_forwarding:
+				return "failure: vlan interfaces need a router\n"
+			var parent := _iface(String(p.get("interface", "")))
+			if parent == null:
+				return "input does not match any value of interface\n"
+			if not String(p.get("vlan-id", "")).is_valid_int():
+				return "value of vlan-id must be specified\n"
+			var vsub := Game.add_subiface(dev, parent.name, int(p["vlan-id"]))
+			if vsub == null:
+				return "failure: could not create the vlan interface\n"
+			if p.has("name"):
+				var names: Dictionary = dev.services.get("vlan_names", {})
+				names[str(vsub.dot1q)] = String(p["name"])
+				dev.services["vlan_names"] = names
+			return ""
+		"interface vlan remove":
+			var vi := _target(args, p)
+			if vi == null or vi.parent == "":
+				return "no such item\n"
+			dev.ifaces.erase(vi)
+			Game.topology_changed.emit()
+			return ""
+		"interface vlan print":
+			var out := "Flags: R - RUNNING\nColumns: NAME, MTU, ARP, VLAN-ID, INTERFACE\n#   NAME     MTU   ARP      VLAN-ID  INTERFACE\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				if i.parent != "":
+					out += "%d %s %-8s %-5d enabled  %-8d %s\n" % [n, "R" if Sim.iface_up(i) else " ", _dname(i), i.mtu, i.dot1q, i.parent]
+					n += 1
+			return out if n > 0 else _empty("Flags: R - RUNNING\n")
+	return null
+
+func _run_interface_vrrp(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"interface vrrp add":
+			if not dev.ip_forwarding:
+				return "failure: vrrp needs a router\n"
+			var on := _iface(String(p.get("interface", "")))
+			if on == null:
+				return "input does not match any value of interface\n"
+			var vrid := int(p.get("vrid", "1")) if String(p.get("vrid", "1")).is_valid_int() else 1
+			var prio := int(p.get("priority", "100")) if String(p.get("priority", "100")).is_valid_int() else 100
+			var nth := 1
+			for other: Net.Iface in dev.ifaces:
+				if other != on and not other.vrrp.is_empty():
+					nth += 1
+			on.vrrp = {"group": vrid, "vip": String(on.vrrp.get("vip", "")), "priority": clampi(prio, 1, 254),
+				"preempt": String(p.get("preemption-mode", "yes")) != "no",
+				"name": String(p.get("name", on.vrrp.get("name", "vrrp%d" % nth)))}
+			Game.topology_changed.emit()
+			return ""
+		"interface vrrp remove":
+			var vi: Net.Iface = _vrrp_iface(String(p.get("name", args[0] if not args.is_empty() else "")))
+			if vi == null:
+				return "no such item\n"
+			vi.vrrp = {}
+			Game.topology_changed.emit()
+			return ""
+		"interface vrrp print":
+			var out := "Flags: R - RUNNING; M - MASTER, B - BACKUP\nColumns: NAME, INTERFACE, VRID, PRIORITY, INTERVAL\n#    NAME   INTERFACE  VRID  PRIORITY  INTERVAL\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				if i.vrrp.is_empty():
+					continue
+				var vip := String(i.vrrp.get("vip", ""))
+				var flag := " "
+				if vip != "":
+					flag = "M" if Sim.vrrp_master(vip, int(i.vrrp["group"]), i) == dev else "B"
+				out += "%d R%s %-7s %-10s %-5d %-9d 1s\n" % [n, flag, _vrrp_name(i), i.name,
+					int(i.vrrp["group"]), int(i.vrrp.get("priority", 100))]
+				n += 1
+			return out if n > 0 else _empty("Flags: R - RUNNING; M - MASTER, B - BACKUP\n")
+	return null
+
+func _run_interface_wireguard(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"interface wireguard add":
+			var wname := String(p.get("name", "wg0"))
+			if not wname.begins_with("wg"):
+				return "invalid value for argument name\n"  # the sim tells a tunnel by its wg prefix
+			if Game.add_wireguard(dev, _wg_num(wname), wname) == null:
+				return "failure: wireguard needs a router\n"
+			return ""
+		"interface wireguard remove":
+			var wi := _target(args, p)
+			if wi == null or not wi.name.begins_with("wg"):
+				return "no such item\n"
+			dev.ifaces.erase(wi)
+			Game.topology_changed.emit()
+			return ""
+		"interface wireguard print":
+			var out := "Flags: X - disabled; R - running\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				if i.name.begins_with("wg"):
+					out += " %d  R name=\"%s\" mtu=1420 listen-port=13231 private-key=\"%s\" public-key=\"%s\"\n" % [n, i.name, i.wg_key.reverse(), i.wg_key]
+					n += 1
+			return out if n > 0 else _empty("Flags: X - disabled; R - running\n")
+		"interface wireguard peers add":
+			var wi := _iface(String(p.get("interface", "")))
+			if wi == null or not wi.name.begins_with("wg"):
+				return "input does not match any value of interface\n"
+			for need in ["public-key", "endpoint-address", "allowed-address"]:
+				if not p.has(need):
+					return "value of %s must be specified\n" % need
+			var allowed: Array = []
+			for c in String(p["allowed-address"]).split(",", false):
+				if not Net.valid_cidr(String(c).strip_edges()):
+					return "invalid value for argument allowed-address\n"
+				allowed.append(String(c).strip_edges())
+			for existing in wi.wg_peers.duplicate():
+				if String(existing.get("key", "")) == String(p["public-key"]):
+					wi.wg_peers.erase(existing)
+			wi.wg_peers.append({"key": String(p["public-key"]), "endpoint": String(p["endpoint-address"]),
+				"allowed": allowed})
+			Game.topology_changed.emit()
+			return ""
+		"interface wireguard peers remove":
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				for pr in i.wg_peers.duplicate():
+					if String(pr.get("key", "")) == String(p.get("public-key", "")) or str(n) in args:
+						i.wg_peers.erase(pr)
+						Game.topology_changed.emit()
+						return ""
+					n += 1
+			return "no such item\n"
+		"interface wireguard peers print":
+			var legend := "Flags: X - disabled; D - dynamic\n"
+			var out := legend + "Columns: INTERFACE, PUBLIC-KEY, ENDPOINT-ADDRESS, ENDPOINT-PORT, CURRENT-ENDPOINT-ADDRESS, CURRENT-ENDPOINT-PORT, ALLOWED-ADDRESS\n#   INTERFACE  PUBLIC-KEY                                    ENDPOINT-ADDRESS  ENDPOINT-PORT  CURRENT-ENDPOINT-ADDRESS  CURRENT-ENDPOINT-PORT  ALLOWED-ADDRESS\n"
+			var detail := "detail" in args
+			var dout := legend
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				for pr in i.wg_peers:
+					var up := Sim.wg_handshake(i, pr)
+					out += "%-3d %-10s %-45s %-17s %-14d %-25s %-22s %s\n" % [n, i.name, pr.get("key", ""), pr.get("endpoint", ""),
+						13231, pr.get("endpoint", "") if up else "", 13231 if up else 0,
+						",".join(PackedStringArray(pr.get("allowed", [])))]
+					dout += " %d   interface=%s public-key=\"%s\" endpoint-address=%s endpoint-port=13231 allowed-address=%s rx=%d tx=%d last-handshake=%s\n" % [
+						n, i.name, pr.get("key", ""), pr.get("endpoint", ""),
+						",".join(PackedStringArray(pr.get("allowed", []))), i.rx_frames * 148, i.tx_frames * 148,
+						"5s" if up else "never"]
+					n += 1
+			if n == 0:
+				return _empty(legend)
+			return dout if detail else out
+	return null
+
+func _run_interface_ethernet(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"interface ethernet print":
+			var out := "Flags: R - RUNNING; S - SLAVE\nColumns: NAME, MTU, MAC-ADDRESS, ARP, SWITCH\n#    NAME     MTU   MAC-ADDRESS        ARP      SWITCH\n"
+			var n := 0
+			for i: Net.Iface in dev.ifaces:
+				if i.parent != "" or i.name.begins_with("wg"):
+					continue
+				out += "%-2d %s%s %-8s %-5d %-18s %-8s %s\n" % [n, _run_flag(i), "S" if _bridge_member(i) or i.lag > 0 else " ",
+					i.name, i.mtu, i.mac, "proxy-arp" if i.name in dev.services.get("proxy_arp_ifaces", []) else "enabled",
+					"switch1" if dev.type == "switch" else ""]
+				n += 1
+			return out
+		"interface ethernet reset-counters":
+			var targets: Array = []
+			if args.is_empty() and p.is_empty():
+				targets = dev.ifaces
+			else:
+				var one := _target(args, p)
+				if one == null:
+					return "input does not match any value of numbers\n"
+				targets = [one]
+			for ri: Net.Iface in targets:
+				ri.tx_frames = 0
+				ri.rx_frames = 0
+				ri.rx_errors = 0
+				ri.rx_crc = 0
+				ri.rx_giants = 0
+				ri.out_drops = 0
+				ri.collisions = 0
+			return ""
+		"interface ethernet monitor":
+			var i := _target(args, p)
+			if i == null:
+				return "input does not match any value of numbers\n"
+			var link := Game.link_at(i)
+			var up := i.enabled and link != null
+			var pairs: Array = [["name", i.name], ["status", "link-ok" if up else "no-link"]]
+			if up:
+				var mbps := Game.iface_speed(i)
+				pairs += [["auto-negotiation", "done"], ["rate", ("%dMbps" % mbps) if mbps < 1000 else ("%dGbps" % (mbps / 1000))],
+					["full-duplex", "no" if i.duplex == "half" else "yes"], ["tx-flow-control", "no"], ["rx-flow-control", "no"],
+					["advertising", "10M-baseT-half,10M-baseT-full,100M-baseT-half,100M-baseT-full,1G-baseT-full"],
+					["link-partner-advertising", "10M-baseT-half,10M-baseT-full,100M-baseT-half,100M-baseT-full,1G-baseT-full"]]
+			else:
+				pairs += [["auto-negotiation", "incomplete"]]
+			return _kv_block(pairs)
+	return null
+
+func _run_interface_bonding(path: String, args: Array, p: Dictionary) -> Variant:
+	match path:
+		"interface bonding add":
+			if dev.type != "switch":
+				return "failure: bonding needs a switch here\n"
+			if not p.has("slaves"):
+				return "value of slaves must be specified\n"
+			var group := 1
+			for i: Net.Iface in dev.ifaces:
+				group = maxi(group, i.lag + 1)
+			var names := String(p["slaves"]).split(",", false)
+			for nm in names:
+				if _iface(nm) == null:
+					return "input does not match any value of slaves\n"
+			for nm in names:
+				_iface(nm).lag = group
+				_iface(nm).lag_mode = "active" if String(p.get("mode", "balance-rr")) == "802.3ad" else "on"
+			if p.has("name"):
+				var bond_names: Dictionary = dev.services.get("bond_names", {})
+				bond_names[str(group)] = String(p["name"])
+				dev.services["bond_names"] = bond_names
+			Game.topology_changed.emit()
+			return ""
+		"interface bonding remove":
+			var groups := _bond_groups()
+			var which := -1
+			var wanted := String(p.get("name", args[0] if not args.is_empty() else ""))
+			var n := 0
+			for g in groups:
+				if wanted == _bond_name(g) or wanted == str(n):
+					which = int(g)
+				n += 1
+			if which < 0:
+				return "no such item\n"
+			for i: Net.Iface in dev.ifaces:
+				if i.lag == which:
+					i.lag = 0
+					i.lag_mode = "on"
+			Game.topology_changed.emit()
+			return ""
+		"interface bonding print":
+			var out := "Flags: R - RUNNING\nColumns: NAME, MTU, MAC-ADDRESS, ARP, MODE, PRIMARY, SLAVES\n#   NAME   MTU   MAC-ADDRESS        ARP      MODE        PRIMARY  SLAVES\n"
+			var groups := _bond_groups()
+			var n := 0
+			for g in groups:
+				var lacp := false
+				for i: Net.Iface in dev.ifaces:
+					if i.lag == g and i.lag_mode != "on":
+						lacp = true
+				out += "%d %s %-9s %-5d %-18s %-8s %-11s %-8s %s\n" % [n, _bond_flag(groups[g]), _bond_name(g), 1500, _iface(groups[g][0]).mac, "enabled",
+					"802.3ad" if lacp else "balance-rr", "", ",".join(PackedStringArray(groups[g]))]
+				n += 1
+			return out if not groups.is_empty() else _empty("Flags: R - RUNNING\n")
 	return null
 
 func _run_routing(path: String, args: Array, p: Dictionary) -> Variant:
