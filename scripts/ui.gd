@@ -3958,6 +3958,19 @@ func _show_scenario_banner() -> void:
 	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	blurb.custom_minimum_size = Vector2(520, 0)
 	scenario_box.add_child(blurb)
+	if String(sc.get("hint", "")) != "":
+		var sc_hint := _label("", 13, Color(0.62, 0.75, 0.85))
+		sc_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sc_hint.custom_minimum_size = Vector2(520, 0)
+		sc_hint.visible = false
+		var sc_hint_btn := Button.new()
+		sc_hint_btn.text = "Stuck? Show me the approach"
+		sc_hint_btn.pressed.connect(func() -> void:
+			sc_hint.text = String(sc["hint"])
+			sc_hint.visible = true
+			sc_hint_btn.visible = false)
+		scenario_box.add_child(sc_hint_btn)
+		scenario_box.add_child(sc_hint)
 	for g in sc["goals"]:
 		var ok: bool = g["t"].call()
 		scenario_box.add_child(_label("   %s  %s" % ["●" if ok else "○", g["d"]], 13,
@@ -6250,6 +6263,7 @@ func _refresh_contracts() -> void:
 	contracts_box.add_child(_section("CAMPAIGN"))
 	var found_active := false
 	var active_shown := 0
+	var rank_shown := 0
 	for c in Contracts.all():
 		var done: bool = c["id"] in Game.contracts_done
 		if done:
@@ -6277,7 +6291,9 @@ func _refresh_contracts() -> void:
 			contracts_box.add_child(_label("🔒  more jobs unlock as you finish these", 13, Color(0.45, 0.5, 0.6)))
 			break
 		if Contracts.rank_locked(c):
-			active_shown += 1
+			rank_shown += 1
+			if rank_shown > 3:
+				continue  # a few rank chips say what is coming; they do not use up the job window
 			contracts_box.add_child(_chip_row("RANK", Color(0.75, 0.65, 0.4),
 				"%s: %s   comes to a %s; you are a %s" % [c["title"], c["customer"], String(c["rank"]), Game.rank()],
 				14, Color(0.75, 0.7, 0.55)))

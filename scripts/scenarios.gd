@@ -24,9 +24,10 @@ static func all() -> Array:
 			"id": "campus",
 			"name": "Campus in a summer",
 			"blurb": "A college wants staff, students and guests on the same wireless and the same switches, and each group kept away from the others. Build it before term starts.",
+			"hint": "On the access point's console: 'ssid staff vlan 10', 'ssid students vlan 20', 'ssid guests vlan 30'. Create the three VLANs on the switch and make the AP's uplink a trunk. Attach the two PCs with 'wifi join staff' and 'wifi join guests'; the guest PC shares the staff subnet, so only the VLAN keeps it out.",
 			"build": func() -> void: _build_campus(),
 			"goals": [
-				{"d": "Three SSIDs on the access point", "t": func() -> bool: return _ap_ssid_count() >= 3},
+				{"d": "Three SSIDs on the access point, each on its own VLAN", "t": func() -> bool: return _ap_ssid_count() >= 3},
 				{"d": "Staff can reach the staff server at 10.61.10.10", "t": func() -> bool: return _ping("10.61.10.20", "10.61.10.10")},
 				{"d": "Guests cannot reach the staff server", "t": func() -> bool: return not _ping("10.61.10.30", "10.61.10.10")},
 			],
@@ -132,10 +133,15 @@ static func _resolves6(from_ip: String, name: String) -> bool:
 	return bool(Sim.ping(src, answer)["ok"])
 
 static func _ap_ssid_count() -> int:
+	## SSIDs on distinct VLANs: three names on one VLAN are one network
 	var best := 0
 	for d in Game.all_devices():
 		if d.type == "ap":
-			best = maxi(best, d.ssids.size())
+			var vids := {}
+			for name in d.ssids:
+				if int(d.ssids[name]) != 1:
+					vids[int(d.ssids[name])] = true
+			best = maxi(best, vids.size())
 	return best
 
 static func _fw_denies(prefix: String, plen: int) -> bool:

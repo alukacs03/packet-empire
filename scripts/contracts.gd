@@ -722,6 +722,7 @@ static func _campaign() -> Array:
 				{"d": "Two links between the same pair of switches", "t": func() -> bool: return _parallel_sw_links() >= 2},
 				{"d": "Spanning tree is blocking the spare", "t": func() -> bool: return _stp_blocking()},
 				{"d": "Alfa's servers still reach each other", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
+				{"d": "And still do with the forwarding link unplugged", "t": func() -> bool: return _core_survives_link_loss(), "once": true},
 			],
 		},
 		{
@@ -831,6 +832,7 @@ static func _campaign() -> Array:
 				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
 				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},
 				{"d": "The virtual gateway answers ping", "t": func() -> bool: return _vip_pings()},
+				{"d": "It still answers with the master switched off", "t": func() -> bool: return _vip_survives_master_loss(), "once": true},
 			],
 		},
 		{
@@ -866,6 +868,42 @@ static func _campaign() -> Array:
 				{"d": "An L3 switch with SVIs for two VLANs", "t": func() -> bool: return _l3_switch_svis() >= 2},
 				{"d": "Servers own 10.80.40.10 and 10.80.50.10", "t": func() -> bool: return _owner("10.80.40.10") != null and _owner("10.80.50.10") != null},
 				{"d": "They route to each other via the switch", "t": func() -> bool: return _ping("10.80.40.10", "10.80.50.10", true) and _ping("10.80.50.10", "10.80.40.10", true)},
+			],
+		},
+		{
+			"id": "guest_wifi",
+			"title": "Guests and staff",
+			"customer": "Balaton Hotel",
+			"reward": 2600,
+			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and on its console, in config mode ('enable', 'configure terminal'), map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.30.11/24 (the same subnet on purpose: only the VLAN keeps them apart), and prove the guest cannot reach the staff machine.",
+			"reqs": [
+				{"d": "An access point broadcasting two SSIDs", "t": func() -> bool: return _ap_ssids() >= 2},
+				{"d": "A host associated on each network", "t": func() -> bool: return _wifi_clients() >= 2},
+				{"d": "Guests cannot reach the staff network", "t": func() -> bool: return _owner("10.110.30.10") != null and _owner("10.110.30.11") != null and _ping("10.110.30.10", "10.110.30.11", false)},
+			],
+		},
+		{
+			"id": "dual_stack",
+			"title": "The address shortage",
+			"customer": "Hollo Media",
+			"reward": 3000,
+			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (in config mode under each interface: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>'). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
+			"reqs": [
+				{"d": "Servers hold 2001:db8:70::10 and 2001:db8:71::10", "t": func() -> bool: return _owner("2001:db8:70::10") != null and _owner("2001:db8:71::10") != null},
+				{"d": "A router has a leg in each v6 prefix", "t": func() -> bool: return _v6_router() != null},
+				{"d": "They reach each other over IPv6", "t": func() -> bool: return _ping("2001:db8:70::10", "2001:db8:71::10", true) and _ping("2001:db8:71::10", "2001:db8:70::10", true)},
+			],
+		},
+		{
+			"id": "keep_it_moving",
+			"title": "Keep it moving",
+			"customer": "Obsidian Cloud",
+			"reward": 3800,
+			"brief": "Obsidian runs virtual machines and expects to move them between hosts without their customers noticing. Put two dual-NIC servers on the same switch and the same VLAN, create a machine on one ('vm create obs01', 'vm addr obs01 10.160.5.20/24'), prove another host can reach it, then migrate it to the second server ('vm migrate obs01 <host>'). It must still answer on the same address afterwards, which only works while both hosts share a broadcast domain.",
+			"reqs": [
+				{"d": "A virtual machine at 10.160.5.20", "t": func() -> bool: return _vm_at("10.160.5.20") != null},
+				{"d": "It has been migrated between hosts", "t": func() -> bool: return _vm_migrated()},
+				{"d": "It still answers after the move", "t": func() -> bool: return _server_pings("10.160.5.20")},
 			],
 		},
 		{
@@ -974,25 +1012,15 @@ static func _campaign() -> Array:
 		},
 		{
 			"id": "bandwidth_crunch",
+			"hint": "Find the link the slowed-down customer crosses (Ops shows the loaded link, 'show interfaces counters' shows output drops). Replace both ends with 10G-capable gear (a 24-port switch or a load balancer port) and re-cable it; the drops stop and the customer's fee comes back to full.",
 			"title": "Bandwidth crunch",
 			"customer": "Everyone at once",
 			"reward": 3500,
 			"brief": "Success has a price: customers report slowdowns, and the Map shows red links: their combined load exceeds your 1G gear. The fix is capacity planning: 10-gig hardware (Arivista 7024 switches, Junivista MX8 routers) on the hot paths. Deliver a 10G-capable link between two pieces of core gear (both ends 10G models) and have zero congested deals.",
 			"reqs": [
 				{"d": "A 10G link in the core (both ends 10G-capable)", "t": func() -> bool: return _has_10g_link()},
-				{"d": "No customer deal is congested", "t": func() -> bool: return _no_congestion()},
-			],
-		},
-		{
-			"id": "guest_wifi",
-			"title": "Guests and staff",
-			"customer": "Balaton Hotel",
-			"reward": 2600,
-			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and on its console, in config mode ('enable', 'configure terminal'), map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.30.11/24 (the same subnet on purpose: only the VLAN keeps them apart), and prove the guest cannot reach the staff machine.",
-			"reqs": [
-				{"d": "An access point broadcasting two SSIDs", "t": func() -> bool: return _ap_ssids() >= 2},
-				{"d": "A host associated on each network", "t": func() -> bool: return _wifi_clients() >= 2},
-				{"d": "Guests cannot reach the staff network", "t": func() -> bool: return _owner("10.110.30.10") != null and _owner("10.110.30.11") != null and _ping("10.110.30.10", "10.110.30.11", false)},
+				{"d": "No customer deal is congested", "t": func() -> bool: return not Game.deals.is_empty() and _no_congestion()},
+				{"d": "A customer who was slowed down runs at full speed again", "t": func() -> bool: return int(Game.stats.get("congestion_relieved", 0)) >= 1},
 			],
 		},
 		{
@@ -1008,18 +1036,6 @@ static func _campaign() -> Array:
 			],
 		},
 		{
-			"id": "keep_it_moving",
-			"title": "Keep it moving",
-			"customer": "Obsidian Cloud",
-			"reward": 3800,
-			"brief": "Obsidian runs virtual machines and expects to move them between hosts without their customers noticing. Put two dual-NIC servers on the same switch and the same VLAN, create a machine on one ('vm create obs01', 'vm addr obs01 10.160.5.20/24'), prove another host can reach it, then migrate it to the second server ('vm migrate obs01 <host>'). It must still answer on the same address afterwards, which only works while both hosts share a broadcast domain.",
-			"reqs": [
-				{"d": "A virtual machine at 10.160.5.20", "t": func() -> bool: return _vm_at("10.160.5.20") != null},
-				{"d": "It has been migrated between hosts", "t": func() -> bool: return _vm_migrated()},
-				{"d": "It still answers after the move", "t": func() -> bool: return _server_pings("10.160.5.20")},
-			],
-		},
-		{
 			"id": "always_on",
 			"title": "Always on",
 			"customer": "Fecske Media",
@@ -1029,10 +1045,12 @@ static func _campaign() -> Array:
 				{"d": "A load balancer with a two-member pool", "t": func() -> bool: return _lb_pool() >= 2},
 				{"d": "The virtual address 10.190.0.100 answers", "t": func() -> bool: return _server_pings("10.190.0.100")},
 				{"d": "At least one member is in service", "t": func() -> bool: return _lb_healthy() >= 1},
+				{"d": "10.190.0.100 still answers with one member switched off", "t": func() -> bool: return _lb_survives_member_loss(), "once": true},
 			],
 		},
 		{
 			"id": "two_sites",
+			"hint": "Business tab: open a second site and order a WAN circuit between the two. Cable the circuit's port at each end to a router leg, put one subnet on each site's router leg (10.120.1.1/24 and 10.120.2.1/24) and a /30 on the circuit legs, then a static route on each router for the far subnet via the far circuit address, and a default route on each server to its own router.",
 			"title": "Two roofs, one service",
 			"customer": "Tisza Bank",
 			"reward": 4200,
@@ -1042,18 +1060,6 @@ static func _campaign() -> Array:
 				{"d": "A WAN circuit links two of them", "t": func() -> bool: return not Game.circuits.is_empty()},
 				{"d": "A server on each of two sites (10.120.1.10, 10.120.2.10)", "t": func() -> bool: return _sites_of_hosts(["10.120.1.10", "10.120.2.10"]).size() >= 2},
 				{"d": "They reach each other across the circuit", "t": func() -> bool: return _ping("10.120.1.10", "10.120.2.10", true) and _ping("10.120.2.10", "10.120.1.10", true)},
-			],
-		},
-		{
-			"id": "dual_stack",
-			"title": "The address shortage",
-			"customer": "Hollo Media",
-			"reward": 3000,
-			"brief": "Hollo Media's new platform must be reachable over IPv6 as well as IPv4. Dual-stack a pair of servers: keep their v4 addressing and add 2001:db8:70::10/64 and 2001:db8:71::10/64, then route between those two /64s with a router (in config mode under each interface: 'ipv6 address 2001:db8:70::1/64' on one leg, 2001:db8:71::1/64 on the other) and point each server's v6 default at its gateway ('ip -6 route add default via <gw>'). Both must ping each other over IPv6. Watch a capture: you will see Neighbor Discovery where ARP used to be.",
-			"reqs": [
-				{"d": "Servers hold 2001:db8:70::10 and 2001:db8:71::10", "t": func() -> bool: return _owner("2001:db8:70::10") != null and _owner("2001:db8:71::10") != null},
-				{"d": "A router has a leg in each v6 prefix", "t": func() -> bool: return _v6_router() != null},
-				{"d": "They reach each other over IPv6", "t": func() -> bool: return _ping("2001:db8:70::10", "2001:db8:71::10", true) and _ping("2001:db8:71::10", "2001:db8:70::10", true)},
 			],
 		},
 		{
@@ -1118,6 +1124,7 @@ static func _campaign() -> Array:
 				{"d": "Two leaves, each uplinked to two spines", "t": func() -> bool: return _fabric_shape()},
 				{"d": "A leaf has two equal-cost paths to the far host", "t": func() -> bool: return _fabric_ecmp()},
 				{"d": "Hosts under different leaves reach each other", "t": func() -> bool: return _ping("10.251.1.10", "10.251.2.10", true)},
+				{"d": "They still do with one spine switched off", "t": func() -> bool: return _fabric_survives_spine_loss(), "once": true},
 			],
 		},
 		{
@@ -1205,6 +1212,92 @@ static func _vip_pings() -> bool:
 			for i: Net.Iface in _vrrp_ifaces():
 				if r["via"] == i.vrrp["vip"] and Sim.ping(d, r["via"])["ok"]:
 					return true
+	return false
+
+static func _vip_survives_master_loss() -> bool:
+	## the proof the brief promises: the master goes dark and the gateway keeps answering
+	for i: Net.Iface in _vrrp_ifaces():
+		var vip := String(i.vrrp.get("vip", ""))
+		var master := Sim.vrrp_master(vip, int(i.vrrp.get("group", -1)))
+		if master == null:
+			continue
+		var asker: Net.NDevice = null
+		for d in Game.all_devices():
+			if d.type == "server" and d.static_routes.any(func(r): return String(r["via"]) == vip):
+				asker = d
+				break
+		if asker == null:
+			continue
+		master.status = "offline"
+		Sim.flush_learned_state()
+		var still: bool = Sim.ping(asker, vip)["ok"]
+		master.status = "active"
+		Sim.flush_learned_state()
+		return still
+	return false
+
+static func _lb_survives_member_loss() -> bool:
+	for d in Game.all_devices():
+		var svc: Dictionary = d.services.get("lb", {})
+		if svc.is_empty() or svc.get("healthy", []).size() < 2:
+			continue
+		var victim := _owner(String(svc["healthy"][0]))
+		if victim == null:
+			continue
+		victim.status = "offline"
+		Sim.flush_learned_state()
+		Game.lb_health_check()
+		var still := _server_pings(String(svc.get("vip", "10.190.0.100")))
+		victim.status = "active"
+		Sim.flush_learned_state()
+		Game.lb_health_check()
+		return still
+	return false
+
+static func _fabric_survives_spine_loss() -> bool:
+	## a spine is a router that owns neither host subnet; switch one off
+	var leaves := {}
+	for ip in ["10.251.1.10", "10.251.2.10"]:
+		var host := _owner(ip)
+		if host == null:
+			return false
+		for i: Net.Iface in host.ifaces:
+			var far := Game.effective_peer(i)
+			if far != null:
+				leaves[far.dev] = true
+	for d in Game.all_devices():
+		if not d.ip_forwarding or leaves.has(d) or d.type == "uplink":
+			continue
+		d.status = "offline"
+		Sim.flush_learned_state()
+		var still := _ping("10.251.1.10", "10.251.2.10", true)
+		d.status = "active"
+		Sim.flush_learned_state()
+		return still
+	return false
+
+static func _core_survives_link_loss() -> bool:
+	## the link spanning tree is forwarding on goes away; the blocked spare has to take over
+	for l in Game.links:
+		if l.a.dev.type != "switch" or l.b.dev.type != "switch" or l.a.dev == l.b.dev:
+			continue
+		if Sim.stp_blocked(l.a) or Sim.stp_blocked(l.b) or not l.a.enabled or not l.b.enabled:
+			continue
+		var twin := false
+		for other in Game.links:
+			if other != l and other.a.dev.type == "switch" and other.b.dev.type == "switch" \
+					and ((other.a.dev == l.a.dev and other.b.dev == l.b.dev) or (other.a.dev == l.b.dev and other.b.dev == l.a.dev)):
+				twin = true
+		if not twin:
+			continue
+		l.a.enabled = false
+		l.b.enabled = false
+		Sim.flush_learned_state()
+		var still := _ping("10.0.0.3", "10.0.0.1", true)
+		l.a.enabled = true
+		l.b.enabled = true
+		Sim.flush_learned_state()
+		return still
 	return false
 
 static func _sites_of_hosts(ips: Array) -> Array:

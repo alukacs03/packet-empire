@@ -9385,6 +9385,9 @@ func sla_tick() -> void:
 		if congested and not deal.get("degraded", false):
 			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
 				% deal["customer"])
+		elif not congested and bool(deal.get("degraded", false)):
+			stats["congestion_relieved"] = int(stats.get("congestion_relieved", 0)) + 1
+			log_event("CONGESTION: %s runs at full speed again." % deal["customer"])
 		deal["degraded"] = congested
 		if deal.has("renewal"):
 			continue  # nothing is billed while the customer is deciding
