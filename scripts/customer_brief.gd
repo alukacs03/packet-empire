@@ -51,8 +51,9 @@ static func render(ui) -> void:
 			paragraph(box, Loc.t("brief.cycle_reason") % [sample["cycle"], sample["reason"]], "success" if sample["served"] else "warning")
 		paragraph(box, Loc.t("brief.chose_bonus") % [Loc.t(String(FirstCustomer.PLANS[String(arc["plan"])]["name"])), arc["bonus"]])
 		var before: Dictionary = arc.get("before", {})
-		if int(f["headroom"]) > int(before.get("headroom", 0)):
-			paragraph(box, Loc.t("brief.headroom_added") % (int(f["headroom"]) - int(before.get("headroom", 0))), "accent")
+		var after: Dictionary = arc.get("after", {})
+		if int(after.get("headroom", 0)) > int(before.get("headroom", 0)):
+			paragraph(box, Loc.t("brief.headroom_added") % (int(after["headroom"]) - int(before.get("headroom", 0))), "accent")
 		box.add_child(WorkspaceShell.button(Loc.t("brief.keep_building"), func() -> void:
 			FirstCustomer.acknowledge()
 			ui._refresh_tutorial()

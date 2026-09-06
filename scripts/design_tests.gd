@@ -50,10 +50,31 @@ static func run() -> void:
 	var paid := Game.money
 	FirstCustomer.tick()
 	SimTests.check(Game.money == paid, "opening: revisiting the debrief cannot pay the bonus twice")
+	var evidence: Dictionary = FirstCustomer.state()["after"].duplicate(true)
+	Game.links.clear()
+	FirstCustomer.tick()
+	SimTests.check(FirstCustomer.state()["after"] == evidence, "opening: post-sale network changes cannot rewrite the debrief evidence")
 	FirstCustomer.acknowledge()
 	SimTests.check(FirstCustomer.complete() and FirstCustomer.protected_time(), "opening: a completed night leaves a short quiet period")
 	Game.cycle += 4
 	SimTests.check(not FirstCustomer.protected_time(), "opening: the wider business resumes after the quiet period")
+	for observed in [0, 1, 2]:
+		fixture()
+		FirstCustomer.tick()
+		FirstCustomer.choose("stagger")
+		for wave in observed:
+			Game.cycle = int(FirstCustomer.state()["starts"]) + wave
+			FirstCustomer.tick()
+		Game.restore(Game.snapshot())
+		Game.cycle = int(FirstCustomer.state()["starts"]) + 5
+		var late_funds := Game.money
+		FirstCustomer.tick()
+		var late := FirstCustomer.state()
+		SimTests.check(late["phase"] == "debrief" and late["samples"].size() == 3 and int(late["successes"]) == observed,
+			"opening: late reload with %d observed waves closes exactly three waves" % observed)
+		FirstCustomer.tick()
+		SimTests.check(Game.money == late_funds and int(late["bonus"]) == 0 and int(late["after"]["headroom"]) == 0,
+			"opening: missed waves cannot earn rewards or invented capacity evidence")
 	f = fixture()
 	FirstCustomer.tick()
 	FirstCustomer.choose("stagger")

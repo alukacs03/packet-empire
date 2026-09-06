@@ -115,19 +115,21 @@ static func tick() -> void:
 		# a save loaded past a wave: the missed waves count as missed, not as never happened
 		arc["samples"].append({"cycle": int(arc["starts"]) + arc["samples"].size(), "served": false,
 			"reason": "Nobody was watching", "headroom": 0, "bottleneck": ""})
-	if arc["samples"].size() >= 3:
-		step = 2  # the window is full: close on this sample
-	var healthy := not deal.is_empty() and bool(deal.get("healthy", false))
-	var good := healthy and not bool(deal.get("degraded", false))
 	var f := forecast()
-	arc["samples"].append({"cycle": Game.cycle, "served": good,
-		"reason": "Orders moving" if good else ("Checkout unavailable" if not healthy else "Shared link congested"),
-		"headroom": f["headroom"], "bottleneck": f["bottleneck"]})
+	# A late load may close the window, but must never invent a fourth wave.
+	if step < 3 and arc["samples"].size() == step:
+		var healthy := not deal.is_empty() and bool(deal.get("healthy", false))
+		var good := healthy and not bool(deal.get("degraded", false))
+		arc["samples"].append({"cycle": Game.cycle, "served": good,
+			"reason": "Orders moving" if good else ("Checkout unavailable" if not healthy else "Shared link congested"),
+			"headroom": f["headroom"], "bottleneck": f["bottleneck"]})
 	if step >= 2 and arc["samples"].size() >= 3:
 		var successes := 0
 		for sample: Dictionary in arc["samples"]:
 			if bool(sample["served"]): successes += 1
 		arc["phase"] = "debrief"
+		# Only evidence observed during the sale can support the debrief.
+		arc["after"] = arc["samples"].back().duplicate(true)
 		arc["successes"] = successes
 		arc["bonus"] = int(PLANS[String(arc["plan"])]["bonus"]) if successes == 3 else 0
 		if int(arc["bonus"]) > 0:
