@@ -556,7 +556,7 @@ func _refresh_money() -> void:
 	money_lbl.text = "%s$%d%s  ♦%d%s" % ["SANDBOX  " if Game.sandbox else "",
 		Game.money, debt_s, Game.reputation, power]
 	if Game.stage >= 1:
-		money_lbl.tooltip_text = "Cash and reputation. Power: %dW nameplate, %dW billed at $%.3f per watt per cycle = $%d next cycle. Cooling capacity: %dW." % [
+		money_lbl.tooltip_text = Loc.t("tip.money_power") % [
 			Game.power_draw_all(), Game.effective_draw(), Game.energy_rate(), Game.power_bill(),
 			Game.cooling_capacity()]
 	else:
@@ -1124,8 +1124,8 @@ func _refresh_slots() -> void:
 			if slot_dev != null:
 				installed += 1
 		sell_btn.disabled = installed > 0
-		sell_btn.tooltip_text = "Only empty racks can be sold" if installed == 0 \
-			else "Empty the rack first: %d device(s) are still installed." % installed
+		sell_btn.tooltip_text = Loc.t("tip.sell_empty_only") if installed == 0 \
+			else Loc.t("tip.sell_empty_first") % installed
 	for c in slot_box.get_children():
 		c.queue_free()
 	var occupied := 0
@@ -1179,8 +1179,8 @@ func _refresh_slots() -> void:
 func _toggle_rack_blanking(slot: int) -> void:
 	if Game.toggle_blanking(cur_rack, slot):
 		var fitted := cur_rack.blanked.has(slot)
-		hud_toast(("Blanking panel fitted at U%d. Hot-air recirculation reduced." if fitted \
-			else "Blanking panel removed from U%d.") % (slot + 1), fitted)
+		hud_toast((Loc.t("toast.blank_fitted") if fitted \
+			else Loc.t("toast.blank_removed")) % (slot + 1), fitted)
 		_refresh_slots()
 
 func _rack_cable_start(iface: Net.Iface, screen_pos: Vector2) -> void:
@@ -1437,7 +1437,7 @@ func _build_dev_overlay() -> void:
 	template_btn.text = Loc.t("dev.templates")
 	template_btn.tooltip_text = Loc.t("dev.templates.tip")
 	template_btn.pressed.connect(func() -> void:
-		var opts: Array = ["Save this device as a template (numbered, never overwrites)"]
+		var opts: Array = [Loc.t("opt.save_template")]
 		var applicable: Array = []
 		for t: Dictionary in Game.templates:
 			if t["type"] == cur_dev.type:
@@ -1449,7 +1449,7 @@ func _build_dev_overlay() -> void:
 				hud_toast(Loc.t("toast.saved_template") % cur_dev.type, true)
 			else:
 				var err: String = Game.apply_template(cur_dev, applicable[id - 1])
-				hud_toast(err if err != "" else "Template applied to %s." % cur_dev.name, err == "")
+				hud_toast(err if err != "" else Loc.t("toast.template_applied") % cur_dev.name, err == "")
 			_refresh_ports()))
 	btn_row.add_child(template_btn)
 	save_cfg_btn = Button.new()
@@ -1504,8 +1504,8 @@ func _build_dev_overlay() -> void:
 		_menu(uninstall, [
 			"Properly: wipe and certify, strip the cabling, reclaim the addresses (best resale)",
 			"Wipe it, leave the rest (less back, and the addresses linger)",
-			"Just pull it out (cheapest now, and there is no certificate)",
-			"Hand it to a technician (they will do it their way)",
+			Loc.t("opt.pull_out"),
+			Loc.t("opt.hand_technician"),
 		], func(id: int) -> void:
 			var dev := cur_dev
 			close_dev()
@@ -1534,14 +1534,14 @@ func _build_dev_overlay() -> void:
 		var facility: Dictionary = Game.remote_facility(
 			int(Game.rack_of(dev).site) if Game.rack_of(dev) != null else 0)
 		_menu(hands, [
-			"Reseat the cable on the selected port ($%d)" % int(facility["cost"]),
-			"Power cycle the device ($%d)" % int(facility["cost"]),
-			"Look at the lights and report back ($%d)" % int(facility["cost"]),
+			Loc.t("opt.reseat_cable") % int(facility["cost"]),
+			Loc.t("opt.power_cycle") % int(facility["cost"]),
+			Loc.t("opt.look_lights") % int(facility["cost"]),
 		], func(id: int) -> void:
 			var action: String = ["reseat", "power_cycle", "check"][id]
 			var err: String = Game.request_remote_hands(dev, action,
 				cur_if if cur_if != null and cur_if.dev == dev else null)
-			hud_toast(err if err != "" else "Booked at %s. They will do exactly what is written (%d%% chance that is the right target)."
+			hud_toast(err if err != "" else Loc.t("toast.booked_hands")
 				% [facility["label"], int(Game.remote_precision(dev,
 					cur_if if cur_if != null and cur_if.dev == dev else null) * 100.0)],
 				err == "")
@@ -1613,11 +1613,11 @@ func _refresh_dev_header() -> void:
 	status_opt.select(0 if cur_dev.status == "active" else 1)
 	psu_opt.select(["A", "B", "AB"].find(cur_dev.psu))
 	psu_opt.set_item_disabled(2, not Game.dual_psu(cur_dev))
-	psu_opt.tooltip_text = "Two power supplies: it survives either feed failing" \
-		if Game.dual_psu(cur_dev) else "One power supply. Spread single-supply gear across both feeds."
+	psu_opt.tooltip_text = Loc.t("tip.two_psu") \
+		if Game.dual_psu(cur_dev) else Loc.t("tip.one_psu")
 	status_opt.disabled = cur_dev.status == "nopower"
-	status_opt.tooltip_text = "No power on feed %s. It comes back on its own." % cur_dev.psu \
-		if cur_dev.status == "nopower" else "Take the device out of service"
+	status_opt.tooltip_text = Loc.t("tip.no_power_feed") % cur_dev.psu \
+		if cur_dev.status == "nopower" else Loc.t("tip.take_out_of_service")
 	var watts := int(Game.WATTS.get(cur_dev.model, 0))
 	dev_power_lbl.text = ("POWER PROFILE  /  %dW nameplate  /  electricity included in colo lease" % watts
 		if Game.stage < 1 else
@@ -2493,7 +2493,7 @@ func _refresh_ops() -> void:
 		var buy_tier := Button.new()
 		buy_tier.text = Loc.t("btn.buy_model") % [Game.SUPPORT_TIERS[tier_i]["label"],
 			int(Game.SUPPORT_TIERS[tier_i]["cost"])]
-		buy_tier.tooltip_text = "Response in %d cycle(s), escalation in %d." % [
+		buy_tier.tooltip_text = Loc.t("tip.support_response") % [
 			int(Game.SUPPORT_TIERS[tier_i]["wait"]), int(Game.SUPPORT_TIERS[tier_i]["escalate"])]
 		buy_tier.pressed.connect(func() -> void:
 			var err: String = Game.buy_support(tier_i)
@@ -2798,8 +2798,8 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_label(Loc.t("body.live_hazard") % [
 			Game.HAZARD_KINDS[haz_i["kind"]]["label"], haz_i["rack"], int(haz_i["severity"]),
 			"" if bool(haz_i["detected"]) else ", undetected"], 12, Prefs.bad_colour()))
-		var what_stops := "Fitted suppression discharges on its own; a crew on shift has a chance each cycle to deal with it by hand." if String(haz_i["kind"]) in ["smoke", "fire"] \
-			else "Fitted drainage takes the water away; a crew on shift has a chance each cycle to deal with it by hand."
+		var what_stops := Loc.t("body.suppression") if String(haz_i["kind"]) in ["smoke", "fire"] \
+			else Loc.t("body.drainage")
 		ops_box.add_child(_wrap(Loc.t("body.fitting_during") % what_stops, 12, MUTED, 600))
 		if not Staff.anyone_on_shift() and not Game.staff.is_empty():
 			var haz_call := Button.new()
@@ -2807,15 +2807,15 @@ func _refresh_ops() -> void:
 			haz_call.tooltip_text = Loc.t("tip.call_out")
 			haz_call.pressed.connect(func() -> void:
 				var err := Game.call_someone_out()
-				hud_toast(err if err != "" else "Somebody is on their way in.", err == "")
+				hud_toast(err if err != "" else Loc.t("toast.on_their_way"), err == "")
 				_refresh_ops())
 			ops_box.add_child(haz_call)
 	ops_box.add_child(_section("FAILOVER TEST"))
 	if Game.dr_running():
 		ops_box.add_child(_wrap(Loc.t("body.failover_running")
 			% [", ".join(PackedStringArray(Game.dr_test["taken"])), int(Game.dr_test["ends"]),
-				"Nothing has dropped so far." if Game.dr_test["failed"].is_empty()
-				else "Already down: %s." % ", ".join(PackedStringArray(Game.dr_test["failed"]))],
+				Loc.t("body.nothing_dropped") if Game.dr_test["failed"].is_empty()
+				else Loc.t("body.already_down") % ", ".join(PackedStringArray(Game.dr_test["failed"]))],
 			13, UIW.colour("warning"), 780))
 	elif not Game.dr_test.is_empty():
 		ops_box.add_child(_wrap(Loc.t("body.failover_booked")
@@ -2944,7 +2944,7 @@ func _refresh_ops() -> void:
 	if Game.stage >= 1 and not Game.has_ups(Game.current_site):
 		var ups_btn := Button.new()
 		ups_btn.text = Loc.t("btn.install_ups") % Game.UPS_PRICE
-		ups_btn.tooltip_text = "Holds a dead feed up for %d cycles while the utility sorts itself out" % Game.UPS_CYCLES
+		ups_btn.tooltip_text = Loc.t("tip.ups") % Game.UPS_CYCLES
 		ups_btn.pressed.connect(func() -> void:
 			var err := Game.buy_ups()
 			if err != "":
@@ -3027,7 +3027,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(arow)
 		if String(aud["state"]) == "offered":
 			for opt: Array in [["Accept", func() -> void: Game.accept_audit()],
-					["Ask for more time", func() -> void: Game.delay_audit()],
+					[Loc.t("opt.more_time"), func() -> void: Game.delay_audit()],
 					["Decline", func() -> void: Game.decline_audit()]]:
 				var ab := Button.new()
 				ab.text = String(opt[0])
@@ -3363,7 +3363,7 @@ func _refresh_ops() -> void:
 		rb_go.pressed.connect(func() -> void:
 			var out: Dictionary = Game.run_runbook(rb_i, false, true)
 			hud_toast(String(out["refused"]) if String(out["refused"]) != ""
-				else "Applied to %d device(s)." % out["applied"].size(),
+				else Loc.t("toast.applied_devices") % out["applied"].size(),
 				String(out["refused"]) == "")
 			_refresh_ops())
 		rbrow.add_child(rb_go)
@@ -3402,7 +3402,7 @@ func _refresh_ops() -> void:
 			rb_back.tooltip_text = Loc.t("tip.roll_back")
 			rb_back.pressed.connect(func() -> void:
 				var back_err: String = Game.rollback_runbook(run_i)
-				hud_toast(back_err if back_err != "" else "Rolled back %d device(s)." % run_i["before"].size(),
+				hud_toast(back_err if back_err != "" else Loc.t("toast.rolled_back") % run_i["before"].size(),
 					back_err == "")
 				_refresh_ops())
 			runrow.add_child(rb_back)
@@ -3590,14 +3590,14 @@ func _capacity_advice() -> String:
 	## one sentence, and only when there is something worth saying
 	var cap := Game.capacity(0)
 	if int(cap["tiles_used"]) >= int(cap["tiles"]):
-		return "No floor tiles left. Expanding to the next stage is the only way to add racks."
+		return Loc.t("advice.no_tiles")
 	if int(cap["slots"]) > 0 and int(cap["slots_used"]) >= int(cap["slots"]):
-		return "Every rack unit is full. Buy another rack before the next contract needs hardware."
+		return Loc.t("advice.units_full")
 	if Game.overheating():
-		return "You are drawing more heat than you can remove. Install a CRAC unit or things start tripping."
+		return Loc.t("advice.too_hot")
 	var runway := Game.capacity_runway("slots_used", int(cap["slots_used"]), int(cap["slots"]))
 	if runway >= 0 and runway <= 6:
-		return "At the rate you have been filling them, you run out of rack units in about %d cycles. A rack costs $%d." % [runway, Game.RACK_PRICE]
+		return Loc.t("advice.runway") % [runway, Game.RACK_PRICE]
 	return ""
 
 func toggle_ops() -> void:
@@ -3808,10 +3808,10 @@ func _build_menu() -> void:
 		_menu(puzzle_btn, [
 			"Copy it as \"solve this\"",
 			"Copy it as \"what am I missing\"",
-			"Copy it blind (an extra fault neither of us has seen)",
-			"Open a puzzle from the clipboard",
-			"Copy the fix I found" if Puzzle.active() else "Read a fix from the clipboard",
-			"Close the puzzle and go home" if Puzzle.active() else "(no puzzle open)",
+			Loc.t("opt.copy_blind"),
+			Loc.t("opt.open_puzzle"),
+			Loc.t("opt.copy_fix") if Puzzle.active() else Loc.t("opt.read_fix"),
+			Loc.t("opt.close_puzzle") if Puzzle.active() else Loc.t("opt.no_puzzle"),
 		], func(id: int) -> void:
 			if id <= 2:
 				DisplayServer.clipboard_set(Puzzle.export_state(
@@ -3881,9 +3881,9 @@ func _build_menu() -> void:
 	chal_btn.pressed.connect(func() -> void:
 		_menu(chal_btn, [
 			"Play today's featured code (%s)" % Challenge.daily_code(),
-			"Play a code from the clipboard",
-			"Copy this challenge's code" if not Challenge.active.is_empty() else "(no challenge running)",
-			"Finish and copy the result card" if not Challenge.active.is_empty() else "(nothing to finish)",
+			Loc.t("opt.play_code"),
+			Loc.t("opt.copy_code") if not Challenge.active.is_empty() else Loc.t("opt.no_challenge"),
+			Loc.t("opt.finish_card") if not Challenge.active.is_empty() else Loc.t("opt.nothing_finish"),
 		], func(id: int) -> void:
 			if id == 0 or id == 1:
 				menu_overlay.visible = false
@@ -4237,9 +4237,9 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 		tutorial_box.add_child(books_btn)
 		return
 	tutorial_box.add_child(_tutorial_head("CUSTOMER LIVE  /  CASH MOVING"))
-	for line in ["Promise translated into a working service",
-			"First invoice raised on the customer terms",
-			"First cash collected without removing the topology"]:
+	for line in [Loc.t("arc.step_promise"),
+			Loc.t("arc.step_invoice"),
+			Loc.t("arc.step_cash")]:
 		tutorial_box.add_child(_label("●  " + line, 12, Color(0.48, 0.9, 0.62)))
 	var continue_btn := Button.new()
 	continue_btn.text = Loc.t("btn.keep_operating_customer")
@@ -4291,9 +4291,9 @@ func _render_guided_outage() -> void:
 			Color(0.48, 0.9, 0.62)))
 		var evidence: Array = incident.get("evidence", [])
 		var ladder := [
-			["monitor", "MONITOR", "Confirm scope from the failed check"],
-			["physical", "PHYSICAL", "Verify that the patch is seated"],
-			["l2", "L2", "Inspect the access-port state"],
+			["monitor", "MONITOR", Loc.t("arc.monitor_step")],
+			["physical", "PHYSICAL", Loc.t("arc.physical_step")],
+			["l2", "L2", Loc.t("arc.l2_step")],
 		]
 		for step: Array in ladder:
 			var done: bool = String(step[0]) in evidence
@@ -4348,9 +4348,9 @@ func _render_guided_outage() -> void:
 		tutorial_box.add_child(_wrap(Loc.t("body.what_changes"),
 			12, UIW.colour("text"), 290))
 		for option: Array in [
-			["spare", "Put matching hardware on the spare shelf"],
-			["monitor", "Keep a permanent reachability monitor"],
-			["config", "Save the affected device configuration"],
+			["spare", Loc.t("arc.harden_spare")],
+			["monitor", Loc.t("arc.harden_monitor")],
+			["config", Loc.t("arc.harden_config")],
 		]:
 			tutorial_box.add_child(_incident_button(String(option[1]), func() -> void:
 				var err := Game.choose_guided_resilience(String(option[0]))
@@ -4752,8 +4752,8 @@ func _build_business_tab() -> void:
 	var owed := Game.receivables()
 	var late := Game.overdue_invoices()
 	contracts_box.add_child(_wrap(
-		"Owed to you: $%d across %d invoice(s).%s" % [owed, Game.invoices.size(),
-			"  %d of them are overdue." % late.size() if not late.is_empty() else ""],
+		Loc.t("body.owed") % [owed, Game.invoices.size(),
+			Loc.t("body.overdue_count") % late.size() if not late.is_empty() else ""],
 		13, Prefs.bad_colour() if not late.is_empty() else Color(0.75, 0.82, 0.9), 560))
 	if Game.invoices.is_empty():
 		contracts_box.add_child(UIW.make_empty_state(
@@ -4793,8 +4793,8 @@ func _build_business_tab() -> void:
 		contracts_box.add_child(e_row)
 		var tariff_btn := Button.new()
 		tariff_btn.text = Loc.t("btn.spot_tariff") if Game.fixed_tariff \
-			else "Switch to a fixed tariff"
-		tariff_btn.tooltip_text = "Fixed costs about %d%% over the spot average and does not care what time it is, or what the spot market is doing." % int(round((Game.FIXED_PREMIUM - 1.02) * 100.0))
+			else Loc.t("btn.fixed_tariff")
+		tariff_btn.tooltip_text = Loc.t("tip.fixed_tariff") % int(round((Game.FIXED_PREMIUM - 1.02) * 100.0))
 		tariff_btn.pressed.connect(func() -> void:
 			Game.set_fixed_tariff(not Game.fixed_tariff)
 			_refresh_contracts())
@@ -4820,7 +4820,7 @@ func _build_business_tab() -> void:
 		13, Color(0.75, 0.82, 0.9), 560))
 	var acc_btn := Button.new()
 	acc_btn.text = Loc.t("btn.dismiss_accountant") if Game.accountant \
-		else "Put an accountant on retainer  ($%d/cycle)" % Game.ACCOUNTANT_FEE
+		else Loc.t("btn.accountant") % Game.ACCOUNTANT_FEE
 	acc_btn.tooltip_text = Loc.t("tip.accountant")
 	acc_btn.pressed.connect(func() -> void:
 		Game.hire_accountant(not Game.accountant)
@@ -4828,7 +4828,7 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(acc_btn)
 	contracts_box.add_child(_section("ADDRESS SPACE"))
 	contracts_box.add_child(_wrap(
-		"You hold %d public IPv4 addresses and %d are spoken for. Customers who do not insist on one of their own sit behind shared translation and cost you nothing."
+		Loc.t("body.ipv4_held")
 		% [Game.ipv4_total(), Game.ipv4_used()], 13,
 		Prefs.bad_colour() if Game.ipv4_free() <= 0 else Color(0.75, 0.82, 0.9), 560))
 	var ip_btn := Button.new()
@@ -4843,7 +4843,7 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("TRANSIT AND PEERING"))
 	var billed := Game.transit_billed_mbps()
 	contracts_box.add_child(_wrap(
-		"Transit is billed on the 95th percentile, not the average: right now %d Mbps at $%.2f per Mbps, which is $%d a cycle. Bursting is free five percent of the time; sustained traffic is not."
+		Loc.t("body.transit_95")
 		% [billed, Game.TRANSIT_PER_MBPS, Game.transit_cost()], 13, Color(0.75, 0.82, 0.9), 560))
 	if bool(Game.ixp.get("joined", false)):
 		contracts_box.add_child(_label(Loc.t("body.at_exchange")
@@ -4958,8 +4958,8 @@ func _build_business_tab() -> void:
 	var maint_row := HBoxContainer.new()
 	contracts_box.add_child(maint_row)
 	maint_row.add_child(_label(Loc.t("body.windows_used") % [
-		("Maintenance window open until cycle %d" % Game.maintenance_until) if Game.in_maintenance()
-		else "No window open: downtime counts against your service levels",
+		(Loc.t("body.window_open") % Game.maintenance_until) if Game.in_maintenance()
+		else Loc.t("body.no_window"),
 		Game.maintenance_used], 13,
 		Color(0.7, 0.9, 0.7) if Game.in_maintenance() else Color(0.75, 0.75, 0.8)))
 	var maint_btn := Button.new()
@@ -5027,7 +5027,7 @@ func _build_business_tab() -> void:
 				"Four cycles, with a backout plan",
 				"Four cycles, no backout plan (faster to write, worse to explain)",
 				"Eight cycles, with a backout plan",
-				"Override the freeze and go now" if frozen != "" else "Two cycles, with a backout plan",
+				Loc.t("btn.override_freeze") if frozen != "" else Loc.t("btn.two_cycles_backout"),
 			], func(id: int) -> void:
 				var minutes: int = [4, 4, 8, 2][id]
 				var err: String = Game.submit_change("planned work on %s" % targets[0],
@@ -5132,7 +5132,7 @@ func _build_business_tab() -> void:
 			Color(0.6, 0.68, 0.78), 640))
 		var oncall_btn := Button.new()
 		oncall_btn.text = "☎ On call" if Staff.on_call(m) else "☎ Not on call"
-		oncall_btn.tooltip_text = "Who carries the phone out of hours. The retainer is $%d a cycle, and calling them out is cheaper on the money and on them." % Staff.ONCALL_RETAINER
+		oncall_btn.tooltip_text = Loc.t("tip.oncall") % Staff.ONCALL_RETAINER
 		if Staff.on_call(m):
 			_accent(oncall_btn)
 		oncall_btn.pressed.connect(func() -> void:
@@ -5344,7 +5344,7 @@ func _build_market_tab() -> void:
 	pipeline_anchor.add_child(_section("PIPELINE"))
 	if Game.leads.is_empty():
 		var pipeline_empty := UIW.make_empty_state(
-			"Nothing in the pipeline. Bigger work arrives through people talking about you, so reputation, references and marketing all feed this.")
+			Loc.t("body.pipeline_empty"))
 		pipeline_empty.custom_minimum_size.x = 560
 		pipeline_anchor.add_child(pipeline_empty)
 	for lead: Dictionary in Game.leads.duplicate():
@@ -5406,7 +5406,7 @@ func _build_market_tab() -> void:
 		for ti in 3:
 			sla_opt.add_item(Market.tier(ti)["label"])
 		sla_opt.select(int(lead["sla"]))
-		sla_opt.tooltip_text = "They asked for %s. Commit to less and the proposal is thrown out; commit to more and the fee rises with the penalty, judged from the day the service first goes live." % Market.tier(int(lead["sla"]))["label"]
+		sla_opt.tooltip_text = Loc.t("tip.sla_commit") % Market.tier(int(lead["sla"]))["label"]
 		prow.add_child(sla_opt)
 		var sbtn := Button.new()
 		sbtn.text = Loc.t("btn.submit_proposal")
@@ -5421,7 +5421,7 @@ func _build_market_tab() -> void:
 			if res.begins_with("lost:"):
 				_toast("Lost: %s." % res.trim_prefix("lost:"))
 			elif res.begins_with("retry:"):
-				_toast("Not signed yet: %s. Kiskacsa will let you revise this first proposal."
+				_toast(Loc.t("toast.not_signed")
 					% res.trim_prefix("retry:"))
 			elif res != "":
 				_toast(res)
@@ -5462,15 +5462,15 @@ func _build_market_tab() -> void:
 			13, Color(0.8, 0.78, 0.7))
 		l.tooltip_text = ("%s\n\nBuying %s brings %d rack(s) and %d contract(s). %s" % [
 			strat["blurb"], r["name"], Rivals.racks_needed(r), int(r["deals"]),
-			("Their site '%s' comes with the company, and so does its diary: expect the filters, the aircon and the generator all overdue, and no fire or water protection fitted." % r["site"]["name"])
+			(Loc.t("body.rival_site") % r["site"]["name"])
 			if Rivals.has_site(r)
-			else "Their racks must fit on a floor you already have."])
+			else Loc.t("body.rival_racks_fit")])
 		var temper: Dictionary = Rivals.temper_of(r)
 		var standing := int(r.get("standing", 0))
 		l.tooltip_text += "\n\n%s %s" % [temper["blurb"],
-			"They are your nemesis: %s." % Game.nemesis_reason if String(r["name"]) == Game.nemesis
-			else ("They owe you one." if standing >= 2
-				else ("There is friction there." if standing <= -1 else ""))]
+			Loc.t("body.nemesis") % Game.nemesis_reason if String(r["name"]) == Game.nemesis
+			else (Loc.t("body.owe_you") if standing >= 2
+				else (Loc.t("body.friction") if standing <= -1 else ""))]
 		l.add_theme_font_override("font", mono)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
@@ -5838,12 +5838,12 @@ func _build_jobs_tab() -> void:
 			facts.add_child(_offer_fact("SERVICE LEVEL", "%s  ·  %.1fx penalty" % [otier["label"],
 				float(otier["penalty"])], "warning"))
 		else:
-			facts.add_child(_offer_fact("SERVICE LEVEL", "Best effort  ·  no penalty", "success"))
+			facts.add_child(_offer_fact("SERVICE LEVEL", Loc.t("fact.best_effort"), "success"))
 		facts.add_child(_offer_fact("DELIVERY", String(offer["costs"]), "info"))
 		var est: Array = Game.market_estimate(offer)
-		var market_copy := "No rival bidder"
+		var market_copy := Loc.t("body.no_rival_bidder")
 		if not Rivals.best_bidder(offer).is_empty():
-			market_copy = ("No price signal yet" if est.is_empty() else "$%d to $%d likely" % [
+			market_copy = (Loc.t("body.no_price_signal") if est.is_empty() else Loc.t("body.price_likely") % [
 				int(est[0]), int(est[1])])
 		facts.add_child(_offer_fact("MARKET RANGE", market_copy,
 			"success" if Rivals.best_bidder(offer).is_empty() else "warm"))
@@ -5885,7 +5885,7 @@ func _build_jobs_tab() -> void:
 			quote.text_submitted.connect(func(_t: String) -> void: send.pressed.emit())
 			send.pressed.connect(func() -> void:
 				if not quote.text.strip_edges().is_valid_int():
-					_toast("Type a whole-dollar price per cycle, like 75, then send.")
+					_toast(Loc.t("toast.whole_dollar"))
 					return
 				var res: String = Game.respond_offer(offer, int(quote.text.strip_edges()))
 				_refresh_contracts()
@@ -6084,9 +6084,7 @@ func _build_jobs_tab() -> void:
 		cv.add_child(_label(Loc.t("body.integration") % a["rival"], 16, Color.WHITE))
 		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
 			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
-		var brief := _label(("Their kit is %s, but it still runs their way: subnet %s.0/24 on VLAN %d, "
-			+ "cabled only to itself. Merge it into your network without breaking their customers, "
-			+ "then save the configs.") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
+		var brief := _label(Loc.t("body.acquired_kit") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
 		cv.add_child(brief)
@@ -6126,9 +6124,9 @@ func _workshop_menu(at: Control) -> void:
 		if bool(row["ok"]):
 			summary = "%d scenario(s), by %s" % [row["scenarios"].size(), row["author"]]
 		opts.append("%s %s: %s" % ["✓" if bool(row["ok"]) else "✗", row["name"], summary])
-	opts.append("Reload packs from disk")
-	opts.append("Import a pack from the clipboard")
-	opts.append("Copy a diagnostic report")
+	opts.append(Loc.t("opt.reload_packs"))
+	opts.append(Loc.t("opt.import_pack"))
+	opts.append(Loc.t("opt.copy_diag"))
 	_menu(at, opts, func(id: int) -> void: _workshop_pick(id, rows))
 
 func _workshop_pick(id: int, rows: Array) -> void:
@@ -6171,8 +6169,8 @@ func _open_settings_card() -> void:
 		["settings.fullscreen", func() -> bool: return Prefs.fullscreen, func(on: bool) -> void: Prefs.fullscreen = on, ""],
 		["settings.sound", func() -> bool: return Prefs.sound, func(on: bool) -> void: Prefs.sound = on, ""],
 		["settings.colourblind", func() -> bool: return Prefs.colourblind, func(on: bool) -> void: Prefs.colourblind = on, ""],
-		["settings.motion", func() -> bool: return Prefs.reduced_motion, func(on: bool) -> void: Prefs.reduced_motion = on, "Replaces traveling highlights and decorative movement with static confirmations"],
-		["settings.toolbox", func() -> bool: return Prefs.show_everything, func(on: bool) -> void: Prefs.show_everything = on, "For experienced players: reveal every navigation area without waiting for campaign unlocks"],
+		["settings.motion", func() -> bool: return Prefs.reduced_motion, func(on: bool) -> void: Prefs.reduced_motion = on, Loc.t("settings.motion.desc")],
+		["settings.toolbox", func() -> bool: return Prefs.show_everything, func(on: bool) -> void: Prefs.show_everything = on, Loc.t("settings.toolbox.desc")],
 		["settings.hints", func() -> bool: return Prefs.learner_hints, func(on: bool) -> void: Prefs.learner_hints = on, "A comment line under a console error that says what to try, and a LEARN chip that opens the field manual. Off for the real thing."],
 	]
 	for row in rows:
@@ -6447,7 +6445,7 @@ func _refresh_contracts() -> void:
 		cv.add_child(btn)
 	if not found_active:
 		contracts_box.add_child(_wrap(Loc.t("demo.finished")
-			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter, under Operations in its Board tab. The floor, the customers and the rivals carry on.",
+			if Demo.active() else Loc.t("body.campaign_done"),
 			14, Color(0.7, 0.85, 0.75), 640))
 
 # ---------- refresh / CLI ----------
