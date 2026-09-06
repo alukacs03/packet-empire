@@ -63,7 +63,7 @@ static func start(code: String) -> String:
 		return String(spec["why"])
 	if Game.drill_active:
 		return "a drill is already running"
-	Drill.start(int(spec["faults"]), int(spec["seed"]))
+	Drill.start(int(spec["faults"]), int(spec["seed"]), int(spec["difficulty"]))
 	active = {"code": code.strip_edges().to_upper(), "started_cycle": Game.cycle,
 		"changes": 0, "hints": 0, "seed": int(spec["seed"]), "faults": int(spec["faults"]),
 		"difficulty": int(spec["difficulty"])}

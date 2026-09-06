@@ -16,7 +16,7 @@ static var outcome := {}  # {client, name, ip} for the services drill
 
 static var scenario := ""
 
-static func start(n_breaks := 3, rng_seed := -1) -> void:
+static func start(n_breaks := 3, rng_seed := -1, difficulty := 2) -> void:
 	_snap = Game.snapshot()
 	Game.drill_active = true
 	Game.racks = []
@@ -40,7 +40,7 @@ static func start(n_breaks := 3, rng_seed := -1) -> void:
 			_build_dynamic()
 		_:
 			_build_core()
-	_break(n_breaks, rng_seed)
+	_break(n_breaks, rng_seed, difficulty)
 	Game.topology_changed.emit()
 
 static func _build_tenants() -> void:
@@ -253,7 +253,16 @@ static func _build() -> void:
 	_cast = {"sw1": sw1, "sw2": sw2, "rtr": rtr, "a": a, "b": b, "c": c,
 		"trunk": sw1.ifaces[3], "access_a": sw1.ifaces[0]}
 
-static func _break(n: int, rng_seed: int) -> void:
+static func _fault_tier(desc: String) -> int:
+	for key in ["was unplugged (disabled)", "was moved to a wrong VLAN"]:
+		if key in desc:
+			return 0
+	for key in ["lost a route it needs", "the DHCP scope was bound", "the DHCP pool was moved", "the app record was removed", "was readdressed into the wrong subnet"]:
+		if key in desc:
+			return 1
+	return 2
+
+static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 	_undo = []
 	faults = []
 	var rng := RandomNumberGenerator.new()
@@ -356,6 +365,12 @@ static func _break(n: int, rng_seed: int) -> void:
 				var old_ips: Array = ip_srv.ifaces[0].ips.duplicate()
 				ip_srv.ifaces[0].ips = ["10.77.1.10/24"]
 				_undo.append(func() -> void: ip_srv.ifaces[0].ips = old_ips)])
+	# the difficulty digit of a challenge code picks the pool: 0 is cables
+	# and VLANs, 1 adds routes, DHCP, DNS and addressing, 2 adds the WAN,
+	# trunks, OSPF and the firewall
+	var tiered: Array = pool.filter(func(f): return _fault_tier(String(f[0])) <= difficulty)
+	if tiered.size() >= n:
+		pool = tiered
 	# apply n distinct faults
 	var order := range(pool.size())
 	for i in order.size():

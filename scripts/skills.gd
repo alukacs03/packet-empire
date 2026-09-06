@@ -21,15 +21,15 @@ const CATALOG := [
 		"claim": "builds paths that survive losing one of them"},
 	{"id": "bgp_peering", "name": "external routing",
 		"line": "You brought up an eBGP session with somebody else's network. That is external routing, and it is how the internet is actually assembled.",
-		"pedia": "Routing & gateways",
+		"pedia": "BGP & the internet",
 		"claim": "runs external routing sessions rather than pointing a default at somebody and hoping"},
 	{"id": "incident_comms", "name": "incident communication",
 		"line": "You told the customer what was happening while it was still happening. Incident communication is a skill, and it is the one operators are judged on.",
-		"pedia": "Spanning tree",
+		"pedia": "Telling people",
 		"claim": "communicates during an incident instead of going quiet"},
 	{"id": "change_window", "name": "change control",
 		"line": "You did the work inside a window you agreed first. That is change control, and it is the difference between an engineer and a liability.",
-		"pedia": "Routing & gateways",
+		"pedia": "The window, and the point of no return",
 		"claim": "works inside agreed change windows"},
 ]
 

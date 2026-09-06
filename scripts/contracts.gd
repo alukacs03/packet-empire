@@ -942,8 +942,8 @@ static func _campaign() -> Array:
 			"brief": "Strict Kft pays for the strict tier and shares a switch uplink with a best-effort customer who does not. At the busy part of the day that link is oversubscribed and both suffer equally, which is not what the strict tier bought. Turn on priority queueing ('qos priority-queueing' under the switch ports on the path): bandwidth is not created, it is allocated, and the strict customer is served first while the best-effort one degrades. Prove it during a busy cycle.",
 			"reqs": [
 				{"d": "Priority queueing on a switch port", "t": func() -> bool: return _qos_port() != null},
-				{"d": "A strict-tier customer served undegraded", "t": func() -> bool: return _strict_undegraded()},
-				{"d": "A best-effort customer taking the shortfall", "t": func() -> bool: return _best_effort_degraded()},
+				{"d": "A strict-tier customer served undegraded", "t": func() -> bool: return _strict_undegraded(), "once": true},
+				{"d": "A best-effort customer taking the shortfall", "t": func() -> bool: return _best_effort_degraded(), "once": true},
 			],
 		},
 		{

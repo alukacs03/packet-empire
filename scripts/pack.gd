@@ -318,9 +318,23 @@ static func _eval(pred: Dictionary) -> Dictionary:
 	return {"ok": false, "why": "unknown requirement"}
 
 static func _device(name: String) -> Net.NDevice:
+	## a device name, an address the device owns, or "switch-of:<address>"
+	## for whatever the owner is cabled to: an author cannot know what the
+	## player called their gear
 	for d: Net.NDevice in Game.all_devices():
 		if d.name == name:
 			return d
+	if name.begins_with("switch-of:"):
+		var host := _device(name.trim_prefix("switch-of:"))
+		if host == null:
+			return null
+		for i: Net.Iface in host.ifaces:
+			var far := Game.effective_peer(i)
+			if far != null:
+				return far.dev
+		return null
+	if name.is_valid_ip_address():
+		return Contracts._owner(name)
 	return null
 
 static func describe(pred: Dictionary) -> String:
@@ -351,7 +365,8 @@ static func describe(pred: Dictionary) -> String:
 		"vlan_access":
 			return "a connected access port in VLAN %d" % int(pred.get("vid", 0))
 		"config_saved":
-			return "%s has its configuration saved" % pred.get("device", "")
+			var saved_dev := _device(String(pred.get("device", "")))
+			return "%s has its configuration saved" % (saved_dev.name if saved_dev != null else String(pred.get("device", "")))
 		"money_at_least":
 			return "at least $%d in the bank" % int(pred.get("amount", 0))
 		"survives_link_loss":

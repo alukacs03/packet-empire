@@ -2841,7 +2841,7 @@ static func run() -> int:
 		var ch_scenario := Drill.scenario
 		var ch_faults := Drill.faults.duplicate()
 		Drill.finish(false)
-		var ch_code := Challenge.encode(3, 1, rooms_seed)
+		var ch_code := Challenge.encode(3, 2, rooms_seed)  # difficulty 2 is the whole pool, the same as a plain drill
 		check(Challenge.start(ch_code) == "", "challenge: a code for that incident starts it")
 		check(Drill.scenario == ch_scenario and Drill.faults == ch_faults,
 			"challenge: and rebuilds the same network with the same faults")
@@ -9570,6 +9570,11 @@ static func run() -> int:
 	var pk: Dictionary = Pack.loaded[0]
 	check(Pack.validate(pk).is_empty() and pk["scenarios"].size() >= 4,
 		"packs: a pack is metadata plus scenarios, and it is checked before it is used")
+	check(Pack._device("switch-of:10.90.0.11") == null or Pack._device("switch-of:10.90.0.11").type == "switch",
+		"packs: switch-of:<address> names whatever the owner is cabled to")
+	var t5_tier_easy := Drill._fault_tier("sw1 Ethernet3 was unplugged (disabled)")
+	var t5_tier_hard := Drill._fault_tier("a deny was inserted above the permit on fw1")
+	check(t5_tier_easy == 0 and t5_tier_hard == 2, "challenge: the difficulty digit maps faults to tiers")
 	check(Pack.validate({"id": "x"})[0].contains("missing field"),
 		"packs: a malformed pack is rejected with the field that is wrong")
 	check(String(Pack.validate({"id": "x", "name": "x", "schema": 99, "scenarios": [{}]})[0]).contains("version"),
