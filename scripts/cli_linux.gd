@@ -90,6 +90,11 @@ func _fw_apply() -> void:
 							entry["proto"] = String(rule["proto"])
 						if rule.has("dport") and String(rule["dport"]).is_valid_int():
 							entry["port"] = int(rule["dport"])
+						elif rule.has("dport") and ":" in String(rule["dport"]):
+							entry["port"] = int(String(rule["dport"]).split(":")[0])
+							entry["port_hi"] = int(String(rule["dport"]).split(":")[1])
+						if rule.has("sport"):
+							entry["sport"] = String(rule["sport"])  # kept for the listing; the sim carries no source ports
 						if String(rule.get("state", "")).contains("established"):
 							entry["established"] = true
 						dev.acls.append(entry)
@@ -192,11 +197,17 @@ func _iptables(a: Array) -> String:
 				match opt:
 					"-i": rule["iif"] = val
 					"-o": rule["oif"] = val
-					"-s": rule["src"] = val
-					"-d": rule["dst"] = val
+					"-s", "-d":
+						var addr := val if "/" in val else val + "/32"
+						if not Net.valid_cidr(addr) or Net.is_v6(addr):
+							return "iptables v1.8.9 (nf_tables): host/network `%s' not found\nTry `iptables -h' or 'iptables --help' for more information.\n" % val
+						rule["src" if opt == "-s" else "dst"] = addr  # iptables-save spells a host /32
 					"-p": rule["proto"] = val
-					"--dport": rule["dport"] = val
-					"--sport": rule["sport"] = val
+					"--dport", "--sport":
+						var ports := _ipt_port(val)
+						if ports == "":
+							return "iptables v1.8.9 (nf_tables): invalid port/service `%s' specified\nTry `iptables -h' or 'iptables --help' for more information.\n" % val
+						rule["dport" if opt == "--dport" else "sport"] = ports
 					"-m":
 						j += 2
 						continue
@@ -233,11 +244,33 @@ func _iptables(a: Array) -> String:
 			return ""
 	return "iptables v1.8.9 (nf_tables): unknown option \"%s\"\nTry `iptables -h' or 'iptables --help' for more information.\n" % cmd
 
+const IPT_SERVICES := {"ssh": 22, "http": 80, "https": 443, "domain": 53, "dns": 53, "ntp": 123, "snmp": 161, "smtp": 25, "bgp": 179, "bootps": 67, "bootpc": 68, "telnet": 23, "ftp": 21}
+
+func _ipt_port(val: String) -> String:
+	## a number, a name from /etc/services, or a lo:hi range; "" when none of those
+	var parts := val.split(":")
+	if parts.size() > 2:
+		return ""
+	var out: Array = []
+	for p in parts:
+		var n := int(p) if p.is_valid_int() else int(IPT_SERVICES.get(p.to_lower(), -1))
+		if n < 0 or n > 65535:
+			return ""
+		out.append(str(n))
+	return ":".join(PackedStringArray(out))
+
 func _ipt_rule_args(rule: Dictionary) -> String:
 	var out := ""
 	for pair in [["src", "-s"], ["dst", "-d"], ["iif", "-i"], ["oif", "-o"], ["proto", "-p"]]:
 		if rule.has(pair[0]):
-			out += " %s %s" % [pair[1], rule[pair[0]]]
+			var v := String(rule[pair[0]])
+			if pair[0] in ["src", "dst"] and "/" not in v:
+				v += "/32"
+			out += " %s %s" % [pair[1], v]
+	if (rule.has("dport") or rule.has("sport")) and String(rule.get("proto", "")) in ["tcp", "udp"]:
+		out += " -m %s" % rule["proto"]  # iptables-save names the match module before its ports
+	if rule.has("sport"):
+		out += " --sport %s" % rule["sport"]
 	if rule.has("dport"):
 		out += " --dport %s" % rule["dport"]
 	if rule.has("state"):
@@ -703,6 +736,10 @@ func exec(line: String) -> String:
 				"yes" if dev.ntp_server != "" else "no", "active" if dev.ntp_server != "" else "inactive"]
 		"tcpdump":
 			return _tcpdump(t.slice(1))
+		"ifup", "ifreload", "ifdown":
+			if t.size() < 2:
+				return "%s: no interface specified\n" % t[0]
+			return _apply_eni("" if String(t[1]) in ["-a", "--all"] else String(t[1]), String(t[0]) == "ifdown")
 		"vtysh":
 			# FRR's shell: -c runs commands and returns, without it you are in it
 			if dev.services.get("stopped_units", {}).has("frr"):
@@ -1904,6 +1941,55 @@ func _cat(args: Array) -> String:
 		return out
 	return "cat: %s: No such file or directory\n" % path
 
+func _apply_eni(only: String, down := false) -> String:
+	## ifupdown: the iface stanzas of /etc/network/interfaces, applied. Only
+	## auto/iface/address/netmask/gateway: what a hand-written file carries.
+	var stanzas := {}
+	var cur := ""
+	for raw in String(dev.services.get("eni", "")).split("\n", false):
+		var w := raw.strip_edges().split(" ", false)
+		if w.is_empty() or String(w[0]).begins_with("#"):
+			continue
+		match String(w[0]):
+			"iface":
+				if w.size() >= 2:
+					cur = String(w[1])
+					if not stanzas.has(cur):
+						stanzas[cur] = {}
+			"address", "netmask", "gateway":
+				if cur != "" and w.size() >= 2:
+					stanzas[cur][String(w[0])] = String(w[1])
+	if only != "" and not stanzas.has(only):
+		return "%s: unknown interface %s\n" % ["ifdown" if down else "ifup", only]
+	for name in stanzas:
+		if only != "" and String(name) != only:
+			continue
+		var ifc := _iface(String(name))
+		if ifc == null:
+			return "%s: unknown interface %s\n" % ["ifdown" if down else "ifup", name]
+		var st: Dictionary = stanzas[name]
+		var cidr := String(st.get("address", ""))
+		if cidr != "" and "/" not in cidr and st.has("netmask"):
+			var mask := int(Net.ip_to_int(String(st["netmask"])))
+			var plen := 0
+			while plen < 32 and (mask & (1 << (31 - plen))) != 0:
+				plen += 1
+			cidr += "/%d" % plen
+		if cidr != "" and Net.valid_cidr(cidr):
+			if down:
+				if cidr in ifc.ips:
+					Game.remove_ip(ifc, cidr)
+			elif cidr not in ifc.ips:
+				Game.add_ip(ifc, cidr)
+		var gw := String(st.get("gateway", ""))
+		if gw != "" and gw.is_valid_ip_address():
+			if down:
+				Game.remove_static_route(dev, "0.0.0.0", 0, "", gw)
+			elif not dev.static_routes.any(func(r): return String(r["prefix"]) == "0.0.0.0" and int(r["plen"]) == 0):
+				dev.static_routes.append({"prefix": "0.0.0.0", "plen": 0, "via": gw, "ad": 1, "dev": ifc.name})
+	Game.topology_changed.emit()
+	return ""
+
 func _redirect(t: Array) -> String:
 	## echo <words> > <file>: the few files a network engineer writes by hand.
 	## > replaces the file, >> appends to it, as on any shell.
@@ -2134,6 +2220,8 @@ func _systemctl(args: Array) -> String:
 			return out
 		"start", "restart", "reload":
 			_unit_toggle(unit, true)
+			if unit == "networking":
+				return _apply_eni("")  # ifupdown reads the file again
 			if unit == "keepalived":
 				var conf: Dictionary = dev.services.get("keepalived", {})
 				var on: Net.Iface = _iface(String(conf.get("iface", ""))) if conf.has("iface") else null

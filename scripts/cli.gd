@@ -2096,6 +2096,9 @@ class EOS extends Session:
 			i.dot1x = on
 			if not on:
 				i.dot1x_ok = ""
+				if i.dot1x_home > 0:
+					i.untagged_vlan = i.dot1x_home  # the session ends: back to the configured VLAN
+					i.dot1x_home = 0
 			return "")
 
 	func _cfg_radius(r: Array) -> String:
@@ -4803,7 +4806,7 @@ class EOS extends Session:
 					out += "   switchport trunk allowed vlan %s\n" % EOS.vlan_ranges(i.tagged_vlans)
 				out += "   switchport mode trunk\n"
 			elif i.mode == "access" and i.untagged_vlan != 1:
-				out += "   switchport access vlan %d\n" % i.untagged_vlan
+				out += "   switchport access vlan %d\n" % (i.dot1x_home if i.dot1x_home > 0 else i.untagged_vlan)
 			if i.port_security:
 				out += "   switchport port-security\n"
 				if i.psec_max != 1:
@@ -5156,6 +5159,13 @@ class Vtysh extends EOS:
 			return ""
 		if toks.size() >= 2 and String(toks[0]) == "show" and "running-config".begins_with(String(toks[1])):
 			return _frr_running()
+		if toks.size() >= 3 and String(toks[0]) == "show" and String(toks[1]) == "ip" and "route".begins_with(String(toks[2])) and toks.size() == 3:
+			return _frr_route()
+		if toks.size() == 4 and String(toks[0]) == "show" and String(toks[1]) == "ip" and String(toks[2]) == "ospf" and "neighbor".begins_with(String(toks[3])):
+			return _frr_ospf_neighbors()
+		if toks.size() >= 3 and String(toks[0]) == "show" and ((String(toks[1]) == "ip" and toks.size() == 4 and String(toks[2]) == "bgp" and "summary".begins_with(String(toks[3])))
+				or (String(toks[1]) == "bgp" and "summary".begins_with(String(toks[2])))):
+			return _frr_bgp_summary()
 		if toks.size() == 2 and String(toks[0]) == "show" and "version".begins_with(String(toks[1])):
 			return "FRRouting 8.4.4 (%s) on Linux(6.1.0-18-amd64).\nCopyright 1996-2005 Kunihiro Ishiguro, et al.\nconfigured with:\n    '--build=x86_64-linux-gnu' '--prefix=/usr' '--enable-vtysh' '--enable-ospfd' '--enable-bgpd'\n" % dev.name
 		if String(toks[0]) == "router" and not dev.ip_forwarding:
@@ -5178,6 +5188,62 @@ class Vtysh extends EOS:
 		if String(toks[0]) == "write" or String(toks[0]) == "copy":
 			return "Note: this version of vtysh never writes vtysh.conf\nBuilding Configuration...\nIntegrated configuration saved to /etc/frr/frr.conf\n[OK]\n"
 		return out
+
+	func _frr_age(k: int) -> String:
+		var secs := (Game.cycle * 3600 + k * 37) % 359999
+		return "%02d:%02d:%02d" % [secs / 3600, (secs / 60) % 60, secs % 60]
+
+	func _frr_route() -> String:
+		## zebra's table: the code, > for selected, * for installed, the age at the end
+		var out := "Codes: K - kernel route, C - connected, S - static, R - RIP,\n       O - OSPF, I - IS-IS, B - BGP, E - EIGRP, N - NHRP,\n       T - Table, v - VNC, V - VNC-Direct, A - Babel, F - PBR,\n       f - OpenFabric,\n       > - selected route, * - FIB route, q - queued, r - rejected, b - backup\n       t - trapped, o - offload failure\n\n"
+		var k := 0
+		for e in Sim.fib(dev):
+			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
+			var code := String(e["src"])
+			if code == "C":
+				out += "C>* %s is directly connected, %s, %s\n" % [pfx, e["iface"].name, _frr_age(k)]
+			elif String(e["next_hop"]) == "null0":
+				out += "S>* %s [1/0] unreachable (blackhole), %s\n" % [pfx, _frr_age(k)]
+			else:
+				out += "%s>* %s [%d/%d] via %s, %s, weight 1, %s\n" % [code, pfx, int(e["ad"]), int(e["cost"]) if code == "O" else 0, e["next_hop"], e["iface"].name, _frr_age(k)]
+			k += 1
+		return out
+
+	func _frr_ospf_neighbors() -> String:
+		if dev.ospf.is_empty():
+			return ""
+		var nbs: Array = Sim.ospf_neighbors(dev).filter(func(nb): return not bool(nb.get("v6", false)))
+		var out := "\nNeighbor ID     Pri State           Up Time         Dead Time Address         Interface                        RXmtL RqstL DBsmL\n"
+		var k := 0
+		for nb in nbs:
+			var far: Net.NDevice = nb["dev"]
+			var far_if: Net.Iface = null
+			for fi: Net.Iface in far.ifaces:
+				if fi.ips.any(func(c): return String(c).split("/")[0] == String(nb["via_ip"])):
+					far_if = fi
+			var state := Sim.ospf_neighbor_state(dev, nb).replace("FULL", "Full").replace("2WAY", "2-Way").replace("/  -", "/-")
+			var mine: Net.Iface = nb["iface"]
+			var my_ip := String(mine.ips[0]).split("/")[0] if not mine.ips.is_empty() else ""
+			out += "%-15s %3d %-15s %-15s %-9s %-15s %-32s %5d %5d %5d\n" % [Sim.ospf_router_id(far), Sim.ospf_priority(far_if) if far_if else 1, state,
+				"%dm%02ds" % [(Game.cycle * 3 + k) % 60, (Game.cycle * 7 + k) % 60], "%d.%03ds" % [31 + (Game.cycle * 7 + k) % 9, (Game.cycle * 13 + k) % 1000],
+				nb["via_ip"], "%s:%s" % [mine.name, my_ip], 0, 0, 0]
+			k += 1
+		return out + "\n"
+
+	func _frr_bgp_summary() -> String:
+		if dev.bgp.is_empty():
+			return "%% BGP instance not found\n"
+		var out := "\nIPv4 Unicast Summary (VRF default):\nBGP router identifier %s, local AS number %d vrf-id 0\nBGP table version %d\nRIB entries %d, using %d bytes of memory\nPeers %d, using %d KiB of memory\n\n" % [
+			Sim.bgp_router_id(dev), int(dev.bgp["asn"]), Game.cycle % 97, Sim.fib(dev).size() * 2, Sim.fib(dev).size() * 368, dev.bgp["neighbors"].size(), dev.bgp["neighbors"].size() * 724]
+		out += "%-15s %s %10s %9s %9s %8s %4s %4s %8s %-12s %8s %s\n" % ["Neighbor", "V", "AS", "MsgRcvd", "MsgSent", "TblVer", "InQ", "OutQ", "Up/Down", "State/PfxRcd", "PfxSnt", "Desc"]
+		var k := 0
+		for nb in dev.bgp["neighbors"]:
+			var up := Sim.bgp_established(dev, nb)
+			var rcvd := Sim.fib(dev).filter(func(e): return e["src"] == "B" and String(e["next_hop"]) == String(nb["ip"])).size()
+			out += "%-15s %s %10d %9d %9d %8d %4d %4d %8s %-12s %8d %s\n" % [nb["ip"], "4", int(nb["remote_as"]), (Game.cycle + 3) * 2 if up else 0, (Game.cycle + 4) * 2 if up else 0,
+				Game.cycle % 97 if up else 0, 0, 0, _frr_age(k) if up else "never", str(rcvd) if up else "Active", Sim.fib(dev).size() if up else 0, String(nb.get("name", "N/A"))]
+			k += 1
+		return out + "\nTotal number of neighbors %d\n" % dev.bgp["neighbors"].size()
 
 	func _frr_running() -> String:
 		## frr.conf as vtysh shows it: only what the daemons own, nothing of the Linux underneath

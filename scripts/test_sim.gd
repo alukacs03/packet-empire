@@ -11909,6 +11909,16 @@ static func run() -> int:
 	var t36_dump := t17_l.exec("tcpdump -c 1 -i eth0")
 	check(not t36_dump.contains("packets received by filter") or t36_dump.contains("1 packets received by filter") or t36_dump.contains("0 packets received by filter"),
 		"linux: tcpdump -c stops counting at the count")
+	# ifupdown, iptables entry checks, FRR's own tables
+	check(t17_l.exec("echo \"auto eth1\" > /etc/network/interfaces") == "" and t17_l.exec("echo \"iface eth1 inet static\" >> /etc/network/interfaces") == ""
+		and t17_l.exec("echo \"address 10.36.5.2\" >> /etc/network/interfaces") == "" and t17_l.exec("echo \"netmask 255.255.255.0\" >> /etc/network/interfaces") == ""
+		and t17_l.exec("ifup eth1") == "" and "10.36.5.2/24" in t17_s.ifaces[1].ips, "linux: ifup applies the interfaces file")
+	check(t17_l.exec("ifdown eth1") == "" and "10.36.5.2/24" not in t17_s.ifaces[1].ips and t17_l.exec("ifup eth9").contains("unknown interface"), "linux: ifdown takes it away, an unknown stanza is refused")
+	check(t17_l.exec("iptables -A INPUT -s 10.0.0.256 -j DROP").contains("not found") and t17_l.exec("iptables -A INPUT -p tcp --dport ssh -j ACCEPT") == ""
+		and t17_l.exec("iptables -S INPUT").contains("-p tcp -m tcp --dport 22") and t17_l.exec("iptables -A INPUT -s 10.36.0.9 -j DROP") == "" and t17_l.exec("iptables -S INPUT").contains("-s 10.36.0.9/32"),
+		"linux: iptables refuses a bad address, resolves service names and lists like iptables-save")
+	t17_l.exec("iptables -F INPUT")
+	check(t17_l.exec("vtysh -c \"show ip route\"").contains("Codes: K - kernel route") and t17_l.exec("vtysh -c \"show ip route\"").contains("C>* "), "linux: vtysh prints zebra's route table, not Arista's")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

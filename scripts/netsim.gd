@@ -3019,7 +3019,7 @@ static func _acl_permits_list(dev: Net.NDevice, active: Array, p: Dictionary) ->
 		var want := String(rule.get("proto", "ip"))
 		if want != "ip" and want != proto:
 			continue
-		if int(rule.get("port", 0)) != 0 and int(rule["port"]) != port:
+		if int(rule.get("port", 0)) != 0 and (int(rule["port"]) != port if int(rule.get("port_hi", 0)) == 0 else (port < int(rule["port"]) or port > int(rule["port_hi"]))):
 			continue
 		if bool(rule.get("established", false)) and not reply:
 			continue

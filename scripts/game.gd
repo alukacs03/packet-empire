@@ -10392,6 +10392,8 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
 	_strip_runtime(cfg.get("services", {}))
 	for si in cfg.get("ifaces", []):
+		if int(si.get("dot1x_home", 0)) > 0:
+			si["untagged_vlan"] = int(si["dot1x_home"])  # what was configured; the RADIUS VLAN is a session, not a setting
 		for k in ["err_disabled", "err_since", "err_cause", "dot1x_ok", "dot1x_home", "violations", "rx_frames", "tx_frames", "rx_errors", "rx_crc", "rx_giants", "collisions", "out_drops"]:
 			si.erase(k)  # counters and learned state: not configuration either
 	cfg.erase("note")  # the handover note is past-you talking, not configuration
