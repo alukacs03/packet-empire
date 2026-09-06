@@ -4,7 +4,7 @@ class_name ServiceDesign
 ## Routed, multi-VLAN and application-service designs stay manual for now.
 
 static func capture(rack: Net.Rack, title: String) -> String:
-	if rack == null: return "Open the cabinet containing the service first."
+	if rack == null: return Loc.t("design.open_cabinet")
 	var devices: Array = []
 	var hosts: Array = []
 	var switches := 0
@@ -15,35 +15,35 @@ static func capture(rack: Net.Rack, title: String) -> String:
 		slots.append(dev.model if dev != null else null)
 		if dev == null: continue
 		if dev.model not in ["sw-lite", "sw-8", "srv-1"]:
-			return "Save a small LAN: one SW5 or S8 and two to four R110 servers. Other designs use the existing hardware blueprints."
-		if dev.status != "active": return "Bring every device online before saving a service."
+			return Loc.t("design.small_lan")
+		if dev.status != "active": return Loc.t("design.online_first")
 		if dev.type == "switch": switches += 1
 		else: hosts.append(dev)
 		if not dev.static_routes.is_empty() or not dev.services.is_empty():
-			return "This first service standard supports a local LAN without routes or application services."
+			return Loc.t("design.no_routes")
 		var ports: Array = []
 		for iface: Net.Iface in dev.ifaces:
 			if iface.name.begins_with("Management"): continue
 			var link := Game.link_at(iface)
 			if link != null:
 				if Game.rack_of(link.other(iface).dev) != rack:
-					return "The service must fit in this cabinet; an external cable would be left behind."
-				if not iface.enabled or (dev.type == "switch" and iface.mode != "access"): return "Save a healthy access LAN; trunks and disabled ports need manual design."
+					return Loc.t("design.fit_cabinet")
+				if not iface.enabled or (dev.type == "switch" and iface.mode != "access"): return Loc.t("design.access_only")
 				if dev.type == "switch":
-					if vid != -1 and vid != iface.untagged_vlan: return "Use one customer VLAN per service standard."
+					if vid != -1 and vid != iface.untagged_vlan: return Loc.t("design.one_vlan")
 					vid = iface.untagged_vlan
 			ports.append({"name": iface.name, "vlan": iface.untagged_vlan})
 		devices.append(dev)
 		nodes.append({"model": dev.model, "slot": rack.slots.find(dev), "ports": ports})
 	if switches != 1 or hosts.size() < 2 or hosts.size() > 4:
-		return "A service standard needs one switch and two to four servers."
+		return Loc.t("design.one_switch")
 	for host: Net.NDevice in hosts:
 		if host.ifaces[0].ips.size() != 1 or not String(host.ifaces[0].ips[0]).ends_with("/24"):
-			return "Give each server one IPv4 /24 address before capturing the LAN."
-		if ":" in String(host.ifaces[0].ips[0]): return "This standard uses IPv4 /24 addressing."
+			return Loc.t("design.ipv4_24")
+		if ":" in String(host.ifaces[0].ips[0]): return Loc.t("design.ipv4_only")
 		for other: Net.NDevice in hosts:
 			if host != other and not Sim.ping(host, String(other.ifaces[0].ips[0]).split("/")[0])["ok"]:
-				return "The servers must reach each other before this service can become a standard."
+				return Loc.t("design.reach_each_other")
 	var cables: Array = []
 	for link: Net.Link in Game.links:
 		if link.a.dev in devices and link.b.dev in devices:
@@ -57,24 +57,24 @@ static func capture(rack: Net.Rack, title: String) -> String:
 static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: int) -> Dictionary:
 	var spec: Dictionary = design.get("service", {})
 	if int(spec.get("version", 0)) != 1 or not spec.get("nodes", []) is Array or spec.get("nodes", []).is_empty():
-		return {"ok": false, "why": "Choose a saved service standard; this entry is a plain hardware blueprint or an older format."}
-	if rack == null or rack not in Game.racks: return {"ok": false, "why": "Open an empty target cabinet."}
+		return {"ok": false, "why": Loc.t("design.choose_standard")}
+	if rack == null or rack not in Game.racks: return {"ok": false, "why": Loc.t("design.empty_target")}
 	for dev in rack.slots:
-		if dev != null: return {"ok": false, "why": "The target cabinet must be empty."}
+		if dev != null: return {"ok": false, "why": Loc.t("design.target_empty")}
 	var parts := prefix.strip_edges().split(".")
-	if parts.size() != 3: return {"ok": false, "why": "Enter three address octets, for example 10.80.0."}
+	if parts.size() != 3: return {"ok": false, "why": Loc.t("design.three_octets")}
 	for octet: String in parts:
 		if not octet.is_valid_int() or int(octet) < 0 or int(octet) > 255:
-			return {"ok": false, "why": "Address octets must be between 0 and 255."}
+			return {"ok": false, "why": Loc.t("design.octet_range")}
 	if int(parts[0]) == 0 or int(parts[0]) == 127 or int(parts[0]) >= 224:
-		return {"ok": false, "why": "Choose a unicast LAN prefix, such as 10.80.0."}
-	if vlan < 1 or vlan > 4094: return {"ok": false, "why": "Choose VLAN 1 to 4094."}
+		return {"ok": false, "why": Loc.t("design.unicast_prefix")}
+	if vlan < 1 or vlan > 4094: return {"ok": false, "why": Loc.t("design.vlan_range")}
 	var normalized := "%d.%d.%d" % [int(parts[0]), int(parts[1]), int(parts[2])]
 	for dev: Net.NDevice in Game.all_devices():
 		for iface: Net.Iface in dev.ifaces:
 			for cidr: String in iface.ips:
 				if cidr.begins_with(normalized + "."):
-					return {"ok": false, "why": "That /24 is already in use. Choose a fresh prefix."}
+					return {"ok": false, "why": Loc.t("design.prefix_in_use")}
 	var price := 0
 	var occupied: Array = []
 	var host_count := 0
@@ -82,25 +82,25 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 		var model := String(node.get("model", ""))
 		var slot := int(node.get("slot", -1))
 		if model not in ["sw-lite", "sw-8", "srv-1"] or slot in occupied or not Game.can_install(rack, slot, model):
-			return {"ok": false, "why": "The saved hardware layout is invalid for this cabinet."}
+			return {"ok": false, "why": Loc.t("design.layout_invalid")}
 		occupied.append(slot)
 		price += int(Game.MODELS[model]["price"])
 		if model == "srv-1": host_count += 1
 	if host_count < 2 or host_count > 4 or spec["nodes"].size() != host_count + 1:
-		return {"ok": false, "why": "This standard has %d servers and %d nodes; a service standard is one switch and two to four servers." % [host_count, spec["nodes"].size()]}
+		return {"ok": false, "why": Loc.t("design.node_count") % [host_count, spec["nodes"].size()]}
 	var extra := 0
 	for node: Dictionary in spec["nodes"]:
 		extra += int(Game.WATTS.get(String(node["model"]), 0))  # the draw table, not the catalogue
 	if Game.stage >= 1 and Game.power_draw(rack.site) + extra > Game.cooling_capacity(rack.site):  # in a colo the cooling is theirs
-		return {"ok": false, "why": "This floor cannot cool another %d W: %d W drawn against %d W of cooling. Add cooling first." % [extra, Game.power_draw(rack.site), Game.cooling_capacity(rack.site)]}
+		return {"ok": false, "why": Loc.t("design.cannot_cool") % [extra, Game.power_draw(rack.site), Game.cooling_capacity(rack.site)]}
 	var endpoints: Array = []
 	if spec.get("cables", []).size() != host_count:
-		return {"ok": false, "why": "This standard holds %d cables for %d servers; every server needs exactly one lead to the switch." % [spec.get("cables", []).size(), host_count]}
+		return {"ok": false, "why": Loc.t("design.cable_count") % [spec.get("cables", []).size(), host_count]}
 	for cable: Dictionary in spec["cables"]:
 		for side in ["a", "b"]:
 			var idx := int(cable.get(side, -1))
 			if idx < 0 or idx >= spec["nodes"].size():
-				return {"ok": false, "why": "A cable in this standard points at a device that is not in it."}
+				return {"ok": false, "why": Loc.t("design.cable_outside")}
 			var model := String(spec["nodes"][idx]["model"])
 			var port := String(cable.get(side + "p", ""))
 			var legal: Array = []
@@ -109,22 +109,22 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 				for n in int(Game.MODELS[model]["ports"]): legal.append(("ether" if model == "sw-lite" else "Ethernet") + str(n + 1))
 			var endpoint := "%d:%s" % [idx, port]
 			if port not in legal:
-				return {"ok": false, "why": "Port %s does not exist on a %s." % [port, Game.MODELS[model]["label"]]}
+				return {"ok": false, "why": Loc.t("design.no_such_port") % [port, Game.MODELS[model]["label"]]}
 			if endpoint in endpoints:
-				return {"ok": false, "why": "Port %s is cabled twice in this standard." % port}
+				return {"ok": false, "why": Loc.t("design.port_twice") % port}
 			endpoints.append(endpoint)
 		if String(spec["nodes"][int(cable["a"])]["model"]) == "srv-1" and String(spec["nodes"][int(cable["b"])]["model"]) == "srv-1":
-			return {"ok": false, "why": "This standard cables two servers directly; every lead must end on the switch."}
+			return {"ok": false, "why": Loc.t("design.server_to_server")}
 	var leads := int(spec["cables"].size())
 	price += leads * int(Game.PART_PRICES["patch"])
-	if not Game.sandbox and Game.money < price: return {"ok": false, "why": "This service costs $%d including patch leads; cash available $%d." % [price, Game.money]}
-	return {"ok": true, "why": "%d servers, one switch, %d patch leads. Addresses %s.10 to %d/24, VLAN %d. Total $%d." % [host_count, leads, normalized, 9 + host_count, vlan, price],
+	if not Game.sandbox and Game.money < price: return {"ok": false, "why": Loc.t("design.costs") % [price, Game.money]}
+	return {"ok": true, "why": Loc.t("design.summary") % [host_count, leads, normalized, 9 + host_count, vlan, price],
 		"price": price, "prefix": normalized, "hosts": host_count, "leads": leads}
 
 static func deploy(rack: Net.Rack, design: Dictionary, prefix: String, vlan: int) -> String:
 	var plan := preview(rack, design, prefix, vlan)
 	if not bool(plan["ok"]): return String(plan["why"])
-	if not Game.try_spend(int(plan["price"])): return "The available cash changed. Preview again."
+	if not Game.try_spend(int(plan["price"])): return Loc.t("design.cash_changed")
 	var spec: Dictionary = design["service"]
 	var created: Array = []
 	var hosts: Array = []
@@ -150,9 +150,9 @@ static func deploy(rack: Net.Rack, design: Dictionary, prefix: String, vlan: int
 		for other: Net.NDevice in hosts:
 			if host != other and not Sim.ping(host, String(other.ifaces[0].ips[0]).split("/")[0])["ok"]: verified = false
 	Game.log_event("SERVICE DEPLOYED: %s into %s. %s" % [design["name"], rack.name,
-		"Every server reaches every other server." if verified else "Connectivity check failed; inspect VLANs and facility power."])
+		Loc.t("design.all_reach") if verified else Loc.t("design.check_failed")])
 	Game.topology_changed.emit()
-	return "" if verified else "Hardware deployed, but connectivity failed. Check this floor's power and cooling before selling the service."
+	return "" if verified else Loc.t("design.deployed_failed")
 
 static func port_named(dev: Net.NDevice, name: String) -> Net.Iface:
 	for iface: Net.Iface in dev.ifaces:

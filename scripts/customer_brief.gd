@@ -22,9 +22,9 @@ static func render(ui) -> void:
 		paragraph(box, String(eye["activity"]), "muted")
 	var f := FirstCustomer.forecast()
 	if phase in ["planning", "countdown"]:
-		paragraph(box, "We have packed the stock. Now we need the checkout to hold up. How should we invite our shoppers?")
+		paragraph(box, Loc.t("brief.packed_stock"))
 		box.add_child(UIW.make_text("%d Mbps available" % int(f["headroom"]), "title", "accent"))
-		paragraph(box, "Forecast at the busiest normal shift. Other customers share this capacity.", "muted")
+		paragraph(box, Loc.t("brief.forecast_note"), "muted")
 		paragraph(box, String(f["bottleneck"]), "muted")
 	if phase == "planning":
 		for key: String in FirstCustomer.PLANS:
@@ -39,26 +39,26 @@ static func render(ui) -> void:
 	elif phase in ["countdown", "live"]:
 		var plan: Dictionary = FirstCustomer.PLANS[String(arc["plan"])]
 		var left := int(arc["starts"]) - Game.cycle
-		paragraph(box, "Starts in %d cycles" % left if left > 0 else "LIVE · wave %d of 3" % mini(3, Game.cycle - int(arc["starts"]) + 1), "warm")
+		paragraph(box, Loc.t("brief.starts_in") % left if left > 0 else Loc.t("brief.live_wave") % mini(3, Game.cycle - int(arc["starts"]) + 1), "warm")
 		box.add_child(DemandChart.new().setup(plan["demand"], int(f["headroom"]), Game.cycle - int(arc["starts"])))
-		paragraph(box, "Your plan: %s. Keep the service reachable and every shared link below capacity." % plan["name"])
-		paragraph(box, "Move competing traffic, add capacity, or inspect a suspected weak point. Pause whenever you need to think.", "muted")
+		paragraph(box, Loc.t("brief.your_plan") % plan["name"])
+		paragraph(box, Loc.t("brief.move_traffic"), "muted")
 	elif phase == "debrief":
 		var successes := int(arc["successes"])
 		box.add_child(UIW.make_text("%d / 3 waves carried" % successes, "title", "accent" if successes == 3 else "warning"))
-		paragraph(box, "We kept printing shipping labels all night. Thank you." if successes == 3 else "We got through the night. Let's look at the moments the checkout struggled.")
+		paragraph(box, Loc.t("brief.all_night") if successes == 3 else Loc.t("brief.got_through"))
 		for sample: Dictionary in arc["samples"]:
-			paragraph(box, "Cycle %d · %s" % [sample["cycle"], sample["reason"]], "success" if sample["served"] else "warning")
-		paragraph(box, "You chose %s. Bonus earned: $%d." % [FirstCustomer.PLANS[String(arc["plan"])]["name"], arc["bonus"]])
+			paragraph(box, Loc.t("brief.cycle_reason") % [sample["cycle"], sample["reason"]], "success" if sample["served"] else "warning")
+		paragraph(box, Loc.t("brief.chose_bonus") % [FirstCustomer.PLANS[String(arc["plan"])]["name"], arc["bonus"]])
 		var before: Dictionary = arc.get("before", {})
 		if int(f["headroom"]) > int(before.get("headroom", 0)):
-			paragraph(box, "Your changes added %d Mbps of forecast headroom." % (int(f["headroom"]) - int(before.get("headroom", 0))), "accent")
-		box.add_child(WorkspaceShell.button("Keep building our company", func() -> void:
+			paragraph(box, Loc.t("brief.headroom_added") % (int(f["headroom"]) - int(before.get("headroom", 0))), "accent")
+		box.add_child(WorkspaceShell.button(Loc.t("brief.keep_building"), func() -> void:
 			FirstCustomer.acknowledge()
 			ui._refresh_tutorial()
 			ui.check_demo_end(), true))
-	box.add_child(WorkspaceShell.button("Trace this customer's network", func() -> void: ui.focus_customer(deal)))
-	box.add_child(WorkspaceShell.button("Continue network jobs", func() -> void:
+	box.add_child(WorkspaceShell.button(Loc.t("brief.trace_network"), func() -> void: ui.focus_customer(deal)))
+	box.add_child(WorkspaceShell.button(Loc.t("brief.continue_jobs"), func() -> void:
 		ui.close_everything()
 		ui.contracts_tab = "Jobs"
 		ui.open_contracts()))
@@ -83,4 +83,4 @@ class DemandChart extends Control:
 			draw_string(UIW.mono_font(), Vector2(x, 118), str(demand[i]), HORIZONTAL_ALIGNMENT_LEFT, 60, 12, UIW.colour("text"))
 		var y := 100 - capacity / maximum * 80
 		draw_dashed_line(Vector2(8, y), Vector2(size.x - 8, y), UIW.colour("warm"), 1.0, 4)
-		draw_string(UIW.sans_font(), Vector2(8, 14), "Demand per wave · dashed line: available Mbps", HORIZONTAL_ALIGNMENT_LEFT, size.x - 16, 11, UIW.colour("muted"))
+		draw_string(UIW.sans_font(), Vector2(8, 14), Loc.t("brief.chart_legend"), HORIZONTAL_ALIGNMENT_LEFT, size.x - 16, 11, UIW.colour("muted"))

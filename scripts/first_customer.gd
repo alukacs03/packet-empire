@@ -70,10 +70,10 @@ static func forecast() -> Dictionary:
 static func choose(plan: String) -> String:
 	var arc := state()
 	if String(arc.get("phase", "")) != "planning" or not PLANS.has(plan):
-		return "Choose a launch plan when Kiskacsa invites you."
+		return Loc.t("arc.choose_when_invited")
 	var spec: Dictionary = PLANS[plan]
 	if not Game.try_spend(int(spec["fee"])):
-		return "The promotion reservation costs $%d." % int(spec["fee"])
+		return Loc.t("arc.reservation_costs") % int(spec["fee"])
 	arc["plan"] = plan
 	arc["phase"] = "countdown"
 	arc["starts"] = Game.cycle + 4

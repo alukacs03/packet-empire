@@ -12071,7 +12071,7 @@ static func run() -> int:
 	var t31_rx := RegEx.new()
 	t31_rx.compile("Loc\\.t\\(\"([a-z0-9_.]+)\"[,)]")  # a key built with + is checked by its own test
 	var t31_missing: Array = []
-	for t31_file in ["res://scripts/ui.gd", "res://scripts/title.gd", "res://scripts/ui_widgets.gd", "res://scripts/ui_shell.gd", "res://scripts/customer_brief.gd", "res://scripts/pedia.gd", "res://scripts/contracts.gd", "res://scripts/game.gd"]:
+	for t31_file in ["res://scripts/ui.gd", "res://scripts/title.gd", "res://scripts/ui_widgets.gd", "res://scripts/ui_shell.gd", "res://scripts/customer_brief.gd", "res://scripts/pedia.gd", "res://scripts/contracts.gd", "res://scripts/game.gd", "res://scripts/service_design.gd", "res://scripts/first_customer.gd"]:
 		if not FileAccess.file_exists(t31_file):
 			continue
 		for t31_m in t31_rx.search_all(FileAccess.get_file_as_string(t31_file)):
