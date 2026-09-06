@@ -4835,6 +4835,24 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	return h
 
 func _build_business_tab() -> void:
+	_biz_business_flow()
+	_biz_receivables()
+	_biz_energy_and_the_books()
+	_biz_address_space()
+	_biz_transit_and_peering()
+	_biz_career_profile()
+	_biz_marketing_and_cover()
+	_biz_change_management()
+	_biz_defence()
+	_biz_quarterly_reports()
+	_biz_achievements()
+	_biz_history()
+	_biz_staff()
+	_biz_sites()
+	_biz_wan_circuits()
+	# (market moved to its own tab)
+
+func _biz_business_flow() -> void:
 	contracts_box.add_child(_section(Loc.t("company.flow.section")))
 	contracts_box.add_child(_wrap(Loc.t("company.flow.body"), 12, UIW.colour("muted"), 600))
 	var flow := GridContainer.new()
@@ -4853,6 +4871,8 @@ func _build_business_tab() -> void:
 	var cash_delta := int(Game.last_cycle_delta)
 	flow.add_child(_offer_fact("NET CASH", "%s$%d\nactual bank movement" % [
 		"+" if cash_delta >= 0 else "-", absi(cash_delta)], "success" if cash_delta >= 0 else "danger"))
+
+func _biz_receivables() -> void:
 	contracts_box.add_child(_section("RECEIVABLES"))
 	var owed := Game.receivables()
 	var late := Game.overdue_invoices()
@@ -4886,6 +4906,8 @@ func _build_business_tab() -> void:
 			row.add_child(chase)
 	if Game.invoices.size() > 8:
 		contracts_box.add_child(_label(Loc.t("body.and_more") % (Game.invoices.size() - 8), 12, MUTED))
+
+func _biz_energy_and_the_books() -> void:
 	contracts_box.add_child(_section("ENERGY AND THE BOOKS"))
 	if Game.stage >= 1:
 		contracts_box.add_child(_wrap(
@@ -4931,6 +4953,8 @@ func _build_business_tab() -> void:
 		Game.hire_accountant(not Game.accountant)
 		_refresh_contracts())
 	contracts_box.add_child(acc_btn)
+
+func _biz_address_space() -> void:
 	contracts_box.add_child(_section("ADDRESS SPACE"))
 	contracts_box.add_child(_wrap(
 		Loc.t("body.ipv4_held")
@@ -4945,6 +4969,8 @@ func _build_business_tab() -> void:
 			_toast(err)
 		_refresh_contracts())
 	contracts_box.add_child(ip_btn)
+
+func _biz_transit_and_peering() -> void:
 	contracts_box.add_child(_section("TRANSIT AND PEERING"))
 	var billed := Game.transit_billed_mbps()
 	contracts_box.add_child(_wrap(
@@ -5025,9 +5051,13 @@ func _build_business_tab() -> void:
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), Loc.t(String(nr2[0]))]],
 		13, Color(0.85, 0.8, 0.6)))
 	contracts_box.add_child(_wrap(Loc.t("body.company_summary") % [Loc.t(Game.identity_label()), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+
+func _biz_career_profile() -> void:
 	contracts_box.add_child(_section("CAREER PROFILE"))
 	for line: String in Skills.profile():
 		contracts_box.add_child(_wrap("  %s" % line, 12, Color(0.72, 0.8, 0.88), 640))
+
+func _biz_marketing_and_cover() -> void:
 	contracts_box.add_child(_section("MARKETING AND COVER"))
 	var mk_row := HBoxContainer.new()
 	contracts_box.add_child(mk_row)
@@ -5059,6 +5089,8 @@ func _build_business_tab() -> void:
 		Game.insured = not Game.insured
 		_refresh_contracts())
 	ins_row.add_child(ins_btn)
+
+func _biz_change_management() -> void:
 	contracts_box.add_child(_section("CHANGE MANAGEMENT"))
 	var maint_row := HBoxContainer.new()
 	contracts_box.add_child(maint_row)
@@ -5141,6 +5173,8 @@ func _build_business_tab() -> void:
 					_toast(err)
 				_refresh_contracts()))
 		contracts_box.add_child(plan_btn)
+
+func _biz_defence() -> void:
 	contracts_box.add_child(_section("DEFENCE"))
 	var scrub_row := HBoxContainer.new()
 	contracts_box.add_child(scrub_row)
@@ -5162,6 +5196,8 @@ func _build_business_tab() -> void:
 		contracts_box.add_child(_label(Loc.t("body.under_attack")
 			% [a["target"], a["customer"], int(a["cycles_left"]), state], 13,
 			Color(0.95, 0.6, 0.45) if not (Game.scrubbing or blackholed) else Color(0.85, 0.85, 0.6)))
+
+func _biz_quarterly_reports() -> void:
 	if not Game.reports.is_empty():
 		contracts_box.add_child(_section("QUARTERLY REPORTS"))
 		for rep: Dictionary in Game.reports.slice(0, 4):
@@ -5172,12 +5208,16 @@ func _build_business_tab() -> void:
 				12, Color(0.72, 0.8, 0.88))
 			rl.add_theme_font_override("font", mono)
 			contracts_box.add_child(rl)
+
+func _biz_achievements() -> void:
 	contracts_box.add_child(_section("ACHIEVEMENTS  (%d of %d)" % [Game.achievements.size(),
 		Game.ACHIEVEMENTS.size()]))
 	for a: Dictionary in Game.ACHIEVEMENTS:
 		var got: bool = a["id"] in Game.achievements
 		contracts_box.add_child(_label("  %s  %-26s %s" % ["★" if got else "☆", Loc.t(String(a["name"])), Loc.t(String(a["how"]))],
 			12, Prefs.ok_colour() if got else Color(0.55, 0.58, 0.66)))
+
+func _biz_history() -> void:
 	contracts_box.add_child(_section("HISTORY"))
 	if Game.history.size() < 2:
 		contracts_box.add_child(_label(Loc.t("body.charts_later"),
@@ -5187,6 +5227,8 @@ func _build_business_tab() -> void:
 				["net", "Net per cycle", Color(0.6, 0.8, 1.0)],
 				["reputation", "Reputation", Color(0.95, 0.8, 0.5)]]:
 			contracts_box.add_child(UIW.Graph.new().setup(g[0], g[1], g[2]))
+
+func _biz_staff() -> void:
 	contracts_box.add_child(_section("STAFF"))
 	if Game.staff.is_empty():
 		contracts_box.add_child(_label(Loc.t("body.no_payroll_faults"),
@@ -5316,6 +5358,8 @@ func _build_business_tab() -> void:
 			else:
 				_toast(res)))
 	contracts_box.add_child(hire_btn)
+
+func _biz_sites() -> void:
 	contracts_box.add_child(_section("SITES"))
 	for i in Game.site_count():
 		var rent := int(Game.sites[i].get("rent", 0))
@@ -5335,6 +5379,8 @@ func _build_business_tab() -> void:
 			if err != "":
 				_toast(err)))
 	contracts_box.add_child(lease)
+
+func _biz_wan_circuits() -> void:
 	if Game.site_count() > 1:
 		contracts_box.add_child(_section("WAN CIRCUITS"))
 		for c: Dictionary in Game.circuits.duplicate():
@@ -5402,7 +5448,6 @@ func _build_business_tab() -> void:
 				if err != "":
 					_toast(err)))
 		contracts_box.add_child(order)
-	# (market moved to its own tab)
 
 func _build_market_tab() -> void:
 	var pipeline_anchor := VBoxContainer.new()
@@ -5891,6 +5936,41 @@ func _build_jobs_tab() -> void:
 			Game.answer_night_call(false)
 			_refresh_contracts())
 		nrow.add_child(wait_btn)
+	_jobs_customer_window()
+	_jobs_bid_desk()
+	_jobs_active_deals()
+	for a: Dictionary in Game.acquisitions:
+		if bool(a.get("done", false)):
+			contracts_box.add_child(_chip_row("MERGED", Color(0.4, 0.85, 0.5),
+				"%s is integrated into your network" % a["rival"], 13, Color(0.55, 0.8, 0.6)))
+			continue
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sb(Color(0.1, 0.12, 0.1), Color(0.5, 0.8, 0.5, 0.5), 8, 14))
+		contracts_box.add_child(card)
+		var cv := VBoxContainer.new()
+		card.add_child(cv)
+		cv.add_child(_label(Loc.t("body.integration") % a["rival"], 16, Color.WHITE))
+		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
+			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
+		var brief := _label(Loc.t("body.acquired_kit") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
+		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		brief.custom_minimum_size = Vector2(560, 0)
+		cv.add_child(brief)
+		for req in Game.integration_status(a):
+			var ok: bool = req["ok"]
+			var txt: String = ("●  " if ok else "○  ") + String(req["d"])
+			if not ok and String(req.get("detail", "")) != "":
+				txt += "   (%s)" % req["detail"]
+			cv.add_child(_label(txt, 13, UIW.colour("success") if ok else Color(0.7, 0.65, 0.6)))
+		var btn := Button.new()
+		btn.text = Loc.t("btn.check_integration")
+		_accent(btn)
+		btn.pressed.connect(func() -> void:
+			Game.try_complete_integration(a)
+			_refresh_contracts())
+		cv.add_child(btn)
+
+func _jobs_customer_window() -> void:
 	var customer_windows: Array = []
 	for active_deal: Dictionary in Game.deals:
 		var customer_view := Game.customer_eye(active_deal)
@@ -5902,6 +5982,8 @@ func _build_jobs_tab() -> void:
 		contracts_box.add_child(live_title)
 		for customer_view: Dictionary in customer_windows:
 			contracts_box.add_child(_customer_eye_card(customer_view))
+
+func _jobs_bid_desk() -> void:
 	if not Game.offers.is_empty():
 		var desk := _section("BID DESK  /  INCOMING OPPORTUNITIES")
 		desk.add_theme_color_override("font_color", UIW.colour("warm"))
@@ -6010,6 +6092,7 @@ func _build_jobs_tab() -> void:
 				_refresh_contracts())
 			row.add_child(dis)
 
+func _jobs_active_deals() -> void:
 	if not Game.deals.is_empty():
 		contracts_box.add_child(_section("ACTIVE DEALS"))
 		for deal: Dictionary in Game.deals:
@@ -6177,37 +6260,6 @@ func _build_jobs_tab() -> void:
 				dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 				dl.custom_minimum_size = Vector2(560, 0)
 				contracts_box.add_child(dl)
-
-	for a: Dictionary in Game.acquisitions:
-		if bool(a.get("done", false)):
-			contracts_box.add_child(_chip_row("MERGED", Color(0.4, 0.85, 0.5),
-				"%s is integrated into your network" % a["rival"], 13, Color(0.55, 0.8, 0.6)))
-			continue
-		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", _sb(Color(0.1, 0.12, 0.1), Color(0.5, 0.8, 0.5, 0.5), 8, 14))
-		contracts_box.add_child(card)
-		var cv := VBoxContainer.new()
-		card.add_child(cv)
-		cv.add_child(_label(Loc.t("body.integration") % a["rival"], 16, Color.WHITE))
-		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
-			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
-		var brief := _label(Loc.t("body.acquired_kit") % [where, a["net"], int(a["vlan"])], 13, Color(0.78, 0.82, 0.78))
-		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		brief.custom_minimum_size = Vector2(560, 0)
-		cv.add_child(brief)
-		for req in Game.integration_status(a):
-			var ok: bool = req["ok"]
-			var txt: String = ("●  " if ok else "○  ") + String(req["d"])
-			if not ok and String(req.get("detail", "")) != "":
-				txt += "   (%s)" % req["detail"]
-			cv.add_child(_label(txt, 13, UIW.colour("success") if ok else Color(0.7, 0.65, 0.6)))
-		var btn := Button.new()
-		btn.text = Loc.t("btn.check_integration")
-		_accent(btn)
-		btn.pressed.connect(func() -> void:
-			Game.try_complete_integration(a)
-			_refresh_contracts())
-		cv.add_child(btn)
 
 func _offer_fact(caption: String, value: String, semantic: String) -> PanelContainer:
 	var panel := UIW.style_panel(PanelContainer.new(), "console", "sm")
