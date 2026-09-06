@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-capture_dir="${1:-/tmp/packet-guided-deal-final.6U2MxZ}"
+capture_dir="${1:?usage: make_trailer.sh <capture-dir> [out.mp4]}"
 output_path="${2:-artifacts/packet-empire-highlight.mp4}"
 
 mkdir -p "$(dirname "$output_path")"

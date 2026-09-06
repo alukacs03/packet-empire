@@ -10,14 +10,14 @@ about outages), you can take the whole of it and supply your own economy.
 
 | File | Lines | What it is |
 |---|---|---|
-| `scripts/net.gd` | ~280 | The data model: sites, racks, devices, interfaces, links, plus address maths (v4 and v6) and port-range formatting. Pure data and pure functions; no dependency on anything else at all. |
-| `scripts/netsim.gd` | ~1600 | The simulation: frames, MAC learning, VLAN tagging, spanning tree (STP/RSTP/MST), LACP and MLAG, ARP/NDP, ICMP with TTL, routing with longest-prefix, local-pref and ECMP, NAT, VRFs, DHCP, DNS with delegation and TTLs, BGP with policy and RPKI, OSPF, VRRP, tunnels, WireGuard, 802.1X, QoS, MTU, multicast, BFD, SNMP. |
-| `scripts/cli.gd` | ~2100 | Two dialects: EOS/IOS-style (modes, abbreviation, interface ranges) and Linux (`ip`, `ping`, `tcpdump`, `dhclient`, …). |
-| `scripts/cli_ros.gd` | ~1300 | The RouterOS dialect: menus, universal verbs, print shapes, `export`. |
-| `scripts/cli_linux.gd` | ~1100 | The Linux host shell: iproute2, iputils, tcpdump, ISC DHCP, resolver files, wireguard-tools. |
-| `scripts/pedia.gd` | ~70 | The encyclopedia articles. Text only; keep the ones that suit your game. |
+| `scripts/net.gd` | ~380 | The data model: sites, racks, devices, interfaces, links, plus address maths (v4 and v6) and port-range formatting. Pure data and pure functions; no dependency on anything else at all. |
+| `scripts/netsim.gd` | ~2600 | The simulation: frames, MAC learning, VLAN tagging, spanning tree (STP/RSTP/MST), LACP and MLAG, ARP/NDP, ICMP with TTL, routing with longest-prefix, local-pref and ECMP, NAT, VRFs, DHCP, DNS with delegation and TTLs, BGP with policy and RPKI, OSPF, VRRP, tunnels, WireGuard, 802.1X, QoS, MTU, multicast, BFD, SNMP. |
+| `scripts/cli.gd` | ~4600 | The EOS dialect (modes, abbreviation, interface ranges, output filters), the session base class, and the shared learner hints. |
+| `scripts/cli_ros.gd` | ~2600 | The RouterOS dialect: menus, universal verbs, print shapes, `export`. |
+| `scripts/cli_linux.gd` | ~2800 | The Linux host shell: iproute2, iputils, tcpdump, ISC DHCP, resolver files, wireguard-tools. |
+| `scripts/pedia.gd` | ~150 | The encyclopedia articles. Text only; keep the ones that suit your game. |
 
-That is roughly 4500 lines with no tycoon coupling.
+That is roughly 13,000 lines with no tycoon coupling.
 
 ## What you must provide
 

@@ -16,8 +16,32 @@ static func load_file() -> void:
 	var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 	if not (data is Dictionary):
 		return
-	epitaph = data.get("epitaph", {})
-	offered = data.get("offered", [])
+	epitaph = data.get("epitaph", {}) if data.get("epitaph", {}) is Dictionary else {}
+	offered = []
+	for entry in data.get("offered", []):
+		if _valid_entry(entry):
+			offered.append(entry)  # a truncated write or an older layout drops the item, not the game
+
+static func _valid_entry(entry: Variant) -> bool:
+	## each kind names the fields apply_carried will index
+	if not (entry is Dictionary) or not entry.has("id") or not entry.has("kind"):
+		return false
+	var data: Variant = entry.get("data", {})
+	if not (data is Dictionary):
+		return false
+	match String(entry["kind"]):
+		"colleague":
+			for k in ["name", "role", "skill", "salary", "morale"]:
+				if not data.has(k):
+					return false
+			return String(data["role"]) in Staff.ROLES
+		"reference":
+			return data.has("customer")
+		"rival":
+			return data.has("name") and data.has("friendly")
+		"runbooks", "lesson":
+			return true
+	return false
 
 static func save_file() -> void:
 	Game.write_text_atomic(path, JSON.stringify({"epitaph": epitaph, "offered": offered}))

@@ -160,13 +160,13 @@ The CLI depends on what you buy, like real life:
 CLI and UI mutate the same `Game` state: they can never disagree.
 
 The simulation layer (`net.gd`, `netsim.gd`, `cli.gd`, `cli_ros.gd`,
-`pedia.gd`, about 4500 lines) has no dependency on any tycoon system and can
+`cli_linux.gd`, `pedia.gd`, about 13,000 lines) has no dependency on any tycoon system and can
 be lifted into a different game wholesale. `docs/REUSE.md` lists exactly what
 a host game has to provide.
 
 ## Recording a showcase
 
-`./run_film.sh /tmp/film packet-empire.mp4` plays a scripted tour of the game
+`./run_film.sh packet-empire.mp4` plays a scripted tour of the game
 and records every rendered frame with a caption strip: the floor and the people
 on it, cabinets that wear their own tidiness, a second building with its own
 colour and its own dock, the map, a booked failover test, the phone ringing out
@@ -176,7 +176,7 @@ needs ffmpeg; the frames are deleted afterwards.
 ## Tests
 
 ```sh
-PACKET_TEST=1 godot --headless --path . --quit-after 600
+PACKET_TEST=1 godot --headless --path . --quit-after 1500
 ```
 
 Or `./run_tests.sh`, which is the same thing with the exit code checked.

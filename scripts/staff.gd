@@ -189,12 +189,6 @@ static func repair_power() -> Array:
 				attempts -= 1  # going through the motions
 	return [maxi(0, attempts), skill]
 
-static func has_role(role: String, min_skill := 1) -> bool:
-	for m in Game.staff:
-		if m["role"] == role and int(m["skill"]) >= min_skill and on_shift(m):
-			return true
-	return false
-
 static func best_of(role: String) -> Dictionary:
 	var best := {}
 	for m in Game.staff:
@@ -210,7 +204,7 @@ static func work_cycle() -> void:
 	if attempts == 0:
 		return
 	var rng := RandomNumberGenerator.new()
-	rng.randomize()
+	rng.seed = Game._biz_rng.randi()  # the business stream, so a seeded run repairs the same way
 	# 1. bring back links that are administratively down but cabled
 	for l in Game.links:
 		if attempts <= 0:

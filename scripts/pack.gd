@@ -438,15 +438,6 @@ static func contracts() -> Array:
 			out.append(to_contract(pack, scenario))
 	return out
 
-static func failure_reasons(scenario: Dictionary) -> Array:
-	var out: Array = []
-	for pred in scenario.get("requirements", []):
-		var r := evaluate(pred)
-		if not bool(r["ok"]):
-			out.append(String(r["why"]))
-	return out
-
-
 ## ---------- the workshop ----------
 
 static func workshop_rows() -> Array:

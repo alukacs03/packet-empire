@@ -6575,7 +6575,7 @@ func refresh_candidates(force := false) -> void:
 	if not candidates.is_empty() and not force:
 		return
 	var rng := RandomNumberGenerator.new()
-	rng.randomize()
+	rng.seed = _biz_rng.randi()  # from the business stream: a seeded run hires the same people
 	candidates = []
 	# a company people have heard good things about attracts better applicants
 	var pool := 3 + int(reputation / 40)
@@ -8172,7 +8172,7 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 		"customer": lead["customer"], "kind": lead["kind"], "params": lead["params"],
 		"fee": price, "brief": Market.rfp_requirements(lead), "healthy": false,
 		"payment_state": "waiting",
-		"cycles": 0, "up_cycles": 0, "term": 18, "sla": committed_sla,
+		"cycles": 0, "up_cycles": 0, "term": 18, "sla": committed_sla, "sla_grace": 8,
 		"ctype": lead.get("ctype", "enterprise"), "loyalty": 0.75,
 		"load": int(lead["load"]), "public": bool(lead.get("public", false)),
 	}
@@ -10187,12 +10187,6 @@ func slot_info(i: int) -> Dictionary:
 		"stage": int(d.get("stage", 0)), "demo": bool(d.get("demo", false)),
 		"saved": String(d.get("saved_at", ""))}
 
-func any_save() -> bool:
-	for i in SLOTS + 1:
-		if FileAccess.file_exists(slot_path(i)):
-			return true
-	return FileAccess.file_exists(save_path)
-
 func import_legacy_save() -> void:
 	## the single old save becomes slot 1 the first time we see it, so nobody
 	## loses the game they were in the middle of
@@ -10587,6 +10581,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"portfast": i.portfast, "bpduguard": i.bpduguard,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
+			"dot1x_ok": i.dot1x_ok, "violations": i.violations,
 			"ips": i.ips, "note": i.note})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans, "vtep": d.vtep,
 		"mac_static": d.mac_static, "note": d.note,
@@ -10601,6 +10596,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 		"startup": d.startup, "versions": d.versions,
 		"acquired_from": d.acquired_from, "installed_cycle": d.installed_cycle,
 		"log_host": d.log_host, "ntp_server": d.ntp_server,
+		"bindings": d.bindings, "logs": d.logs, "clock_skew": d.clock_skew,
 		"ifaces": ifs}
 
 func load_game() -> bool:
@@ -10825,6 +10821,9 @@ func _apply(data: Dictionary) -> void:
 		d.installed_cycle = int(sd.get("installed_cycle", 0))
 		d.log_host = sd.get("log_host", "")
 		d.ntp_server = sd.get("ntp_server", "")
+		d.bindings = sd.get("bindings", {}).duplicate()  # the snooping table and the logs are evidence, kept
+		d.logs = sd.get("logs", []).duplicate()
+		d.clock_skew = int(sd.get("clock_skew", 0))
 		d.note = sd.get("note", {}).duplicate(true)
 		d.resolver = sd.get("resolver", "")
 		for vid in sd.get("vlans", {}):
@@ -10859,6 +10858,8 @@ func _apply(data: Dictionary) -> void:
 			i.vm = si.get("vm", "")
 			i.pvlan = si.get("pvlan", "")
 			i.dot1x = bool(si.get("dot1x", false))
+			i.dot1x_ok = String(si.get("dot1x_ok", ""))
+			i.violations = int(si.get("violations", 0))
 			i.storm_limit = int(si.get("storm_limit", 0))
 			i.port_security = si.get("port_security", false)
 			i.portfast = bool(si.get("portfast", false))
