@@ -8043,6 +8043,26 @@ static func run() -> int:
 		if rv_g.has("grudge_until") and int(rv_g["grudge_until"]) != Game.cycle + 12:
 			grudge_ok = false
 	check(grudge_ok, "buyout: the grudge is dated, so it wears off")
+	check(Contracts.inter_switch_port("ros") != "" and not Contracts.hint_commands("stretch_vlans", "ros")[0].contains("{isl}"),
+		"hints: the trunk hint names a real inter-switch port, never the placeholder")
+	var two_sites_c := {}
+	for tc in Contracts.all():
+		if String(tc["id"]) == "two_sites":
+			two_sites_c = tc
+	check(not two_sites_c.is_empty() and Contracts.hint_for(two_sites_c) != "", "hints: the two-site job has a hint")
+	var graced := {"id": "gr", "customer": "Graced Kft", "kind": "hosting", "params": {"ip": "10.223.0.10"}, "fee": 100, "load": 10, "brief": "",
+		"sla": 2, "cycles": 0, "up_cycles": 0, "healthy": false, "guided": true, "age": 3}
+	Game.deals.append(graced)
+	var cyc_keep := Game.cycle
+	var money_keep := Game.money
+	var graced_rep := Game.reputation
+	Game.sla_tick()
+	Game.deals.erase(graced)
+	Game.money = money_keep  # the tick is not this section's business
+	Game.reputation = graced_rep
+	Game.cycle = cyc_keep
+	check(int(graced["cycles"]) == 0 and int(graced["age"]) == 4, "sla: a guided deal's uptime clock waits for first delivery, with a grace")
+	check(Market.pool_name("Kiskacsa") != "Kiskacsa" and Market.pool_name("Vertex") == "Vertex", "leads: the story customer's name never comes out of the random pool")
 	check(Game.contract_fee({"reward": 9000}) == 120 and Game.contract_fee({"reward": 100}) == 40 and Game.contract_fee({"reward": 800}) == 80,
 		"fees: a campaign job's recurring fee is held between $40 and $120")
 	var grown := {"ctype": "startup", "fee": 60, "load": 200, "customer": "Tiny Kft", "healthy": true}

@@ -1941,6 +1941,8 @@ func _cable_action() -> void:
 	var targets: Array = []
 	var source_rack := Game.rack_of(cur_if.dev)
 	for candidate: Net.Iface in Game.free_ifaces(cur_if.dev):
+		if candidate.name.begins_with("Management") and not cur_if.name.begins_with("Management") and cur_if.dev.type != "console":
+			continue  # the out-of-band port is not a data port; a server patched there reaches nothing
 		if Game.rack_of(candidate.dev) != source_rack:
 			targets.append(candidate)
 	if targets.is_empty():
@@ -5341,7 +5343,7 @@ func _build_market_tab() -> void:
 		for ti in 3:
 			sla_opt.add_item(Market.tier(ti)["label"])
 		sla_opt.select(int(lead["sla"]))
-		sla_opt.tooltip_text = "Commit to less than they asked for and the proposal is thrown out."
+		sla_opt.tooltip_text = "They asked for %s. Commit to less and the proposal is thrown out; commit to more and the fee rises with the penalty, judged from the day the service first goes live." % Market.tier(int(lead["sla"]))["label"]
 		prow.add_child(sla_opt)
 		var sbtn := Button.new()
 		sbtn.text = "Submit the proposal"

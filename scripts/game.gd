@@ -12,7 +12,7 @@ signal guided_outage_changed
 # Hardware catalog: fictional vendors, real tiers. New model = new entry.
 const MODELS := {
 	"sw-lite": {"speed": 1000, "tier": 0, "type": "switch", "label": "PacketTik SW5", "ports": 5, "price": 90, "os": "ros", "if_prefix": "ether"},
-	"sw-8": {"speed": 1000, "tier": 1, "type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
+	"sw-8": {"speed": 1000, "tier": 0, "type": "switch", "label": "OpenRack S8", "ports": 8, "price": 250},
 	"sw-24": {"speed": 10000, "tier": 2, "type": "switch", "label": "Arivista 7024", "ports": 24, "price": 900, "l3": true},
 	"srv-1": {"speed": 1000, "tier": 0, "type": "server", "ports": 1, "label": "Dill R110", "price": 400},
 	"srv-2": {"speed": 10000, "tier": 1, "type": "server", "ports": 2, "label": "Dill R220 (dual NIC)", "price": 700},
@@ -265,14 +265,15 @@ func _achievement_met(id: String) -> bool:
 					return true
 			return false
 		"disciplined":
-			var any := false
+			var saved := 0
 			for d in all_devices():
 				if d.type in ["server", "uplink", "cooling"]:
 					continue
-				any = true
 				if config_dirty(d):
 					return false
-			return any
+				if not d.startup.is_empty():
+					saved += 1
+			return saved >= 1  # nothing saved is not discipline, it is an empty floor
 		"employer":
 			return staff.size() >= 3
 		"steady":
@@ -4432,7 +4433,10 @@ func collect_invoices() -> int:
 			inv["due"] = int(inv["due"]) + randi_range(1, 2)
 			if not bool(inv.get("slipped", false)):
 				inv["slipped"] = true
-				log_event("LATE: %s has not paid the $%d they owe." % [inv["customer"], int(inv["amount"])])
+				inv["first_due"] = int(inv.get("first_due", int(inv["due"]) - randi_range(1, 2)))
+			if int(inv["due"]) > int(inv.get("first_due", inv["due"])) + 2 and not bool(inv.get("late_logged", false)):
+				inv["late_logged"] = true  # a slip of a cycle or two is routine; this one needs chasing
+				log_event("LATE: %s has not paid the $%d they owe, and it is more than two cycles overdue." % [inv["customer"], int(inv["amount"])])
 			continue
 		var amount := int(inv["amount"])
 		collected += amount
@@ -5893,7 +5897,7 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 			base["concept"] = "Physical layer first"
 			base["practice"] = "Trace and label both ends before configuring a protocol."
 			base["avoided"] = "No logical fix can rescue a server that is not physically patched."
-			base["mastery"] = "Fit blanking panels in every unused rack unit."
+			base["mastery"] = "Label both ends of a cable run (a note on the port), or fit blanking panels in every unused rack unit."
 		"first_ping":
 			var left := _iface_with_ip("10.0.0.1")
 			var right := _iface_with_ip("10.0.0.2")
@@ -6205,6 +6209,9 @@ func contract_mastery_met(cid: String) -> bool:
 					return true
 			return false
 		"rackup":
+			for l in links:
+				if not l.a.note.is_empty() or not l.b.note.is_empty() or not l.note.is_empty():
+					return true
 			for rack: Net.Rack in racks:
 				for slot in Net.Rack.SLOTS:
 					if slot_free(rack, slot) and not rack.blanked.has(slot):
@@ -6908,6 +6915,7 @@ const DIGEST_PREFIX := "SHIFT NOTES"
 ## Lines that are routine on their own but must never be folded away: anything
 ## that asks for a decision, names a customer, or is the game teaching.
 const DIGEST_EXEMPT := ["ARRIVAL", "PROMOTED", "SEASON", "FIRST LIGHT", "LIVE", "CREW", "THE PHONE", "YOU SAID", "KEPT IT", "DECISION", "STORY", "STORY PAYOFF", "STORY ENDING", "LEARNED",
+	"FIRST OUTAGE", "PIPELINE", "WON TENDER", "DELIVERY RESERVE", "DELIVERY COACH", "SERVICE DELIVERED", "INVOICE", "CASH", "QUARTER", "BOARD", "PRESS", "SECURITY", "PAYMENT SUSPENDED", "UNDELIVERED",
 	"TICKET", "VISIT", "VISIT BOOKED", "AUDIT", "AUDIT OFFERED", "AUDIT RESULT", "DEBRIEF READY",
 	"RELATIONSHIP", "THE END", "CHALLENGE", "PACK", "HEADS UP", "CARRIED IT", "DROPPED IT",
 	"CONSEQUENCE", "LATER", "IDENTITY", "NEMESIS", "REFERRAL", "MASTERED"]
@@ -7799,7 +7807,7 @@ func housekeeping_tick() -> void:
 		return
 	for member in staff:
 		member["morale"] = mini(100, int(member.get("morale", 70)) + 1)
-	if not bool(stats.get("tidy_noted", false)):
+	if not bool(stats.get("tidy_noted", false)) and not racks.is_empty():
 		stats["tidy_noted"] = true
 		Sfx.play("good")
 		log_event("QUIET: the floor is dressed, blanked and labelled. Faults are rarer here and repairs are quicker.")
@@ -9320,7 +9328,13 @@ func sla_tick() -> void:
 	for deal in deals.duplicate():
 		# a declared maintenance window excuses planned downtime: the cycle
 		# only counts against uptime if the service was actually delivered
-		if not in_maintenance() or deal["healthy"]:
+		deal["age"] = int(deal.get("age", 0)) + 1
+		if deal["healthy"]:
+			deal["was_live"] = true
+		# a guided or tendered deal's uptime clock starts when the service first
+		# goes live, with a grace after which a deal nobody built still comes due
+		var grace := int(deal.get("sla_grace", 8 if bool(deal.get("guided", false)) else 0))
+		if (not in_maintenance() or deal["healthy"]) and (bool(deal.get("was_live", false)) or int(deal["age"]) > grace):
 			deal["cycles"] = int(deal.get("cycles", 0)) + 1
 			# the service level is judged over the last quarter, not the deal's
 			# whole life: one bad night is paid for once, not for thirty cycles
@@ -9352,6 +9366,8 @@ func sla_tick() -> void:
 			if bool(deal.get("on_record", false)):
 				rep_hit = maxi(1, rep_hit / 2)  # you warned them, in writing
 			reputation = maxi(0, reputation - rep_hit)
+			if not bool(deal.get("was_live", false)) and cycle % 2 == 0:
+				log_event("UNDELIVERED: %s is still waiting for the service they signed for: reputation -%d a cycle until it is live." % [deal["customer"], rep_hit])
 			deal["degraded"] = false
 			if bool(deal.get("upstream_down", false)):
 				# somebody else's outage: they do not walk over it, and they

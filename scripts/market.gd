@@ -2,6 +2,11 @@ class_name Market
 ## Customer marketplace: generated offers with a hidden budget, price
 ## negotiation, and live sim-verified delivery checks for accepted deals.
 
+## the story customer's name never leaves the story: a random draw that
+## lands on it is spelled differently, so the seeded sequence is unchanged
+static func pool_name(n: String) -> String:
+	return "Vadkacsa" if n == "Kiskacsa" else n
+
 const NAMES := ["Vertex", "Kiskacsa", "Nimbus", "Turul", "BlueFin", "Paprika",
 	"Quantum", "Hollo", "Solaris", "Duna", "Astra", "Fecske", "Balaton", "Mokus",
 	"Northwind", "Csillag", "Ironclad", "Tisza", "Lumen", "Rakoczi", "Obsidian", "Puli"]
@@ -214,7 +219,7 @@ static func gen_offer() -> Dictionary:
 	return {
 		"id": "mkt_%d" % _next_id,
 		"kind": kind,
-		"customer": "%s %s" % [NAMES[randi() % NAMES.size()], SUFFIX[randi() % SUFFIX.size()]],
+		"customer": "%s %s" % [pool_name(NAMES[randi() % NAMES.size()]), SUFFIX[randi() % SUFFIX.size()]],
 		"loyalty": float(ct["loyalty"]),
 		"brief": (spec["brief"] % [subject]) if subject != "" else spec["brief"],
 		"costs": spec["costs"] + "  Expected load ~%d Mbps." % spec.get("load", 200),
@@ -331,7 +336,7 @@ static func rival_referral_lead(from_rival: String) -> Dictionary:
 	## a person rather than the market.
 	return {
 		"id": "lead_rival_%s" % from_rival.to_lower().replace(" ", "_"),
-		"customer": "%s (referred)" % NAMES[absi(from_rival.hash()) % NAMES.size()],
+		"customer": "%s (referred)" % pool_name(NAMES[absi(from_rival.hash()) % NAMES.size()]),
 		"kind": "hosting",
 		"ctype": "smb",
 		"stage": "lead",
@@ -349,7 +354,7 @@ static func tour_lead(premium: bool) -> Dictionary:
 	## What a good walk round the floor is actually worth: a real job to quote.
 	return {
 		"id": "lead_tour_%s" % ("premium" if premium else "modest"),
-		"customer": "%s %s" % [NAMES[absi("tour".hash()) % NAMES.size()],
+		"customer": "%s %s" % [pool_name(NAMES[absi("tour".hash()) % NAMES.size()]),
 			SUFFIX[0 if premium else 1]],
 		"kind": "secure_host" if premium else "hosting",
 		"ctype": "enterprise" if premium else "smb",
@@ -734,7 +739,7 @@ static func delivery_checks(deal: Dictionary) -> Array:
 		{"promise": "Keep the application on the network",
 			"work": "Patch that server into an active rack port", "ok": patched},
 		{"promise": "Make the application reachable",
-			"work": "Prove a ping from another addressed device", "ok": reachable},
+			"work": "Prove a ping from a second host or a router leg addressed in %s/24, on the same VLAN as the server's port" % ".".join(Array(ip.split(".")).slice(0, 3) + ["0"]), "ok": reachable},
 		{"promise": "Carry about %d Mbps" % load,
 			"work": "Keep at least %d Mbps free across the proven path" % load,
 			"ok": reachable and path_capacity >= load},

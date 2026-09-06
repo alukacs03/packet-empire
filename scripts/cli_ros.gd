@@ -321,8 +321,32 @@ func _help_for(path: String, menu: bool) -> String:
 	kids.sort()
 	var out := ""
 	for k in kids:
-		out += "%s -- %s\n" % [k, VERB_DESC.get(String(k), "")]
+		out += "%s -- %s\n" % [k, VERB_DESC.get(String(k), MENU_DESC.get(String(k), ""))]
 	return out if out != "" else "% no such menu\n"
+
+const MENU_DESC := {
+	"file": "Local router file storage", "help": "Help information", "interface": "Interface configuration",
+	"ip": "IP options", "ipv6": "IPv6 options", "routing": "Routing", "system": "System information and utilities",
+	"tool": "Diagnostics tools", "user": "User management", "snmp": "SNMP settings", "log": "System logs",
+	"export": "Print or save an export script that can be used to restore configuration",
+	"ping": "Send ICMP Echo packets", "quit": "Quit console", "password": "Change password",
+	"bridge": "Bridge management", "ethernet": "Ethernet interfaces", "vlan": "VLAN interfaces", "vrrp": "VRRP interfaces",
+	"wireguard": "WireGuard interfaces", "bonding": "Bonding interfaces", "address": "Address management",
+	"route": "Route management", "arp": "ARP entries management", "dhcp-server": "DHCP server management",
+	"dhcp-client": "DHCP client", "firewall": "Firewall management", "filter": "Firewall filters", "nat": "Network Address Translation",
+	"address-list": "Address lists", "pool": "IP address pools", "dns": "DNS settings", "neighbor": "Neighbor discovery",
+	"service": "IP services", "ospf": "Open Shortest Path First", "bgp": "Border Gateway Protocol", "bfd": "Bidirectional Forwarding Detection",
+	"identity": "Set router identity", "clock": "System clock", "resource": "System resources", "package": "Package management",
+	"logging": "Logging configuration", "ntp": "Network Time Protocol", "backup": "Backup and restore", "reboot": "Reboot the router",
+	"tech-support": "Collect diagnostic output", "torch": "Realtime traffic monitor", "sniffer": "Packet sniffer",
+	"traceroute": "Trace route to a host", "monitor-traffic": "Monitor interface traffic", "list": "Interface lists",
+	"member": "Interface list members", "peers": "WireGuard peers", "port": "Bridge ports", "host": "Bridge hosts",
+	"settings": "Bridge settings", "instance": "OSPF instances", "area": "OSPF areas", "interface-template": "OSPF interface templates",
+	"connection": "BGP connections", "session": "BGP sessions", "cache": "DNS cache", "lease": "DHCP leases",
+	"network": "DHCP networks", "community": "SNMP communities", "traffic-flow": "Traffic flow settings",
+	"discovery-settings": "Neighbor discovery settings", "configuration": "BFD configuration", "sup-output": "Support output",
+	"nd": "Neighbor discovery", "advertisements": "BGP advertisements", "print": "Print values of item properties",
+}
 
 func _next_words(path: String) -> Dictionary:
 	var nexts := {}

@@ -38,7 +38,7 @@ const DIALECT_HINTS := {
 		"intro": "The link between the switches must be a trunk on BOTH ends so tagged VLAN 10 can cross it. Create VLAN 10 on the second switch, trunk the cabled inter-switch port on each switch, then attach 10.0.0.3/24 to a VLAN 10 access port on the second switch.",
 		"after": "Run the switch commands on both ends of the inter-switch cable, substituting its real port name. On the new server use: ip addr add 10.0.0.3/24 dev eth0",
 		"ros": [
-			"/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether5",
+			"/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged={isl}",
 			"/interface bridge vlan print",
 			"/interface bridge port print",
 		],
@@ -46,7 +46,7 @@ const DIALECT_HINTS := {
 			"enable",
 			"configure terminal",
 			"vlan 10",
-			"interface Ethernet8",
+			"interface {isl}",
 			"switchport mode trunk",
 			"show interfaces trunk",
 		],
@@ -106,7 +106,7 @@ const DIALECT_HINTS := {
 		"intro": "A resolver holds the records; a client is pointed at the resolver. Then names work in ping.",
 		"after": "The record's address is the real server's; the resolver's own address is what goes in 'nameserver'. Or hand the resolver out through DHCP's dns field.",
 		"linux": [
-			"dns add www.delta.hu 10.2.0.10        (on the resolver)",
+			"dns add www.delta.hu 10.2.0.5         (on the resolver)",
 			"nameserver 10.2.0.5                  (on the client)",
 			"nslookup www.delta.hu",
 			"ping www.delta.hu",
@@ -599,8 +599,21 @@ static func hint_commands(contract_id: String, dialect: String) -> Array[String]
 	var cfg: Dictionary = DIALECT_HINTS.get(contract_id, {})
 	var commands: Array[String] = []
 	for command in cfg.get(dialect, []):
-		commands.append(String(command))
+		commands.append(String(command).replace("{isl}", inter_switch_port(dialect)))
 	return commands
+
+static func inter_switch_port(dialect: String) -> String:
+	## the port on a switch of that dialect that is cabled to another switch,
+	## so a hint names the port the player actually used; a sane default otherwise
+	for l in Game.links:
+		for side in [[l.a, l.b], [l.b, l.a]]:
+			var i: Net.Iface = side[0]
+			var far: Net.Iface = side[1]
+			if i.dev.type != "switch" or far.dev.type != "switch":
+				continue
+			if String(Game.MODELS.get(i.dev.model, {}).get("os", "eos")) == dialect:
+				return i.name
+	return "ether5" if dialect == "ros" else "Ethernet8"
 
 static func bare_command(line: String) -> String:
 	## the typeable part of a hint line: no trailing "(on the client)" note,
@@ -702,7 +715,7 @@ static func _campaign() -> Array:
 			"title": "Two tenants, one switch",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 800,
-			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. EOS gear (OpenRack, Arivista, Junivista): 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1', then 'switchport access vlan 10'. PacketTik (RouterOS 7): '/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether1' and '/interface bridge port set [find interface=ether1] pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
+			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. PacketTik (RouterOS 7, the SW5 you own): '/interface bridge port set [find interface=ether1] pvid=10' and '/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether1'. EOS gear (OpenRack, Arivista, Junivista): 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1', then 'switchport access vlan 10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
 			"reqs": [
 				{"d": "A switch has VLANs 10 and 20", "t": func() -> bool: return _switch_with_vlans([10, 20]) != null},
 				{"d": "Access ports assigned to both VLAN 10 and 20", "t": func() -> bool: return _access_port_in(10) and _access_port_in(20)},
@@ -764,7 +777,7 @@ static func _campaign() -> Array:
 			"title": "Names, not numbers",
 			"customer": "Delta Web Kft",
 			"reward": 1800,
-			"brief": "Nobody remembers 10.2.0.x. Delta wants DNS: pick a server to be the resolver, give it records: 'dns add www.delta.hu 10.2.0.10': and point a client at it ('nameserver <dns-server-ip>', or hand it out via DHCP's dns field). Then 'nslookup www.delta.hu' and 'ping www.delta.hu' must work from the client.",
+			"brief": "Nobody remembers 10.2.0.x. Delta wants DNS: pick a server to be the resolver, give it records: 'dns add www.delta.hu 10.2.0.5': and point a client at it ('nameserver <dns-server-ip>', or hand it out via DHCP's dns field). Then 'nslookup www.delta.hu' and 'ping www.delta.hu' must work from the client.",
 			"reqs": [
 				{"d": "A DNS server has a record for www.delta.hu", "t": func() -> bool: return _dns_record("www.delta.hu") != ""},
 				{"d": "A client resolves www.delta.hu via the network", "t": func() -> bool: return _client_resolves("www.delta.hu")},
@@ -776,7 +789,7 @@ static func _campaign() -> Array:
 			"title": "Lock it down",
 			"customer": "Epsilon Bank",
 			"reward": 2500,
-			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console, in config mode ('enable', 'configure terminal'): 'ip access-list VAULT', '10 deny ip 172.16.1.0/24 host 172.16.2.20', '20 permit ip any any', then apply it on the office-facing interface with 'ip access-group VAULT in'. First match wins, and a packet no rule names is dropped (the implicit deny at the end of every access list), so without the permit the app server goes dark too; a list that is not applied filters nothing. Verify with 'show ip access-lists' and pings both ways.",
+			"brief": "Epsilon Bank demands segmentation: their office network 172.16.1.0/24 must reach the app server 172.16.2.10, but NEVER the vault server 172.16.2.20. Install a firewall (PacketSense FW4, which needs the Server room stage: expand first) between two networks: one leg 172.16.1.1/24, other leg 172.16.2.1/24, with an office host at 172.16.1.10 and both servers in 172.16.2.0/24 (default gateways as usual). Then on the firewall console, in config mode ('enable', 'configure terminal'): 'ip access-list VAULT', '10 deny ip 172.16.1.0/24 host 172.16.2.20', '20 permit ip any any', then apply it on the office-facing interface with 'ip access-group VAULT in'. First match wins, and a packet no rule names is dropped (the implicit deny at the end of every access list), so without the permit the app server goes dark too; a list that is not applied filters nothing. Verify with 'show ip access-lists' and pings both ways.",
 			"reqs": [
 				{"d": "A firewall with at least one deny rule", "t": func() -> bool: return _fw_with_deny() != null},
 				{"d": "Office 172.16.1.10 reaches app 172.16.2.10", "t": func() -> bool: return _ping("172.16.1.10", "172.16.2.10", true)},
