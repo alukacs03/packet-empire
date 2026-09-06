@@ -11347,5 +11347,32 @@ static func run() -> int:
 	Game.disconnect_iface(fab_leaves[0].ifaces[3])
 	check(Contracts._fabric_spines() < 4, "campaign: a leaf missing a spine is not the hall's fabric")
 	check(int(Game.stats.get("hijacks_rejected", 0)) >= 0, "campaign: the ROA rejection stat exists")
+	# --- EOS configuration sessions: commit, abort, and the timer that saves the walk to the rack ---
+	var cs_sw := Game.new_device("sw-8")
+	var cs_rack := Game.add_rack(Vector2i(9, 10))
+	cs_rack.slots[0] = cs_sw
+	var css := CLI.new_session(cs_sw)
+	css.exec("en")
+	check(css.exec("configure session fix1") == "" and css.prompt().contains("(config-s-fix1)#"), "session: configure session opens the session and the prompt says so")
+	css.exec("vlan 55")
+	check(css.prompt().contains("(config-s-fix1-vlan-55)#"), "session: sub-modes keep the session in the prompt")
+	css.exec("exit")
+	check(css.exec("show session-config diffs").contains("+vlan 55"), "session: show session-config diffs shows what the session added")
+	check(css.exec("abort") == "" and not cs_sw.vlans.has(55) and css.prompt() == cs_sw.name + "#", "session: abort puts the running configuration back")
+	css.exec("configure session fix2")
+	css.exec("vlan 56")
+	css.exec("exit")
+	check(css.exec("commit timer 00:10:00") == "" and Game.confirm_commits.has(cs_sw.name) and cs_sw.vlans.has(56), "session: commit timer arms the revert and leaves the change running")
+	check(css.exec("show configuration sessions").contains("fix2") and css.exec("show configuration sessions").contains("commitTimer"), "session: show configuration sessions lists the pending one")
+	css.exec("configure session fix2")
+	check(css.exec("commit") == "" and not Game.confirm_commits.has(cs_sw.name) and cs_sw.vlans.has(56), "session: the second commit confirms and cancels the timer")
+	css.exec("configure session fix3")
+	css.exec("vlan 57")
+	css.exec("exit")
+	css.exec("commit timer 00:05:00")
+	Game.cycle += 8
+	Game.lockout_tick()
+	check(not cs_sw.vlans.has(57) and not Game.confirm_commits.has(cs_sw.name), "session: an unconfirmed timer reverts the session by itself")
+	Game.cycle -= 8
 	print("---- %d failures" % fails)
 	return fails

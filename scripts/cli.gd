@@ -139,6 +139,7 @@ const LEARN_HINTS := {
 		"network": "'network' lives inside 'router bgp <asn>' or 'router ospf <n>'",
 		"interface": "EOS names are Ethernet1, Vlan10, Management1, Port-Channel1; 'interface Ethernet1' or 'interface et1'",
 		"ping": "no reply: is the target in a connected subnet or reachable through a route, and is the port up?",
+		"configure session": "configure session <name> opens a pending session; commit timer 00:05:00 makes it revert by itself unless you commit again",
 	},
 	"ros": {
 		"ip address add": "address=a.b.c.d/len interface=etherN; the prefix length rides on the address",
@@ -432,6 +433,9 @@ class Session:
 # ============================================================== EOS ==
 
 class EOS extends Session:
+	var session_name := ""  # configure session NAME: pending until commit or abort
+	var session_base_cfg := {}  # what was running when the session opened (abort restores it)
+	var session_base_text := ""  # the running-config text then (diffs are against it)
 	var mode := "exec"  # exec | priv | config | if | vlan | router | ospf | dhcp | acl | dhcpsrv | dhcpsub
 	var ctx_acl := ""  # the named access list being edited
 	var ctx_po := 0  # the Port-Channel being configured: its members are ctx_ifs
@@ -453,6 +457,12 @@ class EOS extends Session:
 		return "%s: PacketOS EOS. Type '?' area: try 'enable', then 'configure terminal'.\n" % dev.name
 
 	func prompt() -> String:
+		var p := _bare_prompt()
+		if session_name != "" and "(config" in p:
+			p = p.replace("(config", "(config-s-%s" % session_name)  # (config-s-fix1)#, (config-s-fix1-if-Et1)#
+		return p
+
+	func _bare_prompt() -> String:
 		match mode:
 			"exec":
 				return dev.name + ">"
@@ -544,6 +554,11 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "config", "diff"], "h": _show_diff},
 			{"m": ["priv"], "p": ["rollback"], "h": _rollback, "hidden": true},
 			{"m": ["priv"], "p": ["configure", "terminal"], "h": func(_r): mode = "config"; return ""},
+			{"m": ["priv"], "p": ["configure", "session"], "h": _configure_session},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["commit"], "h": _session_commit},
+			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["abort"], "h": _session_abort},
+			{"m": EP, "p": ["show", "session-config", "diffs"], "h": _show_session_diffs},
+			{"m": EP, "p": ["show", "configuration", "sessions"], "h": _show_sessions},
 			{"m": ["exec", "priv"], "p": ["ping"], "h": _ping},
 			{"m": ["exec", "priv"], "p": ["traceroute"], "h": _traceroute},
 			{"m": ["exec", "priv"], "p": ["ssh"], "h": _ssh},
@@ -1639,6 +1654,83 @@ class EOS extends Session:
 			if bool(nb.get("rpki", false)):
 				out += "  RPKI origin validation: enabled\n"
 			out += "  Hold time is 180, keepalive interval is 60 seconds\n\n"
+		return out
+
+	func _configure_session(r: Array) -> String:
+		## a configuration session: the changes are made live in this world,
+		## but nothing is final until commit, abort puts it all back, and a
+		## commit timer puts it back by itself unless a second commit confirms
+		if session_name != "" and (r.is_empty() or String(r[0]) == session_name):
+			mode = "config"
+			return ""  # back into the pending session
+		if session_name != "":
+			return "%% Session '%s' is pending: commit or abort it first\n" % session_name
+		session_name = String(r[0]) if not r.is_empty() else "sess-%d" % (Game.cycle + 1)
+		session_base_cfg = Game.device_config(dev)
+		session_base_text = _show_run([])
+		mode = "config"
+		return ""
+
+	func _session_commit(r: Array) -> String:
+		if session_name == "":
+			return "% Invalid input\n"
+		if r.size() >= 2 and String(r[0]) == "timer":
+			# commit timer HH:MM:SS: the change runs, and reverts by itself
+			# unless somebody who can still reach the box commits again
+			var parts := Array(String(r[1]).split(":"))
+			if parts.size() != 3 or not parts.all(func(x): return String(x).is_valid_int()):
+				return "% Invalid input\n"
+			var seconds := int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+			var cycles := maxi(1, int(round(float(seconds) / 300.0)))  # five minutes is a cycle here
+			if Game.confirm_commits.has(dev.name):
+				Game.confirm_commits.erase(dev.name)
+			Game.confirm_commits[dev.name] = {"cfg": session_base_cfg.duplicate(true), "due": Game.cycle + cycles}
+			Game.log_event("COMMIT TIMER armed on %s: session '%s' reverts in %d cycle(s) unless it is committed again." % [dev.name, session_name, cycles])
+			mode = "priv"
+			return ""
+		if not r.is_empty():
+			return "% Invalid input\n"
+		if Game.confirm_commits.has(dev.name):
+			Game.confirm_commits.erase(dev.name)  # the second commit: the timer is cancelled, the change stands
+			Game.log_event("CONFIRMED: the change on %s stands." % dev.name)
+		session_name = ""
+		session_base_cfg = {}
+		session_base_text = ""
+		mode = "priv"
+		return ""
+
+	func _session_abort(_r: Array) -> String:
+		if session_name == "":
+			return "% Invalid input\n"
+		Game.apply_device_config(dev, session_base_cfg)
+		Game.confirm_commits.erase(dev.name)
+		session_name = ""
+		session_base_cfg = {}
+		session_base_text = ""
+		mode = "priv"
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_session_diffs(_r: Array) -> String:
+		if session_name == "":
+			return "% No configuration session in progress\n"
+		var before: Array = session_base_text.split("\n")
+		var after: Array = _show_run([]).split("\n")
+		var out := "--- system:/running-config\n+++ session:/%s-session-config\n" % session_name
+		for line in before:
+			if String(line) != "" and line not in after:
+				out += "-%s\n" % line
+		for line in after:
+			if String(line) != "" and line not in before:
+				out += "+%s\n" % line
+		return out
+
+	func _show_sessions(_r: Array) -> String:
+		var out := "Maximum number of completed sessions: 1\nMaximum number of pending sessions: 5\n\n"
+		if session_name == "":
+			return out
+		out += "  Name             State     User       Terminal\n  ---------------- --------- ---------- ---------\n"
+		out += "  %-16s %-9s %-10s %s\n" % [session_name, "pending" if not Game.confirm_commits.has(dev.name) else "commitTimer", "admin", "console"]
 		return out
 
 	func _checkpoint_save(r: Array) -> String:
