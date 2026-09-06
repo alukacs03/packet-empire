@@ -2302,6 +2302,42 @@ func _refresh_ops() -> void:
 	(ops_metric_values["power"] as Label).text = "%d W" % watts
 	(ops_metric_notes["power"] as Label).text = ("included in colo lease" if Game.stage < 1 else
 		"$%.3f/W  ·  $%d/cycle" % [Game.energy_rate(), Game.power_bill()])
+	_ops_capacity()
+	_ops_this_quarters_targets()
+	_ops_a_visit_is_booked()
+	_ops_what_you_wrote_about_these()
+	_ops_unreachable()
+	_ops_documentation()
+	_ops_nobody_claims_these()
+	_ops_vendor_support()
+	_ops_renewals_calendar()
+	_ops_how_this_run_ended()
+	_ops_runs_before_this_one()
+	_ops_how_the_place_is_trending()
+	_ops_what_kind_of_company_this_is()
+	_ops_who_is_on_the_floor()
+	_ops_fire_smoke_and_water()
+	_ops_failover_test()
+	_ops_facility_schedule()
+	_ops_airflow()
+	_ops_top_talkers()
+	_ops_power()
+	_ops_decisions()
+	_ops_audit_readiness()
+	_ops_standing_duties()
+	_ops_the_parts_drawer()
+	_ops_receiving()
+	_ops_assets_and_spares()
+	_ops_runbooks_and_automation()
+	_ops_playbooks()
+	_ops_certificates()
+	_ops_monitors()
+	# with nothing installed the list stops short and the tab filter is left alone, as before
+	if not _ops_devices(devs):
+		return
+	_apply_ops_tab()
+
+func _ops_capacity() -> void:
 	ops_box.add_child(_section("CAPACITY"))
 	for si in Game.site_count():
 		var cap: Dictionary = Game.capacity(si)
@@ -2335,6 +2371,8 @@ func _refresh_ops() -> void:
 		UIW.colour("warm") if Game.stage >= 1 else UIW.colour("muted"), 780)
 	meter_label.add_theme_font_override("font", mono)
 	meter.add_child(meter_label)
+
+func _ops_this_quarters_targets() -> void:
 	if Game.quarter_goals.is_empty() and Game.cycle > 0:
 		Game.roll_quarter_goals()  # an older save, or a company that has not seen a quarter close yet
 	if not Game.quarter_goals.is_empty():
@@ -2347,6 +2385,8 @@ func _refresh_ops() -> void:
 				12, Color(0.6, 0.85, 0.7) if bool(qp["met"]) else Color(0.78, 0.84, 0.9))
 			ql.add_theme_font_override("font", mono)
 			ops_box.add_child(ql)
+
+func _ops_a_visit_is_booked() -> void:
 	if not Game.tour.is_empty():
 		ops_box.add_child(_section("A VISIT IS BOOKED"))
 		var kind: String = String(Game.tour["kind"])
@@ -2371,11 +2411,15 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(cram_btn)
+
+func _ops_what_you_wrote_about_these() -> void:
 	var past_you: Array = Game.incident_notes()
 	if not past_you.is_empty():
 		ops_box.add_child(_section("WHAT YOU WROTE ABOUT THESE"))
 		for note_line: String in past_you:
 			ops_box.add_child(_wrap("  %s" % note_line, 12, Color(1.0, 0.85, 0.55), 780))
+
+func _ops_unreachable() -> void:
 	var stranded: Array = []
 	for d_lock: Net.NDevice in Game.all_devices():
 		# only a device that could be reached and now cannot: a device that was
@@ -2421,6 +2465,8 @@ func _refresh_ops() -> void:
 						_toast(err)
 			_refresh_ops())
 		crow2.add_child(conf)
+
+func _ops_documentation() -> void:
 	ops_box.add_child(_section("DOCUMENTATION"))
 	ops_box.add_child(_wrap(Loc.t("body.facts_adrift_intro")
 		% Game.site_drift(), 12,
@@ -2446,6 +2492,8 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		dr_row.add_child(walk)
+
+func _ops_nobody_claims_these() -> void:
 	var orphans: Array = Game.orphan_list()
 	if not orphans.is_empty():
 		ops_box.add_child(_section("NOBODY CLAIMS THESE"))
@@ -2483,6 +2531,8 @@ func _refresh_ops() -> void:
 				_refresh_ops()
 				_refresh_money())
 			orow.add_child(kill)
+
+func _ops_vendor_support() -> void:
 	ops_box.add_child(_section("VENDOR SUPPORT"))
 	var tier_row := HBoxContainer.new()
 	tier_row.add_theme_constant_override("separation", 8)
@@ -2577,6 +2627,8 @@ func _refresh_ops() -> void:
 					_toast(err)
 				_refresh_ops())
 			crow.add_child(load_btn)
+
+func _ops_renewals_calendar() -> void:
 	if not Game.renewals.is_empty():
 		ops_box.add_child(_section("RENEWALS CALENDAR"))
 		for item: Dictionary in Game.renewals:
@@ -2614,6 +2666,8 @@ func _refresh_ops() -> void:
 				item["auto"] = on
 				_refresh_ops())
 			rrow.add_child(auto_r)
+
+func _ops_how_this_run_ended() -> void:
 	if not Game.finale.is_empty():
 		ops_box.add_child(_section("HOW THIS RUN ENDED"))
 		for fin_line: String in Game.finale_report():
@@ -2650,6 +2704,8 @@ func _refresh_ops() -> void:
 				_toast(err)
 			_refresh_ops())
 		ops_box.add_child(retire)
+
+func _ops_runs_before_this_one() -> void:
 	var past_runs: Array = Game.run_history()
 	if not past_runs.is_empty():
 		ops_box.add_child(_section("RUNS BEFORE THIS ONE"))
@@ -2670,10 +2726,14 @@ func _refresh_ops() -> void:
 			Game.forget_all_runs()
 			_refresh_ops())
 		ops_box.add_child(forget)
+
+func _ops_how_the_place_is_trending() -> void:
 	ops_box.add_child(_section("HOW THE PLACE IS TRENDING"))
 	for trend_line in Game.trend_read():
 		ops_box.add_child(_wrap("  %s" % String(trend_line), 13,
 			UIW.colour("text_strong"), 780))
+
+func _ops_what_kind_of_company_this_is() -> void:
 	ops_box.add_child(_section("WHAT KIND OF COMPANY THIS IS"))
 	if Game.identity == "":
 		if Game.identity_offered():
@@ -2717,6 +2777,8 @@ func _refresh_ops() -> void:
 				_refresh_ops()
 				_refresh_money()))
 		ops_box.add_child(reb)
+
+func _ops_who_is_on_the_floor() -> void:
 	ops_box.add_child(_section("WHO IS ON THE FLOOR"))
 	ops_box.add_child(_wrap("  %s. %s%s" % [Loc.t(String(Game.ACCESS_POLICIES[Game.access_policy]["label"])),
 		Loc.t(String(Game.ACCESS_POLICIES[Game.access_policy]["blurb"])),
@@ -2762,6 +2824,8 @@ func _refresh_ops() -> void:
 		ops_box.add_child(acc_cap)
 	for acc_line: String in acc_lines.slice(0, 6):
 		ops_box.add_child(_label("      %s" % acc_line, 12, Color(0.68, 0.74, 0.82)))
+
+func _ops_fire_smoke_and_water() -> void:
 	ops_box.add_child(_section("FIRE, SMOKE AND WATER"))
 	for prot_id: String in Game.PROTECTION:
 		var prot: Dictionary = Game.PROTECTION[prot_id]
@@ -2810,6 +2874,8 @@ func _refresh_ops() -> void:
 				hud_toast(err if err != "" else Loc.t("toast.on_their_way"), err == "")
 				_refresh_ops())
 			ops_box.add_child(haz_call)
+
+func _ops_failover_test() -> void:
 	ops_box.add_child(_section("FAILOVER TEST"))
 	if Game.dr_running():
 		ops_box.add_child(_wrap(Loc.t("body.failover_running")
@@ -2841,6 +2907,8 @@ func _refresh_ops() -> void:
 				_toast(err)
 			_refresh_ops())
 		ops_box.add_child(dr_book)
+
+func _ops_facility_schedule() -> void:
 	ops_box.add_child(_section("FACILITY SCHEDULE"))
 	if Game.heat_wave():
 		ops_box.add_child(_wrap(Loc.t("body.heat_wave"),
@@ -2879,6 +2947,8 @@ func _refresh_ops() -> void:
 	if not Game.generator_ready():
 		ops_box.add_child(_wrap(Loc.t("body.generator_untested"),
 			12, Color(1.0, 0.72, 0.45), 780))
+
+func _ops_airflow() -> void:
 	if Game.stage >= 1:
 		ops_box.add_child(_section("AIRFLOW"))
 		var any_hot := false
@@ -2897,6 +2967,8 @@ func _refresh_ops() -> void:
 		if any_hot:
 			ops_box.add_child(_wrap(Loc.t("body.cold_air"),
 				12, Color(1.0, 0.82, 0.5), 780))
+
+func _ops_top_talkers() -> void:
 	var talkers := Game.top_talkers(6)
 	if not talkers.is_empty():
 		ops_box.add_child(_section("TOP TALKERS"))
@@ -2911,6 +2983,8 @@ func _refresh_ops() -> void:
 			Game.clear_talkers()
 			_refresh_ops())
 		ops_box.add_child(clear_btn)
+
+func _ops_power() -> void:
 	ops_box.add_child(_section("POWER"))
 	for si2 in Game.site_count():
 		if si2 == 0 and Game.stage < 1:
@@ -2953,6 +3027,8 @@ func _refresh_ops() -> void:
 				hud_toast(Loc.t("toast.ups_installed"), true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
+
+func _ops_decisions() -> void:
 	if not Game.decisions.is_empty():
 		ops_box.add_child(_section("DECISIONS"))
 		for dec: Dictionary in Game.decisions:
@@ -2977,6 +3053,8 @@ func _refresh_ops() -> void:
 	if not Game.consequences.is_empty():
 		ops_box.add_child(_label(Loc.t("body.waiting_to_land")
 			% Game.consequences.size(), 12, MUTED))
+
+func _ops_audit_readiness() -> void:
 	ops_box.add_child(_section("AUDIT READINESS"))
 	ops_box.add_child(_wrap(Loc.t("body.cert_abstraction")
 		% ("   Trust marker: earned." if Game.trust_marker else ""), 12, MUTED, 780))
@@ -3051,6 +3129,8 @@ func _refresh_ops() -> void:
 				_refresh_ops()
 				_refresh_money())
 			arow.add_child(vb)
+
+func _ops_standing_duties() -> void:
 	ops_box.add_child(_section("STANDING DUTIES"))
 	if Game.staff.is_empty():
 		ops_box.add_child(_label(Loc.t("body.no_payroll_chores"),
@@ -3094,6 +3174,8 @@ func _refresh_ops() -> void:
 	if not Game.last_digest.is_empty():
 		ops_box.add_child(_label(Loc.t("body.last_cycle") % "; ".join(PackedStringArray(Game.last_digest)),
 			12, Color(0.68, 0.74, 0.82)))
+
+func _ops_the_parts_drawer() -> void:
 	ops_box.add_child(_section("THE PARTS DRAWER"))
 	var parts_row := HBoxContainer.new()
 	parts_row.add_theme_constant_override("separation", 8)
@@ -3163,6 +3245,8 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			_refresh_money())
 		ops_box.add_child(redo)
+
+func _ops_receiving() -> void:
 	ops_box.add_child(_section("RECEIVING"))
 	var order_btn := Button.new()
 	order_btn.text = Loc.t("btn.order_hardware")
@@ -3242,6 +3326,8 @@ func _refresh_ops() -> void:
 			Game.clear_packaging()
 			_refresh_ops())
 		prow.add_child(clear_btn)
+
+func _ops_assets_and_spares() -> void:
 	ops_box.add_child(_section("ASSETS AND SPARES"))
 	var shelf: Array = []
 	for m in Game.spares:
@@ -3322,6 +3408,8 @@ func _refresh_ops() -> void:
 			_refresh_ops()
 			get_parent().rebuild_racks())
 		frow.add_child(rma_btn)
+
+func _ops_runbooks_and_automation() -> void:
 	ops_box.add_child(_section("RUNBOOKS AND AUTOMATION"))
 	var rb_new := Button.new()
 	rb_new.text = Loc.t("btn.new_runbook")
@@ -3414,6 +3502,8 @@ func _refresh_ops() -> void:
 			12, Color(0.72, 0.84, 0.8)))
 		for line_t: String in rem_t.get("timeline", []):
 			ops_box.add_child(_label("      %s" % line_t, 11, Color(0.68, 0.74, 0.82)))
+
+func _ops_playbooks() -> void:
 	ops_box.add_child(_section("PLAYBOOKS"))
 	if Game.playbooks.is_empty():
 		ops_box.add_child(_wrap(Loc.t("body.no_playbooks"),
@@ -3475,6 +3565,8 @@ func _refresh_ops() -> void:
 		_refresh_ops())
 	pb_row.add_child(pb_save)
 	ops_box.add_child(pb_body)
+
+func _ops_certificates() -> void:
 	var certs_due := Game.expiring_certs()
 	if not certs_due.is_empty():
 		ops_box.add_child(_section("CERTIFICATES"))
@@ -3497,6 +3589,8 @@ func _refresh_ops() -> void:
 					Game.issue_cert(c_row["dev"], String(c_row["name"]))
 					_refresh_ops())
 				crow.add_child(renew)
+
+func _ops_monitors() -> void:
 	ops_box.add_child(_section("MONITORS"))
 	if Game.monitors.is_empty():
 		ops_box.add_child(_label(Loc.t("body.no_checks"),
@@ -3540,10 +3634,12 @@ func _refresh_ops() -> void:
 				_toast(mon_err)
 			_refresh_ops()))
 	ops_box.add_child(add_mon)
+
+func _ops_devices(devs: Array) -> bool:
 	ops_box.add_child(_section("DEVICES"))
 	if devs.is_empty():
 		ops_box.add_child(_label(Loc.t("body.nothing_installed"), 14, MUTED))
-		return
+		return false
 	var multi := Game.site_count() > 1
 	var head := _label("  %-9s %-14s %-20s %-9s %-7s %-18s %s" % ["DEVICE",
 		"SITE" if multi else "", "MODEL", "STATUS", "LINKS", "ADDRESSES", "ALERTS"],
@@ -3586,7 +3682,7 @@ func _refresh_ops() -> void:
 			cur_rack = rk2
 			open_dev(d))
 		ops_box.add_child(b)
-	_apply_ops_tab()
+	return true
 
 func _capacity_advice() -> String:
 	## one sentence, and only when there is something worth saying
