@@ -11954,6 +11954,18 @@ static func run() -> int:
 	var t38_a := Game.biz_roll()
 	Game.reseed_business_streams()
 	check(is_equal_approx(Game.biz_roll(), t38_a), "rng: the business stream replays from the company and the cycle")
+	# two people cannot share a name: the second gets a number
+	var t39_money := Game.money
+	Game.money = 100000
+	var t39_a := {"name": "Nagy Pal", "role": "noc", "skill": 2, "salary": 300, "ask": 300, "morale": 70, "training_left": 0}
+	var t39_b := {"name": "Nagy Pal", "role": "tech", "skill": 3, "salary": 300, "ask": 300, "morale": 70, "training_left": 0}
+	Game.candidates.append(t39_a)
+	Game.candidates.append(t39_b)
+	check(Game.hire(t39_a) == "" and Game.hire(t39_b) == "" and String(t39_b["name"]) != "Nagy Pal" and String(t39_b["name"]).begins_with("Nagy Pal"),
+		"staff: a second hire with the same name is numbered")
+	Game.staff.erase(t39_a)
+	Game.staff.erase(t39_b)
+	Game.money = t39_money
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

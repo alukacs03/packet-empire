@@ -3518,7 +3518,7 @@ func _apply_decision(effect: String) -> bool:
 			hire["role"] = "engineer"  # the card says engineer; the random role table does not get a say
 			hire["ask"] = int(Staff.ROLES["engineer"]["base"]) * 5 / 4
 			hire["salary"] = int(hire["ask"])
-			hire["name"] = "Szabo Marta"
+			hire["name"] = unique_name("Szabo Marta", staff)
 			staff.append(hire)
 			for r in rivals:
 				Rivals.remember(r, -2, "you took their engineer")
@@ -3567,9 +3567,9 @@ func _apply_decision(effect: String) -> bool:
 			junior["skill"] = 1
 			junior["salary"] = 120
 			junior["ask"] = 120  # priced by the card, so the market drift leaves them alone
-			junior["name"] = "Kis Andras"
+			junior["name"] = unique_name("Kis Andras", staff)
 			staff.append(junior)
-			schedule_consequence(15, "skill", "the junior you took on has been watching you work", {"name": "Kis Andras"})
+			schedule_consequence(15, "skill", "the junior you took on has been watching you work", {"name": junior["name"]})
 		"intern_no":
 			pass
 		"green_yes":
@@ -6705,6 +6705,7 @@ func hire(candidate: Dictionary) -> String:
 		return "you cannot cover even one cycle of their salary"
 	candidates.erase(candidate)
 	candidate["hired_cycle"] = cycle
+	candidate["name"] = unique_name(String(candidate["name"]), staff)  # the rota, the phone and the blame all go by name
 	staff.append(candidate)
 	log_event(Loc.t("log.hired") % [candidate["name"], Loc.t(Staff.label(candidate)),
 		int(candidate["salary"])])
