@@ -2244,37 +2244,46 @@ func _ros_dhcp_assemble() -> void:
 func _ros_filter_apply() -> void:
 	## forward-chain rules filter what crosses the router: they become this
 	## world's access list on every port; input-chain rules are kept for print
-	dev.acls = dev.acls.filter(func(rule): return String(rule.get("list", "")) != "ros-forward")
-	var seq := 10
-	var any := false
-	for rule in dev.services.get("ros_filter", []):
-		if String(rule["chain"]) != "forward" or String(rule.get("disabled", "no")) == "yes":
-			continue
-		any = true
-		var entry := {"action": "permit" if String(rule["action"]) in ["accept", "fasttrack-connection", "passthrough"] else "deny",
-			"src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": "ros-forward", "seq": seq}
-		seq += 10
-		for side in [["src-address", "src", "splen"], ["dst-address", "dst", "dplen"]]:
-			if rule.has(side[0]):
-				var cidr := String(rule[side[0]])
-				if "/" not in cidr:
-					cidr += "/32"
-				if Net.valid_cidr(cidr):
-					entry[side[1]] = cidr.split("/")[0]
-					entry[side[2]] = int(cidr.split("/")[1])
-		if rule.has("protocol") and String(rule["protocol"]) in ["tcp", "udp", "icmp"]:
-			entry["proto"] = String(rule["protocol"])
-		if rule.has("dst-port") and String(rule["dst-port"]).is_valid_int():
-			entry["port"] = int(rule["dst-port"])
-		if String(rule.get("connection-state", "")).contains("established"):
-			entry["established"] = true
-		dev.acls.append(entry)
+	dev.acls = dev.acls.filter(func(rule): return not String(rule.get("list", "")).begins_with("ros-"))
 	var groups: Dictionary = dev.services.get("acl_groups", {})
 	for i: Net.Iface in dev.ifaces:
-		if any:
-			groups[i.name] = "ros-forward"
-		elif String(groups.get(i.name, "")) == "ros-forward":
-			groups.erase(i.name)
+		for key in [i.name, i.name + "|input"]:
+			if String(groups.get(key, "")).begins_with("ros-"):
+				groups.erase(key)
+	for chain in ["forward", "input"]:
+		var rules: Array = dev.services.get("ros_filter", []).filter(func(r): return String(r["chain"]) == chain and String(r.get("disabled", "no")) != "yes")
+		if rules.is_empty():
+			continue
+		for i: Net.Iface in dev.ifaces:
+			# one list per port: rules with no in-interface plus the ones naming this port, in order,
+			# and RouterOS accepts what no rule matched
+			var list_name := "ros-%s@%s" % [chain, i.name]
+			var seq := 10
+			for rule in rules:
+				if String(rule.get("in-interface", "")) != "" and String(rule["in-interface"]) != i.name and String(rule["in-interface"]) != _dname(i):
+					continue
+				if String(rule["action"]) in ["log", "jump", "return", "passthrough", "add-src-to-address-list", "add-dst-to-address-list"]:
+					continue  # non-terminal: the packet walks on to the next rule
+				var entry := {"action": "permit" if String(rule["action"]) in ["accept", "fasttrack-connection"] else "deny",
+					"src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": list_name, "seq": seq}
+				seq += 10
+				for side in [["src-address", "src", "splen"], ["dst-address", "dst", "dplen"]]:
+					if rule.has(side[0]):
+						var cidr := String(rule[side[0]])
+						if "/" not in cidr:
+							cidr += "/32"
+						if Net.valid_cidr(cidr):
+							entry[side[1]] = cidr.split("/")[0]
+							entry[side[2]] = int(cidr.split("/")[1])
+				if rule.has("protocol") and String(rule["protocol"]) in ["tcp", "udp", "icmp"]:
+					entry["proto"] = String(rule["protocol"])
+				if rule.has("dst-port") and String(rule["dst-port"]).is_valid_int():
+					entry["port"] = int(rule["dst-port"])
+				if String(rule.get("connection-state", "")).contains("established"):
+					entry["established"] = true
+				dev.acls.append(entry)
+			dev.acls.append({"action": "permit", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": list_name, "seq": seq})
+			groups[i.name if chain == "forward" else i.name + "|input"] = list_name
 	dev.services["acl_groups"] = groups
 	Game.topology_changed.emit()
 

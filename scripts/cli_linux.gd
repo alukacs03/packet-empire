@@ -44,48 +44,58 @@ func _fw_apply() -> void:
 	var nat: Dictionary = dev.services.get("nat", {"rules": [], "acls": {}})
 	nat["rules"] = nat.get("rules", []).filter(func(r): return not bool(r.get("linux", false)))
 	nat["linux"] = true
-	dev.acls = dev.acls.filter(func(rule): return String(rule.get("list", "")) != "lx-forward")
-	var any_forward := false
-	var seq := 10
+	dev.acls = dev.acls.filter(func(rule): return not String(rule.get("list", "")).begins_with("lx-"))
+	var groups: Dictionary = dev.services.get("acl_groups", {})
+	for i: Net.Iface in dev.ifaces:
+		for key in [i.name, i.name + "|input"]:
+			if String(groups.get(key, "")).begins_with("lx-"):
+				groups.erase(key)
 	for tname in fw["tables"]:
 		for cname in fw["tables"][tname]["chains"]:
 			var chain: Dictionary = fw["tables"][tname]["chains"][cname]
-			if String(chain["hook"]) == "postrouting":
+			var hook := String(chain["hook"])
+			if hook == "postrouting":
 				for rule in chain["rules"]:
 					if String(rule.get("action", "")) == "masquerade" and _iface(String(rule.get("oif", ""))) != null:
 						_iface(String(rule["oif"])).nat = "outside"
 						nat["rules"].append({"kind": "masquerade", "iface": String(rule["oif"]), "linux": true})
-			elif String(chain["hook"]) == "forward":
+			elif hook in ["forward", "input"]:
+				# one list per port: the rules that name no -i plus the ones that name this port,
+				# in chain order, then the chain policy as the last word
+				var base := "lx-forward" if hook == "forward" else "lx-input"
 				var policy_drop := String(chain.get("policy", "accept")) == "drop"
-				for rule in chain["rules"]:
-					any_forward = true
-					var entry := {"action": "permit" if String(rule["action"]) == "accept" else "deny",
-						"src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": "lx-forward", "seq": seq}
-					seq += 10
-					for side in [["src", "src", "splen"], ["dst", "dst", "dplen"]]:
-						if rule.has(side[0]):
-							var cidr := String(rule[side[0]])
-							if "/" not in cidr:
-								cidr += "/32"
-							if Net.valid_cidr(cidr):
-								entry[side[1]] = cidr.split("/")[0]
-								entry[side[2]] = int(cidr.split("/")[1])
-					if rule.has("proto") and String(rule["proto"]) in ["tcp", "udp", "icmp"]:
-						entry["proto"] = String(rule["proto"])
-					if rule.has("dport") and String(rule["dport"]).is_valid_int():
-						entry["port"] = int(rule["dport"])
-					if String(rule.get("state", "")).contains("established"):
-						entry["established"] = true
-					dev.acls.append(entry)
-				if policy_drop:
-					any_forward = true  # a drop policy with no rules is a wall: the implicit deny does the rest
+				if chain["rules"].is_empty() and not policy_drop:
+					continue  # an empty accept chain is no policy at all
+				for i: Net.Iface in dev.ifaces:
+					var list_name := "%s@%s" % [base, i.name]
+					var seq := 10
+					for rule in chain["rules"]:
+						if String(rule.get("iif", "")) != "" and String(rule["iif"]) != i.name:
+							continue  # ponytail: -o is not matched; the egress port is not known on the way in
+						if String(rule["action"]) not in ["accept", "drop", "reject"]:
+							continue  # LOG, jump, RETURN: non-terminal, the packet walks on
+						var entry := {"action": "permit" if String(rule["action"]) == "accept" else "deny",
+							"src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": list_name, "seq": seq}
+						seq += 10
+						for side in [["src", "src", "splen"], ["dst", "dst", "dplen"]]:
+							if rule.has(side[0]):
+								var cidr := String(rule[side[0]])
+								if "/" not in cidr:
+									cidr += "/32"
+								if Net.valid_cidr(cidr):
+									entry[side[1]] = cidr.split("/")[0]
+									entry[side[2]] = int(cidr.split("/")[1])
+						if rule.has("proto") and String(rule["proto"]) in ["tcp", "udp", "icmp"]:
+							entry["proto"] = String(rule["proto"])
+						if rule.has("dport") and String(rule["dport"]).is_valid_int():
+							entry["port"] = int(rule["dport"])
+						if String(rule.get("state", "")).contains("established"):
+							entry["established"] = true
+						dev.acls.append(entry)
+					# the chain policy is the last word: ACCEPT lets the rest through, DROP is a wall even with no rules
+					dev.acls.append({"action": "permit" if not policy_drop else "deny", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": list_name, "seq": seq})
+					groups[i.name if hook == "forward" else i.name + "|input"] = list_name
 	dev.services["nat"] = nat
-	var groups: Dictionary = dev.services.get("acl_groups", {})
-	for i: Net.Iface in dev.ifaces:
-		if any_forward:
-			groups[i.name] = "lx-forward"
-		elif String(groups.get(i.name, "")) == "lx-forward":
-			groups.erase(i.name)
 	dev.services["acl_groups"] = groups
 	Game.topology_changed.emit()
 
@@ -915,7 +925,7 @@ static func _kv(args: Array) -> Dictionary:
 	var k := 0
 	while k < args.size():
 		var w := String(args[k])
-		if w in ["dev", "via", "mtu", "src", "metric", "table", "type", "master", "brd", "scope", "proto", "link", "name", "id"] and k + 1 < args.size():
+		if w in ["dev", "via", "mtu", "src", "metric", "table", "type", "master", "brd", "scope", "proto", "link", "name", "id", "mode"] and k + 1 < args.size():
 			out[w] = String(args[k + 1])
 			k += 2
 		else:
@@ -1127,6 +1137,8 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 			return "" if Game.add_wireguard(dev, int(name.trim_prefix("wg"))) != null else "RTNETLINK answers: Operation not supported\n"
 		if String(kv.get("type", "")) == "bond":
 			dev.services["bond_pending"] = name
+			# mode 802.3ad (4) negotiates LACP; the rest bundle blindly, which only pairs with a static far end
+			dev.services["bond_mode"] = "active" if String(kv.get("mode", "balance-rr")) in ["802.3ad", "4"] else "on"
 			return ""
 		if String(kv.get("type", "")) == "vlan":
 			# ip link add link eth0 name eth0.10 type vlan id 10: a server on a trunk
@@ -1175,6 +1187,7 @@ func _enslave(ifc: Net.Iface, master: String) -> String:
 		for i2: Net.Iface in dev.ifaces:
 			gid = maxi(gid, i2.lag + 1)
 	ifc.lag = gid
+	ifc.lag_mode = String(dev.services.get("bond_mode", "on"))
 	if first != null:
 		ifc.mac = first.mac  # a bond presents one address
 	dev.services.erase("bond_pending")
@@ -2661,7 +2674,11 @@ func _bond_status() -> String:
 			members.append(i)
 	if members.is_empty():
 		return "cat: /proc/net/bonding/bond0: No such file or directory\n"
-	var out := "Ethernet Channel Bonding Driver: v%s\n\nBonding Mode: IEEE 802.3ad Dynamic link aggregation\nTransmit Hash Policy: layer2 (0)\nMII Status: up\nMII Polling Interval (ms): 100\nUp Delay (ms): 0\nDown Delay (ms): 0\n\n802.3ad info\nLACP active: on\nLACP rate: slow\nMin links: 0\nAggregator selection policy (ad_select): stable\n" % KERNEL
+	var lacp: bool = members[0].lag_mode != "on"
+	var out := "Ethernet Channel Bonding Driver: v%s\n\nBonding Mode: %s\nTransmit Hash Policy: layer2 (0)\nMII Status: up\nMII Polling Interval (ms): 100\nUp Delay (ms): 0\nDown Delay (ms): 0\n" % [KERNEL,
+		"IEEE 802.3ad Dynamic link aggregation" if lacp else "load balancing (round-robin)"]
+	if lacp:
+		out += "\n802.3ad info\nLACP active: on\nLACP rate: slow\nMin links: 0\nAggregator selection policy (ad_select): stable\n"
 	for m in members:
 		out += "\nSlave Interface: %s\nMII Status: %s\nSpeed: %d Mbps\nDuplex: full\nLink Failure Count: 0\nPermanent HW addr: %s\nSlave queue ID: 0\nAggregator ID: 1\n" % [m.name, "up" if _up(m) else "down", Game.iface_speed(m), m.mac.to_lower()]
 	return out

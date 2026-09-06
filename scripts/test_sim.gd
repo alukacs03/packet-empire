@@ -795,19 +795,21 @@ static func run() -> int:
 		"fw: both iptables -L and nft list ruleset show the masquerade")
 	check(fws.exec("iptables -A FORWARD -i eth1 -o eth0 -s 10.0.1.0/24 -j ACCEPT") == "" and fws.exec("iptables -P FORWARD DROP") == "",
 		"fw: a forward rule and a drop policy are accepted")
-	var fw_acls := Sim.active_acls(fw_box)
-	check(fw_acls.size() == 1 and String(fw_acls[0]["action"]) == "permit" and String(fw_acls[0]["src"]) == "10.0.1.0" and int(fw_acls[0]["splen"]) == 24,
-		"fw: the forward rule is this box's access list")
+	var fw_acls := Sim._acl_rules_of(fw_box, "lx-forward@eth1")
+	check(fw_acls.size() == 2 and String(fw_acls[0]["action"]) == "permit" and String(fw_acls[0]["src"]) == "10.0.1.0" and int(fw_acls[0]["splen"]) == 24
+		and Sim._acl_rules_of(fw_box, "lx-forward@eth0").all(func(r): return String(r["action"]) == "deny"),
+		"fw: the forward rule is eth1's access list with the drop policy behind it, and eth0 only has the policy")
 	check(fws.exec("iptables -L FORWARD").contains("Chain FORWARD (policy DROP)") and fws.exec("iptables -S").contains("-A FORWARD -s 10.0.1.0/24 -i eth1 -o eth0 -j ACCEPT"),
 		"fw: iptables -L and -S print the chain back")
 	check(fws.exec("nft list ruleset").contains("iifname \"eth1\" oifname \"eth0\" ip saddr 10.0.1.0/24 accept"), "fw: nft list ruleset prints iptables rules in nft syntax")
-	check(fws.exec("iptables -F") == "" and Sim.active_acls(fw_box).is_empty() and fws.exec("iptables -t nat -F") == "" and fw_box.ifaces[0].nat == "" and Sim.nat_rules(fw_box).is_empty(),
-		"fw: flushing removes the access list and the masquerade")
+	check(fws.exec("iptables -F") == "" and Sim.active_acls(fw_box).all(func(r): return String(r["action"]) == "deny") and fws.exec("iptables -t nat -F") == "" and fw_box.ifaces[0].nat == "" and Sim.nat_rules(fw_box).is_empty(),
+		"fw: flushing leaves only the drop policy, and removes the masquerade")
+	check(fws.exec("iptables -P FORWARD ACCEPT") == "" and Sim.active_acls(fw_box).is_empty(), "fw: an empty accept chain is no policy at all")
 	check(fws.exec("nft add table ip nat") == "" and fws.exec("nft add chain ip nat postrouting { type nat hook postrouting priority 100 \\; }") == ""
 		and fws.exec("nft add rule ip nat postrouting oifname \"eth0\" masquerade") == "" and fw_box.ifaces[0].nat == "outside",
 		"fw: the nft way to masquerade works too")
 	check(fws.exec("nft add table inet filter") == "" and fws.exec("nft add chain inet filter forward { type filter hook forward priority 0 \\; policy drop \\; }") == ""
-		and fws.exec("nft add rule inet filter forward iifname \"eth1\" oifname \"eth0\" accept") == "" and Sim.active_acls(fw_box).size() == 1,
+		and fws.exec("nft add rule inet filter forward iifname \"eth1\" oifname \"eth0\" accept") == "" and Sim._acl_rules_of(fw_box, "lx-forward@eth1").any(func(r): return String(r["action"]) == "permit"),
 		"fw: an nft forward chain with a drop policy filters like the iptables one")
 	check(fws.exec("nft add rule ip nat nothere oifname \"eth0\" masquerade").contains("No such file or directory"), "fw: nft names the missing chain")
 	check(fws.exec("nft flush ruleset") == "" and Sim.active_acls(fw_box).is_empty() and fw_box.ifaces[0].nat == "", "fw: nft flush ruleset clears everything")
@@ -2340,9 +2342,9 @@ static func run() -> int:
 	check(rs_fws.exec("/ip firewall filter set 0 action=reject") == "" and rs_fws.exec("/ip firewall filter print").contains("action=reject"),
 		"ros: set changes a rule in place")
 	check(rs_fws.exec("/ip firewall filter disable 0") == "" and rs_fws.exec("/ip firewall filter print").contains(" 0 X ")
-		and Sim.active_acls(rs_fw).size() == 1 and String(Sim.active_acls(rs_fw)[0]["action"]) == "permit",
+		and Sim.active_acls(rs_fw).all(func(r): return String(r["action"]) == "permit"),
 		"ros: a disabled rule shows X and is not in force")
-	check(rs_fws.exec("/ip firewall filter enable 0") == "" and Sim.active_acls(rs_fw).size() == 2, "ros: enable puts it back")
+	check(rs_fws.exec("/ip firewall filter enable 0") == "" and Sim.active_acls(rs_fw).any(func(r): return String(r["action"]) == "deny"), "ros: enable puts it back")
 	check(rs_fws.exec("/ip firewall filter set 9 action=drop") == "no such item (9)\n", "ros: set on a number that does not exist")
 	rs_fws.exec("/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1")
 	check(rs_fws.exec("/ip firewall nat disable 0") == "" and rs_fw.ifaces[0].nat == "" and Sim.nat_rules(rs_fw).is_empty()
@@ -11465,6 +11467,46 @@ static func run() -> int:
 	check(t12_l.exec("systemctl stop keepalived") == "" and t12_s.ifaces[0].vrrp.is_empty(), "keepalived: stopping it drops the VIP")
 	t12_s.services.erase("keepalived")
 	check(t12_l.exec("systemctl start keepalived").begins_with("Job for keepalived.service failed"), "keepalived: no conf, no daemon")
+	# --- firewalls: the input chain guards the box, a rule is scoped to its port, LOG is not a drop ---
+	Game.parts["patch"] = maxi(int(Game.parts.get("patch", 0)), 60)  # cabling silently fails when the drawer is empty
+	var t17_rack := Game.add_rack(Vector2i(9, 17))
+	var t17_s := Game.new_device("srv-2")  # two ports: the bond needs a second one
+	var t17_a := Game.new_device("srv-1")
+	var t17_sw := Game.new_device("sw-8")
+	t17_rack.slots[0] = t17_s
+	t17_rack.slots[1] = t17_a
+	t17_rack.slots[2] = t17_sw
+	Game.connect_ifaces(t17_s.ifaces[0], t17_sw.ifaces[0])
+	Game.connect_ifaces(t17_a.ifaces[0], t17_sw.ifaces[1])
+	Game.add_ip(t17_s.ifaces[0], "10.79.0.1/24")
+	Game.add_ip(t17_a.ifaces[0], "10.79.0.2/24")
+	var t17_l := CLI.new_session(t17_s)
+	check(Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: before any rule the box answers")
+	check(t17_l.exec("iptables -A INPUT -p icmp -j LOG") == "" and Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: a LOG rule records and does not drop")
+	check(t17_l.exec("iptables -A INPUT -s 10.79.0.2 -j DROP") == "" and not Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: an INPUT drop guards the box itself")
+	t17_l.exec("iptables -F INPUT")
+	Sim.flush_learned_state()
+	check(Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: flushing the chain lets the ping back")
+	check(t17_l.exec("iptables -A INPUT -i eth1 -s 10.79.0.2 -j DROP") == "" and Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: a rule scoped to another port does not match on this one")
+	t17_l.exec("iptables -F INPUT")
+	Sim.flush_learned_state()
+	check(t17_l.exec("iptables -P INPUT DROP") == "" and not Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: policy DROP with no rules is a wall")
+	t17_l.exec("iptables -P INPUT ACCEPT")
+	Sim.flush_learned_state()
+	check(Sim.ping(t17_a, "10.79.0.1")["ok"], "fw: policy ACCEPT opens it again")
+	var t17_r := Game.new_device("rtr-lite")
+	t17_rack.slots[3] = t17_r
+	Game.connect_ifaces(t17_r.ifaces[0], t17_sw.ifaces[2])
+	Game.add_ip(t17_r.ifaces[0], "10.79.0.254/24")
+	var t17_rs := CLI.new_session(t17_r)
+	check(Sim.ping(t17_a, "10.79.0.254")["ok"], "ros fw: the router answers before any rule")
+	check(t17_rs.exec("/ip firewall filter add chain=input action=log") == "" and Sim.ping(t17_a, "10.79.0.254")["ok"], "ros fw: action=log is not a drop")
+	check(t17_rs.exec("/ip firewall filter add chain=input in-interface=ether2 action=drop") == "" and Sim.ping(t17_a, "10.79.0.254")["ok"], "ros fw: in-interface scopes the rule to that port")
+	check(t17_rs.exec("/ip firewall filter add chain=input in-interface=ether1 protocol=icmp action=drop") == "" and not Sim.ping(t17_a, "10.79.0.254")["ok"], "ros fw: an input drop on the right port guards the router")
+	t17_l.exec("ip link add bond0 type bond mode 802.3ad")
+	t17_l.exec("ip link set eth1 down")
+	t17_l.exec("ip link set eth1 master bond0")
+	check(t17_s.ifaces[1].lag > 0 and t17_s.ifaces[1].lag_mode == "active" and t17_l.exec("cat /proc/net/bonding/bond0").contains("802.3ad"), "bond: mode 802.3ad negotiates LACP and the proc file says so")
 	# --- the four jobs for protocols the campaign never asked for ---
 	var t13_ids := {}
 	for c13 in Contracts.all():
@@ -11593,6 +11635,7 @@ static func run() -> int:
 	check(t14_sd.exec("show ipv6 route").contains("B E") and t14_sd.exec("show ipv6 route").contains("2001:db8:c::/64"), "bgp6: show ipv6 route prints the B E route")
 	check(t14_sc.exec("show running-config").contains("   address-family ipv6\n      neighbor 10.99.9.2 activate\n      network 2001:db8:c::/64"), "bgp6: the running-config prints the v6 family under router bgp")
 	# RouterOS: an OSPFv3 instance is version=3, and its interface-template names interfaces
+	Game.parts["patch"] = maxi(int(Game.parts.get("patch", 0)), 60)
 	var t16_rack := Game.add_rack(Vector2i(9, 16))
 	var t16_a := Game.new_device("rtr-lite")
 	var t16_b := Game.new_device("rtr-lite")

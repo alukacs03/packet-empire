@@ -2241,10 +2241,12 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			_learn_neighbour(dev, nkey, p["sha"])
 		return
 	# ipv4
-	if dev.ip_forwarding and not _acl_in_permits(dev, iface, p):
+	if not _acl_in_permits(dev, iface, p):
 		# an inbound list on the ingress port is judged before anything else,
-		# for transit and for packets addressed to the router itself
-		_icmp_unreachable(dev, p, "admin", iface.vrf)
+		# for transit and for packets addressed to the router itself; a host's
+		# input chain drops in silence, a router says administratively prohibited
+		if dev.ip_forwarding:
+			_icmp_unreachable(dev, p, "admin", iface.vrf)
 		return
 	var nat_inbound := dev.ip_forwarding and iface.nat == "outside" and not _has_ip(dev, p["dst_ip"], iface.vrf) \
 		and nat_static_inside(dev, String(p["dst_ip"])) != ""
@@ -2763,7 +2765,13 @@ static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 			return i
 	return null
 
-const FORWARD_ONLY_LISTS := ["ros-forward", "lx-forward"]  # firewall forward chains: transit only
+const FORWARD_ONLY_LISTS := ["ros-forward", "lx-forward"]  # firewall forward chains: transit only (per-port lists carry an @port suffix)
+
+static func _forward_only(list_name: String) -> bool:
+	for base in FORWARD_ONLY_LISTS:
+		if list_name == base or list_name.begins_with(base + "@"):
+			return true
+	return false
 
 static func _acl_rules_of(dev: Net.NDevice, list_name: String) -> Array:
 	return dev.acls.filter(func(rule): return String(rule.get("list", "")) == list_name)
@@ -2773,16 +2781,21 @@ static func _acl_in_permits(dev: Net.NDevice, iface: Net.Iface, p: Dictionary) -
 	## itself as well as transit; a firewall's forward chain is not applied here
 	var groups: Dictionary = dev.services.get("acl_groups", {})
 	var list_name := String(groups.get(iface.name, ""))
-	if list_name == "" or list_name in FORWARD_ONLY_LISTS:
-		return true
-	return _acl_permits_list(dev, _acl_rules_of(dev, list_name), p)
+	var ok := true
+	if list_name != "" and not _forward_only(list_name):
+		ok = _acl_permits_list(dev, _acl_rules_of(dev, list_name), p)
+	# a firewall's input chain: only what is addressed to the box itself
+	var input_list := String(groups.get(iface.name + "|input", ""))
+	if ok and input_list != "" and _has_ip(dev, String(p.get("dst_ip", ""))):
+		ok = _acl_permits_list(dev, _acl_rules_of(dev, input_list), p)
+	return ok
 
 static func _acl_forward_permits(dev: Net.NDevice, iface: Net.Iface, p: Dictionary) -> bool:
 	## what a firewall's forward chain and the old unattached rules see: transit only
 	var groups: Dictionary = dev.services.get("acl_groups", {})
 	var list_name := String(groups.get(iface.name, ""))
 	var rules: Array = dev.acls.filter(func(rule): return String(rule.get("list", "")) == "")
-	if list_name in FORWARD_ONLY_LISTS:
+	if _forward_only(list_name):
 		rules += _acl_rules_of(dev, list_name)
 	if rules.is_empty():
 		return true
