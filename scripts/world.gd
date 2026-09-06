@@ -88,9 +88,7 @@ func _leave_title() -> void:
 
 func _start_new(slot: int, company: String, diff: int, is_demo: bool) -> void:
 	Game.reset_new(company, diff, is_demo)
-	ui.cli_sessions.clear()  # a new world, no consoles left open on the old one
-	ui._demo_end_shown = false
-	ui.tutorial_hidden = false
+	ui.enter_world()
 	Game.current_slot = slot
 	Game.save_game()
 	_leave_title()
@@ -102,6 +100,7 @@ func _continue(slot: int) -> void:
 	if not Game.load_slot(slot):
 		title.show_error("Could not load: %s" % Game.last_load_error)
 		return
+	ui.enter_world()
 	_leave_title()
 
 func _film_all() -> void:
@@ -866,6 +865,8 @@ func _notification(what: int) -> void:
 			Drill.finish(false)  # abandon: restore the real datacenter before saving
 		if Puzzle.active():
 			Puzzle.close()  # the puzzle is scratch; the player's own world is what gets saved
+		if not Scenarios.active.is_empty():
+			Scenarios.finish(false)  # abandon: the real world comes back from its snapshot before the save
 		Game.save_game()
 
 func _process(dt: float) -> void:

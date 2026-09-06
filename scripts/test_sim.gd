@@ -11888,6 +11888,31 @@ static func run() -> int:
 	check(t35.exec("no storm-control multicast") == "" and t35_sw.ifaces[6].storm_types.is_empty(), "eos: no storm-control multicast clears only that type")
 	t35.exec("exit")
 	t35.exec("exit")
+	# the linux services the audit found wanting: hosts, wireguard files, frr, nft, iptables chains, tcpdump -c
+	check(t17_l.exec("echo \"10.79.0.254 gw-a\" >> /etc/hosts") == "" and Sim.resolve(t17_s, "gw-a") == "10.79.0.254", "linux: /etc/hosts answers a name with no resolver")
+	check(t17_l.exec("echo \"[Interface] Address = 10.36.0.1/24, fd36::1/64 [Peer] PublicKey = far-key Endpoint = 10.79.0.99:51820 AllowedIPs = 10.36.1.0/24, 10.36.2.0/24\" > /etc/wireguard/wg9.conf") == ""
+		and t17_l.exec("cat /etc/wireguard/wg9.conf").contains("10.36.2.0/24") and t17_l.exec("ls /etc/wireguard").contains("wg9.conf"),
+		"linux: a wireguard config keeps every list entry and exists before the tunnel is up")
+	var t36_up := t17_l.exec("wg-quick up wg9")
+	check(t36_up.contains("ip -4 route add 10.36.1.0/24 dev wg9") and t17_s.static_routes.any(func(r): return String(r["prefix"]) == "10.36.2.0" and String(r.get("dev", "")) == "wg9"),
+		"linux: wg-quick up installs the AllowedIPs routes")
+	check(t17_l.exec("wg-quick down wg9").contains("ip link delete") and not t17_s.static_routes.any(func(r): return String(r.get("dev", "")) == "wg9"), "linux: wg-quick down removes them")
+	t17_l.exec("systemctl stop frr")
+	check(t17_l.exec("vtysh -c \"show running-config\"").contains("failed to connect to any daemons") and not t17_s.services.has("frr"), "linux: vtysh with frr stopped cannot connect")
+	t17_l.exec("systemctl start frr")
+	check(t17_l.exec("nft add table inet filter") == "" and t17_l.exec("nft add chain inet filter input { type filter hook input priority 0 \\; }") == ""
+		and t17_l.exec("nft add rule inet filter input iifname \"wg7\" accept") == "" and t17_l.exec("nft list ruleset").contains("wg7"),
+		"linux: an nft rule for an interface that does not exist yet is kept")
+	t17_l.exec("nft flush ruleset")
+	check(t17_l.exec("iptables -A OUTPUT -i eth0 -j DROP").contains("Can't use -i with OUTPUT") and t17_l.exec("iptables -A INPUT -o eth0 -j DROP").contains("Can't use -o with INPUT"),
+		"linux: iptables refuses -i on OUTPUT and -o on INPUT")
+	var t36_dump := t17_l.exec("tcpdump -c 1 -i eth0")
+	check(not t36_dump.contains("packets received by filter") or t36_dump.contains("1 packets received by filter") or t36_dump.contains("0 packets received by filter"),
+		"linux: tcpdump -c stops counting at the count")
+	# a save keeps the dot1x home vlan and the sale happens once
+	t17_s.ifaces[0].dot1x_home = 30
+	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")
+	t17_s.ifaces[0].dot1x_home = 0
 	# the OUTPUT chain: what the box itself sends
 	check(t17_l.exec("iptables -A OUTPUT -d 10.79.0.2 -j DROP") == "" and not Sim.ping(t17_s, "10.79.0.2")["ok"] and t17_l.exec("ping -c 1 10.79.0.2").contains("Operation not permitted"), "fw: an OUTPUT drop stops the box sending, and ping says so the way iputils does")
 	t17_l.exec("iptables -F OUTPUT")

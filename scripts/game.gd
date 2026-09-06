@@ -5229,6 +5229,8 @@ func make_report() -> Dictionary:
 func accept_buyout() -> String:
 	if buyout_offer.is_empty():
 		return "there is nothing on the table"
+	if sold_out:
+		return "you already sold it"
 	var price := int(buyout_offer["price"])
 	money += price  # the sale is cash in the bank, and is scored as that, not as trading
 	sold_out = true
@@ -7610,7 +7612,8 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 				reputation = mini(100, reputation + 1)
 				log_event(Loc.t("log.blame_on_team"))
 			elif who.is_empty():
-				return "they are not on the payroll any more"
+				blame_fear = mini(5, blame_fear + 1)  # the name still goes on the record; the crew notices
+				log_event(Loc.t("log.blame_named") % [inc["by"], inc["by"]])
 			else:
 				blame_fear = mini(5, blame_fear + 1)
 				who["morale"] = maxi(0, int(who.get("morale", 70)) - 25)
@@ -10389,7 +10392,7 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
 	_strip_runtime(cfg.get("services", {}))
 	for si in cfg.get("ifaces", []):
-		for k in ["err_disabled", "err_since", "err_cause", "dot1x_ok", "violations", "rx_frames", "tx_frames", "rx_errors", "rx_crc", "rx_giants", "collisions", "out_drops"]:
+		for k in ["err_disabled", "err_since", "err_cause", "dot1x_ok", "dot1x_home", "violations", "rx_frames", "tx_frames", "rx_errors", "rx_crc", "rx_giants", "collisions", "out_drops"]:
 			si.erase(k)  # counters and learned state: not configuration either
 	cfg.erase("note")  # the handover note is past-you talking, not configuration
 	cfg.erase("mcast_groups")
@@ -10698,7 +10701,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"rx_giants": i.rx_giants, "collisions": i.collisions, "out_drops": i.out_drops,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "storm_types": i.storm_types, "dot1x": i.dot1x,
-			"dot1x_ok": i.dot1x_ok, "violations": i.violations,
+			"dot1x_ok": i.dot1x_ok, "dot1x_home": i.dot1x_home, "violations": i.violations,
 			"ips": i.ips, "note": i.note})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans, "vtep": d.vtep,
 		"mac_static": d.mac_static, "note": d.note,
@@ -10978,6 +10981,7 @@ func _apply(data: Dictionary) -> void:
 			i.pvlan = si.get("pvlan", "")
 			i.dot1x = bool(si.get("dot1x", false))
 			i.dot1x_ok = String(si.get("dot1x_ok", ""))
+			i.dot1x_home = int(si.get("dot1x_home", 0))
 			i.violations = int(si.get("violations", 0))
 			i.storm_limit = int(si.get("storm_limit", 0))
 			i.storm_types = Dictionary(si.get("storm_types", {})).duplicate()

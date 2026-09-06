@@ -370,6 +370,11 @@ static func resolve(dev: Net.NDevice, name: String, use_cache := true, want_v6 :
 		if not hit.is_empty() and Game.cycle < int(hit["expires"]):
 			last_answer_kind = "cached"
 			return String(hit["ip"])
+	for h in dev.services.get("hosts", []):
+		var toks := String(h).split(" ", false)  # "10.0.0.5 shop www": glibc's files source answers first
+		if toks.size() >= 2 and toks[0].is_valid_ip_address() and Net.is_v6(toks[0]) == want_v6 and name in toks.slice(1):
+			last_answer_kind = "hosts"
+			return toks[0]
 	if dev.resolver == "":
 		return ""
 	var server: String = dev.resolver

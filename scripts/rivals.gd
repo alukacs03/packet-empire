@@ -189,6 +189,8 @@ static func would_buy_player(r: Dictionary) -> bool:
 	return Game.money < price / 4 or Game.debt > 0 or Game.reputation < 45
 
 static func maybe_offer_for_player() -> void:
+	if Game.sold_out or not Game.finale.is_empty():
+		return  # the company is not for sale twice
 	if Game.buyout_offer != null and not Game.buyout_offer.is_empty():
 		return
 	if Game.cycle < int(Game.stats.get("buyout_cooldown", 0)):

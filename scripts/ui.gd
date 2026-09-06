@@ -3535,7 +3535,9 @@ func _refresh_ops() -> void:
 			return
 		_menu(add_mon, opts.slice(0, 20), func(id: int) -> void:
 			var sp: Array = specs[id]
-			Game.add_monitor(sp[0], sp[1], sp[2])
+			var mon_err := Game.add_monitor(sp[0], sp[1], sp[2])
+			if mon_err != "":
+				_toast(mon_err)
 			_refresh_ops()))
 	ops_box.add_child(add_mon)
 	ops_box.add_child(_section("DEVICES"))
@@ -4656,6 +4658,13 @@ func _build_demo_end() -> void:
 
 var _demo_end_shown := false
 
+func enter_world() -> void:
+	## a new or loaded company: no consoles left open on the old one, and the
+	## per-run cards start over
+	cli_sessions.clear()
+	_demo_end_shown = false
+	tutorial_hidden = false
+
 func refresh_demo_end() -> void:
 	## the card is about the shift they just worked, not a brochure
 	var run_line := demo_overlay.get_meta("run_line") as Label
@@ -5626,7 +5635,9 @@ func _build_log_tab() -> void:
 					var sbtn := Button.new()
 					sbtn.text = Loc.t(String(say[1]))
 					sbtn.pressed.connect(func() -> void:
-						Game.blame_incident(inc, String(say[0]))
+						var blame_err := Game.blame_incident(inc, String(say[0]))
+						if blame_err != "":
+							_toast(blame_err)
 						_refresh_contracts())
 					brow.add_child(sbtn)
 			elif inc.has("blame"):

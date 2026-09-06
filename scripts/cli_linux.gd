@@ -205,6 +205,10 @@ func _iptables(a: Array) -> String:
 					_:
 						return "iptables v1.8.9 (nf_tables): unknown option \"%s\"\nTry `iptables -h' or 'iptables --help' for more information.\n" % opt
 				j += 2
+			if cname == "OUTPUT" and rule.has("iif"):
+				return "iptables v1.8.9 (nf_tables): Can't use -i with OUTPUT\n\nTry `iptables -h' or 'iptables --help' for more information.\n"
+			if cname == "INPUT" and rule.has("oif"):
+				return "iptables v1.8.9 (nf_tables): Can't use -o with INPUT\n\nTry `iptables -h' or 'iptables --help' for more information.\n"
 			if not rule.has("action"):
 				return "iptables v1.8.9 (nf_tables): -A requires a target (-j)\nTry `iptables -h' or 'iptables --help' for more information.\n" if cmd != "-D" else "iptables: Bad rule (does a matching rule exist in that chain?).\n"
 			if String(rule["action"]) not in ["accept", "drop", "reject", "masquerade", "log", "return"]:
@@ -358,9 +362,7 @@ func _nft(a: Array) -> String:
 						return "Error: syntax error, unexpected end of file\n"
 					if String(rule["action"]) == "masquerade" and String(ch["hook"]) != "postrouting":
 						return "Error: Could not process rule: Operation not supported\n"
-					for ifk in ["iif", "oif"]:
-						if rule.has(ifk) and _iface(String(rule[ifk])) == null:
-							return ""  # nft accepts a name that does not exist yet; it just never matches
+					# a name that does not exist yet is kept, and starts matching when the interface appears
 					if verb == "insert":
 						ch["rules"].insert(0, rule)
 					else:
@@ -546,6 +548,9 @@ func exec(line: String) -> String:
 					return "dhclient.conf  dhclient-enter-hooks.d  dhclient-exit-hooks.d%s\n" % ("  dhcpd.conf" if dev.services.has("dhcp") else "")
 				"/etc/wireguard":
 					var confs: Array = dev.ifaces.filter(func(i): return i.name.begins_with("wg")).map(func(i): return i.name + ".conf")
+					for written in dev.services.get("wg_conf", {}):
+						if String(written) + ".conf" not in confs:
+							confs.append(String(written) + ".conf")
 					return ("  ".join(PackedStringArray(confs)) + "\n") if not confs.is_empty() else ""
 				"/var/log":
 					return "auth.log  btmp  daemon.log  dpkg.log  kern.log  lastlog  messages  syslog  wtmp\n"
@@ -664,12 +669,25 @@ func exec(line: String) -> String:
 						Game.add_ip(made, String(cidr))
 					for pr in conf.get("peers", []):
 						_wg_add_peer(made, pr)
+					var route_lines := ""
+					for pr in conf.get("peers", []):
+						for allowed in pr.get("allowed", []):
+							var ap := String(allowed).split("/")
+							if ap.size() != 2 or not ap[0].is_valid_ip_address() or Net.is_v6(ap[0]):
+								continue
+							if made.ips.any(func(c): return Net.same_subnet(ap[0], String(c).split("/")[0], int(String(c).split("/")[1]))):
+								continue  # inside the tunnel's own subnet: connected already
+							dev.static_routes.append({"prefix": ap[0], "plen": int(ap[1]), "via": "", "ad": 1, "dev": String(t[2])})
+							route_lines += "[#] ip -4 route add %s dev %s\n" % [allowed, t[2]]
 					Game.topology_changed.emit()
-					return "[#] ip link add %s type wireguard\n[#] wg setconf %s /dev/fd/63\n[#] ip -4 address add %s dev %s\n[#] ip link set mtu 1420 up dev %s\n" % [t[2], t[2],
-						" ".join(PackedStringArray(made.ips)), t[2], t[2]]
+					return "[#] ip link add %s type wireguard\n[#] wg setconf %s /dev/fd/63\n[#] ip -4 address add %s dev %s\n[#] ip link set mtu 1420 up dev %s\n%s" % [t[2], t[2],
+						" ".join(PackedStringArray(made.ips)), t[2], t[2], route_lines]
 				if wq == null:
 					return "wg-quick: `%s' is not a WireGuard interface\n" % t[2]
 				dev.ifaces.erase(wq)
+				for r in dev.static_routes.duplicate():
+					if String(r.get("dev", "")) == String(t[2]):
+						dev.static_routes.erase(r)  # the AllowedIPs routes go with the tunnel
 				Game.topology_changed.emit()
 				return "[#] ip link delete dev %s\n" % t[2]
 			return "Usage: wg-quick [ up | down | save | strip ] [ CONFIG_FILE | INTERFACE ]\n"
@@ -687,6 +705,8 @@ func exec(line: String) -> String:
 			return _tcpdump(t.slice(1))
 		"vtysh":
 			# FRR's shell: -c runs commands and returns, without it you are in it
+			if dev.services.get("stopped_units", {}).has("frr"):
+				return "Exiting: failed to connect to any daemons.\n"  # systemctl stop frr: nothing to talk to
 			dev.services["frr"] = true  # the package is there; whether it routes is the sysctl's business
 			if t.size() == 1:
 				pending_sub = CLI.Vtysh.new(dev)
@@ -809,7 +829,7 @@ func exec(line: String) -> String:
 					return "(nobody authorised yet)\n"
 				var out := ""
 				for u in users:
-					out += "%-19s vlan %s\n" % [u, str(users[u]) if int(users[u]) > 0 else "-"]
+					out += "%-19s vlan %s\n" % [u, str(int(users[u])) if int(users[u]) > 0 else "-"]
 				return out
 			return "radiusd: collecting authentication requests\nusage: radiusd add <mac> [vlan] | radiusd list\n"
 		"wifi", "nmcli":
@@ -1752,9 +1772,9 @@ func _tcpdump(args: Array) -> String:
 		var tagged := desc.begins_with("vlan ")
 		if not _bpf_match(filt, desc):
 			continue
-		seen += 1
 		if limit > 0 and shown >= limit:
-			continue
+			break  # -c: the capture ends when the count is reached
+		seen += 1
 		shown += 1
 		var body := desc
 		if show_link and link != "":
@@ -1868,7 +1888,14 @@ func _cat(args: Array) -> String:
 		"/var/log/syslog", "/var/log/messages":
 			return _journalctl([])
 	if path.begins_with("/etc/wireguard/") and path.ends_with(".conf"):
-		var wi := _iface(path.get_file().trim_suffix(".conf"))
+		var wname := path.get_file().trim_suffix(".conf")
+		var written: Dictionary = dev.services.get("wg_conf", {}).get(wname, {})
+		if not written.is_empty():
+			var wout := "[Interface]\nPrivateKey = %s\nAddress = %s\n" % [_fake_key(dev.name + "priv"), ", ".join(PackedStringArray(written.get("address", [])))]
+			for p in written.get("peers", []):
+				wout += "\n[Peer]\nPublicKey = %s\nEndpoint = %s:51820\nAllowedIPs = %s\n" % [p.get("key", ""), p.get("endpoint", ""), ", ".join(PackedStringArray(p.get("allowed", [])))]
+			return wout
+		var wi := _iface(wname)
 		if wi == null:
 			return "cat: %s: No such file or directory\n" % path
 		var out := "[Interface]\nPrivateKey = %s\nAddress = %s\nListenPort = 51820\n" % [_fake_key(dev.name + "priv"), ", ".join(PackedStringArray(wi.ips))]
@@ -1969,20 +1996,25 @@ func _redirect(t: Array) -> String:
 		while k < words.size():
 			var w := String(words[k])
 			var v := String(words[k + 2]) if k + 2 < words.size() and String(words[k + 1]) == "=" else ""
+			var consumed := 3 if v != "" else 1
+			while v != "" and v.ends_with(",") and k + consumed < words.size():
+				v += String(words[k + consumed])  # "10.0.1.0/24, 10.0.2.0/24": the list goes on after the space
+				consumed += 1
 			match w:
 				"[Peer]":
 					if not peer.is_empty():
 						conf["peers"].append(peer)
 					peer = {"key": "", "endpoint": "", "allowed": []}
 				"Address":
-					conf["address"].append(v.trim_suffix(","))
+					for a in v.split(",", false):
+						conf["address"].append(String(a))
 				"PublicKey":
 					peer["key"] = v
 				"Endpoint":
 					peer["endpoint"] = v.split(":")[0] if v.count(":") == 1 else v
 				"AllowedIPs":
 					peer["allowed"] = Array(v.split(",", false))
-			k += 3 if v != "" else 1
+			k += consumed
 		if not peer.is_empty():
 			conf["peers"].append(peer)
 		confs[name] = conf
