@@ -1216,7 +1216,7 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 	var target := _rack_target_at(screen_pos)
 	var original_target: Net.Iface = rack_cable_old_link.other(rack_cable_from) if rack_cable_old_link else null
 	rack_cable_layer.finish()
-	if target == original_target:
+	if target != null and target == original_target:  # a fresh cable dropped on nothing has no original to reseat
 		hud_toast("Plug reseated: %s %s." % [target.dev.name, target.name], true)
 		rack_cable_layer.confirm(rack_cable_from, target)
 	elif target and Game.can_link(rack_cable_from, target):
