@@ -102,8 +102,9 @@ static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Arra
 	## last_trace_note carries the unreachable code a router answered with
 	var hops: Array = []
 	last_trace_note = ""
+	var run_id := next_echo_id()  # one identifier for the run: the same path at every TTL
 	for ttl in range(1, max_hops + 1):
-		var r := ping(dev, dst_ip, ttl)
+		var r := ping(dev, dst_ip, ttl, "", 64, run_id, ttl)
 		if r["ok"]:
 			hops.append(r["from"])
 			break
@@ -826,6 +827,7 @@ static func static_port(dev: Net.NDevice, vlan: int, mac: String) -> Net.Iface:
 
 static func flush_learned_state() -> void:
 	_ospf_cache.clear()
+	_rib_cache.clear()
 	## everything learned ages out: the world was rebuilt, or a cycle passed
 	_stp_dirty = true
 	for d in Game.all_devices():
@@ -851,6 +853,7 @@ static func arp_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
 
 static func topology_change() -> void:
 	_ospf_cache.clear()
+	_rib_cache.clear()
 	## a link came or went: spanning tree tells every bridge to forget what it
 	## learned, exactly so that a moved host is found again by flooding
 	for d in Game.all_devices():
@@ -872,6 +875,7 @@ static func forget_ip(ip: String) -> void:
 
 static func prune_learned_state() -> void:
 	_ospf_cache.clear()  # an adjacency is a fact about cables and configuration, both of which just moved
+	_rib_cache.clear()
 	## A configuration changed somewhere. Real gear does not forget the whole
 	## world for that: it drops only what can no longer be true, and the rest
 	## ages out or is relearned when the host next speaks.
@@ -1332,10 +1336,22 @@ static func _all_routes(dev: Net.NDevice, dst_ip: String, vrf := "") -> Array:
 		out.append(c)
 	return out
 
+static var _rib_cache := {}  # "device|vrf" -> entries, until the topology or a configuration moves
+
 static func _route_entries(dev: Net.NDevice, vrf := "") -> Array:
 	## Every route this device could install in one table, usable or not
 	## filtered out: shut interfaces, next hops nothing is connected to.
 	## src is the show-ip-route code (C/S/B/O), ad the administrative distance.
+	## Cached: a forwarded packet must not rebuild BGP and Dijkstra per hop.
+	var ckey := "%s|%s" % [dev.name, vrf]
+	if _rib_cache.has(ckey):
+		return _rib_cache[ckey]
+	var out: Array = _route_entries_build(dev, vrf)
+	if not _ospf_probing:
+		_rib_cache[ckey] = out
+	return out
+
+static func _route_entries_build(dev: Net.NDevice, vrf := "") -> Array:
 	var out: Array = []
 	for i: Net.Iface in dev.ifaces:
 		if not iface_up(i) or i.vrf != vrf or bfd_down(i):
@@ -1389,54 +1405,6 @@ static func _prefix_sort_key(cidr: String) -> Array:
 		return [1, parts[0], int(parts[1])]
 	return [0, Net.ip_to_int(parts[0]), int(parts[1])]
 
-static func _route_lookup_single(dev: Net.NDevice, dst_ip: String) -> Dictionary:
-	var best := {}
-	var best_len := -1
-	var want_v6 := Net.is_v6(dst_ip)
-	for i: Net.Iface in dev.ifaces:
-		if not i.enabled:
-			continue
-		for cidr: String in i.ips:
-			if Net.is_v6(cidr) != want_v6:
-				continue
-			var parts := cidr.split("/")
-			var plen := int(parts[1])
-			if plen > best_len and Net.same_net(dst_ip, parts[0], plen):
-				best_len = plen
-				best = {"iface": i, "next_hop": dst_ip, "plen": plen}
-	for r in dev.static_routes:
-		if Net.is_v6(String(r["prefix"])) != want_v6:
-			continue
-		if int(r["plen"]) > best_len and Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
-			var via_rt := {}
-			var via_len := -1
-			for i: Net.Iface in dev.ifaces:
-				if not i.enabled:
-					continue
-				for cidr: String in i.ips:
-					if Net.is_v6(cidr) != Net.is_v6(String(r["via"])):
-						continue
-					var parts := cidr.split("/")
-					if int(parts[1]) > via_len and Net.same_net(r["via"], parts[0], int(parts[1])):
-						via_len = int(parts[1])
-						via_rt = {"iface": i, "next_hop": r["via"]}
-			if String(r["via"]) == "null0":
-				best_len = int(r["plen"])
-				best = {"iface": null, "next_hop": "null0", "plen": best_len}  # discard route
-			elif not via_rt.is_empty():
-				best_len = int(r["plen"])
-				via_rt["plen"] = best_len
-				best = via_rt
-	for r in _bgp_learned(dev) + _ospf_learned(dev):
-		if Net.is_v6(String(r["prefix"])) != want_v6:
-			continue
-		if int(r["plen"]) > best_len and Net.same_net(dst_ip, r["prefix"], int(r["plen"])):
-			var out := _connected_iface(dev, r["via"])
-			if out:
-				best_len = int(r["plen"])
-				best = {"iface": out, "next_hop": r["via"], "plen": best_len}
-	return best
-
 static func _neigh_key(iface: Net.Iface, ip: String) -> String:
 	## neighbour caches are per routing table: two tenants may legitimately
 	## use the same address, and they are not the same neighbour
@@ -1483,9 +1451,11 @@ static func _first_ip(iface: Net.Iface, v6 := false) -> String:
 			return cidr.split("/")[0]
 	return "::" if v6 else "0.0.0.0"
 
-static func _has_ip(dev: Net.NDevice, ip: String) -> bool:
+static func _has_ip(dev: Net.NDevice, ip: String, vrf := "*") -> bool:
+	## "*" means any table (the loopback shortcut in ping); a packet that arrived
+	## on a VRF interface is only "ours" if the address lives in that VRF
 	for i: Net.Iface in dev.ifaces:
-		if i.enabled:
+		if i.enabled and (vrf == "*" or i.vrf == vrf):
 			for cidr: String in i.ips:
 				if Net.addr_eq(cidr.split("/")[0], ip):
 					return true
@@ -1976,9 +1946,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		# for transit and for packets addressed to the router itself
 		_icmp_unreachable(dev, p, "admin", iface.vrf)
 		return
-	var nat_inbound := dev.ip_forwarding and iface.nat == "outside" and not _has_ip(dev, p["dst_ip"]) \
+	var nat_inbound := dev.ip_forwarding and iface.nat == "outside" and not _has_ip(dev, p["dst_ip"], iface.vrf) \
 		and nat_static_inside(dev, String(p["dst_ip"])) != ""
-	if dev.ip_forwarding and (_has_ip(dev, p["dst_ip"]) or nat_inbound):
+	if dev.ip_forwarding and (_has_ip(dev, p["dst_ip"], iface.vrf) or nat_inbound):
 		var flow_id: int = p["l4"].get("id", 0)
 		var lb_svc: Dictionary = dev.services.get("lb", {})
 		if not lb_svc.is_empty() and dev.nat_flows.has(flow_id):
@@ -2042,7 +2012,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			"type": "ipv4", "pl": fwd_lb})
 		return
 	var vrrp_local := _vrrp_owns(dev, iface, p["dst_ip"])
-	if _has_ip(dev, p["dst_ip"]) or vrrp_local:
+	if _has_ip(dev, p["dst_ip"], iface.vrf) or vrrp_local:
 		var l4: Dictionary = p["l4"]
 		if l4["proto"] == "icmp":
 			match l4["type"]:

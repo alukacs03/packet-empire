@@ -2566,6 +2566,31 @@ static func run() -> int:
 	check(Sim.ping(rel_cli, "10.61.0.5")["ok"], "relay: leased client routes to the central DHCP server")
 	check(rel_srv.services["dhcp"].has("since") and not rel_srv.services["dhcp"]["since"].is_empty(),
 		"relay: a relayed lease carries a clock, so it can expire like a local one")
+	# --- the route table is cached until something moves ---
+	Sim._rib_cache.clear()
+	var rib_before := Sim.rib(rel_srv)
+	check(Sim._rib_cache.size() > 0, "perf: a route lookup fills the cache")
+	Game.add_static_route(rel_srv, "10.99.0.0", 24, "10.61.0.1")
+	check(Sim.rib(rel_srv).size() == rib_before.size() + 1, "perf: a configuration change invalidates the cache")
+	Game.remove_static_route(rel_srv, "10.99.0.0", 24)
+	# --- a VRF's address is not answered from another table ---
+	var vrf_r := Game.new_device("rtr-edge")
+	var vrf_h := Game.new_device("srv-1")
+	var t3_vrf_rack := Game.add_rack(Vector2i(8, 8))
+	t3_vrf_rack.slots[0] = vrf_r
+	t3_vrf_rack.slots[1] = vrf_h
+	Game.connect_ifaces(vrf_r.ifaces[0], vrf_h.ifaces[0])
+	Game.add_vrf(vrf_r, "red")
+	Game.add_vrf(vrf_r, "blue")
+	vrf_r.ifaces[0].vrf = "red"
+	vrf_r.ifaces[1].vrf = "blue"
+	Game.add_ip(vrf_r.ifaces[0], "10.70.1.1/24")
+	Game.add_ip(vrf_r.ifaces[1], "10.70.2.1/24")
+	Game.add_ip(vrf_h.ifaces[0], "10.70.1.10/24")
+	Game.add_static_route(vrf_h, "0.0.0.0", 0, "10.70.1.1")
+	Game.topology_changed.emit()
+	check(Sim.ping(vrf_h, "10.70.1.1")["ok"], "vrf: the gateway in the host's own VRF answers")
+	check(not Sim.ping(vrf_h, "10.70.2.1")["ok"], "vrf: an address that lives in another VRF is not answered")
 
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
