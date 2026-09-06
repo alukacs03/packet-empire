@@ -384,7 +384,7 @@ static func ui_smoke(world: Node2D) -> int:
 	Prefs.language = "en"
 	Loc.language = "en"
 	ui._rebuild_localised()
-	ui.ops_tab = "Company"
+	ui.ops_tab = "Board"
 	ui._refresh_ops()
 	var trend_visible := false
 	for ops_child in ui.ops_box.get_children():
@@ -10835,7 +10835,7 @@ static func run() -> int:
 	var fl_second := fl_deal.duplicate(true)
 	fl_second["customer"] = "Madaras Jatek Kft"
 	Game._first_light(fl_second)
-	check(not Game.log_contains("FIRST LIGHT") and Game.log_contains("service(s) of yours in the world"),
+	check(not Game.log_contains("FIRST LIGHT") and Game.log_contains("services of yours in the world"),
 		"first light: the second one is quieter, and counts them")
 	check(int(Game.stats["services_live"]) == 2,
 		"first light: the game remembers how many it has put into the world")
@@ -12029,6 +12029,13 @@ static func run() -> int:
 	for t26 in Pedia.topics():
 		if String(t26[0]) == "Trunks":
 			check(Pedia.article_text(t26).contains("The exercise:"), "manual: the teaching sentence survives the dialect examples replacing the Try line")
+	check(Loc.tidy_plurals("1 cycle(s) left, 3 device(s) down") == "1 cycle left, 3 devices down", "text: the (s) plurals resolve on the way to the screen")
+	check(Loc.t("rack.blank.fitted").contains("Blanking") and Loc.t("settings.motion.tip") != "settings.motion.tip", "text: the rack and settings tooltips come from the catalogue")
+	var t29_stats := int(Game.stats.get("guided_outage_complete", 0))
+	Game.guided_outage = {"state": "communicated", "device": "no-such-box", "iface": "Ethernet1", "deal": "", "evidence": []}
+	check(Game.give_up_guided_outage() == "" and String(Game.guided_outage.get("state", "")) == "complete" and int(Game.stats.get("guided_outage_complete", 0)) == 1, "incident: a removed device closes the guided outage instead of dead-ending it")
+	Game.guided_outage = {}
+	Game.stats["guided_outage_complete"] = t29_stats
 	check(Drill._fault_tier("L1: sw1 Ethernet3 was left disabled on sw1") == 0 and Drill._fault_tier("the second copy of the service (x) was readdressed and nobody noticed") == 1, "drill: the two-room faults are graded")
 	DesignTests.run()
 	print("---- %d failures" % fails)

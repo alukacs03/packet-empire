@@ -45,6 +45,12 @@ const CATALOG := {
 	"settings.sound": {"en": "Sound", "hu": "Hang"},
 	"settings.colourblind": {"en": "Colourblind-friendly status colours",
 		"hu": "Színtévesztő-barát állapotszínek"},
+	"settings.motion.tip": {"en": "Replaces traveling highlights and decorative movement with static confirmations", "hu": "A mozgó kiemeléseket és díszmozgásokat álló visszajelzésekre cseréli"},
+	"settings.toolbox.tip": {"en": "For experienced players: reveal every navigation area without waiting for campaign unlocks", "hu": "Tapasztalt játékosoknak: minden panel elérhető a kampány feloldásai nélkül"},
+	"settings.hints.tip": {"en": "A comment line under a console error that says what to try, and a LEARN chip that opens the field manual", "hu": "Egy megjegyzés a konzolhiba alatt, hogy mit érdemes próbálni, és egy LEARN gomb, ami a kézikönyvet nyitja"},
+	"title.error": {"en": "Something went wrong", "hu": "Valami elromlott"},
+	"rack.blank.fitted": {"en": "Blanking panel fitted · right-click to remove · left-click to install hardware", "hu": "Vakpanel beszerelve · jobb klikk: eltávolítás · bal klikk: hardver beszerelése"},
+	"rack.blank.gap": {"en": "Open rack gap · right-click to fit a blanking panel · left-click to install hardware", "hu": "Üres rackhely · jobb klikk: vakpanel · bal klikk: hardver beszerelése"},
 	"settings.motion": {"en": "Reduce motion", "hu": "Kevesebb mozgás"},
 	"settings.hints": {"en": "Learner hints under console errors", "hu": "Tanulói tippek a konzol hibái alatt"},
 	"settings.volume": {"en": "Volume", "hu": "Hangerő"},
@@ -97,12 +103,6 @@ const CATALOG := {
 	"welcome.title": {
 		"en": "Welcome to the floor",
 		"hu": "Üdv a gépteremben"},
-	"welcome.body": {
-		"en": "You have a corner of somebody else's colo, a little money, and a list of jobs. Rack something, cable it, and make it answer.",
-		"hu": "Kaptál egy sarkot valaki más kolokációjában, egy kis pénzt és egy feladatlistát. Rakj be valamit, kábelezd be, és érd el, hogy válaszoljon."},
-	"welcome.hint": {
-		"en": "Q selects, R places a rack, and every device has a working console.",
-		"hu": "Q kiválaszt, R rakot helyez el, és minden eszköznek van működő konzolja."},
 	"welcome.shift": {
 		"en": "SHIFT 01  /  LEGACY COLO  /  02:13",
 		"hu": "01. MŰSZAK  /  RÉGI KOLOKÁCIÓ  /  02:13"},
@@ -192,6 +192,24 @@ static func t(id: String, args := {}) -> String:
 	if language == "pseudo":
 		text = pseudo(text)
 	return text
+
+static var _plural_rx: RegEx = null
+
+static func tidy_plurals(text: String) -> String:
+	## "1 cycle(s)" -> "1 cycle", "3 cycle(s)" -> "3 cycles": the "(s)" spelling is
+	## resolved on the way to the screen, so no line ever reads "1 cycles"
+	## ponytail: English suffix rules only; the Hungarian forms carry no "(s)"
+	if "(s)" not in text:
+		return text
+	if _plural_rx == null:
+		_plural_rx = RegEx.new()
+		_plural_rx.compile("(\\d+) ([A-Za-z]+)\\(s\\)")
+	var out := text
+	for m in _plural_rx.search_all(text):
+		var n := int(m.get_string(1))
+		var noun := m.get_string(2)
+		out = out.replace(m.get_string(0), "%d %s" % [n, noun if n == 1 else noun + "s"])
+	return out
 
 static func plural(id: String, count: int, args := {}) -> String:
 	## Two forms, separated by a pipe: enough for English and Hungarian, and

@@ -755,8 +755,7 @@ class RackSlot extends Control:
 			if Game.config_dirty(d):
 				tooltip_text += "   (unsaved configuration)"
 		else:
-			tooltip_text = ("Blanking panel fitted · right-click to remove · left-click to install hardware"
-				if blanked else "Open rack gap · right-click to fit a blanking panel · left-click to install hardware")
+			tooltip_text = Loc.t("rack.blank.fitted") if blanked else Loc.t("rack.blank.gap")
 		return self
 
 	func _notification(what: int) -> void:

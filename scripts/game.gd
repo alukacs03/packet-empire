@@ -6979,6 +6979,7 @@ func _digest_line(at: int) -> String:
 		"; ".join(PackedStringArray(preview))]
 
 func log_event(text: String) -> void:
+	text = Loc.tidy_plurals(text)
 	events_logged += 1
 	if event_severity(text) == "info" and not _digest_exempt(text):
 		# routine work folds into one note per cycle: nothing is dropped, and

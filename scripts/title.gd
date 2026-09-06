@@ -221,7 +221,7 @@ func _generated_company() -> String:
 
 func show_error(msg: String) -> void:
 	_clear_pane()
-	pane_title.text = "Something went wrong"
+	pane_title.text = Loc.t("title.error")
 	panel_box.add_child(_lbl(msg, 14, Color(0.9, 0.5, 0.45)))
 	panel_box.add_child(_para("The file was left as it is. The .bak next to it is the previous save, if there was one."))
 
@@ -341,7 +341,7 @@ func show_settings() -> void:
 	panel_box.add_child(cb)
 	var motion := CheckButton.new()
 	motion.text = Loc.t("settings.motion")
-	motion.tooltip_text = "Replaces traveling highlights and decorative movement with static confirmations"
+	motion.tooltip_text = Loc.t("settings.motion.tip")
 	motion.button_pressed = Prefs.reduced_motion
 	motion.toggled.connect(func(on: bool) -> void:
 		Prefs.reduced_motion = on
@@ -349,7 +349,7 @@ func show_settings() -> void:
 	panel_box.add_child(motion)
 	var toolbox := CheckButton.new()
 	toolbox.text = Loc.t("settings.toolbox")
-	toolbox.tooltip_text = "For experienced players: reveal every navigation area without waiting for campaign unlocks"
+	toolbox.tooltip_text = Loc.t("settings.toolbox.tip")
 	toolbox.button_pressed = Prefs.show_everything
 	toolbox.toggled.connect(func(on: bool) -> void:
 		Prefs.show_everything = on
@@ -357,7 +357,7 @@ func show_settings() -> void:
 	panel_box.add_child(toolbox)
 	var hints := CheckButton.new()
 	hints.text = Loc.t("settings.hints")
-	hints.tooltip_text = "A comment line under a console error that says what to try, and a LEARN chip that opens the field manual"
+	hints.tooltip_text = Loc.t("settings.hints.tip")
 	hints.button_pressed = Prefs.learner_hints
 	hints.toggled.connect(func(on: bool) -> void:
 		Prefs.learner_hints = on

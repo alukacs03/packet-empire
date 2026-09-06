@@ -90,8 +90,8 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 		return {"ok": false, "why": "This standard has %d servers and %d nodes; a service standard is one switch and two to four servers." % [host_count, spec["nodes"].size()]}
 	var extra := 0
 	for node: Dictionary in spec["nodes"]:
-		extra += int(Game.MODELS[String(node["model"])].get("watts", 0))
-	if Game.cooling_capacity(rack.site) > 0 and Game.power_draw(rack.site) + extra > Game.cooling_capacity(rack.site):
+		extra += int(Game.WATTS.get(String(node["model"]), 0))  # the draw table, not the catalogue
+	if Game.stage >= 1 and Game.power_draw(rack.site) + extra > Game.cooling_capacity(rack.site):  # in a colo the cooling is theirs
 		return {"ok": false, "why": "This floor cannot cool another %d W: %d W drawn against %d W of cooling. Add cooling first." % [extra, Game.power_draw(rack.site), Game.cooling_capacity(rack.site)]}
 	var endpoints: Array = []
 	if spec.get("cables", []).size() != host_count:

@@ -456,6 +456,7 @@ func _refresh_hud_layout(width_override := -1.0) -> void:
 	_refresh_money()
 
 func hud_toast(text: String, good := false) -> void:
+	text = Loc.tidy_plurals(text)
 	## a short message on the HUD, for actions that would otherwise fail silently
 	Sfx.play("good" if good else "bad")
 	if hud_msg == null:
@@ -650,6 +651,7 @@ func _flat_sb(bg: Color, border: Color, radius := 0, margin := 8) -> StyleBoxFla
 	return style
 
 func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 560.0) -> Label:
+	text = Loc.tidy_plurals(text)
 	## a label that wraps instead of pushing its container sideways
 	var l := _label(text, size, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -665,6 +667,7 @@ func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 
 	return l
 
 func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
+	text = Loc.tidy_plurals(text)
 	var l := UIW.make_text(text)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
@@ -2166,7 +2169,7 @@ const OPS_TABS := [
 	["Automation", ["PLAYBOOKS", "CERTIFICATES", "RUNBOOKS AND AUTOMATION", "STANDING DUTIES"]],
 	["Records", ["DOCUMENTATION", "AUDIT READINESS", "RENEWALS CALENDAR", "UNREACHABLE",
 		"WHAT YOU WROTE ABOUT THESE"]],
-	["Company", ["THIS QUARTER'S TARGETS", "HOW THE PLACE IS TRENDING", "WHAT KIND OF COMPANY THIS IS", "DECISIONS",
+	["Board", ["THIS QUARTER'S TARGETS", "HOW THE PLACE IS TRENDING", "WHAT KIND OF COMPANY THIS IS", "DECISIONS",
 		"A VISIT IS BOOKED",
 		"HOW THIS RUN ENDED", "RUNS BEFORE THIS ONE"]],
 ]
@@ -6439,7 +6442,7 @@ func _refresh_contracts() -> void:
 		cv.add_child(btn)
 	if not found_active:
 		contracts_box.add_child(_wrap("The demo arc is finished. The full game carries on from here."
-			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter, under Operations in its Company tab. The floor, the customers and the rivals carry on.",
+			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter, under Operations in its Board tab. The floor, the customers and the rivals carry on.",
 			14, Color(0.7, 0.85, 0.75), 640))
 
 # ---------- refresh / CLI ----------
