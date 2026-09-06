@@ -2591,6 +2591,24 @@ static func run() -> int:
 	Game.topology_changed.emit()
 	check(Sim.ping(vrf_h, "10.70.1.1")["ok"], "vrf: the gateway in the host's own VRF answers")
 	check(not Sim.ping(vrf_h, "10.70.2.1")["ok"], "vrf: an address that lives in another VRF is not answered")
+	# --- the source address follows the connected route ---
+	var src_a := Game.new_device("srv-1")
+	var src_b := Game.new_device("srv-1")
+	Game.connect_ifaces(src_a.ifaces[0], src_b.ifaces[0])
+	Game.add_ip(src_a.ifaces[0], "10.9.0.1/24")
+	Game.add_ip(src_a.ifaces[0], "10.8.0.1/24")
+	Game.add_ip(src_b.ifaces[0], "10.8.0.9/24")  # no route back to 10.9.0.0/24: a wrong source gets no reply
+	check(Sim.ping(src_a, "10.8.0.9")["ok"], "src: a host with two addresses on one port sends from the one in the target's subnet")
+	var src_s := CLI.new_session(src_a)
+	check(src_s.exec("ip adr").contains("Object \"adr\" is unknown"), "Linux: ip adr is not a prefix of address")
+	check(src_s.exec("ping -I 10.9.0.1 -c 1 10.8.0.9").contains("100% packet loss") or src_s.exec("ping -I 10.9.0.1 -c 1 10.8.0.9").contains("0 received"),
+		"Linux: ping -I with the wrong address gets no reply, which is the point of -I")
+	check(src_s.exec("ping -I 10.99.0.1 -c 1 10.8.0.9").contains("Cannot assign requested address"), "Linux: ping -I with an address the host does not own is refused")
+	Game.add_static_route(src_b, "0.0.0.0", 0, "10.8.0.1")
+	check(Game.is_gateway_of(src_b, "10.8.0.1") and not Game.is_gateway_of(src_b, "10.77.0.1"), "security: a host's own gateway is not a management breach")
+	Game.night_call = {"reason": "test", "cycle": Game.cycle}
+	Game.answer_night_call(false)
+	check(int(Game.stats.get("phone_quiet_until", 0)) > Game.cycle, "phone: an honest no keeps the phone quiet until morning")
 
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")
@@ -4751,6 +4769,7 @@ static func run() -> int:
 		"night call: an empty floor with something live rings the phone, and says what it is")
 	check(Game.answer_night_call(false) == "" and Game.night_call.is_empty(),
 		"night call: letting it wait costs nothing and clears the call")
+	Game.stats["phone_quiet_until"] = -1  # a new night: the morning came and went
 	Game.night_call_tick()
 	var nc_money := Game.money
 	check(Game.answer_night_call(true) == "" and Game.money < nc_money \

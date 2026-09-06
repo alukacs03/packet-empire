@@ -929,6 +929,8 @@ func _ip_cmd(args: Array) -> String:
 	var obj := String(args[0])
 	var rest: Array = args.slice(1)
 	if obj.begins_with("a") and not obj.begins_with("addrl"):
+		if not "address".begins_with(obj):
+			return "Object \"%s\" is unknown, try \"ip help\".\n" % obj
 		return _ip_addr(rest, family, brief)
 	if obj.begins_with("l"):
 		return _ip_link(rest, brief, stats)
@@ -1341,6 +1343,7 @@ func _ping(args: Array, force6: bool) -> String:
 	var df := false
 	var v6 := force6
 	var target := ""
+	var src_from := ""
 	var k := 0
 	while k < args.size():
 		var a := String(args[k])
@@ -1355,6 +1358,13 @@ func _ping(args: Array, force6: bool) -> String:
 					if not v.is_valid_int() or int(v) < 0:
 						return "ping: invalid argument: '%s'\n" % v
 					payload = int(v)
+				elif a == "-I":
+					if v.is_valid_ip_address() or Net.is_v6(v):
+						if not Sim._owns_ip_anywhere(dev, v):
+							return "ping: bind icmp socket: Cannot assign requested address\n"
+						src_from = v
+					elif _iface(v) == null:
+						return "ping: unknown iface: %s\n" % v
 				elif a == "-M":
 					if v not in ["do", "dont", "want", "probe"]:
 						return "ping: invalid -M argument: %s\n" % v
@@ -1394,7 +1404,9 @@ func _ping(args: Array, force6: bool) -> String:
 	var rtts: Array = []
 	var run_id := Sim.next_echo_id()
 	for seq in count:
+		Sim.src_override = src_from
 		var r := Sim.ping(dev, ip, 64, "", reply_bytes, run_id, seq + 1)
+		Sim.src_override = ""
 		var detail := String(r.get("detail", ""))
 		var frag_line := ""
 		if not bool(r["ok"]) and detail.begins_with("dropped:"):
@@ -2157,8 +2169,9 @@ func _nslookup(args: Array) -> String:
 		if nm == "":
 			return head + "** server can't find %s: NXDOMAIN\n" % arpa
 		return head + "%s\tname = %s.\n" % [arpa, nm]
-	var v4 := Sim.resolve(dev, name) if qtype != "AAAA" else ""
-	var v6 := Sim.resolve(dev, name, true, true) if qtype != "A" else ""
+	# nslookup asks the server every time; the stub cache is the resolver's business
+	var v4 := Sim.resolve(dev, name, false) if qtype != "AAAA" else ""
+	var v6 := Sim.resolve(dev, name, false, true) if qtype != "A" else ""
 	if v4 == "" and v6 == "":
 		return head + "** server can't find %s: NXDOMAIN\n" % name
 	var out := head + ("" if _authoritative(name) else "Non-authoritative answer:\n")

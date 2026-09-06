@@ -4102,7 +4102,7 @@ var tutorial_hidden := false
 
 func _next_job() -> Dictionary:
 	for c in Contracts.all():
-		if c["id"] not in Game.contracts_done:
+		if c["id"] not in Game.contracts_done and not Contracts.retired(c["id"]):
 			return c
 	return {}
 

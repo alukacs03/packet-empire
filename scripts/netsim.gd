@@ -1140,7 +1140,9 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary,
 	if rt.get("next_hop", "") == "null0":
 		return "blackholed by a discard route"
 	var out: Net.Iface = rt["iface"]
-	var src_ip := _first_ip(out, Net.is_v6(dst_ip))
+	var src_ip := _src_on(out, String(rt["next_hop"]), Net.is_v6(dst_ip))
+	if src_override != "" and _owns_ip_anywhere(dev, src_override):
+		src_ip = src_override  # ping -I: the address the operator asked for
 	var mac := _arp_resolve(dev, out, rt["next_hop"])
 	if mac == "":
 		return "host unreachable (no ARP reply for %s)" % rt["next_hop"]
@@ -1444,6 +1446,19 @@ static func _learn_neighbour(dev: Net.NDevice, key: String, mac: String) -> void
 	dev.arp[key] = mac
 	dev.arp_seen[key] = Game.cycle
 	_arp_pending.erase("%s|%s" % [dev.name, key])
+
+static var src_override := ""  # ping -I <address>: honoured for one probe when the host owns it
+
+static func _src_on(iface: Net.Iface, next_hop: String, v6 := false) -> String:
+	## the source address: the one on the egress port whose subnet holds the
+	## next hop (the connected route), else the first of that family
+	for cidr: String in iface.ips:
+		if Net.is_v6(cidr) != v6:
+			continue
+		var bits := cidr.split("/")
+		if Net.same_net(next_hop, bits[0], int(bits[1])):
+			return bits[0]
+	return _first_ip(iface, v6)
 
 static func _first_ip(iface: Net.Iface, v6 := false) -> String:
 	for cidr: String in iface.ips:

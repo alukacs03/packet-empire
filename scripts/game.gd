@@ -2032,8 +2032,8 @@ func night_call_tick() -> void:
 		if not callout_ready():
 			night_call = {}
 		return
-	if not callout_ready():
-		return
+	if not callout_ready() or cycle < int(stats.get("phone_quiet_until", -1)):
+		return  # "it waits until morning" means the phone stays quiet until morning
 	var reason := ""
 	if customer_outage_active:
 		reason = "a customer of yours is off the air and there is nobody in the building"
@@ -2057,6 +2057,7 @@ func answer_night_call(get_them_in: bool) -> String:
 		return "nobody is on the phone"
 	if not get_them_in:
 		night_call = {}
+		stats["phone_quiet_until"] = cycle + 4
 		log_event("THE PHONE: you said it waits until morning. Whatever it does overnight, it does.")
 		return ""
 	var err := call_someone_out()
@@ -2469,11 +2470,20 @@ func walk_to_device(d: Net.NDevice) -> String:
 		% [label.capitalize(), d.name, "" if cost == 0 else "  That cost $%d." % cost])
 	return ""
 
+func is_gateway_of(host: Net.NDevice, ip: String) -> bool:
+	## the address is a next hop the host routes through (its gateway)
+	for r in host.static_routes:
+		if String(r.get("via", "")) == ip:
+			return true
+	return false
+
 func lockout_tick() -> void:
 	# reachability is expensive to compute, and a lockout is not urgent news
 	if cycle % 4 != 0:
 		return
 	for d: Net.NDevice in all_devices():
+		if d.type == "server":
+			continue  # a tenant host you cannot reach is isolation working, not a lockout
 		var pending: Dictionary = confirm_commits.get(d.name, {})
 		if not pending.is_empty() and cycle >= int(pending["due"]):
 			confirm_commits.erase(d.name)
@@ -7001,6 +7011,8 @@ func _security_sweep() -> int:
 				if i.name == "lo" or i.ips.is_empty():
 					continue
 				var mgmt_ip: String = i.ips[0].split("/")[0]
+				if is_gateway_of(srv, mgmt_ip):
+					continue  # a host reaching its own gateway is the service working, not a breach
 				if Sim.ping(srv, mgmt_ip)["ok"]:
 					incidents_seen[key] = true
 					cost += 100
