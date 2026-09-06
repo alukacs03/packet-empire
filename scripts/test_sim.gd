@@ -11939,6 +11939,21 @@ static func run() -> int:
 	check(Staff.give_raise(t37_m, 30) == "" and int(t37_m["morale"]) == 52 and Staff.give_raise(t37_m, 30) == "" and int(t37_m["morale"]) == 52, "staff: the second raise in a quarter buys no morale")
 	Game.staff.erase(t37_m)
 	check(not bool(Game.quarter_goal_progress({"id": "uptime", "target": 95})["met"]) or int(Game.stats.get("deal_cycles", 0)) > 0 or not Game.deals.is_empty(), "board: an uptime target with nobody served is not met")
+	# the green tariff is a bill, a dead rival's offer is withdrawn, the streams reseed
+	var t38_rate := Game.energy_rate()
+	var t38_marketing := Game.marketing
+	Game._apply_decision("green_yes")
+	check(Game.marketing == t38_marketing and Game.energy_rate() > t38_rate * 1.1, "decision: the green tariff raises the power rate and leaves marketing alone")
+	Game.stats.erase("green_tariff")
+	Game.rivals.append({"name": "Gone Ltd", "cash": 0, "deals": 0, "capacity": 0, "racks": [], "bought": true})
+	Game.buyout_offer = {"rival": "Gone Ltd", "price": 1000, "ttl": 3}
+	Game.withdraw_dead_offers()
+	check(Game.buyout_offer.is_empty(), "rivals: an offer from a rival that no longer trades is withdrawn")
+	Game.rivals = Game.rivals.filter(func(r): return String(r["name"]) != "Gone Ltd")
+	Game.reseed_business_streams()
+	var t38_a := Game.biz_roll()
+	Game.reseed_business_streams()
+	check(is_equal_approx(Game.biz_roll(), t38_a), "rng: the business stream replays from the company and the cycle")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

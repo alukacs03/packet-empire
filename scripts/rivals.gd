@@ -267,6 +267,11 @@ static func _maybe_consolidate() -> void:
 		buyer["racks"].append(rack)
 	prey["bought"] = true
 	prey["merged_into"] = buyer["name"]
+	if has_site(prey):
+		if not has_site(buyer):
+			buyer["site"] = prey["site"]  # the premises come with the company
+		else:
+			Game.log_event("MARKET: %s closed the %s; two buildings were one too many." % [buyer["name"], prey["site"]["name"]])
 	Game.log_event("MARKET: %s acquired %s. The field is getting smaller."
 		% [buyer["name"], prey["name"]])
 

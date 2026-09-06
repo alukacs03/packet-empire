@@ -3573,7 +3573,7 @@ func _apply_decision(effect: String) -> bool:
 		"intern_no":
 			pass
 		"green_yes":
-			marketing += 40
+			stats["green_tariff"] = 1  # the dearer tariff: the power bill carries it, not the marketing slider
 			reputation = mini(100, reputation + 3)
 			schedule_consequence(12, "reputation", "customers who asked about the tariff signed", {"amount": 3})
 		"green_no":
@@ -6405,10 +6405,29 @@ func _ready() -> void:
 	_ensure_sites()
 	_pristine = _serialize()  # a snapshot of an untouched game, for New Game
 
+func reseed_business_streams() -> void:
+	## the hiring, decision and rival streams start from this company and
+	## cycle, so a seeded run and a loaded save replay the same
+	_biz_rng.seed = hash("%s|%d|biz" % [company_name, cycle])
+	_biz_ready = true
+	Rivals._rng.seed = hash("%s|%d|rivals" % [company_name, cycle])
+	Rivals._rng_ready = true
+
+func withdraw_dead_offers() -> void:
+	## an approach from a rival that was absorbed this cycle is off the table
+	if buyout_offer.is_empty():
+		return
+	for r in rivals:
+		if String(r["name"]) == String(buyout_offer["rival"]) and not Rivals.alive(r):
+			log_event(Loc.t("log.approach_withdrawn") % buyout_offer["rival"])
+			buyout_offer = {}
+			return
+
 func reset_run_state() -> void:
 	## per-run state that is never carried over: without this a second company
 	## inherits the first one's totals, its breach flags and its ticket numbers
 	stats = {"earned": 0, "incidents": 0, "faults": 0, "contracts": 0, "deals": 0}
+	reseed_business_streams()
 	sla_status = {}
 	digest = {}
 	lockout_state = {}
@@ -8543,7 +8562,8 @@ func energy_rate() -> float:
 	## the flat contract is priced above the average of the spot curve, which
 	## is what you pay for not having to think about it
 	var green := 0.75 if identity_is("green") else 1.0
-	return ENERGY_BASE * (FIXED_PREMIUM if fixed_tariff else energy_multiplier()) * green
+	var certified := 1.15 if int(stats.get("green_tariff", 0)) > 0 else 1.0  # the certificate customers can see costs fifteen percent
+	return ENERGY_BASE * (FIXED_PREMIUM if fixed_tariff else energy_multiplier()) * green * certified
 
 func efficiency_factor() -> float:
 	return maxf(0.55, 1.0 - EFFICIENCY_STEP * float(efficiency))
@@ -9293,6 +9313,7 @@ func sla_tick() -> void:
 					topology_changed.emit()
 					break
 	Rivals.tick()
+	withdraw_dead_offers()
 	if not buyout_offer.is_empty():
 		buyout_offer["ttl"] = int(buyout_offer["ttl"]) - 1
 		if int(buyout_offer["ttl"]) <= 0:
@@ -10326,6 +10347,7 @@ func load_slot(i: int) -> bool:
 		return false
 	current_slot = i
 	_apply(data)
+	reseed_business_streams()  # a loaded company draws from its own stream, not whatever the process used up
 	in_world = true
 	return true
 
