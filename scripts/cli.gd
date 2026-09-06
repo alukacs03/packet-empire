@@ -374,6 +374,7 @@ class Session:
 # ============================================================== EOS ==
 
 class EOS extends Session:
+	var awaiting_secret := false  # 'enable' asked for the password; the next line is it
 	var session_name := ""  # configure session NAME: pending until commit or abort
 	var session_base_cfg := {}  # what was running when the session opened (abort restores it)
 	var session_base_text := ""  # the running-config text then (diffs are against it)
@@ -475,7 +476,12 @@ class EOS extends Session:
 	func _build_cmds() -> void:
 		var EP := ["exec", "priv", "config", "if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"]  # show/ping work everywhere via 'do'-free shortcut
 		_cmds = [
-			{"m": ["exec"], "p": ["enable"], "h": func(_r): mode = "priv"; return ""},
+			{"m": ["exec"], "p": ["enable"], "h": func(_r):
+				if String(dev.services.get("enable_secret", "")) != "":
+					awaiting_secret = true
+					return "Password: \n"  # the box asks; the next line answers
+				mode = "priv"
+				return ""},
 			{"m": ["config", "if", "vlan", "router", "ospf", "dhcp", "acl", "mlag", "vxlan", "mst", "rmap", "af"], "p": ["enable"], "h": func(_r): return ""},
 			{"m": ["priv"], "p": ["disable"], "h": func(_r): mode = "exec"; return ""},
 			{"m": ["priv"], "p": ["write", "memory"], "h": _write_mem},
@@ -898,8 +904,10 @@ class EOS extends Session:
 			{"m": ["config"], "p": ["no", "errdisable", "recovery"], "h": func(_r): dev.services.erase("errdisable_recovery"); dev.services.erase("errdisable_causes"); return ""},
 			{"m": ["config"], "p": ["management", "ssh"], "h": func(_r): return ""},
 			{"m": ["config"], "p": ["management", "api", "http-commands"], "h": func(_r): return ""},
-			{"m": ["config"], "p": ["enable", "secret"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
-			{"m": ["config"], "p": ["enable", "password"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
+			{"m": ["config"], "p": ["enable", "secret"], "h": _enable_secret},
+			{"m": ["config"], "p": ["enable", "password"], "h": _enable_secret},
+			{"m": ["config"], "p": ["no", "enable", "secret"], "h": func(_r): dev.services.erase("enable_secret"); return ""},
+			{"m": ["config"], "p": ["no", "enable", "password"], "h": func(_r): dev.services.erase("enable_secret"); return ""},
 			{"m": ["config"], "p": ["banner", "motd"], "h": func(r):
 				dev.services["motd"] = " ".join(PackedStringArray(r))
 				return ""},
@@ -1006,6 +1014,12 @@ class EOS extends Session:
 		if pipe > 0:
 			stages = CLI.parse_pipe_stages(line.substr(pipe + 1))
 			line = line.substr(0, pipe).strip_edges()
+		if awaiting_secret:
+			awaiting_secret = false
+			if line.strip_edges().sha256_text() == String(dev.services.get("enable_secret", "")):
+				mode = "priv"
+				return ""
+			return "% Access denied\n"
 		var toks := Array(line.strip_edges().split(" ", false))
 		if toks.is_empty() or String(toks[0]).begins_with("!"):
 			return ""  # a comment line, the way a pasted running-config carries them
@@ -1610,6 +1624,20 @@ class EOS extends Session:
 				out += "  RPKI origin validation: enabled\n"
 			out += "  Hold time is 180, keepalive interval is 60 seconds\n\n"
 		return out
+
+	func _enable_secret(r: Array) -> String:
+		## enable secret <word>, or the hashed form the running-config prints back: enable secret sha512 <hash>
+		if r.is_empty():
+			return "% Incomplete command\n"
+		if r.size() == 2 and String(r[0]) in ["sha512", "5"]:
+			dev.services["enable_secret"] = String(r[1])  # already a hash: a pasted config
+			return ""
+		if r.size() == 2 and String(r[0]) == "0":
+			r = [r[1]]  # type 0 is the clear-text spelling
+		if r.size() != 1:
+			return "% Invalid input\n"
+		dev.services["enable_secret"] = String(r[0]).sha256_text()  # only the hash is kept, as on the box
+		return ""
 
 	func _configure_session(r: Array) -> String:
 		## a configuration session: the changes are made live in this world,
@@ -4565,6 +4593,8 @@ class EOS extends Session:
 			out += "clock timezone %s\n!\n" % dev.services["timezone"]
 		if String(dev.services.get("motd", "")) != "":
 			out += "banner motd\n%s\nEOF\n!\n" % dev.services["motd"]
+		if String(dev.services.get("enable_secret", "")) != "":
+			out += "enable secret sha512 %s\n!\n" % dev.services["enable_secret"]
 		if dev.services.has("dot1x_global"):
 			out += "%sdot1x system-auth-control\n!\n" % ("" if bool(dev.services["dot1x_global"]) else "no ")
 		if bool(dev.services.get("errdisable_recovery", false)):
@@ -4813,7 +4843,11 @@ class EOS extends Session:
 		if not pool.is_empty() and String(pool.get("iface", "")) == "" and String(pool.get("start", "")) != "":
 			# the EOS block, whichever spelling built it
 			var pnet := Net.network_of("%s/%d" % [pool["start"], int(pool["plen"])])
-			out += "dhcp server\n   subnet %s/%d\n      range %s %s\n" % [pnet["prefix"], int(pool["plen"]), pool["start"], pool["end"]]
+			out += "dhcp server\n"
+			if pool.has("lease_cycles") or dev.services.has("dhcp_lease"):
+				var minutes := int(pool.get("lease_cycles", dev.services.get("dhcp_lease", 24))) * 5
+				out += "   lease time %d %d %d\n" % [minutes / 1440, (minutes / 60) % 24, minutes % 60]
+			out += "   subnet %s/%d\n      range %s %s\n" % [pnet["prefix"], int(pool["plen"]), pool["start"], pool["end"]]
 			if String(pool.get("gw", "")) != "":
 				out += "      default-gateway %s\n" % pool["gw"]
 			if String(pool.get("dns", "")) != "":

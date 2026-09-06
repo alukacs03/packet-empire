@@ -1465,6 +1465,10 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary,
 	var src_ip := _src_on(out, String(rt["next_hop"]), Net.is_v6(dst_ip))
 	if src_override != "" and _owns_ip_anywhere(dev, src_override):
 		src_ip = src_override  # ping -I: the address the operator asked for
+	# the firewall's output chain: what this box itself sends, judged on the way out
+	var out_list := String(dev.services.get("acl_groups", {}).get(out.name + "|output", ""))
+	if out_list != "" and not _acl_permits_list(dev, _acl_rules_of(dev, out_list), {"src_ip": src_ip, "dst_ip": dst_ip, "l4": l4}):
+		return "dropped by the output chain"
 	var mac := _arp_resolve(dev, out, rt["next_hop"])
 	if mac == "":
 		return "host unreachable (no ARP reply for %s)" % rt["next_hop"]

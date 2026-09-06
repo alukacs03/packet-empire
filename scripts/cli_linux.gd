@@ -47,7 +47,7 @@ func _fw_apply() -> void:
 	dev.acls = dev.acls.filter(func(rule): return not String(rule.get("list", "")).begins_with("lx-"))
 	var groups: Dictionary = dev.services.get("acl_groups", {})
 	for i: Net.Iface in dev.ifaces:
-		for key in [i.name, i.name + "|input"]:
+		for key in [i.name, i.name + "|input", i.name + "|output"]:
 			if String(groups.get(key, "")).begins_with("lx-"):
 				groups.erase(key)
 	for tname in fw["tables"]:
@@ -59,10 +59,11 @@ func _fw_apply() -> void:
 					if String(rule.get("action", "")) == "masquerade" and _iface(String(rule.get("oif", ""))) != null:
 						_iface(String(rule["oif"])).nat = "outside"
 						nat["rules"].append({"kind": "masquerade", "iface": String(rule["oif"]), "linux": true})
-			elif hook in ["forward", "input"]:
-				# one list per port: the rules that name no -i plus the ones that name this port,
-				# in chain order, then the chain policy as the last word
-				var base := "lx-forward" if hook == "forward" else "lx-input"
+			elif hook in ["forward", "input", "output"]:
+				# one list per port: the rules that name no -i (or -o, for OUTPUT) plus the ones
+				# that name this port, in chain order, then the chain policy as the last word
+				var base := "lx-" + hook
+				var scope_key := "oif" if hook == "output" else "iif"
 				var policy_drop := String(chain.get("policy", "accept")) == "drop"
 				if chain["rules"].is_empty() and not policy_drop:
 					continue  # an empty accept chain is no policy at all
@@ -70,8 +71,8 @@ func _fw_apply() -> void:
 					var list_name := "%s@%s" % [base, i.name]
 					var seq := 10
 					for rule in chain["rules"]:
-						if String(rule.get("iif", "")) != "" and String(rule["iif"]) != i.name:
-							continue  # ponytail: -o is not matched; the egress port is not known on the way in
+						if String(rule.get(scope_key, "")) != "" and String(rule[scope_key]) != i.name:
+							continue  # ponytail: FORWARD matches -i only; the egress port is not known on the way in
 						if String(rule["action"]) not in ["accept", "drop", "reject"]:
 							continue  # LOG, jump, RETURN: non-terminal, the packet walks on
 						var entry := {"action": "permit" if String(rule["action"]) == "accept" else "deny",
@@ -94,7 +95,7 @@ func _fw_apply() -> void:
 						dev.acls.append(entry)
 					# the chain policy is the last word: ACCEPT lets the rest through, DROP is a wall even with no rules
 					dev.acls.append({"action": "permit" if not policy_drop else "deny", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": list_name, "seq": seq})
-					groups[i.name if hook == "forward" else i.name + "|input"] = list_name
+					groups[i.name if hook == "forward" else i.name + "|" + hook] = list_name
 	dev.services["nat"] = nat
 	dev.services["acl_groups"] = groups
 	Game.topology_changed.emit()
@@ -1536,6 +1537,10 @@ func _ping(args: Array, force6: bool) -> String:
 			return "ping: connect: Network is unreachable\n"
 		if detail == "blackholed by a discard route":
 			return "ping: connect: Invalid argument\n" if seq == 0 else out
+		if detail == "dropped by the output chain":
+			errors += 1
+			out += "ping: sendmsg: Operation not permitted\n"  # the OUTPUT chain refused it, as iputils reports
+			continue
 		errors += 1
 		if frag_line != "":
 			out += frag_line

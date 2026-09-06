@@ -2319,10 +2319,10 @@ func _ros_filter_apply() -> void:
 	dev.acls = dev.acls.filter(func(rule): return not String(rule.get("list", "")).begins_with("ros-"))
 	var groups: Dictionary = dev.services.get("acl_groups", {})
 	for i: Net.Iface in dev.ifaces:
-		for key in [i.name, i.name + "|input"]:
+		for key in [i.name, i.name + "|input", i.name + "|output"]:
 			if String(groups.get(key, "")).begins_with("ros-"):
 				groups.erase(key)
-	for chain in ["forward", "input"]:
+	for chain in ["forward", "input", "output"]:
 		var rules: Array = dev.services.get("ros_filter", []).filter(func(r): return String(r["chain"]) == chain and String(r.get("disabled", "no")) != "yes")
 		if rules.is_empty():
 			continue
@@ -2332,7 +2332,8 @@ func _ros_filter_apply() -> void:
 			var list_name := "ros-%s@%s" % [chain, i.name]
 			var seq := 10
 			for rule in rules:
-				if String(rule.get("in-interface", "")) != "" and String(rule["in-interface"]) != i.name and String(rule["in-interface"]) != _dname(i):
+				var scope_key := "out-interface" if chain == "output" else "in-interface"
+				if String(rule.get(scope_key, "")) != "" and String(rule[scope_key]) != i.name and String(rule[scope_key]) != _dname(i):
 					continue
 				if String(rule["action"]) in ["log", "jump", "return", "passthrough", "add-src-to-address-list", "add-dst-to-address-list"]:
 					continue  # non-terminal: the packet walks on to the next rule
@@ -2355,7 +2356,7 @@ func _ros_filter_apply() -> void:
 					entry["established"] = true
 				dev.acls.append(entry)
 			dev.acls.append({"action": "permit", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0, "list": list_name, "seq": seq})
-			groups[i.name if chain == "forward" else i.name + "|input"] = list_name
+			groups[i.name if chain == "forward" else i.name + "|" + chain] = list_name
 	dev.services["acl_groups"] = groups
 	Game.topology_changed.emit()
 
