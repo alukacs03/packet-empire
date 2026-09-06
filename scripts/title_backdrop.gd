@@ -26,7 +26,7 @@ func _ready() -> void:
 				"phase": rng.randf() * TAU, "hue": rng.randf()})
 
 func _process(dt: float) -> void:
-	t += dt
+	if not Prefs.reduced_motion: t += dt
 	queue_redraw()
 
 func _draw() -> void:
@@ -36,11 +36,10 @@ func _draw() -> void:
 	for band in 24:
 		var f := float(band) / 23.0
 		draw_rect(Rect2(vp.x * f * 0.55, 0, vp.x * 0.55 / 23.0 + 2, vp.y),
-			Color(0.02, 0.065, 0.12, 0.72 * (1.0 - f)))
+			Color(0.025, 0.045, 0.045, 0.92 * (1.0 - f)))
 	# Live packet sparks bind the key art to the simulated world.
 	for lane in 3:
 		var a := Vector2(vp.x * 0.55, vp.y * (0.63 + lane * 0.07))
 		var b := Vector2(vp.x * 0.88, vp.y * (0.50 + lane * 0.04))
 		var p := a.lerp(b, fmod(t * (0.08 + lane * 0.02) + lane * 0.27, 1.0))
 		draw_circle(p, 3.0, Color(UIW.colour("accent"), 0.80))
-

@@ -1130,6 +1130,7 @@ func change_tick() -> void:
 	maintenance_until = cycle
 
 func maybe_window_job() -> void:
+	if FirstCustomer.protected_time(): return
 	## A job that can only be delivered inside a window, and is genuinely tight.
 	for deal in deals:
 		if deal.has("window_job") or not bool(deal.get("healthy", false)):
@@ -1944,6 +1945,7 @@ func repair_grey(i: Net.Iface, action: String) -> String:
 	return ""
 
 func _maybe_grey_fault() -> void:
+	if FirstCustomer.protected_time(): return
 	## Aging hardware, a third-party optic, an improvised patch lead. Never
 	## announced, and never red.
 	# a fault like this belongs to an estate with some age on it
@@ -3420,6 +3422,7 @@ func decision_by_id(id: String) -> Dictionary:
 	return {}
 
 func maybe_offer_decision() -> void:
+	if FirstCustomer.protected_time(): return
 	if decisions.size() >= 2 or cycle < 12 or biz_roll() > 0.08:
 		return
 	var pool: Array = []
@@ -3918,6 +3921,7 @@ func tour_score(kind: String) -> float:
 	return clampf(total + float(tour.get("crammed", 0.0)), 0.0, 1.0)
 
 func maybe_schedule_tour() -> void:
+	if FirstCustomer.protected_time(): return
 	if not tour.is_empty() or deals.is_empty() or cycle < 30 or biz_roll() > 0.03:
 		return
 	var kinds: Array = TOUR_KINDS.keys()
@@ -4808,6 +4812,8 @@ func peak_multiplier(deal: Dictionary) -> float:
 	return float(event.get("multiplier", 1.0)) if int(event.get("cycle", -1)) == cycle else 1.0
 
 func maybe_announce_peak() -> void:
+	if FirstCustomer.protected_time():
+		return
 	## The night they have been planning for. Announced in advance, on purpose:
 	## the content is the preparation, not the surprise.
 	for deal in deals:
@@ -6381,6 +6387,7 @@ func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	_apply(_pristine.duplicate(true))
 	company_name = company if company.strip_edges() != "" else "Packet Empire"
 	demo = is_demo
+	stats["customer_arc_version"] = 1
 	apply_difficulty(diff)
 	rivals = Rivals.spawn()
 	_scale_rival_aggression()
@@ -7116,6 +7123,7 @@ func contract_fee(c: Dictionary) -> int:
 	return clampi(int(c["reward"]) / 10, 40, 120)
 
 func customer_growth(deal: Dictionary) -> void:
+	if FirstCustomer.protected_time() and bool(deal.get("guided", false)): return
 	## a startup that survives outgrows its contract, in fee and in traffic,
 	## up to a ceiling: nobody pays three times what they signed for forever
 	if deal.get("ctype", "") != "startup" or randf() >= 0.06:
@@ -7274,25 +7282,26 @@ func guided_outage_probe(layer: String) -> String:
 	if layer not in order:
 		return "that evidence layer is not part of this incident"
 	var evidence: Array = guided_outage.get("evidence", [])
-	var idx := order.find(layer)
-	if idx > evidence.size():
-		return "follow the evidence in order"
 	if layer in evidence:
 		return ""
 	var iface := guided_outage_iface()
+	if iface == null:
+		return "The original port is no longer installed. Inspect the current service path."
 	match layer:
 		"monitor":
 			_guided_outage_note("cycle %d · monitor confirms %s is unreachable from %s" % [cycle,
 				guided_outage.get("target_ip", "the service"),
 				guided_outage.get("monitor_from", "the network")])
 		"physical":
-			_guided_outage_note("cycle %d · physical cable is seated at both ends" % cycle)
+			_guided_outage_note("cycle %d · physical check: %s" % [cycle,
+				"cable seated at both ends" if link_at(iface) != null else "no cable attached to this port"])
 		"l2":
-			_guided_outage_note("cycle %d · L2 evidence: %s %s is administratively down" % [cycle,
-				guided_outage.get("device", "device"), guided_outage.get("iface", "port")])
-			guided_outage["state"] = "diagnosed"
-			guided_outage["diagnosis"] = "access port administratively down"
-			guided_outage["downstream_clear"] = iface != null and not iface.enabled
+			_guided_outage_note("cycle %d · L2 evidence: %s %s is %s" % [cycle,
+				iface.dev.name, iface.name, "administratively down" if iface.admin_down else "enabled" if iface.enabled else "not forwarding"])
+			if iface.admin_down:
+				guided_outage["state"] = "diagnosed"
+				guided_outage["diagnosis"] = "access port administratively down"
+			guided_outage["downstream_clear"] = iface.admin_down and link_at(iface) != null
 	evidence.append(layer)
 	guided_outage["evidence"] = evidence
 	if String(guided_outage.get("state", "")) != "diagnosed":
@@ -7374,7 +7383,7 @@ func advance_kiskacsa_arc(deal: Dictionary) -> void:
 		return
 	arc["beat"] = "payoff"
 	arc["payoff_cycle"] = cycle
-	var trusted := bool(arc.get("communicated", false)) and not bool(arc.get("assisted", false))
+	var trusted := bool(arc.get("communicated", false))
 	if trusted:
 		arc["outcome"] = "trusted"
 		if "Kiskacsa Kft" not in references:
@@ -7393,7 +7402,7 @@ func advance_kiskacsa_arc(deal: Dictionary) -> void:
 		deal["fee"] = maxi(1, int(round(float(int(deal["fee"])) * 0.9)))
 		deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.75)) - 0.2)
 		deal["term"] = mini(int(deal.get("term", 18)), 10)
-		log_event("RELATIONSHIP: Kiskacsa stayed after five healthy cycles, but the assisted restore left them cautious: ten percent less fee and no referral.")
+		log_event("RELATIONSHIP: Kiskacsa stayed after five healthy cycles, but the missing customer update left them cautious: ten percent less fee and no referral.")
 	customer_arcs["kiskacsa"] = arc
 	topology_changed.emit()
 
@@ -8029,7 +8038,7 @@ func _attack_tick() -> void:
 		if int(a["cycles_left"]) <= 0:
 			attacks.erase(a)
 			log_event("ATTACK over: the flood against %s has stopped." % a["target"])
-	if stage < 1 or deals.is_empty() or attacks.size() >= 2 or randf() > 0.08:
+	if FirstCustomer.protected_time() or stage < 1 or deals.is_empty() or attacks.size() >= 2 or randf() > 0.08:
 		return
 	var victim: Dictionary = deals[randi() % deals.size()]
 	var ip: String = victim["params"].get("ip", "")
@@ -8120,19 +8129,21 @@ var leads: Array = []
 
 func lead_tick() -> void:
 	for l in leads.duplicate():
+		if bool(l.get("guided", false)) and FirstCustomer.protected_time(): continue
 		l["ttl"] = int(l["ttl"]) - 1
 		if int(l["ttl"]) <= 0:
 			leads.erase(l)
 			log_event("PIPELINE: %s went quiet. Somebody else got there first." % l["customer"])
 	# The first pipeline lead is a named teaching story; once it has appeared,
 	# the normal uncertain word-of-mouth market takes over permanently.
-	if contracts_done.size() >= 3 and not bool(stats.get("guided_first_lead_seen", false)) \
+	if (contracts_done.size() >= 3 or (FirstCustomer.enabled() and "first_ping" in contracts_done)) and not bool(stats.get("guided_first_lead_seen", false)) \
 			and leads.is_empty() and deals.is_empty():
 		leads.append(Market.guided_first_lead())
 		stats["guided_first_lead_seen"] = true
 		log_event("PIPELINE: Kiskacsa Kft was referred by your first customers. Go and learn what they need.")
 		return
 	# bigger work arrives through people talking, not through a web form
+	if FirstCustomer.protected_time(): return
 	var cap := 2 + int(marketing / MARKETING_STEP) + references.size()
 	if leads.size() < cap and contracts_done.size() >= 3 and biz_roll() < 0.35 * season_work():
 		# one in four of them is somebody who will still be here in fifty
@@ -8268,6 +8279,7 @@ func dispute_kind(id: String) -> Dictionary:
 	return DISPUTE_KINDS[0]
 
 func maybe_dispute() -> void:
+	if FirstCustomer.protected_time(): return
 	## The customer who argues. Being right does not prevent the outage: what
 	## the player controls is who is holding the paperwork afterwards.
 	for deal in deals:
@@ -9337,11 +9349,12 @@ func sla_tick() -> void:
 		else:
 			deal["payment_state"] = "waiting"
 		if deal["healthy"]:
-			var used := _deal_path_links(deal)
+			var used := FirstCustomer.path(deal)
 			deal_links[deal["id"]] = used
 			# traffic follows the working day: quiet at night, heaviest at noon
 			var load := int(round(float(int(deal.get("load", 200))) * day_factor()
 				* peak_multiplier(deal)))
+			load = FirstCustomer.demand(deal, load)
 			var atk := attack_on(deal["params"].get("ip", ""))
 			if not atk.is_empty() and not scrubbing and not attack_blackholed(atk):
 				load += int(atk["mbps"])  # the flood rides the same path
@@ -9455,6 +9468,7 @@ func sla_tick() -> void:
 		reputation = mini(100, reputation + 1)
 	for deal_peak in deals:
 		peak_tick(deal_peak)  # the night they warned you about, judged on live delivery
+	FirstCustomer.tick()
 	_update_reliability_streak(customer_outage_now)
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
@@ -9465,7 +9479,7 @@ func sla_tick() -> void:
 			offers.erase(offer)
 	var offer_cap := 2 + int(marketing / MARKETING_STEP)
 	var offer_chance := 0.7 + 0.06 * float(marketing) / float(MARKETING_STEP)
-	if offers.size() < offer_cap and contracts_done.size() >= 2 and randf() < offer_chance:
+	if not FirstCustomer.protected_time() and offers.size() < offer_cap and contracts_done.size() >= 2 and randf() < offer_chance:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
 	# transit is billed on the 95th percentile of what you burst to, so the
 	# sample has to be taken after this cycle's link loads are known

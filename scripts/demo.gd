@@ -36,7 +36,7 @@ static func step() -> int:
 	return done
 
 static func complete() -> bool:
-	return active() and step() >= ARC.size()
+	return active() and step() >= ARC.size() and (not FirstCustomer.enabled() or FirstCustomer.complete())
 
 static func progress_text() -> String:
 	return "Demo  %d/%d" % [step(), ARC.size()]

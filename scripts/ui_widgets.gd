@@ -3,22 +3,22 @@ class_name UIW
 ## consume the named tokens and helpers here rather than copy colours/styles.
 
 const COLORS := {
-	"accent": Color("39d9d0"),
-	"accent_soft": Color("174c5c"),
-	"warm": Color("ffb45c"),
-	"backdrop": Color(0.025, 0.055, 0.10, 0.76),
-	"overlay": Color("13233b"),
-	"surface": Color("192b47"),
-	"surface_raised": Color("223957"),
-	"surface_hover": Color("2b4969"),
-	"console": Color("0b1728"),
-	"border": Color("395a76"),
-	"border_strong": Color("5683a0"),
-	"focus": Color("8ff8f0"),
-	"text": Color("d9e8f2"),
-	"text_strong": Color("fff7e8"),
-	"muted": Color("8da7ba"),
-	"subtle": Color("66869d"),
+	"accent": Color("94ddc2"),
+	"accent_soft": Color("29473e"),
+	"warm": Color("eac895"),
+	"backdrop": Color(0.025, 0.035, 0.04, 0.28),
+	"overlay": Color("182125"),
+	"surface": Color("202c30"),
+	"surface_raised": Color("2b383d"),
+	"surface_hover": Color("35464a"),
+	"console": Color("10191d"),
+	"border": Color("35464b"),
+	"border_strong": Color("586e72"),
+	"focus": Color("baffde"),
+	"text": Color("dce6e3"),
+	"text_strong": Color("f5f3ea"),
+	"muted": Color("a1b4b3"),
+	"subtle": Color("859b9d"),
 	"success": Color("69e39a"),
 	"warning": Color("ffb45c"),
 	"danger": Color("ff6f68"),
@@ -26,9 +26,9 @@ const COLORS := {
 }
 
 const SPACING := {"xs": 4, "sm": 8, "md": 16, "lg": 24, "xl": 36}
-const TYPE_SCALE := {"caption": 11, "small": 12, "body": 14, "body_large": 15,
-	"heading": 17, "title": 20, "display": 28}
-const RADII := {"sm": 4, "md": 7, "lg": 11}
+const TYPE_SCALE := {"caption": 12, "small": 13, "body": 15, "body_large": 17,
+	"heading": 18, "title": 24, "display": 36}
+const RADII := {"sm": 5, "md": 8, "lg": 14}
 
 static func colour(token: String) -> Color:
 	## the status pair follows the colourblind setting everywhere it is used
@@ -69,9 +69,9 @@ static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
 			edge = colour("border_strong")
 			rounding = radius("lg")
 		"hud":
-			bg = Color(0.055, 0.105, 0.175, 0.97)
-			edge = Color(colour("accent"), 0.62)
-			rounding = 0
+			bg = colour("console")
+			edge = colour("border")
+			rounding = radius("md")
 		"console":
 			bg = colour("console")
 			edge = Color(colour("border_strong"), 0.8)
@@ -89,10 +89,6 @@ static func panel_box(variant := "surface", padding := "md") -> StyleBoxFlat:
 		style.shadow_color = Color(0.01, 0.025, 0.06, 0.38)
 		style.shadow_size = 6
 		style.shadow_offset = Vector2(0, 4)
-	# Cards use a clipped technical silhouette and a stronger leading rail.
-	style.corner_radius_top_right = 2
-	style.corner_radius_bottom_left = 2
-	style.border_width_left = 3
 	return style
 
 static func style_panel(panel: PanelContainer, variant := "surface", padding := "md") -> PanelContainer:
@@ -102,13 +98,13 @@ static func style_panel(panel: PanelContainer, variant := "surface", padding := 
 static func _button_palette(variant: String) -> Dictionary:
 	match variant:
 		"primary":
-			return {"base": Color("176775"), "edge": colour("accent"),
-				"text": colour("text_strong")}
+			return {"base": colour("accent"), "edge": colour("accent"),
+				"text": colour("console")}
 		"danger":
 			return {"base": Color("6a2932"), "edge": Color(colour("danger"), 0.9),
 				"text": Color(1.0, 0.82, 0.80)}
 		"quiet":
-			return {"base": Color(0.07, 0.13, 0.22, 0.80), "edge": Color(colour("border"), 0.85),
+			return {"base": colour("overlay"), "edge": Color.TRANSPARENT,
 				"text": colour("text")}
 	return {"base": colour("surface_raised"), "edge": colour("border"), "text": colour("text")}
 
@@ -126,9 +122,9 @@ static func style_button(button: Button, variant := "default") -> Button:
 	button.add_theme_stylebox_override("disabled", custom_box(base.darkened(0.18),
 		Color(edge, 0.35), radius("md"), space("sm")))
 	button.add_theme_color_override("font_color", palette["text"])
-	button.add_theme_color_override("font_hover_color", colour("text_strong"))
-	button.add_theme_color_override("font_pressed_color", colour("text_strong"))
-	button.add_theme_color_override("font_focus_color", colour("text_strong"))
+	button.add_theme_color_override("font_hover_color", palette["text"])
+	button.add_theme_color_override("font_pressed_color", palette["text"])
+	button.add_theme_color_override("font_focus_color", palette["text"])
 	button.add_theme_color_override("font_disabled_color", Color(colour("muted"), 0.55))
 	return button
 
@@ -222,27 +218,13 @@ class CommandPanel extends PanelContainer:
 		return self
 
 	func _draw() -> void:
-		var w := size.x
-		var h := size.y
-		if w < 32.0 or h < 32.0:
-			return
-		var cut := 16.0
-		var bg := UIW.colour("overlay")
-		if variant == "surface":
-			bg = UIW.colour("surface")
-		elif variant == "console":
-			bg = UIW.colour("console")
-		# Broad offset silhouette, then a square technical plate. Diagonal corner
-		# braces carry the chamfer motif without relying on polygon triangulation.
-		draw_rect(Rect2(Vector2(8, 10), size), Color(0.01, 0.025, 0.06, 0.48))
-		draw_rect(Rect2(Vector2.ZERO, size), bg)
-		draw_rect(Rect2(Vector2.ZERO, size), Color(UIW.colour("border_strong"), 0.90), false, 1.25)
-		draw_line(Vector2(0, 36), Vector2(0, h - 24), accent, 4.0)
-		draw_line(Vector2(cut, 0), Vector2(110, 0), accent, 3.0)
-		draw_line(Vector2(w - 36, 0), Vector2(w, 36), Color(accent, 0.60), 2.0)
-		draw_line(Vector2(w - 16, h), Vector2(w, h - 16), Color(UIW.colour("border_strong"), 0.68), 1.25)
-		for i in 3:
-			draw_circle(Vector2(w - 22 - i * 10, 18), 2.0, Color(accent, 0.35 + i * 0.18))
+		if size.x < 32 or size.y < 32: return
+		var box := UIW.panel_box(variant)
+		box.shadow_size = 16
+		box.shadow_color = Color(0, 0, 0, 0.24)
+		box.shadow_offset = Vector2(0, 8)
+		draw_style_box(box, Rect2(Vector2.ZERO, size))
+		draw_line(Vector2(24, 1), Vector2(minf(88, size.x - 24), 1), Color(accent, 0.8), 2.0)
 
 # ============================================================ ActionButton ==
 
@@ -260,23 +242,23 @@ class ActionButton extends Button:
 		glyph = mark
 		primary = is_primary
 		text = ""
-		custom_minimum_size = Vector2(430, 68 if subtitle != "" else 58)
+		custom_minimum_size = Vector2(430, 60 if subtitle != "" else 42)
 		UIW.style_button(self, "primary" if primary else "quiet")
 		return self
 
 	func _draw() -> void:
-		var accent_col := UIW.colour("warm") if primary else UIW.colour("accent")
+		var accent_col := UIW.colour("console") if primary else UIW.colour("accent")
 		var center := Vector2(30, size.y * 0.5)
 		draw_circle(center, 17, Color(accent_col, 0.14 if not is_hovered() else 0.26))
 		draw_circle(center, 17, Color(accent_col, 0.72), false, 1.25)
 		draw_string(UIW.mono_font(), center + Vector2(-8, 4), glyph,
 			HORIZONTAL_ALIGNMENT_CENTER, 16, 10, accent_col)
-		var title_y := 29.0 if detail != "" else size.y * 0.5 + 5
+		var title_y := 25.0 if detail != "" else size.y * 0.5 + 5
 		draw_string(UIW.sans_font(), Vector2(58, title_y), heading,
-			HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 17, UIW.colour("text_strong"))
+			HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 17, UIW.colour("console") if primary else UIW.colour("text_strong"))
 		if detail != "":
-			draw_string(UIW.sans_font(), Vector2(58, 49), detail,
-				HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 12, UIW.colour("muted"))
+			draw_string(UIW.sans_font(), Vector2(58, 44), detail,
+				HORIZONTAL_ALIGNMENT_LEFT, size.x - 110, 12, UIW.colour("overlay") if primary else UIW.colour("muted"))
 		draw_string(UIW.mono_font(), Vector2(size.x - 42, size.y * 0.5 + 5), "→",
 			HORIZONTAL_ALIGNMENT_CENTER, 24, 16, accent_col)
 
@@ -389,6 +371,17 @@ class Graph extends Control:
 # ================================================================ TopoMap ==
 
 class TopoMap extends Control:
+	var focus_customer_id := ""
+	var focus_links: Array = []
+	var focus_devices: Array = []
+	var focus_name := "All services"
+
+	func refresh_focus() -> void:
+		var deal := Game.deal_by_id(focus_customer_id)
+		focus_links = FirstCustomer.path(deal)
+		focus_devices = FirstCustomer.focus_devices(deal)
+		focus_name = String(deal.get("customer", "All services"))
+		queue_redraw()
 	var on_dev: Callable  # (Net.NDevice)
 	var on_link: Callable  # (Net.NDevice, Net.NDevice) -> String: cable these two up
 	var _mono: SystemFont
@@ -406,6 +399,8 @@ class TopoMap extends Control:
 		_mono = UIW.mono_font()
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		set_anchors_preset(Control.PRESET_FULL_RECT)
+		Game.topology_changed.connect(refresh_focus)
+		Game.money_changed.connect(refresh_focus)
 		return self
 
 	func _process(_dt: float) -> void:
@@ -498,7 +493,7 @@ class TopoMap extends Control:
 		draw_rect(Rect2(0, 0, size.x, 74), Color("0d1d31"))
 		draw_line(Vector2(0, 73), Vector2(size.x, 73), Color(UIW.colour("accent"), 0.55), 1.0)
 		draw_rect(Rect2(30, 18, 4, 38), UIW.colour("accent"))
-		draw_string(_mono, Vector2(48, 31), "NETWORK MAP  /  LIVE ESTATE",
+		draw_string(_mono, Vector2(48, 31), "SERVICE NETWORK  /  " + focus_name.to_upper(),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("accent"))
 		draw_string(_mono, Vector2(48, 55), "LOGICAL TOPOLOGY",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UIW.colour("text_strong"))
@@ -591,6 +586,8 @@ class TopoMap extends Control:
 				pa.y = ra.end.y if pb.y > pa.y else ra.position.y
 				pb.y = rb.position.y if pb.y > pa.y else rb.end.y
 			var col := Color(0.35, 0.7, 0.65, 0.8)
+			if not focus_customer_id.is_empty() and l in focus_links:
+				draw_line(pa, pb, Color(UIW.colour("accent"), 0.45), 12.0)
 			var blocked := false
 			if l.a.dev.type == "switch" and l.b.dev.type == "switch":
 				col = Color(1.0, 0.62, 0.2, 0.85)
@@ -624,6 +621,8 @@ class TopoMap extends Control:
 			var identity: Dictionary = UIW.model_visual(dev.model)
 			var col: Color = identity["accent"]
 			var fill := Color(identity["base"]).darkened(0.30)
+			if not focus_customer_id.is_empty() and dev in focus_devices:
+				draw_rect(rect.grow(4), UIW.colour("accent"), false, 2.0)
 			draw_rect(rect, fill)
 			draw_rect(Rect2(rect.position, Vector2(5, rect.size.y)), col)
 			draw_rect(rect, col if dev.status == "active" else UIW.colour("danger"), false, 1.5)

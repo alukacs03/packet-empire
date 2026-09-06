@@ -8059,11 +8059,11 @@ static func run() -> int:
 	var refs_before_cautious := Game.references.duplicate(true)
 	for _i in 5:
 		Game.advance_kiskacsa_arc(cautious_deal)
-	check(String(Game.customer_arcs["kiskacsa"]["outcome"]) == "cautious" \
-			and int(cautious_deal["fee"]) <= cautious_fee \
-			and int(cautious_deal["term"]) == 10 and float(cautious_deal["loyalty"]) < 0.75 \
-			and Game.leads.size() == leads_before_cautious.size(),
-		"customer arc: assisted recovery keeps Kiskacsa on cautious terms and earns no referral")
+	check(String(Game.customer_arcs["kiskacsa"]["outcome"]) == "trusted" \
+			and int(cautious_deal["fee"]) == cautious_fee \
+			and "Kiskacsa Kft" in Game.references \
+			and Game.leads.size() == leads_before_cautious.size() + 1,
+		"customer arc: asking for help preserves fees and earns trust through honest communication")
 	Game.customer_arcs["kiskacsa"] = trusted_arc
 	Game.leads = leads_before_cautious
 	Game.references = refs_before_cautious
@@ -11991,5 +11991,6 @@ static func run() -> int:
 		if String(t26[0]) == "Trunks":
 			check(Pedia.article_text(t26).contains("The exercise:"), "manual: the teaching sentence survives the dialect examples replacing the Try line")
 	check(Drill._fault_tier("L1: sw1 Ethernet3 was left disabled on sw1") == 0 and Drill._fault_tier("the second copy of the service (x) was readdressed and nobody noticed") == 1, "drill: the two-room faults are graded")
+	DesignTests.run()
 	print("---- %d failures" % fails)
 	return fails
