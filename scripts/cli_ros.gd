@@ -2031,6 +2031,15 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					out += " %d peer=%s-1 dst=%s afi=ip nexthop=%s origin=igp as-path=\"\"\n" % [n, nb.get("name", "peer"), net,
 						_local_addr_toward(String(nb["ip"]))]
 					n += 1
+				for rt in Sim._bgp_learned(dev):  # transit: what was learned is passed on with the path it came with
+					if String(rt["via"]) == String(nb["ip"]):
+						continue  # never back to the session it came from
+					var as_path: Array = []
+					for asn in rt.get("as_path", []):
+						as_path.append(str(int(asn)))
+					out += " %d peer=%s-1 dst=%s/%d afi=ip nexthop=%s origin=igp as-path=\"%s\"\n" % [n, nb.get("name", "peer"), rt["prefix"], int(rt["plen"]),
+						_local_addr_toward(String(nb["ip"])), ",".join(PackedStringArray(as_path))]
+					n += 1
 			return out
 	return null
 

@@ -371,50 +371,147 @@ static func bgp_router_id(dev: Net.NDevice) -> String:
 		return String(dev.bgp["router_id"])
 	return ospf_router_id(dev)
 
+static var _bgp_cache := {}  # the path-vector tables of every speaker, until something moves
+
+static func _bgp_speakers() -> Array:
+	var out: Array = []
+	for d in Game.all_devices():
+		if not d.bgp.is_empty() and d.status == "active" and (d.ip_forwarding or d.type == "uplink"):
+			out.append(d)
+	return out
+
+static func _bgp_originated(dev: Net.NDevice) -> Array:
+	## "network" advertises only a prefix the router actually has: connected,
+	## static (the null0 aggregate trick included) or learned from OSPF; the
+	## carrier's handoff is the internet and is trusted for what it announces
+	var out: Array = []
+	for net in dev.bgp.get("networks", []):
+		var parts := String(net).split("/")
+		if parts.size() != 2:
+			continue
+		if dev.type == "uplink":
+			out.append(String(net))
+			continue
+		var have := false
+		for i: Net.Iface in dev.ifaces:
+			if not iface_up(i):
+				continue
+			for cidr: String in i.ips:
+				if Net.is_v6(cidr):
+					continue
+				var nw := Net.network_of(cidr)
+				if String(nw["prefix"]) == parts[0] and int(nw["plen"]) == int(parts[1]):
+					have = true
+		for r in dev.static_routes:
+			if String(r["prefix"]) == parts[0] and int(r["plen"]) == int(parts[1]):
+				have = true
+		if not have:
+			for o in _ospf_learned(dev):
+				if String(o["prefix"]) == parts[0] and int(o["plen"]) == int(parts[1]):
+					have = true
+		if have:
+			out.append(String(net))
+	return out
+
+static func _bgp_better(a: Dictionary, b: Dictionary) -> bool:
+	## the decision: local preference, then the shortest AS path, then the lowest router-id
+	if int(a["pref"]) != int(b["pref"]):
+		return int(a["pref"]) > int(b["pref"])
+	if a["as_path"].size() != b["as_path"].size():
+		return a["as_path"].size() < b["as_path"].size()
+	return int(a["rid"]) < int(b["rid"])
+
+static func _bgp_tables() -> Dictionary:
+	## BGP as the path-vector protocol it is: every speaker starts with what
+	## it originates, then each established session carries the sender's best
+	## path per prefix with the sender's AS prepended, a receiver drops a path
+	## that already carries its own AS, and it all repeats until nothing changes.
+	if _bgp_cache.has("tables"):
+		return _bgp_cache["tables"]
+	var speakers := _bgp_speakers()
+	var tables := {}
+	for d in speakers:
+		var own := {}
+		for net in _bgp_originated(d):
+			own[net] = [{"as_path": [], "pref": 100, "rid": Net.ip_to_int(bgp_router_id(d)), "via": "", "origin": d}]  # the AS goes on when it is advertised
+		tables[d] = own
+	# the sessions, once: [sender, receiver, sender's neighbour entry, receiver's neighbour entry, via for the receiver]
+	var sessions: Array = []
+	for a in speakers:
+		for anb in a.bgp.get("neighbors", []):
+			if not bgp_established(a, anb):
+				continue
+			var b := _ip_owner(String(anb["ip"]))
+			if b == null or not tables.has(b):
+				continue
+			var bnb := _neighbor_towards(b, a)
+			var via_for_b := String(bnb["ip"]) if not bnb.is_empty() else _ip_of_on_subnet(a, String(anb["ip"]))
+			var via_for_a := String(anb["ip"])
+			sessions.append([a, b, anb, bnb, via_for_b])
+			if bnb.is_empty():
+				sessions.append([b, a, {}, anb, via_for_a])  # the passive side (the handoff) advertises back
+	for _round in speakers.size() + 2:
+		var changed := false
+		for sess in sessions:
+			var sender: Net.NDevice = sess[0]
+			var receiver: Net.NDevice = sess[1]
+			var snb: Dictionary = sess[2]
+			var rnb: Dictionary = sess[3]
+			var via: String = sess[4]
+			var receiver_asn := int(receiver.bgp.get("asn", 0))
+			for pfx in tables[sender]:
+				var best: Dictionary = {}
+				for path in tables[sender][pfx]:
+					if best.is_empty() or _bgp_better(path, best):
+						best = path
+				if best.is_empty():
+					continue
+				if not _policy_allows(snb, "prefix_out", String(pfx)) or not _policy_allows(rnb, "prefix_in", String(pfx)):
+					continue
+				if receiver_asn in best["as_path"]:
+					continue  # loop prevention: the path already went through us
+				var prepend := 1 + int(snb.get("prepend", 0))
+				var new_path: Array = []
+				for k in prepend:
+					new_path.append(int(sender.bgp.get("asn", 0)))
+				new_path += best["as_path"]
+				var cand := {"as_path": new_path, "pref": int(rnb.get("local_pref", 100)), "rid": Net.ip_to_int(bgp_router_id(sender)),
+					"via": via, "origin": best["origin"], "multipath": int(receiver.bgp.get("maximum_paths", 1)) > 1}
+				var have: Array = tables[receiver].get(pfx, [])
+				var dup := false
+				for h in have:
+					if String(h["via"]) == via:
+						if h["as_path"] == new_path and int(h["pref"]) == int(cand["pref"]):
+							dup = true
+						else:
+							have.erase(h)  # the same session, a changed path
+						break
+				if dup:
+					continue
+				have.append(cand)
+				tables[receiver][pfx] = have
+				changed = true
+		if not changed:
+			break
+	_bgp_cache["tables"] = tables
+	return tables
+
 static func _bgp_learned(dev: Net.NDevice) -> Array:
-	## Routes this device learns from established sessions:
-	## configured neighbors' networks, plus (for the passive/ISP side)
-	## networks of peers that neighbor US. -> [{prefix, plen, via}]
+	## what this router learned over BGP: every path per prefix, with the AS
+	## path it came with; the RIB picks by preference, path length, router-id
 	var out: Array = []
 	if dev.bgp.is_empty():
 		return out
-	for nb in dev.bgp.get("neighbors", []):
-		if bgp_established(dev, nb):
-			var peer := _ip_owner(nb["ip"])
-			var peer_nb := _neighbor_towards(peer, dev)
-			for net in peer.bgp.get("networks", []):
-				if not _policy_allows(peer_nb, "prefix_out", String(net)):
-					continue  # the far side is not announcing it to us
-				if not _policy_allows(nb, "prefix_in", String(net)):
-					continue  # we are not accepting it from them
-				var parts := String(net).split("/")
-				out.append({"prefix": parts[0], "plen": int(parts[1]), "via": nb["ip"],
-					"pref": int(nb.get("local_pref", 100)),
-					"cost": 1 + int(peer_nb.get("prepend", 0)),
-					"asn": int(peer.bgp.get("asn", 0)), "prepend": int(peer_nb.get("prepend", 0)),
-					"rid": Net.ip_to_int(bgp_router_id(peer)), "multipath": int(dev.bgp.get("maximum_paths", 1)) > 1})
-	for other in Game.all_devices():
-		if other == dev or other.bgp.is_empty():
-			continue
-		for onb in other.bgp.get("neighbors", []):
-			if _owns_ip_anywhere(dev, onb["ip"]) and bgp_established(other, onb):
-				var via := _ip_of_on_subnet(other, onb["ip"])
-				if via == "":
-					continue
-				var our_nb := _neighbor_towards(dev, other)
-				for net in other.bgp.get("networks", []):
-					if not _policy_allows(onb, "prefix_out", String(net)):
-						continue
-					if not _policy_allows(our_nb, "prefix_in", String(net)):
-						continue
-					var parts := String(net).split("/")
-					# their prepending is how they ask us to prefer the other path
-					out.append({"prefix": parts[0], "plen": int(parts[1]), "via": via,
-						"pref": int(our_nb.get("local_pref", 100)),
-						"cost": 1 + int(onb.get("prepend", 0)),
-						"asn": int(other.bgp.get("asn", 0)), "prepend": int(onb.get("prepend", 0)),
-						"rid": Net.ip_to_int(bgp_router_id(other)), "multipath": int(dev.bgp.get("maximum_paths", 1)) > 1})
-
+	var table: Dictionary = _bgp_tables().get(dev, {})
+	for pfx in table:
+		for path in table[pfx]:
+			if String(path["via"]) == "":
+				continue  # our own
+			var parts := String(pfx).split("/")
+			out.append({"prefix": parts[0], "plen": int(parts[1]), "via": path["via"],
+				"pref": int(path["pref"]), "cost": path["as_path"].size(),
+				"asn": int(path["as_path"][path["as_path"].size() - 1]) if not path["as_path"].is_empty() else int(dev.bgp.get("asn", 0)), "prepend": 0,
+				"as_path": path["as_path"], "rid": int(path["rid"]), "multipath": bool(path.get("multipath", false))})
 	return out
 
 static func _neighbor_towards(dev: Net.NDevice, other: Net.NDevice) -> Dictionary:
@@ -874,6 +971,7 @@ static func static_port(dev: Net.NDevice, vlan: int, mac: String) -> Net.Iface:
 static func flush_learned_state() -> void:
 	_ospf_cache.clear()
 	_rib_cache.clear()
+	_bgp_cache.clear()
 	## everything learned ages out: the world was rebuilt, or a cycle passed
 	_stp_dirty = true
 	for d in Game.all_devices():
@@ -900,6 +998,7 @@ static func arp_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
 static func topology_change() -> void:
 	_ospf_cache.clear()
 	_rib_cache.clear()
+	_bgp_cache.clear()
 	## a link came or went: spanning tree tells every bridge to forget what it
 	## learned, exactly so that a moved host is found again by flooding
 	for d in Game.all_devices():
@@ -922,6 +1021,7 @@ static func forget_ip(ip: String) -> void:
 static func prune_learned_state() -> void:
 	_ospf_cache.clear()  # an adjacency is a fact about cables and configuration, both of which just moved
 	_rib_cache.clear()
+	_bgp_cache.clear()
 	## A configuration changed somewhere. Real gear does not forget the whole
 	## world for that: it drops only what can no longer be true, and the rest
 	## ages out or is relearned when the host next speaks.

@@ -2484,6 +2484,45 @@ static func run() -> int:
 	Game.connect_ifaces(ll_r.ifaces[1], Game.new_device("srv-1").ifaces[0])
 	Game.topology_changed.emit()
 	check(Sim.ping(ll_h, "2001:db8:99::1")["ok"], "ll: the default via a link-local next hop forwards")
+	# --- BGP is a path-vector protocol: transit, AS paths, and only what you have ---
+	var t7_pv_a := Game.new_device("rtr-edge")
+	var t7_pv_b := Game.new_device("rtr-edge")
+	var t7_pv_c := Game.new_device("rtr-edge")
+	var t7_pv_rack := Game.add_rack(Vector2i(9, 8))
+	t7_pv_rack.slots[0] = t7_pv_a
+	t7_pv_rack.slots[1] = t7_pv_b
+	t7_pv_rack.slots[2] = t7_pv_c
+	Game.connect_ifaces(t7_pv_a.ifaces[0], t7_pv_b.ifaces[0])
+	Game.connect_ifaces(t7_pv_b.ifaces[1], t7_pv_c.ifaces[0])
+	Game.add_ip(t7_pv_a.ifaces[0], "10.9.1.1/30")
+	Game.add_ip(t7_pv_b.ifaces[0], "10.9.1.2/30")
+	Game.add_ip(t7_pv_b.ifaces[1], "10.9.2.1/30")
+	Game.add_ip(t7_pv_c.ifaces[0], "10.9.2.2/30")
+	Game.add_static_route(t7_pv_a, "192.0.2.0", 24, "null0")  # the aggregate trick: the prefix exists, so it may be announced
+	for pv in [[t7_pv_a, 65001, "10.9.1.2", 65002], [t7_pv_b, 65002, "10.9.1.1", 65001], [t7_pv_c, 65003, "10.9.2.1", 65002]]:
+		var pv_s := CLI.new_session(pv[0])
+		pv_s.exec("en")
+		pv_s.exec("conf t")
+		pv_s.exec("router bgp %d" % pv[1])
+		pv_s.exec("neighbor %s remote-as %d" % [pv[2], pv[3]])
+		if pv[0] == t7_pv_b:
+			pv_s.exec("neighbor 10.9.2.2 remote-as 65003")
+		if pv[0] == t7_pv_a:
+			pv_s.exec("network 192.0.2.0/24")
+			pv_s.exec("network 198.51.100.0/24")  # announced, but nothing owns it: not advertised
+		pv_s.exec("end")
+	Game.topology_changed.emit()
+	var pv_c_learned := Sim._bgp_learned(t7_pv_c)
+	var pv_seen := {}
+	for lr in pv_c_learned:
+		pv_seen["%s/%d" % [lr["prefix"], int(lr["plen"])]] = lr
+	check(pv_seen.has("192.0.2.0/24") and Array(pv_seen["192.0.2.0/24"]["as_path"]) == [65002, 65001],
+		"bgp: C learns A's prefix through B with the AS path 65002 65001")
+	check(not pv_seen.has("198.51.100.0/24"), "bgp: a network statement for a prefix the router does not have advertises nothing")
+	check(CLI.new_session(t7_pv_c).exec("show ip bgp").contains("65002 65001"), "bgp: show ip bgp prints the real path")
+	var pv_a_learned := Sim._bgp_learned(t7_pv_a)
+	check(pv_a_learned.all(func(lr): return String(lr["prefix"]) != "192.0.2.0"), "bgp: a path that already carries our AS is dropped, so our own prefix never comes back")
+	check(Sim.rib(t7_pv_c).any(func(e): return e["src"] == "B" and String(e["prefix"]) == "192.0.2.0"), "bgp: the transited prefix is installed on C")
 	# --- duplicate addresses are logged on both boxes ---
 	var dup_a := Game.new_device("srv-1")
 	var dup_b := Game.new_device("srv-1")

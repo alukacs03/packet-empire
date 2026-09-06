@@ -3283,8 +3283,8 @@ class EOS extends Session:
 		for rt in Sim._bgp_learned(dev):
 			var pfx := "%s/%d" % [rt["prefix"], int(rt["plen"])]
 			var path: Array = []
-			for k in 1 + int(rt.get("prepend", 0)):
-				path.append(str(int(rt.get("asn", 0))))
+			for asn in rt.get("as_path", [int(rt.get("asn", 0))]):
+				path.append(str(int(asn)))
 			out += " * %s %s    %-22s %-21s %-7s %-10s %-7d %-7d %s i\n" % [">" if installed.has("%s|%s" % [pfx, rt["via"]]) else " ",
 				"U", pfx, rt["via"], "-", "-", int(rt.get("pref", 100)), 0, " ".join(PackedStringArray(path))]
 		for h in Game.hijacks:
