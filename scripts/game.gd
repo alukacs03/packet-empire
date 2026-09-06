@@ -8844,6 +8844,7 @@ func hijack_tick() -> void:
 	var parts := String(entry["cidr"]).split("/")
 	var culprit := "AS%d" % (64600 + randi() % 300)
 	if hijack_protected(entry):
+		stats["hijacks_rejected"] = int(stats.get("hijacks_rejected", 0)) + 1
 		log_event("SECURITY: %s announced %s and was rejected: your ROA says it is not theirs."
 			% [culprit, entry["cidr"]])
 		return

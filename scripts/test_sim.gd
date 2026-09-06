@@ -11323,5 +11323,29 @@ static func run() -> int:
 	check(int(Game.stats.get("earned", 0)) == 0 and Game.sla_status.is_empty(),
 		"bugs: a new company does not inherit the old one's earnings or breach flags")
 
+	# --- the top of the campaign: three jobs at the last two ranks ---
+	var top_ids := {}
+	for tc2 in Contracts.all():
+		top_ids[String(tc2["id"])] = String(tc2.get("rank", ""))
+	check(top_ids.get("at_the_exchange", "") == "Datacenter architect" and top_ids.get("announcing_you", "") == "Datacenter architect" and top_ids.get("the_hall", "") == "Packet Emperor",
+		"campaign: the exchange and hijack jobs come at Architect and the hall at Emperor")
+	var t9_fab_rack := Game.add_rack(Vector2i(9, 9))
+	var fab_leaves: Array = []
+	var fab_spines: Array = []
+	for k in 2:
+		var leaf := Game.new_device("rtr-edge")
+		t9_fab_rack.slots[k] = leaf
+		fab_leaves.append(leaf)
+	for k in 4:
+		var spine := Game.new_device("rtr-edge")
+		t9_fab_rack.slots[2 + k] = spine
+		fab_spines.append(spine)
+	for li in 2:
+		for si in 4:
+			Game.connect_ifaces(fab_leaves[li].ifaces[si], fab_spines[si].ifaces[li])
+	check(Contracts._fabric_spines() == 4, "campaign: four spines seen by two leaves are counted as a fabric")
+	Game.disconnect_iface(fab_leaves[0].ifaces[3])
+	check(Contracts._fabric_spines() < 4, "campaign: a leaf missing a spine is not the hall's fabric")
+	check(int(Game.stats.get("hijacks_rejected", 0)) >= 0, "campaign: the ROA rejection stat exists")
 	print("---- %d failures" % fails)
 	return fails

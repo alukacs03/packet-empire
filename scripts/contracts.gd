@@ -1165,6 +1165,50 @@ static func _campaign() -> Array:
 			],
 		},
 		{
+			"id": "at_the_exchange",
+			"rank": "Datacenter architect",
+			"title": "At the exchange",
+			"customer": "Panonia Data (consulting)",
+			"reward": 5200,
+			"hint": "Business tab, Peering: buy a port at the exchange ($%d plus $%d a cycle), then add peering sessions one at a time. Each one takes a share of your traffic off transit, and the transit bill on the 95th percentile falls with it." % [Game.IXP_SETUP, Game.IXP_PORT_FEE],
+			"brief": "Transit is billed on your 95th percentile, and most of what you send is going to networks that would happily take it for free. An internet exchange is a switch in a building where those networks meet. Get a port there, peer with enough of them that at least a third of your traffic bypasses transit, and read what the transit invoice does the next quarter.",
+			"reqs": [
+				{"d": "A port at the exchange", "t": func() -> bool: return bool(Game.ixp.get("joined", false))},
+				{"d": "At least three peering sessions", "t": func() -> bool: return int(Game.ixp.get("peers", 0)) >= 3},
+				{"d": "A third of your traffic off transit", "t": func() -> bool: return Game.peering_share() >= 0.3},
+			],
+		},
+		{
+			"id": "announcing_you",
+			"rank": "Datacenter architect",
+			"title": "Somebody else announcing you",
+			"customer": "Tisza Bank",
+			"reward": 5600,
+			"hint": "Under router bgp on the router that announces your prefixes: 'roa <prefix>/24' signs each one, and 'neighbor <upstream> rpki' asks that upstream to check origins against the signatures. A prefix nobody signed can be announced by anybody; a signed one is rejected when it is not you.",
+			"brief": "The bank's security team has read about prefix hijacks: another network announces your addresses and the internet believes the shorter path. The cure is a signed statement of who may originate each prefix (a ROA) and an upstream that validates against it. Sign every prefix you announce, ask every upstream to validate, and keep your own route table pointing at you.",
+			"reqs": [
+				{"d": "Every announced prefix has a ROA", "t": func() -> bool: return _all_prefixes_signed()},
+				{"d": "Every upstream session validates against RPKI", "t": func() -> bool: return _all_upstreams_rpki()},
+				{"d": "No bogus announcement of your prefixes is live", "t": func() -> bool: return Game.hijacks.is_empty()},
+			],
+		},
+		{
+			"id": "the_hall",
+			"rank": "Packet Emperor",
+			"title": "The hall",
+			"customer": "Panonia Data (consulting)",
+			"reward": 9000,
+			"hint": "Expand to the Campus hall (Business tab). Four spine routers, two leaf routers each uplinked to all four (a /30 per link, OSPF over all of it), the two leaves paired as MLAG peers with a server bonded across both, and a host under each leaf that reaches the other.",
+			"brief": "The last floor is a hall built for a fabric. Build the one every large room runs: four spines, two leaves, every leaf to every spine, the leaves paired so a server can hang off both, and hosts at 10.252.1.10 and 10.252.2.10 under different leaves that reach each other whichever spine is taken away.",
+			"reqs": [
+				{"d": "You own the Campus hall", "t": func() -> bool: return Game.stage >= Game.STAGES.size() - 1},
+				{"d": "Four spines, two leaves, every leaf to every spine", "t": func() -> bool: return _fabric_spines() >= 4},
+				{"d": "The leaves paired as MLAG peers", "t": func() -> bool: return _mlag_pair() != null},
+				{"d": "A server bonded across both leaves", "t": func() -> bool: return _mlag_server() != null},
+				{"d": "Hosts under different leaves reach each other", "t": func() -> bool: return _ping("10.252.1.10", "10.252.2.10", true)},
+			],
+		},
+		{
 			"id": "prove_it",
 			"title": "The exercise",
 			"customer": "Tisza Bank",
@@ -1539,6 +1583,67 @@ static func _multihomed_router() -> Net.NDevice:
 			best_n = asns.size()
 			best = d
 	return best
+
+static func _all_prefixes_signed() -> bool:
+	## every prefix any router announces to an upstream carries a ROA on that router
+	var any := false
+	for d in Game.all_devices():
+		if d.bgp.is_empty() or d.type == "uplink":
+			continue
+		var nets: Array = d.bgp.get("networks", [])
+		if nets.is_empty():
+			continue
+		for net in nets:
+			any = true
+			if String(net) not in d.bgp.get("roa", []):
+				return false
+	return any
+
+static func _all_upstreams_rpki() -> bool:
+	var any := false
+	for d in Game.all_devices():
+		if d.bgp.is_empty() or d.type == "uplink":
+			continue
+		for nb in d.bgp.get("neighbors", []):
+			var peer := Sim._ip_owner(String(nb["ip"]))
+			if peer == null or peer.type != "uplink":
+				continue
+			any = true
+			if not bool(nb.get("rpki", false)):
+				return false
+	return any
+
+static func _fabric_spines() -> int:
+	## a leaf is a router with four or more router peers; a spine is a router
+	## whose router peers are all leaves; the fabric is four spines seen by
+	## at least two leaves
+	var peers := {}
+	for l in Game.links:
+		if not l.a.dev.ip_forwarding or not l.b.dev.ip_forwarding or l.a.dev.type == "uplink" or l.b.dev.type == "uplink":
+			continue
+		if not peers.has(l.a.dev):
+			peers[l.a.dev] = {}
+		if not peers.has(l.b.dev):
+			peers[l.b.dev] = {}
+		peers[l.a.dev][l.b.dev] = true
+		peers[l.b.dev][l.a.dev] = true
+	var leaves := {}
+	for d in peers:
+		if peers[d].size() >= 4:
+			leaves[d] = true
+	if leaves.size() < 2:
+		return 0
+	var spines := 0
+	for d in peers:
+		if leaves.has(d):
+			continue
+		var all_leaves := true
+		for p in peers[d]:
+			if not leaves.has(p):
+				all_leaves = false
+		if all_leaves and peers[d].size() >= 2:
+			spines += 1
+	return spines
 
 static func _upstream_sessions() -> int:
 	var r := _multihomed_router()
