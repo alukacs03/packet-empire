@@ -4676,13 +4676,13 @@ func _build_contracts_overlay() -> void:
 	contracts_overlay = _overlay()
 	var v := _card(contracts_overlay, 660)
 	var t := _header(v, close_contracts)
-	t.text = "Customers & company"
+	t.text = Loc.t("company.title")
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 6)
 	v.add_child(tabs)
 	for name in ["Jobs", "Business", "Market", "Log"]:
 		var tb := Button.new()
-		tb.text = name
+		tb.text = Loc.t("company.tab." + String(name).to_lower())  # the id stays English; the label follows the language
 		tb.toggle_mode = true
 		tb.pressed.connect(func() -> void:
 			contracts_tab = name
@@ -4726,10 +4726,8 @@ func _chip_row(chip_text: String, chip_col: Color, text: String, size: int, col:
 	return h
 
 func _build_business_tab() -> void:
-	contracts_box.add_child(_section("LAST CYCLE  /  BUSINESS FLOW"))
-	contracts_box.add_child(_wrap(
-		"Revenue is what the network earned. An invoice makes it receivable; collection is when cash reaches the bank. Power and transit leave immediately.",
-		12, UIW.colour("muted"), 600))
+	contracts_box.add_child(_section(Loc.t("company.flow.section")))
+	contracts_box.add_child(_wrap(Loc.t("company.flow.body"), 12, UIW.colour("muted"), 600))
 	var flow := GridContainer.new()
 	flow.columns = 3
 	flow.add_theme_constant_override("h_separation", UIW.space("sm"))
