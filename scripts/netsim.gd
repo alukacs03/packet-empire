@@ -1050,6 +1050,8 @@ static func _lag_member_matches(port: Net.Iface) -> bool:
 	return true
 
 static func _mlag_live(port: Net.Iface) -> bool:
+	if port == null:
+		return false  # the peer has no port in this bundle
 	if port.mlag > 0 and _mlag_isolated_secondary(port.dev):
 		return false  # the peer link is down and the primary is alive: the secondary shuts its bundle ports
 	return leg_usable(port) and not stp_blocked(port)
@@ -1295,6 +1297,7 @@ static func _stp_tree(instance: int) -> Dictionary:
 					and far.dev.status == "active" and port.dev.status == "active":
 				port.err_disabled = true
 				port.err_since = Game.cycle
+				port.err_cause = "bpduguard"
 				port.enabled = false
 				Game.device_log(port.dev, "%s: BPDU received on a bpduguard port from %s, err-disabled" % [port.name, far.dev.name])
 				Game.log_event("BPDU GUARD: %s %s heard a switch (%s) and shut itself." % [port.dev.name, port.name, far.dev.name])
@@ -2151,6 +2154,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 				if in_if.psec_violation == "shutdown":
 					in_if.err_disabled = true
 					in_if.err_since = Game.cycle
+					in_if.err_cause = "portsec"
 					in_if.enabled = false
 					Game.device_log(dev, "port-security violation on %s: saw %s" % [in_if.name, frame["src"]])
 					Game.log_event("PORT SECURITY: %s %s saw %s instead of %s and shut down."
@@ -2533,7 +2537,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		var path_mtu := out.mtu
 		var out_link := Game.link_at(out)
 		if out_link != null:
-			path_mtu = mini(path_mtu, out_link.other(out).mtu)
+			var far_end := Game.effective_peer(out)  # through the panel: the glass has no MTU
+			if far_end != null and far_end.dev.type != "panel":
+				path_mtu = mini(path_mtu, far_end.mtu)
 		if fsize > 0 and path_mtu > 0 and fsize > path_mtu:
 			out.out_drops += 1
 			Game.device_log(dev, "MTU: %d byte packet for %s needs fragmentation, egress %s MTU %d; ICMP frag-needed sent" % [fsize, fwd["dst_ip"], out.name, path_mtu])
@@ -2762,7 +2768,14 @@ static func vrrp_master(vip: String, group: int, seen_from: Net.Iface = null) ->
 				best_preempt = bool(i.vrrp.get("preempt", true))
 	# a router with preempt off does not take the address back from a live
 	# master of lower priority: the master stays until it dies
-	var key := "%s|%d" % [vip, group]
+	var seg_id := ""
+	if seen_from != null:
+		var names: Array = []
+		for di: Net.Iface in domain:
+			names.append("%s/%s" % [di.dev.name, di.name])
+		names.sort()
+		seg_id = String(names[0]) if not names.is_empty() else ""
+	var key := "%s|%d|%s" % [vip, group, seg_id]  # a split segment keeps a memory per half
 	var current: Net.NDevice = _vrrp_current.get(key)
 	if best != null and not best_preempt and current != null and current != best \
 			and is_instance_valid(current) and alive.has(current):
@@ -2888,7 +2901,7 @@ static func _acl_in_permits(dev: Net.NDevice, iface: Net.Iface, p: Dictionary) -
 		ok = _acl_permits_list(dev, _acl_rules_of(dev, list_name), p)
 	# a firewall's input chain: only what is addressed to the box itself
 	var input_list := String(groups.get(iface.name + "|input", ""))
-	if ok and input_list != "" and _has_ip(dev, String(p.get("dst_ip", ""))):
+	if ok and input_list != "" and (_has_ip(dev, String(p.get("dst_ip", ""))) or _vrrp_owns(dev, iface, String(p.get("dst_ip", "")))):
 		ok = _acl_permits_list(dev, _acl_rules_of(dev, input_list), p)
 	return ok
 

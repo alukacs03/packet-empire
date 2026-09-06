@@ -1846,6 +1846,10 @@ func _redirect(t: Array) -> String:
 						conf["preempt"] = false
 					"virtual_ipaddress":
 						conf["vip"] = nxt.split("/")[0]
+			var old: Dictionary = dev.services.get("keepalived", {})
+			if bool(old.get("running", false)) and _iface(String(old.get("iface", ""))) != null:
+				_iface(String(old["iface"])).vrrp = {}  # the running daemon's address goes with the old file
+				Game.topology_changed.emit()
 			conf["running"] = false
 			dev.services["keepalived"] = conf
 			return ""
@@ -2069,6 +2073,16 @@ func _unit_toggle(unit: String, on: bool) -> void:
 			elif not on and dev.services.has(key):
 				parked[unit] = dev.services[key]
 				dev.services.erase(key)
+		"frr":
+			if on and parked.has(unit):
+				dev.ospf = parked[unit].get("ospf", {})
+				dev.bgp = parked[unit].get("bgp", {})
+				dev.services["frr"] = true
+			elif not on:
+				parked[unit] = {"ospf": dev.ospf, "bgp": dev.bgp}
+				dev.ospf = {}
+				dev.bgp = {}
+				dev.services.erase("frr")
 		_:
 			return
 	if on:

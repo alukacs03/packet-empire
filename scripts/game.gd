@@ -2478,32 +2478,38 @@ func is_gateway_of(host: Net.NDevice, ip: String) -> bool:
 			return true
 	return false
 
-func errdisable_tick() -> void:
-	## errdisable recovery: a port the switch shut comes back by itself once the interval has passed
-	for d in all_devices():
-		if not bool(d.services.get("errdisable_recovery", false)):
-			continue
-		var cycles := maxi(1, int(d.services.get("errdisable_interval", 300)) / 300)  # five minutes is a cycle here
-		for i: Net.Iface in d.ifaces:
-			if i.err_disabled and cycle - i.err_since >= cycles:
-				i.err_disabled = false
-				i.enabled = not i.admin_down
-				device_log(d, "errdisable recovery: %s brought back up" % i.name)
-				topology_changed.emit()
-
-func lockout_tick() -> void:
-	# reachability is expensive to compute, and a lockout is not urgent news
-	if cycle % 4 != 0:
-		return
+func confirm_tick() -> void:
+	## a commit timer is due when it says, not on the next lockout sweep
 	for d: Net.NDevice in all_devices():
-		if d.type == "server":
-			continue  # a tenant host you cannot reach is isolation working, not a lockout
 		var pending: Dictionary = confirm_commits.get(d.name, {})
 		if not pending.is_empty() and cycle >= int(pending["due"]):
 			confirm_commits.erase(d.name)
 			apply_device_config(d, pending["cfg"])
 			log_event("REVERTED: nobody confirmed the change on %s, so it rolled back to what was running before. That is what the timer is for."
 				% d.name)
+
+func errdisable_tick() -> void:
+	## errdisable recovery: a port the switch shut comes back by itself once the interval has passed
+	for d in all_devices():
+		if not bool(d.services.get("errdisable_recovery", false)):
+			continue
+		var cycles := maxi(1, int(d.services.get("errdisable_interval", 300)) / 300)  # five minutes is a cycle here
+		var causes: Array = d.services.get("errdisable_causes", [])
+		for i: Net.Iface in d.ifaces:
+			if i.err_disabled and cycle - i.err_since >= cycles and (i.err_cause == "" or i.err_cause in causes or "all" in causes):
+				i.err_disabled = false
+				i.enabled = not i.admin_down
+				device_log(d, "errdisable recovery: %s brought back up" % i.name)
+				topology_changed.emit()
+
+func lockout_tick() -> void:
+	confirm_tick()  # a due commit timer reverts on this cycle, whatever the sweep below decides
+	# reachability is expensive to compute, and a lockout is not urgent news
+	if cycle % 4 != 0:
+		return
+	for d: Net.NDevice in all_devices():
+		if d.type == "server":
+			continue  # a tenant host you cannot reach is isolation working, not a lockout
 			topology_changed.emit()
 			continue
 		var first_sight := not lockout_state.has(d.name)

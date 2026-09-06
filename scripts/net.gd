@@ -46,6 +46,7 @@ class Iface:
 	var psec_max := 1  # switchport port-security maximum
 	var psec_violation := "shutdown"  # shutdown | restrict | protect
 	var err_since := 0  # the cycle the switch shut it, for errdisable recovery
+	var err_cause := ""  # portsec | bpduguard: what shut it, so recovery can be per cause
 	var violations := 0
 	var parent := ""  # 802.1Q subinterface: name of the physical parent
 	var dot1q := 0  # subinterface VLAN tag

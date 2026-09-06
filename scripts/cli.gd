@@ -890,7 +890,7 @@ class EOS extends Session:
 				dev.services["domain"] = String(r[0])
 				return ""},
 			{"m": ["config"], "p": ["errdisable", "recovery"], "h": _errdisable_recovery},
-			{"m": ["config"], "p": ["no", "errdisable", "recovery"], "h": func(_r): dev.services.erase("errdisable_recovery"); return ""},
+			{"m": ["config"], "p": ["no", "errdisable", "recovery"], "h": func(_r): dev.services.erase("errdisable_recovery"); dev.services.erase("errdisable_causes"); return ""},
 			{"m": ["config"], "p": ["management", "ssh"], "h": func(_r): return ""},
 			{"m": ["config"], "p": ["management", "api", "http-commands"], "h": func(_r): return ""},
 			{"m": ["config"], "p": ["enable", "secret"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
@@ -1494,7 +1494,7 @@ class EOS extends Session:
 			if i.mlag <= 0:
 				continue
 			var far := Sim.mlag_port(peer, i.mlag) if peer != null else null
-			var l_up := Game.link_at(i) != null and i.enabled
+			var l_up := Game.link_at(i) != null and i.enabled and not Sim._mlag_isolated_secondary(dev)
 			var r_up := far != null and Game.link_at(far) != null and far.enabled
 			out += "%10d %10s %17s %11s %12s %12s\n" % [i.mlag, "", "active-full" if l_up and r_up else ("active-partial" if l_up or r_up else "inactive"),
 				EOS._short(i.name), EOS._short(far.name) if far != null else "-", "%s/%s" % ["up" if l_up else "down", "up" if r_up else "down"]]
@@ -2078,6 +2078,13 @@ class EOS extends Session:
 
 	func _errdisable_recovery(r: Array) -> String:
 		if r.size() == 2 and String(r[0]) == "cause":
+			var cause := String(r[1])
+			if cause not in ["bpduguard", "portsec", "all", "link-flap", "arp-inspection"]:
+				return "% Invalid input\n"
+			var causes: Array = dev.services.get("errdisable_causes", [])
+			if cause not in causes:
+				causes.append(cause)
+			dev.services["errdisable_causes"] = causes
 			dev.services["errdisable_recovery"] = true
 			return ""
 		if r.size() == 2 and String(r[0]) == "interval" and String(r[1]).is_valid_int() and int(r[1]) >= 30:
@@ -2241,14 +2248,17 @@ class EOS extends Session:
 		return out
 
 	func _show_port_sec(_r: Array) -> String:
-		var out := "%-11s %-9s %-19s %s\n" % ["Port", "Security", "Secure MAC", "Violations"]
+		var out := "%-11s %-9s %-4s %-9s %-40s %s\n" % ["Port", "Security", "Max", "Violation", "Secure MACs", "Violations"]
 		var any := false
 		for i: Net.Iface in dev.ifaces:
 			if not i.port_security:
 				continue
 			any = true
-			out += "%-11s %-9s %-19s %d%s\n" % [EOS._short(i.name), "enabled",
-				i.secure_mac if i.secure_mac else "(none learned)", i.violations,
+			var macs: Array = i.secure_macs.duplicate()
+			if i.secure_mac != "" and i.secure_mac not in macs:
+				macs.push_front(i.secure_mac)
+			out += "%-11s %-9s %-4d %-9s %-40s %d%s\n" % [EOS._short(i.name), "enabled", i.psec_max, i.psec_violation,
+				", ".join(PackedStringArray(macs)) if not macs.is_empty() else "(none learned)", i.violations,
 				"   [SHUTDOWN]" if not i.enabled else ""]
 		return out if any else "  (no ports secured: 'switchport port-security' under an interface)\n"
 
@@ -3093,7 +3103,8 @@ class EOS extends Session:
 			return "% Invalid input\n"
 		var v6_ifaces: Array = dev.ospf["v6_ifaces"]
 		if not on:
-			v6_ifaces.erase(ctx_if.name)
+			for ci: Net.Iface in ctx_ifs:
+				v6_ifaces.erase(ci.name)
 			Game.topology_changed.emit()
 			return ""
 		if r.size() != 3 or String(r[1]) != "area":
@@ -3107,8 +3118,9 @@ class EOS extends Session:
 		if (not dev.ospf.get("networks", []).is_empty() or not v6_ifaces.is_empty()) and area != have:
 			return "%% multi-area OSPF is not supported here: this router is in area %s\n" % have
 		dev.ospf["areas"] = {"area": area}
-		if ctx_if.name not in v6_ifaces:
-			v6_ifaces.append(ctx_if.name)
+		for ci: Net.Iface in ctx_ifs:
+			if ci.name not in v6_ifaces:
+				v6_ifaces.append(ci.name)
 		Game.topology_changed.emit()
 		return ""
 
@@ -4551,7 +4563,8 @@ class EOS extends Session:
 		if dev.services.has("dot1x_global"):
 			out += "%sdot1x system-auth-control\n!\n" % ("" if bool(dev.services["dot1x_global"]) else "no ")
 		if bool(dev.services.get("errdisable_recovery", false)):
-			out += "errdisable recovery cause bpduguard\nerrdisable recovery cause portsec\n"
+			for cause in dev.services.get("errdisable_causes", ["bpduguard", "portsec"]):
+				out += "errdisable recovery cause %s\n" % cause
 			if dev.services.has("errdisable_interval"):
 				out += "errdisable recovery interval %d\n" % int(dev.services["errdisable_interval"])
 			out += "!\n"
@@ -4978,6 +4991,7 @@ class Vtysh extends EOS:
 	## commands and the protocol shows; everything else is the Linux
 	## underneath, and vtysh does not have it
 	const ALLOWED := [["configure", "terminal"], ["router", "ospf"], ["router", "bgp"], ["no", "router", "ospf"], ["no", "router", "bgp"],
+		["router", "ospf6"], ["interface"], ["show", "ipv6", "route"], ["show", "ipv6", "ospf6"],
 		["show", "ip", "ospf"], ["show", "ip", "bgp"], ["show", "bgp"], ["show", "ip", "route"], ["show", "running-config"],
 		["show", "version"], ["exit"], ["end"], ["quit"], ["write"], ["copy", "running-config", "startup-config"]]
 
@@ -5006,8 +5020,20 @@ class Vtysh extends EOS:
 			return "FRRouting 8.4.4 (%s) on Linux(6.1.0-18-amd64).\nCopyright 1996-2005 Kunihiro Ishiguro, et al.\nconfigured with:\n    '--build=x86_64-linux-gnu' '--prefix=/usr' '--enable-vtysh' '--enable-ospfd' '--enable-bgpd'\n" % dev.name
 		if String(toks[0]) == "router" and not dev.ip_forwarding:
 			return "%% this box does not forward: sysctl -w net.ipv4.ip_forward=1 first, or the daemons route nothing\n"
-		if toks.size() == 2 and String(toks[0]) == "router" and "ospf".begins_with(String(toks[1])):
+		if toks.size() == 2 and String(toks[0]) == "router" and String(toks[1]) == "ospf6":
+			line = "ipv6 router ospf 1"  # ospf6d: enabled per interface with ipv6 ospf6 area
+		elif toks.size() == 2 and String(toks[0]) == "router" and "ospf".begins_with(String(toks[1])):
 			line = "router ospf 1"  # FRR's router ospf has no process id; the Arista grammar underneath wants one
+		if toks.size() >= 3 and String(toks[0]) == "show" and String(toks[1]) == "ipv6" and String(toks[2]) == "ospf6":
+			line = "show ipv6 ospf " + " ".join(PackedStringArray(toks.slice(3)))
+		if mode == "if":
+			# FRR's interface mode is for the daemons' knobs only, not addresses
+			if toks.size() == 4 and String(toks[0]) == "ipv6" and String(toks[1]) == "ospf6" and String(toks[2]) == "area":
+				line = "ipv6 ospf 1 area %s" % toks[3]
+			elif String(toks[0]) not in ["exit", "end", "interface", "ip", "ipv6"]:
+				return "%% Unknown command: %s\n" % line.strip_edges()
+			elif String(toks[0]) in ["ip", "ipv6"] and not (toks.size() >= 2 and String(toks[1]) in ["ospf", "ospf6"]):
+				return "%% Unknown command: %s\n" % line.strip_edges()
 		var out := super.exec(line)
 		if String(toks[0]) == "write" or String(toks[0]) == "copy":
 			return "Note: this version of vtysh never writes vtysh.conf\nBuilding Configuration...\nIntegrated configuration saved to /etc/frr/frr.conf\n[OK]\n"

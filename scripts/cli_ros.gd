@@ -2047,14 +2047,36 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"routing ospf instance remove":
 			if dev.ospf.is_empty():
 				return "no such item\n"
-			dev.ospf = {}
+			var which := String(p.get("name", args[0] if not args.is_empty() else ""))
+			if which == String(dev.ospf.get("v6_instance", "\u0000")) or (which == "1" and dev.ospf.has("v6_instance") and dev.ospf.has("instance")):
+				# only the v3 instance goes: its areas and interfaces with it
+				for a in dev.ospf.get("v6_areas", []):
+					dev.ospf.get("areas", {}).erase(a)
+				for k in ["v6_instance", "v6_areas", "v6_ifaces"]:
+					dev.ospf.erase(k)
+			elif which == String(dev.ospf.get("instance", "default")) or which == "0" or which == "":
+				if dev.ospf.has("v6_instance"):
+					dev.ospf["networks"] = []
+					dev.ospf.erase("instance")  # the v2 instance goes, the v3 one stays
+				else:
+					dev.ospf = {}
+			else:
+				return "no such item\n"
+			if dev.ospf.get("networks", []).is_empty() and not dev.ospf.has("v6_instance") and not dev.ospf.has("instance"):
+				dev.ospf = {}
 			Game.topology_changed.emit()
 			return ""
 		"routing ospf instance print":
 			if dev.ospf.is_empty():
 				return _empty("Flags: X - disabled\n")
-			return "Flags: X - disabled\n 0   name=\"%s\" version=2 vrf=main router-id=%s\n" % [dev.ospf.get("instance", "default"),
-				dev.ospf.get("router_id", _first_ip())]
+			var out := "Flags: X - disabled\n"
+			var n := 0
+			if dev.ospf.has("instance") or not dev.ospf.has("v6_instance"):
+				out += " %d   name=\"%s\" version=2 vrf=main router-id=%s\n" % [n, dev.ospf.get("instance", "default"), dev.ospf.get("router_id", _first_ip())]
+				n += 1
+			if dev.ospf.has("v6_instance"):
+				out += " %d   name=\"%s\" version=3 vrf=main router-id=%s\n" % [n, dev.ospf["v6_instance"], dev.ospf.get("router_id", _first_ip())]
+			return out
 		"routing ospf area add":
 			if dev.ospf.is_empty():
 				return "input does not match any value of instance\n"
@@ -2070,6 +2092,10 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			for a in areas.keys():
 				if String(p.get("name", "")) == String(a) or str(n) in args:
 					areas.erase(a)
+					if String(a) in dev.ospf.get("v6_areas", []):
+						dev.ospf["v6_areas"].erase(String(a))
+						dev.ospf["v6_ifaces"] = []  # the interfaces that area enabled go with it
+						Game.topology_changed.emit()
 					return ""
 				n += 1
 			return "no such item\n"
@@ -2132,12 +2158,16 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			Game.topology_changed.emit()
 			return ""
 		"routing ospf interface-template print":
-			if dev.ospf.is_empty() or dev.ospf.get("networks", []).is_empty():
+			if dev.ospf.is_empty() or (dev.ospf.get("networks", []).is_empty() and dev.ospf.get("v6_ifaces", []).is_empty()):
 				return _empty("Flags: X - disabled, I - inactive\n")
 			var out := "Flags: X - disabled, I - inactive\n"
 			var n := 0
-			for net in dev.ospf["networks"]:
+			for net in dev.ospf.get("networks", []):
 				out += " %d   area=%s networks=%s cost=1 priority=128 type=broadcast auth=none\n" % [n, _area_name(), net]
+				n += 1
+			var v6_area := String(dev.ospf["v6_areas"][0]) if not dev.ospf.get("v6_areas", []).is_empty() else "backbone-v3"
+			for ifn6 in dev.ospf.get("v6_ifaces", []):
+				out += " %d   area=%s interfaces=%s cost=1 priority=128 type=broadcast auth=none\n" % [n, v6_area, ifn6]
 				n += 1
 			return out
 		"routing ospf neighbor print":
@@ -2806,7 +2836,8 @@ func _export() -> String:
 	for pool_name in rd.get("pools", {}):
 		add.call("/ip pool", "add name=%s ranges=%s-%s" % [pool_name, rd["pools"][pool_name][0], rd["pools"][pool_name][1]])
 	if rd.has("server"):
-		add.call("/ip dhcp-server", "add address-pool=%s interface=%s name=%s" % [rd["server"]["pool"], rd["server"]["iface"], rd["server"]["name"]])
+		add.call("/ip dhcp-server", "add address-pool=%s interface=%s%s name=%s" % [rd["server"]["pool"], rd["server"]["iface"],
+			(" lease-time=%s" % rd["server"]["lease"]) if String(rd["server"].get("lease", "10m")) != "10m" else "", rd["server"]["name"]])
 	if rd.has("network"):
 		var nw: Dictionary = rd["network"]
 		add.call("/ip dhcp-server network", "add address=%s%s%s" % [nw["address"], (" dns-server=%s" % nw["dns"]) if String(nw.get("dns", "")) != "" else "",
