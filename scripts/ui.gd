@@ -1321,7 +1321,7 @@ func _build_dev_overlay() -> void:
 	var btn_row := HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 8)
 	v.add_child(btn_row)
-	name_row.add_child(_label("Hostname:  ", 14, MUTED))
+	name_row.add_child(_label(Loc.t("dev.hostname") + ":  ", 14, MUTED))
 	name_edit = _mono_edit(220)
 	name_edit.placeholder_text = "hostname, Enter to apply"
 	name_edit.text_submitted.connect(_rename_dev)
@@ -1341,7 +1341,7 @@ func _build_dev_overlay() -> void:
 	psu_opt = OptionButton.new()
 	for feed in ["A", "B", "AB"]:
 		psu_opt.add_item("feed " + feed if feed != "AB" else "both feeds")
-	psu_opt.tooltip_text = "Which power feed this device is plugged into"
+	psu_opt.tooltip_text = Loc.t("dev.psu.tip")
 	psu_opt.item_selected.connect(func(idx: int) -> void:
 		var err := Game.set_psu(cur_dev, ["A", "B", "AB"][idx])
 		if err != "":
@@ -1351,7 +1351,7 @@ func _build_dev_overlay() -> void:
 	name_hint = _label("", 13, Color(0.9, 0.5, 0.45))
 	name_row.add_child(name_hint)
 
-	v.add_child(_section("FRONT PANEL  /  CLICK A PORT TO INSPECT OR CABLE"))
+	v.add_child(_section(Loc.t("dev.section.front")))
 	var plate := PanelContainer.new()
 	var plate_sb := _sb(Color(0.1, 0.11, 0.14), Color(0.4, 0.44, 0.52), 10, 16)
 	plate_sb.border_width_top = 3
@@ -1372,17 +1372,17 @@ func _build_dev_overlay() -> void:
 	vlan_section = VBoxContainer.new()
 	v.add_child(vlan_section)
 	vlan_section.add_child(HSeparator.new())
-	vlan_section.add_child(_section("OBSERVED VLAN DATABASE  /  CONFIGURE IN CONSOLE"))
+	vlan_section.add_child(_section(Loc.t("dev.section.vlans")))
 	vlan_box = VBoxContainer.new()
 	vlan_section.add_child(vlan_box)
 
 	dev_note_btn = Button.new()
 	dev_note_btn.text = "✎ LEAVE NOTE"
-	dev_note_btn.tooltip_text = "Leave short handover context on this device"
+	dev_note_btn.tooltip_text = Loc.t("dev.note.tip")
 	dev_note_btn.pressed.connect(func() -> void: _open_note_card(dev_note_ui))
 	btn_row.add_child(dev_note_btn)
 	cli_toggle = Button.new()
-	cli_toggle.text = "Open console  ▤"
+	cli_toggle.text = Loc.t("dev.console.open") + "  ▤"
 	_last_cli_line = ""
 	if cli_learn_btn != null:
 		cli_learn_btn.visible = false  # the chip belongs to what was typed here, not on the last box
@@ -1391,7 +1391,7 @@ func _build_dev_overlay() -> void:
 	btn_row.add_child(cli_toggle)
 	var cli_size_btn := Button.new()
 	cli_size_btn.text = "▤ taller"
-	cli_size_btn.tooltip_text = "Cycle the console height (or type terminal length N)"
+	cli_size_btn.tooltip_text = Loc.t("dev.console.size.tip")
 	cli_size_btn.pressed.connect(func() -> void:
 		if cli_session != null:
 			cli_session.term_length = 0  # the button takes over from terminal length
@@ -1404,7 +1404,7 @@ func _build_dev_overlay() -> void:
 	btn_row.add_child(cli_size_btn)
 	cli_learn_btn = Button.new()
 	cli_learn_btn.text = "LEARN ↗"
-	cli_learn_btn.tooltip_text = "Open the field manual at the article for what you last typed"
+	cli_learn_btn.tooltip_text = Loc.t("dev.learn.tip")
 	cli_learn_btn.visible = false
 	cli_learn_btn.pressed.connect(func() -> void:
 		var topic := CLI.topic_for(_last_cli_line)
@@ -1417,7 +1417,7 @@ func _build_dev_overlay() -> void:
 	btn_row.add_child(cli_learn_btn)
 	cap_toggle = Button.new()
 	cap_toggle.text = "Packets ⇅"
-	cap_toggle.tooltip_text = "Live capture (tcpdump) of this device"
+	cap_toggle.tooltip_text = Loc.t("dev.capture.tip")
 	cap_toggle.pressed.connect(func() -> void:
 		cap_box.visible = not cap_box.visible
 		cap_out.custom_minimum_size.y = 170 if cap_box.visible else 0
@@ -1428,8 +1428,8 @@ func _build_dev_overlay() -> void:
 			_fit_cards.call_deferred())
 	btn_row.add_child(cap_toggle)
 	template_btn = Button.new()
-	template_btn.text = "Templates"
-	template_btn.tooltip_text = "Save this device as a standard, or apply one"
+	template_btn.text = Loc.t("dev.templates")
+	template_btn.tooltip_text = Loc.t("dev.templates.tip")
 	template_btn.pressed.connect(func() -> void:
 		var opts: Array = ["Save this device as a template (numbered, never overwrites)"]
 		var applicable: Array = []
@@ -1588,7 +1588,7 @@ func open_dev(d: Net.NDevice) -> void:
 	cap_box.visible = false
 	cli_out.custom_minimum_size.y = 0
 	cap_out.custom_minimum_size.y = 0
-	cli_toggle.text = "Open console  ▤"
+	cli_toggle.text = Loc.t("dev.console.open") + "  ▤"
 	_refresh_ports()
 	_show_overlay(dev_overlay)
 
@@ -3710,10 +3710,10 @@ func _build_menu() -> void:
 		menu_overlay.visible = false
 		get_parent().show_title())
 	v.add_child(title_btn)
-	v.add_child(_section("PRACTICE"))
+	v.add_child(_section(Loc.t("menu.section.practice")))
 	var scen_btn := Button.new()
 	scen_btn.text = Loc.t("menu.scenarios")
-	scen_btn.tooltip_text = "Authored situations to work through; your own datacenter waits for you"
+	scen_btn.tooltip_text = Loc.t("menu.scenarios.tip")
 	scen_btn.pressed.connect(func() -> void:
 		var opts: Array = []
 		for sc: Dictionary in Scenarios.all():
@@ -3729,7 +3729,7 @@ func _build_menu() -> void:
 	v.add_child(scen_btn)
 	var sandbox_btn := Button.new()
 	sandbox_btn.text = Loc.t("menu.sandbox")
-	sandbox_btn.tooltip_text = "Free hardware, no bills, no events: somewhere to try an idea"
+	sandbox_btn.tooltip_text = Loc.t("menu.sandbox.tip")
 	sandbox_btn.pressed.connect(func() -> void:
 		Game.sandbox = not Game.sandbox
 		Game.log_event("SANDBOX: %s." % ("on, nothing costs anything" if Game.sandbox
@@ -3794,7 +3794,7 @@ func _build_menu() -> void:
 			hud_toast("Difficulty set to %s: fault rate, prices and cycle length change from now. The bank balance stays, and the run is scored at the preset it started on." % Game.DIFFICULTIES[id]["name"], true)
 			_refresh_money()))
 	v.add_child(diff_btn)
-	v.add_child(_section("SHARE AND EXPORT"))
+	v.add_child(_section(Loc.t("menu.section.share")))
 	var puzzle_btn := Button.new()
 	puzzle_btn.text = "Hand somebody this fault…"
 	puzzle_btn.tooltip_text = "Copy the live topology, configs and symptom to the clipboard, or open one somebody sent you"
@@ -6493,7 +6493,7 @@ func _toggle_cli() -> void:
 	if cli_box.visible:
 		cli_out.custom_minimum_size.y = _console_height()
 		_ensure_visible(cli_box)  # the console opens below the fold otherwise
-		cli_toggle.text = "Close console  ▤"
+		cli_toggle.text = Loc.t("dev.console.close") + "  ▤"
 		var kept: Dictionary = cli_sessions.get(cur_dev, {})
 		var kept_base: CLI.Session = (kept["stack"][0] if not kept.get("stack", []).is_empty() else kept.get("session")) if not kept.is_empty() else null
 		var resumed: bool = kept_base != null and is_instance_valid(kept_base.dev) and kept_base.dev == cur_dev  # an ssh hop kept open comes back too
@@ -6526,7 +6526,7 @@ func _toggle_cli() -> void:
 		_ensure_visible.call_deferred(cli_in)  # the input line, not the box: the box is taller than the fold
 	else:
 		cli_out.custom_minimum_size.y = 0
-		cli_toggle.text = "Open console  ▤"
+		cli_toggle.text = Loc.t("dev.console.open") + "  ▤"
 		cli_out.clear()
 		cli_session = null  # the session object stays in cli_sessions until logout or exit
 		_fit_cards.call_deferred()
