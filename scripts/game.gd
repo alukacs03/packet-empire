@@ -304,7 +304,7 @@ func check_achievements() -> Array:
 		if _achievement_met(a["id"]):
 			achievements.append(a["id"])
 			newly.append(a)
-			log_event("ACHIEVEMENT: %s (%s)" % [a["name"], a["how"]])
+			log_event(Loc.t("log.achievement") % [a["name"], a["how"]])
 	return newly
 
 const LOAN_TRANCHE := 1000
@@ -316,7 +316,7 @@ func borrow() -> bool:
 		return false
 	debt += LOAN_TRANCHE
 	money += LOAN_TRANCHE
-	log_event("BANK: borrowed $%d (debt $%d, %.1f%% interest per cycle)" % [LOAN_TRANCHE, debt, LOAN_RATE * 100.0])
+	log_event(Loc.t("log.bank_borrowed") % [LOAN_TRANCHE, debt, LOAN_RATE * 100.0])
 	money_changed.emit()
 	return true
 
@@ -614,7 +614,7 @@ func settle_quarter_goals() -> void:
 			earn_on("board bonuses", paid)
 		reputation = clampi(reputation + met_n * 2 - (quarter_goals.size() - met_n), 0, 100)
 		stats["quarter_goals_met"] = int(stats.get("quarter_goals_met", 0)) + met_n
-		log_event("BOARD: %d of %d quarterly targets met%s." % [met_n, quarter_goals.size(),
+		log_event(Loc.t("log.board_targets_met") % [met_n, quarter_goals.size(),
 			", $%d in bonuses" % paid if paid > 0 else ""])
 		money_changed.emit()
 	roll_quarter_goals()
@@ -622,7 +622,7 @@ func settle_quarter_goals() -> void:
 		var names: Array = []
 		for g2: Dictionary in quarter_goals:
 			names.append(String(g2["label"]))
-		log_event("BOARD: this quarter's targets: %s." % "; ".join(PackedStringArray(names)))
+		log_event(Loc.t("log.board_targets") % "; ".join(PackedStringArray(names)))
 
 func next_quarter_goal() -> String:
 	## the first target still open, for the status line once the campaign is done
@@ -879,7 +879,7 @@ func lease_site(offer_idx: int) -> String:
 	var g: Array = o["grid"]
 	var idx := add_site("%s %d" % [o["label"], site_count()], Vector2i(int(g[0]), int(g[1])), "leased")
 	sites[idx]["rent"] = int(o["rent"])
-	log_event("SITE: leased a %s ($%d/cycle rent). Reaching it needs a circuit." % [o["label"], int(o["rent"])])
+	log_event(Loc.t("log.site_leased") % [o["label"], int(o["rent"])])
 	topology_changed.emit()
 	return ""
 
@@ -919,7 +919,7 @@ func carrier_tick() -> void:
 	for name in CARRIERS:
 		if not carrier_up(name):
 			if cycle == int(carrier_outage[name]):
-				log_event("CARRIER: %s is back. Circuits on them are up." % name)
+				log_event(Loc.t("log.carrier_back") % name)
 			continue
 		var uses := 0
 		for c in circuits:
@@ -929,7 +929,7 @@ func carrier_tick() -> void:
 			continue
 		if randf() < 0.02 * DIFFICULTIES[difficulty]["faults"]:
 			carrier_outage[name] = cycle + randi_range(1, 4)
-			log_event("CARRIER: %s has an outage. Every circuit you buy from them is down."
+			log_event(Loc.t("log.carrier_outage")
 				% name)
 			topology_changed.emit()
 
@@ -948,7 +948,7 @@ func buy_circuit(site_a: int, site_b: int, grade: int, carrier := "") -> String:
 		return "you cannot afford the $%d installation" % int(g["setup"])
 	circuits.append({"a": site_a, "b": site_b, "mbps": int(g["mbps"]),
 		"fee": int(g["fee"]), "label": g["label"], "carrier": carrier})
-	log_event("CIRCUIT: %s from %s ordered between %s and %s ($%d/cycle)." % [g["label"],
+	log_event(Loc.t("log.circuit_ordered") % [g["label"],
 		carrier, site_name(site_a), site_name(site_b), int(g["fee"])])
 	topology_changed.emit()
 	return ""
@@ -969,7 +969,7 @@ func cancel_circuit(c: Dictionary) -> void:
 			if cc == c:
 				links.erase(l)  # the cables riding it go with it
 	circuits.erase(c)
-	log_event("CIRCUIT: cancelled %s." % c["label"])
+	log_event(Loc.t("log.circuit_cancelled") % c["label"])
 	topology_changed.emit()
 
 func sites_of(a: Net.Iface, b: Net.Iface) -> Array:
@@ -1039,7 +1039,7 @@ func submit_change(summary: String, targets: Array, duration: int, backout: bool
 				change_window["snapshots"][name] = device_config(d)
 	maintenance_until = cycle + duration
 	maintenance_used += 1
-	log_event("CHANGE WINDOW: \"%s\" open for %d cycles on %s. Safe rollback point at cycle %d.%s%s"
+	log_event(Loc.t("log.change_window_open")
 		% [summary, duration, ", ".join(PackedStringArray(targets)),
 			int(change_window["rollback_at"]),
 			"  No backout plan was submitted." if not backout else "",
@@ -1067,7 +1067,7 @@ func complete_change() -> String:
 	var overridden: bool = bool(change_window["overridden"])
 	change_window["done"] = true
 	reputation = mini(100, reputation + (3 if bool(change_window["backout"]) else 1))
-	log_event("CHANGE COMPLETE: \"%s\" finished inside the window.%s"
+	log_event(Loc.t("log.change_complete")
 		% [change_window["summary"],
 			"  Overriding the freeze went unpunished this time." if overridden else ""])
 	reconcile_after_change(change_window["targets"])
@@ -1085,7 +1085,7 @@ func abort_change() -> String:
 			if d.name == name:
 				apply_device_config(d, change_window["snapshots"][name])
 				d.startup = device_config(d)
-	log_event("ROLLED BACK: \"%s\" reverted at the rollback point. Everything is as it was, and the night is gone."
+	log_event(Loc.t("log.change_rolled_back")
 		% change_window["summary"])
 	change_window = {}
 	maintenance_until = cycle
@@ -1096,7 +1096,7 @@ func push_on_change() -> String:
 	if not change_active():
 		return "no window is running"
 	change_window["pushed"] = true
-	log_event("PUSHING ON: past the safe rollback point on \"%s\". From here it has to work."
+	log_event(Loc.t("log.change_pushing_on")
 		% change_window["summary"])
 	return ""
 
@@ -1105,7 +1105,7 @@ func change_tick() -> void:
 		return
 	if cycle == int(change_window["rollback_at"]) and not change_work_done() \
 			and not bool(change_window["pushed"]):
-		log_event("ROLLBACK POINT: \"%s\" is not finished. Abort and revert, or push on past the point of safe return."
+		log_event(Loc.t("log.change_rollback_point")
 			% change_window["summary"])
 	if cycle < int(change_window["ends"]):
 		return
@@ -1120,7 +1120,7 @@ func change_tick() -> void:
 	for m in staff:
 		m["morale"] = maxi(0, int(m.get("morale", 70)) - 8)
 	record_incident("change", "a change window overran on %s" % change_window["summary"])
-	log_event("OVERRUN: \"%s\" is still open and the window has closed. %sCustomers are exposed, the crew are wrecked, and this is on the record."
+	log_event(Loc.t("log.change_overrun")
 		% [change_window["summary"],
 			"You pushed past the rollback point. " if pushed else ""])
 	if not pushed:
@@ -1138,7 +1138,7 @@ func maybe_window_job() -> void:
 		if int(deal.get("cycles", 0)) < 10 or biz_roll() > 0.03:
 			continue
 		deal["window_job"] = {"fee": int(deal["fee"]) * 3, "by": cycle + 10}
-		log_event("WINDOW JOB: %s will pay $%d for a change they can only take inside an agreed window, finished within 10 cycles."
+		log_event(Loc.t("log.window_job")
 			% [deal["customer"], int(deal["window_job"]["fee"])])
 		return
 
@@ -1152,7 +1152,7 @@ func window_job_tick() -> void:
 		if cycle > int(job["by"]):
 			deal.erase("window_job")
 			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.1)
-			log_event("WINDOW JOB MISSED: %s wanted it done inside a window and it never happened."
+			log_event(Loc.t("log.window_job_missed")
 				% deal["customer"])
 
 func claim_window_job(deal: Dictionary) -> String:
@@ -1168,7 +1168,7 @@ func claim_window_job(deal: Dictionary) -> String:
 	money += int(job["fee"])
 	money_changed.emit()
 	deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.1)
-	log_event("WINDOW JOB DONE: %s paid $%d for work done properly, inside the window."
+	log_event(Loc.t("log.window_job_done")
 		% [deal["customer"], int(job["fee"])])
 	return ""
 
@@ -1211,7 +1211,7 @@ func assign_duty(id: String, name: String) -> String:
 	_sync_duty_policies()
 	Staff.say(Staff.by_name(name), "duty")
 	if duty_load(name) > DUTY_CAPACITY:
-		log_event("DUTIES: %s now holds %d standing duties. Something will be done badly."
+		log_event(Loc.t("log.duties_overloaded")
 			% [name, duty_load(name)])
 	return ""
 
@@ -1267,7 +1267,7 @@ func oncall_tick() -> void:
 	var stint := oncall_stint()
 	if stint > 0 and stint % ONCALL_STINT == 0:
 		who["morale"] = maxi(0, int(who.get("morale", 70)) - 4)
-		log_event("ROTA: %s has been on call for %s without a break. It is starting to tell."
+		log_event(Loc.t("log.rota_tired")
 			% [oncall, Loc.cycles(int(stint))])
 
 func set_oncall(name: String) -> String:
@@ -1281,7 +1281,7 @@ func set_oncall(name: String) -> String:
 		return "nobody by that name works here"
 	oncall = name
 	oncall_since = cycle
-	log_event("ROTA: %s is on call. The retainer is $%d a cycle." % [name, Staff.ONCALL_RETAINER])
+	log_event(Loc.t("log.rota_on_call") % [name, Staff.ONCALL_RETAINER])
 	return ""
 
 func call_someone_out() -> String:
@@ -1307,7 +1307,7 @@ func call_someone_out() -> String:
 	picked["tired_until"] = cycle + 2  # the real cost arrives tomorrow
 	callout_who = String(picked["name"])
 	callout_until = cycle + 1
-	log_event("CALL-OUT: %s was phoned at %s and is coming in. It cost $%d%s."
+	log_event(Loc.t("log.call_out")
 		% [callout_who, day_name(), fee,
 			", which is what the retainer is for" if expected else ", and it cost them"])
 	Sfx.play("phone")
@@ -1397,7 +1397,7 @@ func duties_tick() -> void:
 				if not done:
 					last_digest.append("%s: everything is labelled" % name)
 	if not last_digest.is_empty():
-		log_event("DUTIES: %s." % "; ".join(PackedStringArray(last_digest)))
+		log_event(Loc.t("log.duties") % "; ".join(PackedStringArray(last_digest)))
 
 func cable_debt_items() -> Array:
 	## Every penalty traces to one of these, and each is visible on the floor.
@@ -1463,7 +1463,7 @@ func buy_parts(kind: String, qty := 10) -> String:
 	if not spend_on("parts", price):
 		return "%d %s cost $%d" % [qty, PART_LABELS[kind], price]
 	parts[kind] = parts_of(kind) + qty
-	log_event("PARTS: %d %s into the drawer for $%d." % [qty, PART_LABELS[kind], price])
+	log_event(Loc.t("log.parts_bought") % [qty, PART_LABELS[kind], price])
 	return ""
 
 func take_part(kind: String) -> bool:
@@ -1474,7 +1474,7 @@ func take_part(kind: String) -> bool:
 		last_pl["parts"] = int(last_pl.get("parts", 0)) - refill_cost
 		money_changed.emit()
 		parts[kind] = PART_REORDER
-		log_event("PARTS: the drawer ran out of %s and the standing order refilled it."
+		log_event(Loc.t("log.parts_refilled")
 			% PART_LABELS[kind])
 	if parts_of(kind) <= 0:
 		return false
@@ -1485,7 +1485,7 @@ func improvise_part(kind: String) -> void:
 	## The wrong length, at two in the morning. It works, and it is visible for
 	## as long as it stays there.
 	cable_debt += 1
-	log_event("IMPROVISED: no %s of the right sort in the drawer, so something else went in. That is cable debt now."
+	log_event(Loc.t("log.improvised")
 		% PART_LABELS[kind])
 
 func redo_cable_debt() -> String:
@@ -1494,7 +1494,7 @@ func redo_cable_debt() -> String:
 	if not take_part("patch"):
 		return "there is nothing in the drawer to redo it with"
 	cable_debt -= 1
-	log_event("CABLING: one improvised lead replaced with the right length.")
+	log_event(Loc.t("log.cabling_replaced"))
 	topology_changed.emit()
 	return ""
 
@@ -1512,7 +1512,7 @@ func parts_tick() -> void:
 		last_pl["parts"] = int(last_pl.get("parts", 0)) - price
 		money_changed.emit()
 		parts[kind] = parts_of(kind) + qty
-		log_event("PARTS: the standing order topped up %s ($%d). It runs itself until the money does not."
+		log_event(Loc.t("log.parts_topped_up")
 			% [PART_LABELS[kind], price])
 
 const VENDOR_TIERS := {
@@ -1546,7 +1546,7 @@ func stockout_tick() -> void:
 	if stocked_out(model):
 		return
 	stockouts[model] = cycle + 6 + int(biz_roll() * 8.0)
-	log_event("SUPPLY: %s is on back order until around cycle %d. Everybody wants that one."
+	log_event(Loc.t("log.supply_back_order")
 		% [MODELS[model]["label"], int(stockouts[model])])
 
 func order_estimate(model: String, tier: String) -> int:
@@ -1562,7 +1562,7 @@ func send_rma(dev: Net.NDevice) -> String:
 	rmas.append({"model": dev.model, "device": dev.name, "due": cycle + wait,
 		"advance": advance})
 	uninstall_device(dev, false)
-	log_event("RMA: %s shipped back to the vendor.%s" % [dev.name,
+	log_event(Loc.t("log.rma_shipped") % [dev.name,
 		"  Advance replacement is on its way on your support contract."
 		if advance else "  The replacement follows when they have seen it."])
 	topology_changed.emit()
@@ -1576,7 +1576,7 @@ func rma_tick() -> void:
 		crates.append({"model": r["model"], "shipped": r["model"], "ordered": cycle,
 			"due": cycle, "arrived": cycle, "checked": false, "damaged": false,
 			"unpack_left": 2 if String(r["model"]) in HEAVY_MODELS else 1})
-		log_event("RMA: the replacement %s is on the dock." % MODELS[r["model"]]["label"])
+		log_event(Loc.t("log.rma_replacement") % MODELS[r["model"]]["label"])
 
 const RECEIVING_SPACE := 4  # crates the receiving area holds before it is an aisle problem
 const HEAVY_MODELS := ["sw-24", "srv-2", "rtr-edge", "crac-1", "lb-1"]
@@ -1609,7 +1609,7 @@ func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 			"due": cycle + randi_range(int(spec["wait"][0]), int(spec["wait"][1])), "arrived": -1,
 			"checked": false, "damaged": damaged, "used": tier == "used",
 			"unpack_left": 2 if model in HEAVY_MODELS else 1})
-	log_event("ORDERED: %d x %s from the %s for $%d, expected in %d to %d cycles."
+	log_event(Loc.t("log.ordered")
 		% [qty, MODELS[model]["label"], spec["label"], price,
 			int(spec["wait"][0]), int(spec["wait"][1])])
 	return ""
@@ -1643,19 +1643,19 @@ func check_crate(crate: Dictionary) -> String:
 		return "you have already checked that one"
 	crate["checked"] = true
 	if bool(crate["damaged"]):
-		log_event("RECEIVING: the %s arrived damaged. Checked on receipt, so it goes straight back and the money comes with it."
+		log_event(Loc.t("log.receiving_damaged")
 			% MODELS[crate["model"]]["label"])
 		crates.erase(crate)
 		_refund(int(float(crate.get("paid", MODELS[crate["model"]]["price"])) * 0.85))
 		return ""
 	if String(crate["shipped"]) != String(crate["model"]):
-		log_event("RECEIVING: they shipped a %s instead of a %s. Caught at the dock; the right one is on its way."
+		log_event(Loc.t("log.receiving_wrong_item")
 			% [MODELS[crate["shipped"]]["label"], MODELS[crate["model"]]["label"]])
 		crate["shipped"] = crate["model"]
 		crate["due"] = cycle + 3
 		crate["arrived"] = -1
 		return ""
-	log_event("RECEIVING: the %s matches the order and the serial is written down."
+	log_event(Loc.t("log.receiving_matches")
 		% MODELS[crate["model"]]["label"])
 	return ""
 
@@ -1669,13 +1669,13 @@ func unpack_crate(crate: Dictionary) -> String:
 			hands += 1
 	crate["unpack_left"] = int(crate["unpack_left"]) - (2 if hands >= 2 else 1)
 	if int(crate["unpack_left"]) > 0:
-		log_event("RECEIVING: the %s is half out of its crate. It is deep, and it is heavy."
+		log_event(Loc.t("log.receiving_half_out")
 			% MODELS[crate["model"]]["label"])
 		return ""
 	crates.erase(crate)
 	packaging += 1
 	if bool(crate["damaged"]) and not bool(crate["checked"]):
-		log_event("RECEIVING: the %s came out of the crate with a bent chassis. Nobody checked it at the dock, so that is now yours."
+		log_event(Loc.t("log.receiving_bent")
 			% MODELS[crate["model"]]["label"])
 		return ""
 	var model := String(crate["shipped"])
@@ -1683,7 +1683,7 @@ func unpack_crate(crate: Dictionary) -> String:
 	if bool(crate.get("used", false)) and randf() < 0.35:
 		# no warranty, old firmware, and something the last owner knew about
 		latent_defects[model] = int(latent_defects.get(model, 0)) + 1
-	log_event("RECEIVING: a %s is unpacked and on the shelf.%s" % [MODELS[model]["label"],
+	log_event(Loc.t("log.receiving_unpacked") % [MODELS[model]["label"],
 		"" if model == String(crate["model"])
 		else "  It is not what you ordered, and nobody noticed at the dock."])
 	return ""
@@ -1713,7 +1713,7 @@ func send_device_to(dev: Net.NDevice, site: int) -> String:
 		"due": cycle + TRANSIT_CYCLES, "arrived": -1, "checked": true, "damaged": false,
 		"used": false, "site": site, "from": from_name,
 		"unpack_left": 2 if dev.model in HEAVY_MODELS else 1})
-	log_event("TRANSFER: %s left %s for %s. Its configuration stayed with the rack it came out of."
+	log_event(Loc.t("log.transfer")
 		% [dev.name, from_name, site_name(site)])
 	topology_changed.emit()
 	return ""
@@ -1722,14 +1722,14 @@ func clear_packaging() -> String:
 	if packaging <= 0:
 		return "the aisle is clear"
 	packaging = 0
-	log_event("RECEIVING: the cardboard and pallet wrap are out of the aisle.")
+	log_event(Loc.t("log.receiving_cleared"))
 	return ""
 
 func receiving_tick() -> void:
 	for c in crates:
 		if int(c["arrived"]) < 0 and cycle >= int(c["due"]):
 			c["arrived"] = cycle
-			log_event("DELIVERY: a crate is in the receiving area. Check it against the order before it is unpacked.")
+			log_event(Loc.t("log.delivery_crate"))
 	# the crew absorb this work when they have hands free
 	if not staff.is_empty() and Staff.anyone_on_shift() and cycle % 2 == 0:
 		var waiting := crates_waiting()
@@ -1791,7 +1791,7 @@ func request_remote_hands(dev: Net.NDevice, action: String, iface: Net.Iface = n
 		"action": action,
 		"due": cycle + int(round(float(facility["wait"]) * season_contractor_delay())),
 		"precision": remote_precision(dev, iface), "site": int(rack.site)})
-	log_event("REMOTE HANDS: asked %s to %s %s%s. They arrive in %d cycle(s) and will do exactly what is written."
+	log_event(Loc.t("log.remote_hands_asked")
 		% [facility["label"], REMOTE_ACTIONS[action], dev.name,
 			" %s" % iface.name if iface != null else "", int(facility["wait"])])
 	return ""
@@ -1819,7 +1819,7 @@ func remote_hands_tick() -> void:
 			if d.name == String(job["device"]):
 				dev = d
 		if dev == null:
-			log_event("REMOTE HANDS: they could not find %s. That is the job, and it is billed."
+			log_event(Loc.t("log.remote_hands_not_found")
 				% job["device"])
 			continue
 		var iface: Net.Iface = null
@@ -1844,13 +1844,13 @@ func remote_hands_tick() -> void:
 					apply_device_config(target_dev, target_dev.startup)
 				device_log(target_dev, "power cycled by remote hands")
 			"check":
-				log_event("REMOTE HANDS REPORT: %s %s: link light is %s." % [target_dev.name,
+				log_event(Loc.t("log.remote_hands_report") % [target_dev.name,
 					target_iface.name if target_iface != null else "chassis",
 					"on" if target_iface != null and target_iface.enabled else "off"])
 		if right:
-			log_event("REMOTE HANDS: done, on the device you meant.")
+			log_event(Loc.t("log.remote_hands_done"))
 		else:
-			log_event("REMOTE HANDS: they did it to %s%s. That is what the label said, or rather did not."
+			log_event(Loc.t("log.remote_hands_wrong")
 				% [target_dev.name, " %s" % target_iface.name if target_iface != null else ""])
 		topology_changed.emit()
 
@@ -1927,11 +1927,11 @@ func repair_grey(i: Net.Iface, action: String) -> String:
 	if action == "replace cable" and not take_part("patch"):
 		return "no patch leads in the drawer"
 	if fault.is_empty():
-		log_event("MAINTENANCE: %s %s %s. Nothing was wrong with it."
+		log_event(Loc.t("log.maintenance_nothing_wrong")
 			% [i.dev.name, i.name, action])
 		return ""
 	if action != String(GREY_KINDS[fault["kind"]]["repair"]):
-		log_event("NO CHANGE: %s on %s %s, and the errors are still climbing."
+		log_event(Loc.t("log.no_change")
 			% [action.capitalize(), i.dev.name, i.name])
 		return ""
 	grey_faults.erase(iface_key(i))
@@ -1939,7 +1939,7 @@ func repair_grey(i: Net.Iface, action: String) -> String:
 	i.light_dbm = -6.0
 	if String(fault["kind"]) == "mtu":
 		i.mtu = int(fault.get("was_mtu", 1500))
-	log_event("FIXED: %s on %s %s cleared the fault. The counters stop moving."
+	log_event(Loc.t("log.fixed")
 		% [action.capitalize(), i.dev.name, i.name])
 	topology_changed.emit()
 	return ""
@@ -1989,7 +1989,7 @@ func maybe_call(deal: Dictionary) -> void:
 	if int(deal.get("missed", 0)) != 2 or deal.has("call"):
 		return
 	deal["call"] = {"words": _call_words(deal), "raised": cycle}
-	log_event("THE PHONE: %s is on the line about their service." % deal["customer"])
+	log_event(Loc.t("log.phone_on_line") % deal["customer"])
 	Sfx.play("phone")
 
 func answer_call(deal: Dictionary, answer: String) -> String:
@@ -2011,16 +2011,16 @@ func answer_call(deal: Dictionary, answer: String) -> String:
 		"honest":
 			deal["missed"] = maxi(0, int(deal.get("missed", 0)) - 1)
 			deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.03)
-			log_event("YOU SAID: what you actually knew. %s will wait a little longer for that."
+			log_event(Loc.t("log.you_said_truth")
 				% deal["customer"])
 		"promise":
 			deal["missed"] = maxi(0, int(deal.get("missed", 0)) - 2)
 			deal["promised_by"] = cycle + 3
-			log_event("YOU SAID: it will be back within three cycles. %s wrote that down."
+			log_event(Loc.t("log.you_said_three")
 				% deal["customer"])
 		"callback":
 			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.05)
-			log_event("YOU SAID: you would call back. %s is still waiting to hear from somebody."
+			log_event(Loc.t("log.you_said_call_back")
 				% deal["customer"])
 	return ""
 
@@ -2052,7 +2052,7 @@ func night_call_tick() -> void:
 	if reason == "":
 		return
 	night_call = {"reason": reason, "cycle": cycle}
-	log_event("THE PHONE: %s." % sentence(reason))
+	log_event(Loc.t("log.phone") % sentence(reason))
 	Sfx.play("phone")
 
 func answer_night_call(get_them_in: bool) -> String:
@@ -2061,7 +2061,7 @@ func answer_night_call(get_them_in: bool) -> String:
 	if not get_them_in:
 		night_call = {}
 		stats["phone_quiet_until"] = cycle + 4
-		log_event("THE PHONE: you said it waits until morning. Whatever it does overnight, it does.")
+		log_event(Loc.t("log.phone_until_morning"))
 		return ""
 	var err := call_someone_out()
 	if err != "":
@@ -2160,13 +2160,13 @@ func handover_tick() -> void:
 	if not handover.is_empty() and not bool(handover.get("read", false)) \
 			and int(handover.get("substantive", 0)) > 0:
 		observe_habit("documents", false)
-		log_event("HANDOVER: last shift's notes went unread, and the crew coming on found out the hard way.")
+		log_event(Loc.t("log.handover_unread"))
 	var going := "night" if slot == 2 else "day"
 	var written := handover_lines()
 	handover = {"cycle": cycle, "from": going, "lines": written, "read": false,
 		"substantive": 0 if written.size() == 1 and String(written[0]).begins_with("Nothing")
 			else written.size()}
-	log_event("HANDOVER: the %s shift left %d note(s) for the %s shift."
+	log_event(Loc.t("log.handover_notes")
 		% [going, handover["lines"].size(), "day" if going == "night" else "night"])
 
 const TREND_WINDOW := 20  # far enough back that a slow measure has moved
@@ -2238,7 +2238,7 @@ func call_tick() -> void:
 				deal.erase("promised_by")
 				deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.12)
 				reputation = mini(100, reputation + 2)
-				log_event("KEPT IT: %s was back inside the window you promised them."
+				log_event(Loc.t("log.kept_it")
 					% deal["customer"])
 			deal.erase("promised_by")
 			continue
@@ -2248,7 +2248,7 @@ func call_tick() -> void:
 			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.25)
 			reputation = maxi(0, reputation - 6)
 			deal["missed"] = int(deal.get("missed", 0)) + 2
-			log_event("BROKEN PROMISE: you told %s three cycles. It has been longer, and they heard it from you rather than found it out."
+			log_event(Loc.t("log.broken_promise")
 				% deal["customer"])
 			record_incident("promise", "a repair time promised to %s was missed" % deal["customer"])
 
@@ -2282,7 +2282,7 @@ func open_ticket(customer: String, text: String, cause: Dictionary) -> Dictionar
 	var ticket := {"id": "T%03d" % _ticket_seq, "customer": customer, "text": text,
 		"cause": cause, "opened": cycle, "state": "open", "triaged": "", "reopened": 0}
 	tickets.push_front(ticket)
-	log_event("TICKET %s from %s: \"%s\"" % [ticket["id"], customer, text])
+	log_event(Loc.t("log.ticket_from") % [ticket["id"], customer, text])
 	return ticket
 
 func ticket_area_for(cause: Dictionary) -> String:
@@ -2304,11 +2304,11 @@ func triage_ticket(t: Dictionary, area: String) -> String:
 	t["triaged"] = area
 	if area == ticket_area_for(t["cause"]):
 		t["state"] = "investigating"
-		log_event("TICKET %s: triaged to %s, which is where it actually is.%s" % [t["id"], area,
+		log_event(Loc.t("log.ticket_triaged_right") % [t["id"], area,
 			"  %s" % _ticket_hint(t["cause"])])
 		return ""
 	charge_on("callouts", 40)  # somebody's afternoon, spent looking in the wrong place
-	log_event("TICKET %s: triaged to %s. That is not where it is, and the clock kept running."
+	log_event(Loc.t("log.ticket_triaged_wrong")
 		% [t["id"], area])
 	return ""
 
@@ -2348,10 +2348,10 @@ func close_ticket(t: Dictionary) -> String:
 	t["state"] = "closed"
 	t["closed"] = cycle
 	if ticket_condition_live(t):
-		log_event("TICKET %s closed. Nothing about it has actually changed." % t["id"])
+		log_event(Loc.t("log.ticket_closed_nothing") % t["id"])
 	else:
 		reputation = mini(100, reputation + 1)
-		log_event("TICKET %s closed: %s can see it working again." % [t["id"], t["customer"]])
+		log_event(Loc.t("log.ticket_closed_working") % [t["id"], t["customer"]])
 	return ""
 
 func ticket_tick() -> void:
@@ -2378,7 +2378,7 @@ func ticket_tick() -> void:
 			t["state"] = "open"
 			t["reopened"] = int(t["reopened"]) + 1
 			reputation = maxi(0, reputation - 3)
-			log_event("TICKET %s reopened by %s, and they are not being polite about it. It was never fixed."
+			log_event(Loc.t("log.ticket_reopened")
 				% [t["id"], t["customer"]])
 	if tickets.size() > 12:
 		# keep every open ticket, cap the closed tail: trimming an open one
@@ -2445,7 +2445,7 @@ func arm_confirm(d: Net.NDevice, cycles := 3) -> String:
 	if confirm_commits.has(d.name):
 		return "there is already a confirmation pending on %s" % d.name
 	confirm_commits[d.name] = {"cfg": device_config(d), "due": cycle + maxi(1, cycles)}
-	log_event("CONFIRMED COMMIT armed on %s: it reverts in %s unless you confirm."
+	log_event(Loc.t("log.confirmed_commit_armed")
 		% [d.name, Loc.cycles(maxi(1, cycles))])
 	return ""
 
@@ -2456,7 +2456,7 @@ func confirm_commit(d: Net.NDevice) -> String:
 		return "you cannot confirm a change on a device you cannot reach"
 	confirm_commits.erase(d.name)
 	d.startup = device_config(d)
-	log_event("CONFIRMED: the change on %s stands." % d.name)
+	log_event(Loc.t("log.confirmed_stands") % d.name)
 	return ""
 
 func walk_to_device(d: Net.NDevice) -> String:
@@ -2469,7 +2469,7 @@ func walk_to_device(d: Net.NDevice) -> String:
 	if cost > 0 and not try_spend(cost):
 		return "%s costs $%d" % [label, cost]
 	physical_access[d.name] = cycle + 2 - (1 if access_friction() > 0.3 else 0)
-	log_event("PHYSICAL ACCESS: %s. You are at %s's console for the next couple of cycles.%s"
+	log_event(Loc.t("log.physical_access")
 		% [label.capitalize(), d.name, "" if cost == 0 else "  That cost $%d." % cost])
 	return ""
 
@@ -2487,7 +2487,7 @@ func confirm_tick() -> void:
 		if not pending.is_empty() and cycle >= int(pending["due"]):
 			confirm_commits.erase(d.name)
 			apply_device_config(d, pending["cfg"])
-			log_event("REVERTED: nobody confirmed the change on %s, so it rolled back to what was running before. That is what the timer is for."
+			log_event(Loc.t("log.reverted_unconfirmed")
 				% d.name)
 
 func errdisable_tick() -> void:
@@ -2520,7 +2520,7 @@ func lockout_tick() -> void:
 		lockout_state[d.name] = now
 		# only a device that could be reached and now cannot has locked you out
 		if now and not was and not first_sight:
-			log_event("LOCKED OUT: %s is running its new configuration and nothing can reach it. %s"
+			log_event(Loc.t("log.locked_out")
 				% [d.name, "There is a console cable on it." if console_reachable(d)
 					else "Console server, a walk to the rack, or a site visit."])
 			record_incident("lockout", "%s was cut off by its own configuration" % d.name)
@@ -2594,7 +2594,7 @@ func reconcile_rack(r: Net.Rack) -> String:
 	for d in r.slots:
 		if d != null:
 			document_device(d)
-	log_event("DOCUMENTATION: %s walked and written up. %d fact(s) corrected." % [r.name, drift])
+	log_event(Loc.t("log.documentation") % [r.name, drift])
 	return ""
 
 func reconcile_after_change(targets: Array) -> void:
@@ -2686,11 +2686,11 @@ func investigate_orphan(orphan: Dictionary) -> String:
 		return "an afternoon of somebody's time costs $50"
 	orphan_intel[String(orphan["key"])] = level + 1
 	if level + 1 < 2:
-		log_event("INVESTIGATION: counters and logs pulled for %s. Nothing conclusive yet."
+		log_event(Loc.t("log.investigation_pulled")
 			% orphan["label"])
 		return ""
 	var bearing := orphan_load_bearing(orphan)
-	log_event("INVESTIGATION: %s. %s" % [orphan["label"],
+	log_event(Loc.t("log.investigation") % [orphan["label"],
 		("It is load bearing: %s." % bearing) if bearing != ""
 		else "Nothing has touched it and nothing depends on it. It can go."])
 	return ""
@@ -2714,11 +2714,11 @@ func retire_orphan(orphan: Dictionary) -> String:
 			monitors.erase(orphan["ref"])
 	orphan_intel.erase(String(orphan["key"]))
 	if bearing == "":
-		log_event("RECLAIMED: %s. Power, space and addresses back." % orphan["label"])
+		log_event(Loc.t("log.reclaimed") % orphan["label"])
 	else:
 		# diagnosable, and exactly what the investigation would have told you
 		reputation = maxi(0, reputation - 3)
-		log_event("IT WAS LOAD BEARING: %s. %s. Nobody looked first."
+		log_event(Loc.t("log.load_bearing")
 			% [orphan["label"], bearing.capitalize()])
 		record_incident("zombie", "something nobody claimed turned out to be carrying traffic")
 	topology_changed.emit()
@@ -2746,7 +2746,7 @@ func buy_support(tier: int) -> String:
 	var item := add_renewal("support", "vendor support: %s" % SUPPORT_TIERS[tier]["label"],
 		int(SUPPORT_TIERS[tier]["cost"]) / 4, 40)
 	item["tier"] = tier
-	log_event("SUPPORT: %s cover bought. Cases get a response in %d cycle(s)."
+	log_event(Loc.t("log.support_cover")
 		% [SUPPORT_TIERS[tier]["label"], int(SUPPORT_TIERS[tier]["wait"])])
 	return ""
 
@@ -2763,7 +2763,7 @@ func _maybe_firmware_bug() -> void:
 		return
 	var victim: Net.NDevice = devs[randi() % devs.size()]
 	firmware_bugs[victim.name] = {"since": cycle, "model": victim.model}
-	log_event("FIRMWARE: %s keeps dropping a port and bringing it straight back. Nothing in its configuration explains it. This is one for the vendor."
+	log_event(Loc.t("log.firmware_flapping")
 		% victim.name)
 	record_incident("firmware", "%s is flapping a port for no configurable reason" % victim.name)
 
@@ -2794,7 +2794,7 @@ func open_tac_case(dev: Net.NDevice, severity: int) -> String:
 		"severity": clampi(severity, 1, 4), "stage": "evidence", "evidence": [],
 		"opened": cycle, "tier": tier, "waiting_until": -1, "asked_again": false,
 		"delegated": false})
-	log_event("CASE %s opened against %s (severity %d, %s). They want a log bundle, a show command and a repro."
+	log_event(Loc.t("log.case_opened")
 		% [tac_cases[tac_cases.size() - 1]["id"], dev.name, severity,
 			SUPPORT_TIERS[tier]["label"]])
 	return ""
@@ -2809,7 +2809,7 @@ func attach_bundle(c: Dictionary) -> String:
 	for kind: String in TAC_EVIDENCE:
 		if kind not in c["evidence"]:
 			attach_evidence(c, kind)
-	log_event("CASE %s: a full tech-support bundle attached in one go." % c["id"])
+	log_event(Loc.t("log.case_bundle") % c["id"])
 	return ""
 
 func attach_evidence(c: Dictionary, kind: String) -> String:
@@ -2829,12 +2829,12 @@ func attach_evidence(c: Dictionary, kind: String) -> String:
 		c["asked_again"] = true
 		c["stage"] = "level_one"
 		c["evidence"] = TAC_EVIDENCE.slice(0, 2)
-		log_event("CASE %s: level one has asked for the log bundle again. It is in the case already."
+		log_event(Loc.t("log.case_bundle_again")
 			% c["id"])
 		return ""
 	c["stage"] = "queued"
 	c["waiting_until"] = cycle + int(SUPPORT_TIERS[int(c["tier"])]["wait"])
-	log_event("CASE %s: complete and queued. Response expected in %d cycle(s) on your cover."
+	log_event(Loc.t("log.case_queued")
 		% [c["id"], int(SUPPORT_TIERS[int(c["tier"])]["wait"])])
 	return ""
 
@@ -2847,7 +2847,7 @@ func escalate_case(c: Dictionary) -> String:
 		return "insisting costs $200 of somebody's afternoon"
 	c["escalated"] = true
 	c["waiting_until"] = cycle + int(SUPPORT_TIERS[int(c["tier"])]["escalate"])
-	log_event("CASE %s escalated. Somebody who has seen this before is now reading it." % c["id"])
+	log_event(Loc.t("log.case_escalated") % c["id"])
 	return ""
 
 func tac_tick() -> void:
@@ -2856,7 +2856,7 @@ func tac_tick() -> void:
 	for c in tac_cases:
 		if String(c["stage"]) == "queued" and cycle >= int(c["waiting_until"]):
 			c["stage"] = "fix_ready"
-			log_event("CASE %s: confirmed as a known firmware defect. A fixed image is available; it needs a reload."
+			log_event(Loc.t("log.case_defect")
 				% c["id"])
 		elif bool(c.get("delegated", false)) and String(c["stage"]) in ["evidence", "level_one"]:
 			# staff work the case, slowly, and they will not push back
@@ -2884,11 +2884,11 @@ func apply_firmware(c: Dictionary) -> String:
 		apply_device_config(dev, dev.startup)
 	if not in_maintenance() and randf() < 0.3:
 		dev.status = "offline"
-		log_event("FIRMWARE UPGRADE: %s did not come back cleanly, and you did it outside a window. It is offline."
+		log_event(Loc.t("log.firmware_upgrade_failed")
 			% dev.name)
 		record_incident("firmware", "%s went down during an unplanned firmware upgrade" % dev.name)
 		return ""
-	log_event("FIRMWARE UPGRADE: %s reloaded on the fixed image. The flapping is gone, and case %s is closed."
+	log_event(Loc.t("log.firmware_upgrade_ok")
 		% [dev.name, c["id"]])
 	topology_changed.emit()
 	return ""
@@ -2923,7 +2923,7 @@ func renew_item(id: String) -> String:
 	item["due"] = cycle + int(item["period"])
 	var was_lapsed: bool = item["lapsed"]
 	item["lapsed"] = false
-	log_event("RENEWED: %s for $%d%s." % [item["label"], price,
+	log_event(Loc.t("log.renewed_for") % [item["label"], price,
 		", out of lapse" if was_lapsed else ""])
 	topology_changed.emit()
 	return ""
@@ -2956,22 +2956,22 @@ func renewal_tick() -> void:
 				last_pl["renewals"] = int(last_pl.get("renewals", 0)) - int(item["cost"])
 				money_changed.emit()
 				item["due"] = cycle + int(item["period"])
-				log_event("AUTO-RENEWED: %s, $%d taken." % [item["label"], int(item["cost"])])
+				log_event(Loc.t("log.auto_renewed") % [item["label"], int(item["cost"])])
 				continue
 		if overdue == 0:
-			log_event("DUE: %s is due now ($%d). There are %d cycles of grace after that."
+			log_event(Loc.t("log.due")
 				% [item["label"], int(item["cost"]), RENEWAL_GRACE])
 		elif overdue == RENEWAL_GRACE and not bool(item["lapsed"]):
 			item["lapsed"] = true
 			match String(item["kind"]):
 				"licence":
-					log_event("LAPSED: the licence on %s has expired. The device is still up, and it is not running at the speed you think it is."
+					log_event(Loc.t("log.lapsed_licence")
 						% item["serial"])
 				"support":
-					log_event("LAPSED: %s. Hardware failures are now yours to pay for in full."
+					log_event(Loc.t("log.lapsed_hardware")
 						% item["label"])
 				_:
-					log_event("LAPSED: %s. This gets more expensive and more visible from here."
+					log_event(Loc.t("log.lapsed_expensive")
 						% item["label"])
 			topology_changed.emit()
 		elif bool(item["lapsed"]) and overdue % 4 == 0 \
@@ -3012,7 +3012,7 @@ func choose_identity(id: String) -> String:
 	if identity != "":
 		return "you are already a %s: a rebrand is what changes that" % IDENTITIES[identity]["label"]
 	identity = id
-	log_event("IDENTITY: you are a %s now. %s" % [IDENTITIES[id]["label"], IDENTITIES[id]["trade"]])
+	log_event(Loc.t("log.identity") % [IDENTITIES[id]["label"], IDENTITIES[id]["trade"]])
 	leads.append(Market.identity_lead(id))
 	return ""
 
@@ -3026,7 +3026,7 @@ func rebrand(id: String) -> String:
 		return "a rebrand costs $5000 and a hit to your standing"
 	reputation = maxi(0, reputation - 5)
 	identity = id
-	log_event("REBRAND: the sign says %s now, and the market will take a while to believe it."
+	log_event(Loc.t("log.rebrand")
 		% IDENTITIES[id]["label"])
 	leads.append(Market.identity_lead(id))
 	return ""
@@ -3065,7 +3065,7 @@ func set_access_policy(policy: String) -> String:
 	if cost > 0 and not try_spend(cost):
 		return "%s costs $%d to put in" % [ACCESS_POLICIES[policy]["label"], cost]
 	access_policy = policy
-	log_event("ACCESS: the floor is now %s. %s" % [ACCESS_POLICIES[policy]["label"].to_lower(),
+	log_event(Loc.t("log.access_floor") % [ACCESS_POLICIES[policy]["label"].to_lower(),
 		ACCESS_POLICIES[policy]["blurb"]])
 	return ""
 
@@ -3075,7 +3075,7 @@ func buy_cameras() -> String:
 	if not spend_on("physical security", 1200):
 		return "camera coverage costs $1200"
 	cameras = true
-	log_event("ACCESS: cameras cover the aisles. They prevent nothing and explain everything.")
+	log_event(Loc.t("log.access_cameras"))
 	return ""
 
 func access_note(who: String, what: String, authorised: bool) -> void:
@@ -3089,7 +3089,7 @@ func admit_visitor(name: String, reason: String) -> String:
 	visitors.append({"name": name, "reason": reason, "since": cycle,
 		"escorted": access_policy == "escorted"})
 	access_note(name, "signed in: %s" % reason, true)
-	log_event("VISITOR: %s is on the floor (%s)%s." % [name, reason,
+	log_event(Loc.t("log.visitor") % [name, reason,
 		", escorted" if access_policy == "escorted" else ""])
 	return ""
 
@@ -3126,12 +3126,12 @@ func access_incident_tick() -> void:
 	match access_policy:
 		"escorted":
 			access_note(who, "turned back at the door to %s" % r.name, false)
-			log_event("ACCESS: %s tried to follow somebody in and was turned back. Escorting works, and it is why every visit takes longer."
+			log_event(Loc.t("log.access_turned_back")
 				% who)
 			return
 		"badges":
 			access_note(who, "tailgated into the room, near %s" % r.name, false)
-			log_event("ACCESS: the badge log shows a tailgate near %s. Nothing was touched, and you know it happened."
+			log_event(Loc.t("log.access_tailgate")
 				% r.name)
 			return
 		_:
@@ -3147,7 +3147,7 @@ func access_incident_tick() -> void:
 				access_note(who, "unplugged %s %s" % [d.name, i.name], false)
 				device_log(d, "%s changed state to down (no change logged)" % i.name)
 				record_incident("access", "a cable was pulled in %s and nobody was badged" % r.name)
-				log_event("ACCESS: something in %s was unplugged. %s" % [r.name,
+				log_event(Loc.t("log.access_unplugged") % [r.name,
 					"The cameras have it." if cameras
 					else "There is no badge log and no camera, so that is where the investigation ends."])
 				topology_changed.emit()
@@ -3213,7 +3213,7 @@ func buy_protection(kind: String) -> String:
 	if not spend_on("fire and water protection", int(PROTECTION[kind]["cost"])):
 		return "%s costs $%d" % [PROTECTION[kind]["label"], int(PROTECTION[kind]["cost"])]
 	protection[protection_key(kind)] = {"installed": true, "serviced_cycle": cycle}
-	log_event("FACILITY: %s fitted. It is only worth what its last inspection says it is."
+	log_event(Loc.t("log.facility_fitted")
 		% PROTECTION[kind]["label"])
 	return ""
 
@@ -3223,7 +3223,7 @@ func service_protection(kind: String) -> String:
 	if not spend_on("facility", int(PROTECTION[kind]["cost"]) / 6):
 		return "the inspection costs $%d" % (int(PROTECTION[kind]["cost"]) / 6)
 	protection[protection_key(kind)]["serviced_cycle"] = cycle
-	log_event("FACILITY: %s inspected and signed off." % PROTECTION[kind]["label"])
+	log_event(Loc.t("log.facility_inspected") % PROTECTION[kind]["label"])
 	return ""
 
 func hazard_risk(r: Net.Rack) -> float:
@@ -3249,11 +3249,11 @@ func start_hazard(r: Net.Rack, kind: String) -> Dictionary:
 		"zone": [r.name]}
 	hazards.append(haz)
 	if bool(haz["detected"]):
-		log_event("ALARM: %s detected in %s. The panel found it in the cycle it started."
+		log_event(Loc.t("log.alarm_detected")
 			% [HAZARD_KINDS[kind]["label"], r.name])
 		Sfx.play("alert")
 	else:
-		log_event("SOMETHING IS WRONG in %s, and nothing on this floor is watching for it."
+		log_event(Loc.t("log.something_wrong")
 			% r.name)
 	record_incident("hazard", "%s in %s" % [HAZARD_KINDS[kind]["label"], r.name])
 	return haz
@@ -3290,7 +3290,7 @@ func hazard_tick() -> void:
 		var haz_site := int(haz.get("site", 0))
 		if not bool(haz["detected"]) and protection_ready("detection", haz_site):
 			haz["detected"] = true
-			log_event("ALARM: the panel has picked up the %s in %s."
+			log_event(Loc.t("log.alarm_picked_up")
 				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
 		var responded := false
 		if String(haz["kind"]) in ["smoke", "fire"] and protection_ready("suppression", haz_site) \
@@ -3299,12 +3299,12 @@ func hazard_tick() -> void:
 			for d in rack.slots:
 				if d != null and d.status == "active":
 					d.status = "offline"  # suppression shuts the cabinet down doing its job
-			log_event("SUPPRESSION: the system discharged in %s. Everything in that cabinet is down, and the building is not on fire."
+			log_event(Loc.t("log.suppression")
 				% haz["rack"])
 		elif String(haz["kind"]) == "water" and protection_ready("drainage", haz_site) \
 				and bool(haz["detected"]):
 			responded = true
-			log_event("DRAINAGE: the water went under the floor and out, which is what it is for.")
+			log_event(Loc.t("log.drainage"))
 		if responded:
 			hazards.erase(haz)
 			topology_changed.emit()
@@ -3312,7 +3312,7 @@ func hazard_tick() -> void:
 		# nobody is dealing with it: it gets worse on a schedule you can watch
 		if Staff.anyone_on_shift() and bool(haz["detected"]) and biz_roll() < 0.4:
 			hazards.erase(haz)
-			log_event("RESPONSE: the crew dealt with the %s in %s by hand."
+			log_event(Loc.t("log.response_by_hand")
 				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
 			continue
 		haz["severity"] = int(haz["severity"]) + 1
@@ -3321,13 +3321,13 @@ func hazard_tick() -> void:
 			haz["severity"] = cap
 		if String(haz["kind"]) == "smoke" and int(haz["severity"]) >= 3:
 			haz["kind"] = "fire"
-			log_event("FIRE: the smoke in %s has become a fire." % haz["rack"])
+			log_event(Loc.t("log.fire") % haz["rack"])
 		match String(HAZARD_KINDS[haz["kind"]]["damage"]):
 			"power":
 				for d in rack.slots:
 					if d != null and d.status == "active":
 						d.status = "offline"
-						log_event("HAZARD: %s in %s took %s down."
+						log_event(Loc.t("log.hazard_took_down")
 							% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"], d.name])
 						break
 			"device":
@@ -3335,7 +3335,7 @@ func hazard_tick() -> void:
 					if d != null:
 						# it goes, and so does every cable that was in it
 						uninstall_device(d, false)
-						log_event("LOST: %s did not survive the fire in %s." % [d.name, haz["rack"]])
+						log_event(Loc.t("log.lost_fire") % [d.name, haz["rack"]])
 						break
 		topology_changed.emit()
 
@@ -3435,12 +3435,12 @@ func maybe_offer_decision() -> void:
 	var pick: Dictionary = pool[int(biz_roll() * pool.size()) % pool.size()]
 	decisions_seen.append(String(pick["id"]))
 	decisions.append({"id": String(pick["id"]), "raised": cycle})
-	log_event("DECISION: %s. %s" % [pick["title"], pick["text"]])
+	log_event(Loc.t("log.decision") % [pick["title"], pick["text"]])
 
 func schedule_consequence(after: int, kind: String, note: String, data := {}) -> void:
 	## Foreshadowed on purpose: the player is told something will come of this.
 	consequences.append({"cycle": cycle + after, "kind": kind, "note": note, "data": data})
-	log_event("LATER: %s" % note)
+	log_event(Loc.t("log.later") % note)
 
 func decide(id: String, option: int) -> String:
 	var spec := decision_by_id(id)
@@ -3461,7 +3461,7 @@ func _apply_decision(effect: String) -> void:
 	match effect:
 		"swap_now":
 			if not spend_on("decisions", 900):
-				log_event("DECISION: the swap needs $900 the account does not have; the discounted units stay on the shelf.")
+				log_event(Loc.t("log.decision_no_900_swap"))
 				return
 			latent_defects["sw-8"] = int(latent_defects.get("sw-8", 0)) + 1
 			schedule_consequence(10, "note", "the discounted units carry the fault the vendor admitted to")
@@ -3480,7 +3480,7 @@ func _apply_decision(effect: String) -> void:
 			schedule_consequence(12, "incident", "the cause you did not fix is still there")
 		"root_cause":
 			if not spend_on("decisions", 300):
-				log_event("DECISION: the root-cause work needs $300 the account does not have; the workaround stays in place.")
+				log_event(Loc.t("log.decision_no_300_root"))
 				return
 			reputation = mini(100, reputation + 2)
 		"carrier_sign":
@@ -3510,13 +3510,13 @@ func _apply_decision(effect: String) -> void:
 				break
 		"optics_yes":
 			if not spend_on("spares", 300):
-				log_event("DECISION: no $300 for the optics; the shelf stays as it was.")
+				log_event(Loc.t("log.decision_no_300_optics"))
 				return
 			parts["optic"] = parts_of("optic") + 20
 			schedule_consequence(9, "grey", "cheap optics are where dirty-optic faults come from")
 		"optics_no":
 			if not spend_on("spares", 900):
-				log_event("DECISION: no $900 for the branded optics; the shelf stays as it was.")
+				log_event(Loc.t("log.decision_no_900_optics"))
 				return
 			parts["optic"] = parts_of("optic") + 20
 		"overtime_yes":
@@ -3602,7 +3602,7 @@ func consequence_tick() -> void:
 						break
 			"note":
 				pass
-		log_event("CONSEQUENCE: %s." % c["note"])
+		log_event(Loc.t("log.consequence") % c["note"])
 		record_timeline_note(String(c["note"]))
 
 func record_timeline_note(text: String) -> void:
@@ -3757,14 +3757,14 @@ func maybe_offer_audit() -> void:
 	var customer := String(deals[int(biz_roll() * deals.size()) % deals.size()]["customer"])
 	audit = {"state": "offered", "customer": customer, "scope": scope, "reward": 4500,
 		"deadline": cycle + 10, "findings": [], "history": []}
-	log_event("AUDIT OFFERED: %s wants a compliance review of %s, worth $%d if you pass. This is a teaching abstraction, not a real certification."
+	log_event(Loc.t("log.audit_offered")
 		% [customer, ", ".join(PackedStringArray(scope)), int(audit["reward"])])
 
 func accept_audit() -> String:
 	if audit.get("state", "") != "offered":
 		return "there is nothing on the table"
 	audit["state"] = "accepted"
-	log_event("AUDIT ACCEPTED: %s samples %d control(s) at cycle %d. The scope is fixed from now on."
+	log_event(Loc.t("log.audit_accepted")
 		% [audit["customer"], audit["scope"].size(), int(audit["deadline"])])
 	return ""
 
@@ -3777,14 +3777,14 @@ func delay_audit() -> String:
 	for deal in deals:
 		if String(deal["customer"]) == String(audit["customer"]):
 			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.1)
-	log_event("AUDIT DELAYED: %s moved the window out, and noticed that you asked."
+	log_event(Loc.t("log.audit_delayed")
 		% audit["customer"])
 	return ""
 
 func decline_audit() -> String:
 	if audit.get("state", "") != "offered":
 		return "there is nothing to decline"
-	log_event("AUDIT DECLINED: %s will take their compliance work elsewhere." % audit["customer"])
+	log_event(Loc.t("log.audit_declined") % audit["customer"])
 	for deal in deals:
 		if String(deal["customer"]) == String(audit["customer"]):
 			deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.15)
@@ -3816,10 +3816,10 @@ func run_audit() -> void:
 	for f: Dictionary in audit["findings"]:
 		if String(f["grade"]) == "major finding":
 			majors += 1
-	log_event("AUDIT RESULT: %d finding(s), %d of them major. You have 8 cycles to remediate before it closes."
+	log_event(Loc.t("log.audit_result")
 		% [audit["findings"].size(), majors])
 	for f2: Dictionary in audit["findings"]:
-		log_event("AUDIT %s: %s (%s)" % [String(f2["grade"]).to_upper(), f2["control"], f2["why"]])
+		log_event(Loc.t("log.audit_finding") % [String(f2["grade"]).to_upper(), f2["control"], f2["why"]])
 
 func verify_audit() -> String:
 	## The same controls, re-checked against the live network. Nothing moves.
@@ -3831,14 +3831,14 @@ func verify_audit() -> String:
 		if String(f["grade"]) == "major finding":
 			majors += 1
 	if majors > 0:
-		log_event("AUDIT REVERIFICATION: %d major finding(s) still open." % majors)
+		log_event(Loc.t("log.audit_reverification") % majors)
 		return "%d major finding(s) are still open" % majors
 	audit["state"] = "closed"
 	trust_marker = true
 	earn_on("audits", int(audit["reward"]))
 	reputation = mini(100, reputation + 6)
 	leads.append(Market.audit_lead(String(audit["customer"])))
-	log_event("AUDIT PASSED: $%d, a visible trust marker, and the kind of customer who asks for this now has your number."
+	log_event(Loc.t("log.audit_passed")
 		% int(audit["reward"]))
 	audit = {}  # the next auditor can now be offered; the marker is what stays
 	return ""
@@ -3854,7 +3854,7 @@ func audit_tick() -> void:
 				majors += 1
 		if majors > 0:
 			reputation = maxi(0, reputation - 5)
-			log_event("AUDIT CLOSED: the remediation window ran out with %d major finding(s) open."
+			log_event(Loc.t("log.audit_closed")
 				% majors)
 		audit = {}
 
@@ -3927,7 +3927,7 @@ func maybe_schedule_tour() -> void:
 	var kinds: Array = TOUR_KINDS.keys()
 	var kind: String = kinds[int(biz_roll() * kinds.size()) % kinds.size()]
 	tour = {"kind": kind, "cycle": cycle + 5, "crammed": 0.0}
-	log_event("VISIT BOOKED: %s is walking the floor in 5 cycles. They care about %s."
+	log_event(Loc.t("log.visit_booked")
 		% [TOUR_KINDS[kind]["label"], TOUR_KINDS[kind]["cares"]])
 
 func cram_for_tour() -> String:
@@ -3939,7 +3939,7 @@ func cram_for_tour() -> String:
 	if not spend_on("visit preparation", 600):
 		return "a crew at this notice costs $600"
 	tour["crammed"] = 0.1
-	log_event("SCRAMBLE: cleaners, cable ties and a skip, at short notice and full price. It will show, a little.")
+	log_event(Loc.t("log.scramble"))
 	return ""
 
 func tour_tick() -> void:
@@ -3949,36 +3949,36 @@ func tour_tick() -> void:
 	var score := tour_score(kind)
 	tour = {}
 	var verdict := "impressed" if score >= 0.7 else ("unconvinced" if score >= 0.45 else "alarmed")
-	log_event("VISIT: %s walked the floor and left %s (%d%%)."
+	log_event(Loc.t("log.visit_walked")
 		% [TOUR_KINDS[kind]["label"], verdict, int(score * 100.0)])
 	match kind:
 		"prospect":
 			if score >= 0.7:
 				leads.append(Market.tour_lead(true))
-				log_event("VISIT RESULT: they want a quote, on their terms and at their size. A floor that looks run wins work.")
+				log_event(Loc.t("log.visit_quote"))
 			elif score >= 0.45:
 				leads.append(Market.tour_lead(false))
 			else:
 				reputation = maxi(0, reputation - 2)
-				log_event("VISIT RESULT: they will not be sending anything here. You could see them deciding it in the aisle.")
+				log_event(Loc.t("log.visit_nothing"))
 		"investor":
 			if score >= 0.7:
 				earn_on("investors", 6000)
-				log_event("VISIT RESULT: a $6000 tranche, because it looks like a business rather than a hobby.")
+				log_event(Loc.t("log.visit_tranche"))
 			else:
-				log_event("VISIT RESULT: no money. They have seen enough rooms to know what a tidy one means.")
+				log_event(Loc.t("log.visit_no_money"))
 		"auditor":
 			if score >= 0.6:
 				reputation = mini(100, reputation + 5)
-				log_event("VISIT RESULT: no findings. Everything you claimed, you could show.")
+				log_event(Loc.t("log.visit_no_findings"))
 			else:
 				reputation = maxi(0, reputation - 6)
 				charge_on("fines", 900)
 				record_incident("audit", "an audit found documentation and records wanting")
-				log_event("VISIT RESULT: findings raised and $900 of remediation. You could not show what you said you did.")
+				log_event(Loc.t("log.visit_findings"))
 		"press":
 			reputation = clampi(reputation + (4 if score >= 0.7 else -4), 0, 100)
-			log_event("VISIT RESULT: the photograph they chose is %s."
+			log_event(Loc.t("log.visit_photo")
 				% ("a room that looks run" if score >= 0.7 else "the cable spaghetti behind rack one"))
 
 const FACILITY_TASKS := {
@@ -4054,17 +4054,17 @@ func service_facility(task: String) -> String:
 			for d in all_devices():
 				if d.status == "active" and d.type != "cooling":
 					d.status = "offline"
-					log_event("GENERATOR TEST: the transfer dropped %s. That is what a test day is for: better today than during a real cut."
+					log_event(Loc.t("log.generator_dropped")
 						% d.name)
 					record_incident("facility", "a device did not survive the generator transfer")
 					topology_changed.emit()
 					break
 		else:
-			log_event("GENERATOR TEST: clean transfer to backup power and back. It will start when you need it.")
+			log_event(Loc.t("log.generator_clean"))
 	else:
 		if task == "aircon":
 			admit_visitor("Vas Elektro", "aircon service")
-		log_event("FACILITY: %s done for $%d." % [FACILITY_TASKS[task]["label"], cost])
+		log_event(Loc.t("log.facility_done") % [FACILITY_TASKS[task]["label"], cost])
 	return ""
 
 func generator_ready() -> bool:
@@ -4075,7 +4075,7 @@ func facility_tick() -> void:
 	## Seasonal pressure, delegated schedules, and the slow costs of neglect.
 	if not heat_wave() and biz_roll() < 0.01:
 		heat_wave_until = cycle + 5
-		log_event("HEAT WAVE: the next few cycles are hot. Cooling headroom is down a tenth: a prepared floor will not notice.")
+		log_event(Loc.t("log.heat_wave"))
 	for task: String in FACILITY_TASKS:
 		if not bool(facility_auto.get(task, false)) or facility_due_in(task) > 0:
 			continue
@@ -4086,14 +4086,14 @@ func facility_tick() -> void:
 		for d in all_devices():
 			if d.type == "cooling" and d.status == "active":
 				d.status = "offline"
-				log_event("FACILITY: the unserviced cooling unit %s has failed. Nobody has looked at it in %d cycles."
+				log_event(Loc.t("log.facility_cooling_failed")
 					% [d.name, cycle - int(facility.get("aircon", 0))])
 				record_incident("facility", "an unserviced cooling unit failed")
 				topology_changed.emit()
 				break
 	if facility_overdue("ups") > 30 and int(ups.get(current_site, 0)) > 0 and randf() < 0.03:
 		ups[current_site] = 0
-		log_event("FACILITY: the UPS battery on %s was flat when it was needed. Nobody had checked it."
+		log_event(Loc.t("log.facility_ups_flat")
 			% site_name(current_site))
 
 func overheating(site := -1) -> bool:
@@ -4144,7 +4144,7 @@ func toggle_blanking(r: Net.Rack, idx: int) -> bool:
 		r.blanked.erase(idx)
 	else:
 		if not take_part("blank"):
-			log_event("BLOCKED: no blanking panels left in the drawer.")
+			log_event(Loc.t("log.blocked_blanking"))
 			return false
 		r.blanked[idx] = true
 	observe_habit("tidy", r.blanked.get(idx, false))
@@ -4277,7 +4277,7 @@ func wifi_join(client: Net.NDevice, ssid: String) -> String:
 				radio.untagged_vlan = int(ap.ssids[ssid])
 				if connect_ifaces(client.ifaces[0], radio):
 					client.wifi = ssid
-					log_event("WIFI: %s associated with '%s' on %s." % [client.name, ssid, ap.name])
+					log_event(Loc.t("log.wifi_associated") % [client.name, ssid, ap.name])
 					return ""
 	return "no access point in range is broadcasting '%s'" % ssid
 
@@ -4326,7 +4326,7 @@ func migrate_vm(name: String, target: Net.NDevice) -> String:
 	target.ifaces.append(nic)
 	Sim.forget_mac(nic.mac)  # the moved machine announces itself from its new host
 	stats["migrations"] = int(stats.get("migrations", 0)) + 1  # the log is trimmed; this is not
-	log_event("MIGRATION: %s moved from %s to %s, keeping %s."
+	log_event(Loc.t("log.migration")
 		% [name, source.name, target.name,
 			", ".join(PackedStringArray(nic.ips)) if not nic.ips.is_empty() else "no address"])
 	topology_changed.emit()
@@ -4433,7 +4433,7 @@ func raise_invoice(deal: Dictionary, amount: int) -> void:
 		deal["first_invoice_cycle"] = cycle
 		deal["first_invoice_amount"] = amount
 		customer_cash_changed.emit(String(deal["customer"]), "invoiced", amount)
-		log_event("INVOICE: %s now owes $%d, due in %d cycle(s). Revenue is earned; cash has not arrived yet."
+		log_event(Loc.t("log.invoice")
 			% [deal["customer"], amount, terms])
 
 func deal_by_id(id: String) -> Dictionary:
@@ -4459,7 +4459,7 @@ func collect_invoices() -> int:
 				inv["first_due"] = int(inv.get("first_due", int(inv["due"]) - randi_range(1, 2)))
 			if int(inv["due"]) > int(inv.get("first_due", inv["due"])) + 2 and not bool(inv.get("late_logged", false)):
 				inv["late_logged"] = true  # a slip of a cycle or two is routine; this one needs chasing
-				log_event("LATE: %s has not paid the $%d they owe, and it is more than two cycles overdue." % [inv["customer"], int(inv["amount"])])
+				log_event(Loc.t("log.late") % [inv["customer"], int(inv["amount"])])
 			continue
 		var amount := int(inv["amount"])
 		collected += amount
@@ -4473,7 +4473,7 @@ func collect_invoices() -> int:
 			deal["first_cash_amount"] = amount
 			stats["guided_delivery_complete"] = 1
 			customer_cash_changed.emit(String(deal["customer"]), "collected", amount)
-			log_event("CASH: %s paid their first $%d invoice. The service stays live and keeps billing."
+			log_event(Loc.t("log.cash_first")
 				% [deal["customer"], amount])
 		invoices.erase(inv)
 	for inv2 in invoices.duplicate():
@@ -4482,7 +4482,7 @@ func collect_invoices() -> int:
 		if cycle - expected > WRITE_OFF_AFTER:
 			invoices.erase(inv2)
 			reputation = maxi(0, reputation - 2)
-			log_event("WRITTEN OFF: $%d from %s is never arriving." % [int(inv2["amount"]), inv2["customer"]])
+			log_event(Loc.t("log.written_off") % [int(inv2["amount"]), inv2["customer"]])
 	var deal_cash := collected - int(last_pl.get("service fees", 0))
 	if deal_cash > 0:
 		last_pl["cash collected"] = int(last_pl.get("cash collected", 0)) + deal_cash
@@ -4536,7 +4536,7 @@ func season_tick() -> void:
 	var first := _season_seen < 0
 	_season_seen = now
 	if not first:
-		log_event("SEASON: %s" % season()["line"])
+		log_event(Loc.t("log.season") % season()["line"])
 
 func day_slot() -> int:
 	return int(cycle) % DAY_CYCLES
@@ -4556,14 +4556,14 @@ func _first_light(deal: Dictionary) -> void:
 	var earlier := int(stats.get("services_live", 0))
 	stats["services_live"] = earlier + 1
 	if earlier == 0:
-		log_event("FIRST LIGHT: %s is live. %s Somebody's %s is working because of a cable you ran and a configuration you wrote."
+		log_event(Loc.t("log.first_light")
 			% [deal["customer"], String(biz["live"]),
 				String(biz["what"]).trim_prefix("a ").trim_prefix("an ")])
-		log_event("FIRST LIGHT: “%s”, and it is worth $%d every cycle it stays that way."
+		log_event(Loc.t("log.first_light_worth")
 			% [_first_light_words(deal), int(deal["fee"])])
 		Sfx.play("money")
 	else:
-		log_event("LIVE: %s is answering. %s That is %d service(s) of yours in the world now."
+		log_event(Loc.t("log.live")
 			% [deal["customer"], String(biz["live"]), earlier + 1])
 
 func _first_light_words(deal: Dictionary) -> String:
@@ -4717,7 +4717,7 @@ func story_tick() -> void:
 						deal["load"] = int(deal.get("load", 200)) * 2
 						arc["story_load"] = int(deal["load"])
 						deal["story_load"] = int(deal["load"])
-					log_event("STORY: %s. %s" % [deal["customer"],
+					log_event(Loc.t("log.story") % [deal["customer"],
 						STORY_CUSTOMERS[key]["complication"]])
 			"complication":
 				if _story_need_met(key, deal):
@@ -4728,14 +4728,14 @@ func story_tick() -> void:
 					if String(deal["customer"]) not in references:
 						references.append(String(deal["customer"]))
 					leads.append(Market.story_referral_lead(String(deal["customer"])))
-					log_event("STORY PAYOFF: %s. %s" % [deal["customer"],
+					log_event(Loc.t("log.story_payoff") % [deal["customer"],
 						STORY_CUSTOMERS[key]["payoff"]])
 				elif cycle > int(arc.get("deadline", cycle + 12)):
 					arc["beat"] = "payoff"
 					arc["outcome"] = "lost"
 					deals.erase(deal)
 					reputation = maxi(0, reputation - 4)
-					log_event("STORY ENDING: %s. %s" % [deal["customer"],
+					log_event(Loc.t("log.story_ending") % [deal["customer"],
 						STORY_CUSTOMERS[key]["failure"]])
 		customer_arcs[key] = arc
 
@@ -4824,7 +4824,7 @@ func maybe_announce_peak() -> void:
 		var biz := Market.business_for(deal)
 		var event := {"label": String(biz["peak"]), "cycle": cycle + 4, "multiplier": 3}
 		deal["peak_event"] = event
-		log_event("HEADS UP: %s has a %s in 4 cycles. Expect about three times their usual traffic; they will remember how it goes."
+		log_event(Loc.t("log.heads_up_event")
 			% [deal["customer"], biz["peak"]])
 		return
 
@@ -4838,12 +4838,12 @@ func peak_tick(deal: Dictionary) -> void:
 		deal["peaks_carried"] = int(deal.get("peaks_carried", 0)) + 1
 		deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.15)
 		reputation = mini(100, reputation + 3)
-		log_event("CARRIED IT: %s's %s went through your network without a wobble. They have written to say so."
+		log_event(Loc.t("log.carried_it")
 			% [deal["customer"], event["label"]])
 	else:
 		deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.2)
 		reputation = maxi(0, reputation - 4)
-		log_event("DROPPED IT: %s's %s was the one night that mattered, and your network did not carry it."
+		log_event(Loc.t("log.dropped_it")
 			% [deal["customer"], event["label"]])
 
 func _kiskacsa_resilience_name(choice: String) -> String:
@@ -4895,7 +4895,7 @@ func chase_invoice(inv: Dictionary) -> String:
 	inv["chased"] = true
 	inv["due"] = cycle  # it will be collected on the next cycle
 	reputation = maxi(0, reputation - CHASE_REPUTATION)
-	log_event("CHASED: %s has been asked for the $%d they owe." % [inv["customer"], int(inv["amount"])])
+	log_event(Loc.t("log.chased") % [inv["customer"], int(inv["amount"])])
 	return ""
 
 # ---------- power distribution ----------
@@ -4981,7 +4981,7 @@ func dr_request_tick() -> void:
 			continue
 		deal["dr_asked"] = cycle
 		deal["dr_due"] = cycle + 12
-		log_event("%s wants the failover tested and the result sent to them, by cycle %d."
+		log_event(Loc.t("log.failover_wanted")
 			% [deal["customer"], int(deal["dr_due"])])
 	for deal2 in deals:
 		if not deal2.has("dr_due") or bool(deal2.get("dr_done", false)):
@@ -4991,12 +4991,12 @@ func dr_request_tick() -> void:
 			deal2["dr_done"] = true
 			deal2["loyalty"] = minf(1.0, float(deal2.get("loyalty", 0.6)) + 0.15)
 			reputation = mini(100, reputation + 2)
-			log_event("%s has the failover result they asked for. They did not want it to be interesting, and it was not."
+			log_event(Loc.t("log.failover_result_sent")
 				% deal2["customer"])
 		elif cycle > int(deal2["dr_due"]):
 			deal2.erase("dr_due")
 			deal2["loyalty"] = maxf(0.0, float(deal2.get("loyalty", 0.6)) - 0.2)
-			log_event("%s asked for a failover test and never got one. They have written that down."
+			log_event(Loc.t("log.failover_never")
 				% deal2["customer"])
 
 func book_dr_test() -> String:
@@ -5006,7 +5006,7 @@ func book_dr_test() -> String:
 	if dr_candidates().is_empty():
 		return "there is nothing here to take away yet"
 	dr_test = {"booked": cycle + DR_NOTICE, "ends": -1, "taken": [], "failed": []}
-	log_event("FAILOVER TEST: booked for cycle %d. The upstream on this floor goes away for %d cycle(s)."
+	log_event(Loc.t("log.failover_booked")
 		% [int(dr_test["booked"]), DR_LENGTH])
 	return ""
 
@@ -5016,7 +5016,7 @@ func cancel_dr_test() -> String:
 	if int(dr_test.get("ends", -1)) > 0:
 		return "it is running: it finishes when it finishes"
 	dr_test = {}
-	log_event("FAILOVER TEST: cancelled. Nothing was proved, which is the same as before.")
+	log_event(Loc.t("log.failover_cancelled"))
 	return ""
 
 func dr_running() -> bool:
@@ -5033,7 +5033,7 @@ func dr_tick() -> void:
 		if customer_down_now() or upstream_active() or not hazards.is_empty():
 			if not bool(dr_test.get("held", false)):
 				dr_test["held"] = true
-				log_event("FAILOVER TEST: held. The floor is already dealing with something; it runs when that is over.")
+				log_event(Loc.t("log.failover_held"))
 			return
 		dr_test["held"] = false
 		var taken: Array = []
@@ -5042,11 +5042,11 @@ func dr_tick() -> void:
 			taken.append(d.name)
 		if taken.is_empty():
 			dr_test = {}
-			log_event("FAILOVER TEST: nothing left to take away. Cancelled.")
+			log_event(Loc.t("log.failover_nothing"))
 			return
 		dr_test["taken"] = taken
 		dr_test["ends"] = cycle + DR_LENGTH
-		log_event("FAILOVER TEST: %s is out of service on purpose. Everything that is meant to survive it should now."
+		log_event(Loc.t("log.failover_running")
 			% ", ".join(PackedStringArray(taken)))
 		topology_changed.emit()
 		return
@@ -5067,11 +5067,11 @@ func dr_tick() -> void:
 		reputation = mini(100, reputation + 5)
 		control_evidence["failover"] = cycle
 		stats["failovers_passed"] = int(stats.get("failovers_passed", 0)) + 1
-		log_event("FAILOVER TEST: passed. The upstream was gone for %d cycle(s) and no customer noticed."
+		log_event(Loc.t("log.failover_passed")
 			% DR_LENGTH)
 	else:
 		reputation = maxi(0, reputation - 3)
-		log_event("FAILOVER TEST: failed. %s went down while the upstream was away, which is what the test was for."
+		log_event(Loc.t("log.failover_failed")
 			% ", ".join(PackedStringArray(failed)))
 	dr_test = {}
 	topology_changed.emit()
@@ -5084,7 +5084,7 @@ func buy_ups() -> String:
 	if not try_spend(UPS_PRICE):
 		return "you cannot afford the $%d UPS" % UPS_PRICE
 	ups[current_site] = UPS_CYCLES
-	log_event("POWER: a UPS is installed on %s, good for %d cycles of one dead feed."
+	log_event(Loc.t("log.power_ups_installed")
 		% [site_name(current_site), UPS_CYCLES])
 	topology_changed.emit()
 	return ""
@@ -5112,7 +5112,7 @@ func power_tick() -> void:
 				if cycle >= int(feed_out_until.get(key, 0)):
 					f[letter] = true
 					feed_out_until.erase(key)
-					log_event("POWER: feed %s on %s is back." % [letter, site_name(site)])
+					log_event(Loc.t("log.power_feed_back") % [letter, site_name(site)])
 				continue
 			# the colo's power is somebody else's problem; your own room is not
 			if site == 0 and stage < 1:
@@ -5120,12 +5120,12 @@ func power_tick() -> void:
 			if randf() < 0.012 * DIFFICULTIES[difficulty]["faults"]:
 				f[letter] = false
 				feed_out_until[key] = cycle + randi_range(1, 3)
-				log_event("POWER: feed %s on %s has dropped." % [letter, site_name(site)])
+				log_event(Loc.t("log.power_feed_dropped") % [letter, site_name(site)])
 		var any_out := not bool(f["A"]) or not bool(f["B"])
 		if any_out and int(ups.get(site, 0)) > 0:
 			ups[site] = int(ups[site]) - 1
 			if int(ups[site]) == 0:
-				log_event("POWER: the UPS on %s is flat. Anything on the dead feed is going down."
+				log_event(Loc.t("log.power_ups_flat")
 					% site_name(site))
 		elif not any_out and ups.has(site) and int(ups[site]) < UPS_CYCLES:
 			ups[site] = mini(UPS_CYCLES, int(ups[site]) + 1)  # recharging
@@ -5209,13 +5209,13 @@ func make_report() -> Dictionary:
 	reports.push_front(rep)
 	if reports.size() > 8:
 		reports.pop_back()
-	log_event("QUARTER %d closed: net %s$%d, %d customers, %d%% delivered, rank %s."
+	log_event(Loc.t("log.quarter_closed")
 		% [int(rep["quarter"]), "+" if net >= 0 else "-", absi(net), deals.size(),
 			int(rep["uptime"]), rep["rank"]])
 	if nemesis != "":
 		# they never miss a quarter without a comment
 		rep["needle"] = Rivals.nemesis_line()
-		log_event("QUARTERLY NEEDLE: %s" % rep["needle"])
+		log_event(Loc.t("log.quarterly_needle") % rep["needle"])
 	return rep
 
 func accept_buyout() -> String:
@@ -5224,7 +5224,7 @@ func accept_buyout() -> String:
 	var price := int(buyout_offer["price"])
 	money += price  # the sale is cash in the bank, and is scored as that, not as trading
 	sold_out = true
-	log_event("SOLD: %s bought the company for $%d. That is the end of it."
+	log_event(Loc.t("log.sold")
 		% [buyout_offer["rival"], price])
 	buyout_offer = {}
 	money_changed.emit()
@@ -5246,7 +5246,7 @@ func decline_buyout() -> String:
 			r["grudge_until"] = cycle + 12
 			r["cash"] = int(r["cash"]) + 4000
 	stats["buyout_cooldown"] = cycle + 24
-	log_event("APPROACH: you turned %s down. They are going to compete harder for it this quarter." % who)
+	log_event(Loc.t("log.approach_turned_down") % who)
 	return ""
 
 const FINALE_ENDING_LABELS := {"sold": "sold", "retired": "retired", "insolvent": "went under"}
@@ -5564,7 +5564,7 @@ func export_topology(path := "user://topology.md") -> String:
 	if f == null:
 		return ""
 	f.store_string(body)
-	log_event("EXPORTED: the topology is written out as a diagram and a plain listing.")
+	log_event(Loc.t("log.exported_topology"))
 	return body
 
 func export_containerlab(dir := "user://clab") -> String:
@@ -5624,7 +5624,7 @@ func export_containerlab(dir := "user://clab") -> String:
 	if yf == null:
 		return ""
 	yf.store_string(yaml)
-	log_event("EXPORTED: the floor is written out as a containerlab topology in %s." % dir)
+	log_event(Loc.t("log.exported_clab") % dir)
 	return yaml
 
 func _clab_iface(i: Net.Iface) -> String:
@@ -5653,7 +5653,7 @@ func end_run(ending: String) -> String:
 	var scored := finale_score(finale)
 	finale["score"] = scored
 	finale["record"] = record_run(finale)
-	log_event("THE END: %s  %s scored %d." % [FINALE_ENDINGS[ending], company_name,
+	log_event(Loc.t("log.the_end") % [FINALE_ENDINGS[ending], company_name,
 		int(scored["total"])])
 	Legacy.harvest(FINALE_ENDINGS[ending])
 	return ""
@@ -5691,10 +5691,10 @@ func maybe_end_run() -> void:
 		if int(stats["insolvent_cycles"]) >= 5:
 			end_run("insolvent")
 		else:
-			log_event("BANK: $%d in the red. %d cycle(s) before the bank calls it." % [money, 5 - int(stats["insolvent_cycles"])])
+			log_event(Loc.t("log.bank_red") % [money, 5 - int(stats["insolvent_cycles"])])
 	else:
 		if int(stats.get("insolvent_cycles", 0)) > 0:
-			log_event("BANK: back above -$3000. The countdown is off.")
+			log_event(Loc.t("log.bank_back_above"))
 		stats["insolvent_cycles"] = 0
 
 func rank_score() -> int:
@@ -5771,7 +5771,7 @@ func rank_tick() -> void:
 	if now == rank_seen:
 		return
 	rank_seen = now
-	log_event("PROMOTED: they would call you a %s now. Not for the money: %s."
+	log_event(Loc.t("log.promoted")
 		% [now.to_lower(), rank_citation()])
 	Sfx.play("good")
 
@@ -5870,7 +5870,7 @@ func try_complete_contract(c: Dictionary) -> bool:
 	if not debrief.is_empty():
 		contract_debriefs[String(c["id"])] = debrief
 		active_contract_debrief = debrief
-		log_event("DEBRIEF READY: %s is complete. The proof records what made it work." % c["title"])
+		log_event(Loc.t("log.debrief_ready") % c["title"])
 	money_changed.emit()
 	return true
 
@@ -6304,7 +6304,7 @@ func check_contract_mastery(cid: String) -> String:
 	if not contract_mastery_met(cid):
 		return "mastery condition is not live yet"
 	mastered_contracts.append(cid)
-	log_event("MASTERED: %s was completed with the optional operating constraint." % cid)
+	log_event(Loc.t("log.mastered") % cid)
 	money_changed.emit()
 	return ""
 
@@ -6417,21 +6417,21 @@ func arrival_note() -> void:
 		return
 	var seed_key := absi((company_name + DIFFICULTIES[difficulty]["name"]).hash())
 	var landlord: Dictionary = ARRIVAL_LANDLORDS[seed_key % ARRIVAL_LANDLORDS.size()]
-	log_event("ARRIVAL: %s" % landlord["line"])
-	log_event("ARRIVAL: %s" % ARRIVAL_LEFTOVERS[(seed_key / 3) % ARRIVAL_LEFTOVERS.size()])
+	log_event(Loc.t("log.arrival") % landlord["line"])
+	log_event(Loc.t("log.arrival") % ARRIVAL_LEFTOVERS[(seed_key / 3) % ARRIVAL_LEFTOVERS.size()])
 	# one line that is true only for this run
 	if identity != "":
-		log_event("ARRIVAL: you already know what sort of shop this is going to be: %s."
+		log_event(Loc.t("log.arrival_shop")
 			% IDENTITIES[identity]["label"].to_lower())
 	elif not Legacy.selected.is_empty() or not Legacy.epitaph.is_empty():
-		log_event("ARRIVAL: %s ran for %d cycles before this. Some of it came with you."
+		log_event(Loc.t("log.arrival_ran")
 			% [Legacy.epitaph.get("company", "The last company"),
 				int(Legacy.epitaph.get("cycles", 0))])
 	else:
-		log_event("ARRIVAL: %s, on the %s footing: %s"
+		log_event(Loc.t("log.arrival_footing")
 			% [company_name, String(DIFFICULTIES[difficulty]["name"]).to_lower(),
 				DIFFICULTIES[difficulty]["blurb"]])
-	log_event("ARRIVAL: your first job is on the contracts board, and the customer is already waiting.")
+	log_event(Loc.t("log.arrival_first_job"))
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
 	var blocked := can_accept_offer(offer)
@@ -6448,14 +6448,14 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 			rival["deals"] = int(rival["deals"]) + 1
 			rival["revenue"] = int(rival["revenue"]) + bid
 			market_intel += 1
-			log_event("LOST: %s went to %s, who quoted $%d against your $%d. (You now know the market better.)"
+			log_event(Loc.t("log.lost_quote")
 				% [offer["customer"], rival["name"], bid, quote])
 			return "undercut"
 	match result:
 		"accepted":
 			if not rival.is_empty():
 				Rivals.remember(rival, -1, "you took %s off them" % offer["customer"])
-				log_event("MARKET: %s heard you won %s. %s" % [rival["name"], offer["customer"],
+				log_event(Loc.t("log.market_heard") % [rival["name"], offer["customer"],
 					Rivals.temper_of(rival)["win"]])
 			_offer_to_deal(offer, quote)
 		"counter":
@@ -6519,10 +6519,10 @@ func _run_monitors() -> void:
 		if ok == bool(m["failing"]):  # state changed
 			m["failing"] = not ok
 			if ok:
-				log_event("MONITOR OK: %s" % monitor_label(m))
+				log_event(Loc.t("log.monitor_ok") % monitor_label(m))
 				_remediation_verify(m, true)
 			else:
-				log_event("MONITOR ALERT: %s is failing." % monitor_label(m))
+				log_event(Loc.t("log.monitor_alert") % monitor_label(m))
 				_remediation_fire(m)  # act at once, then keep working it in the tick
 
 const REMEDIATION_COOLDOWN := 6  # cycles before the same alert may act again
@@ -6536,7 +6536,7 @@ func bind_remediation(m: Dictionary, rb: Dictionary) -> String:
 		return ""
 	m["remediation"] = {"runbook": String(rb["name"]), "last_fired": -999, "failures": 0,
 		"timeline": []}
-	log_event("AUTOMATION: '%s' is now bound to the alert '%s'." % [rb["name"], monitor_label(m)])
+	log_event(Loc.t("log.automation_bound") % [rb["name"], monitor_label(m)])
 	return ""
 
 func _remediation_note(m: Dictionary, text: String) -> void:
@@ -6563,7 +6563,7 @@ func _remediation_fire(m: Dictionary) -> void:
 		return
 	if int(rem["failures"]) >= REMEDIATION_RETRIES:
 		_remediation_note(m, "escalated: it has tried twice and stopped")
-		log_event("AUTOMATION: '%s' has stopped trying and wants a person." % rem["runbook"])
+		log_event(Loc.t("log.automation_gave_up") % rem["runbook"])
 		return
 	var rb := {}
 	for entry: Dictionary in runbooks:
@@ -6590,7 +6590,7 @@ func _remediation_verify(m: Dictionary, recovered: bool) -> void:
 	if recovered:
 		rem["failures"] = 0
 		_remediation_note(m, "verified: the service came back")
-		log_event("AUTOMATION: '%s' fixed it, hands off." % rem["runbook"])
+		log_event(Loc.t("log.automation_fixed") % rem["runbook"])
 	else:
 		rem["failures"] = int(rem["failures"]) + 1
 		_remediation_note(m, "unverified: still failing after the action")
@@ -6638,13 +6638,13 @@ func offer_job(candidate: Dictionary, salary: int) -> String:
 	var tolerance := 0.08 + float(reputation) / 100.0 * 0.22
 	if gap <= tolerance:
 		candidate["salary"] = salary
-		log_event("HIRING: %s accepted $%d, below their asking price." % [candidate["name"], salary])
+		log_event(Loc.t("log.hiring_accepted") % [candidate["name"], salary])
 		return hire(candidate)
 	if gap <= tolerance * 2.0:
 		candidate["counter"] = int(round(float(int(candidate["ask"])) * (1.0 - tolerance * 0.5)))
 		return "counter"
 	candidates.erase(candidate)
-	log_event("HIRING: %s turned you down and took something else." % candidate["name"])
+	log_event(Loc.t("log.hiring_declined") % candidate["name"])
 	return "walked"
 
 func hire(candidate: Dictionary) -> String:
@@ -6653,7 +6653,7 @@ func hire(candidate: Dictionary) -> String:
 	candidates.erase(candidate)
 	candidate["hired_cycle"] = cycle
 	staff.append(candidate)
-	log_event("HIRED: %s as %s at $%d/cycle." % [candidate["name"], Staff.label(candidate),
+	log_event(Loc.t("log.hired") % [candidate["name"], Staff.label(candidate),
 		int(candidate["salary"])])
 	money_changed.emit()
 	return ""
@@ -6673,7 +6673,7 @@ func fire(member: Dictionary) -> void:
 		callout_who = ""  # and nobody who has left is still in the building
 		callout_until = -1
 	reputation = maxi(0, reputation - 1)
-	log_event("LET GO: %s has left the company." % member["name"])
+	log_event(Loc.t("log.let_go") % member["name"])
 	money_changed.emit()
 
 func market_estimate(offer: Dictionary) -> Array:
@@ -6705,7 +6705,7 @@ func _inherit_neglect(site: int, from_whom: String) -> void:
 		if facility_due_in(task, site) < 0:
 			overdue.append(String(FACILITY_TASKS[task]["label"]).to_lower())
 	if not overdue.is_empty():
-		log_event("ACQUISITION: %s's building comes with %s's diary: %s all overdue. Their protection was never fitted either."
+		log_event(Loc.t("log.acquisition_diary")
 			% [from_whom, from_whom, ", ".join(PackedStringArray(overdue))])
 
 func buy_rival(r: Dictionary) -> String:
@@ -6790,16 +6790,16 @@ func buy_rival(r: Dictionary) -> String:
 			"brief": "Inherited from %s: their server at %s must stay reachable." % [r["name"], served],
 			"healthy": true, "acquired": true, "loyalty": stance})
 	if int(r["deals"]) > 0:
-		log_event("ACQUISITION: %s's customers have been told. %s" % [r["name"],
+		log_event(Loc.t("log.acquisition_told") % [r["name"],
 			"They were not being looked after and are prepared to like you."
 			if stance >= 0.65 else ("They are watching to see whether this was good news."
 			if stance >= 0.45 else "They did not ask to be sold, and it shows.")])
 	reputation = mini(100, reputation + 5)
 	if Rivals.has_site(r):
-		log_event("ACQUISITION: you bought %s for $%d, including their site '%s' with %d racks and %d contracts."
+		log_event(Loc.t("log.acquisition_site")
 			% [r["name"], price, r["site"]["name"], Rivals.racks_needed(r), int(r["deals"])])
 	else:
-		log_event("ACQUISITION: you bought %s for $%d and moved their %d rack(s) into your room, with %d contracts."
+		log_event(Loc.t("log.acquisition_moved")
 			% [r["name"], price, Rivals.racks_needed(r), int(r["deals"])])
 	money_changed.emit()
 	topology_changed.emit()
@@ -6862,7 +6862,7 @@ func try_complete_integration(a: Dictionary) -> bool:
 	earn_on("integration", bonus)
 	reputation = mini(100, reputation + 5)
 	stats["earned"] = int(stats.get("earned", 0)) + bonus
-	log_event("INTEGRATION complete: %s is now part of your network (+$%d)." % [a["rival"], bonus])
+	log_event(Loc.t("log.integration_complete") % [a["rival"], bonus])
 	money_changed.emit()
 	return true
 
@@ -7068,7 +7068,7 @@ func _security_sweep() -> int:
 					cost += 100
 					stats["incidents"] += 1
 					reputation = maxi(0, reputation - 5)
-					log_event("SECURITY: %s's machine %s reached %s management at %s: incident response -$100. Isolate your management plane (firewall it off from customer networks)!"
+					log_event(Loc.t("log.security_management")
 						% [deal["customer"], srv.name, d.name, mgmt_ip])
 					break
 			if incidents_seen.has(key):
@@ -7094,7 +7094,7 @@ func _renewals_tick() -> void:
 			deal["signed_fee"] = int(deal["fee"])
 		var proposed := mini(int(float(deal["fee"]) * factor), int(float(deal["signed_fee"]) * GROWTH_CAP))
 		deal["renewal"] = {"fee": proposed, "mood": mood, "uptime": int(uptime * 100)}
-		log_event("RENEWAL: %s's contract is up. They propose $%d/cycle: %s."
+		log_event(Loc.t("log.renewal_proposed")
 			% [deal["customer"], proposed, mood])
 
 func accept_renewal(deal: Dictionary) -> void:
@@ -7106,13 +7106,13 @@ func accept_renewal(deal: Dictionary) -> void:
 	deal["up_cycles"] = 0
 	deal["term"] = 14 + randi() % 10
 	deal.erase("renewal")
-	log_event("RENEWED: %s stays at $%d/cycle." % [deal["customer"], int(deal["fee"])])
+	log_event(Loc.t("log.renewed_stays") % [deal["customer"], int(deal["fee"])])
 	money_changed.emit()
 
 func decline_renewal(deal: Dictionary) -> void:
 	deals.erase(deal)
 	reputation = maxi(0, reputation - 2)
-	log_event("ENDED: %s's contract was not renewed." % deal["customer"])
+	log_event(Loc.t("log.ended") % deal["customer"])
 	money_changed.emit()
 
 const GROWTH_CAP := 3.0  # a customer grows to at most three times what they signed for
@@ -7136,7 +7136,7 @@ func customer_growth(deal: Dictionary) -> void:
 		return
 	deal["fee"] = mini(int(int(deal["fee"]) * 1.25), int(float(deal["signed_fee"]) * GROWTH_CAP))
 	deal["load"] = mini(int(int(deal.get("load", 200)) * 1.4), GROWTH_LOAD_CAP)
-	log_event("GROWTH: %s is scaling up: their fee rises to $%d and their traffic with it."
+	log_event(Loc.t("log.growth_scaling")
 		% [deal["customer"], int(deal["fee"])])
 
 const MAINTENANCE_LENGTH := 3
@@ -7152,7 +7152,7 @@ func declare_maintenance() -> String:
 	maintenance_until = cycle + MAINTENANCE_LENGTH
 	observe_habit("windows", true, 2.0)
 	maintenance_used += 1
-	log_event("MAINTENANCE: a planned window is open for %d cycles. Downtime in it is excused."
+	log_event(Loc.t("log.maintenance_window")
 		% MAINTENANCE_LENGTH)
 	return ""
 
@@ -7170,7 +7170,7 @@ func post_status(text: String) -> String:
 	status_posts.push_front({"cycle": cycle, "text": text.strip_edges()})
 	if status_posts.size() > 12:
 		status_posts.pop_back()
-	log_event("STATUS PAGE: \"%s\"" % text.strip_edges())
+	log_event(Loc.t("log.status_page") % text.strip_edges())
 	if guided_outage_active() and String(guided_outage.get("state", "")) in ["acknowledged", "investigating"]:
 		guided_outage["state"] = "communicated"
 		guided_outage["status_cycle"] = cycle
@@ -7271,7 +7271,7 @@ func acknowledge_guided_outage() -> String:
 	guided_outage["state"] = "acknowledged"
 	guided_outage["acknowledged_cycle"] = cycle
 	_guided_outage_note("cycle %d · alert acknowledged; investigation owner established" % cycle)
-	log_event("INCIDENT ACKNOWLEDGED: Kiskacsa has an owner. Post a plain-language status update before touching the network.")
+	log_event(Loc.t("log.incident_acknowledged"))
 	guided_outage_changed.emit()
 	return ""
 
@@ -7320,7 +7320,7 @@ func _guided_outage_check_recovery() -> void:
 	guided_outage["state"] = "recovered"
 	guided_outage["recovered_cycle"] = cycle
 	_guided_outage_note("cycle %d · monitor green; customer delivery and billing restored" % cycle)
-	log_event("INCIDENT RECOVERED: Kiskacsa is reachable and billing has resumed. Review the short timeline, then harden one weak spot.")
+	log_event(Loc.t("log.incident_recovered"))
 	guided_outage_changed.emit()
 
 func debrief_guided_outage() -> String:
@@ -7398,13 +7398,13 @@ func advance_kiskacsa_arc(deal: Dictionary) -> void:
 				break
 		if not already_referred:
 			leads.append(Market.kiskacsa_referral_lead())
-		log_event("RELATIONSHIP: Kiskacsa remembers the honest outage response and five quiet cycles. They will be your reference, and sent Madaras Játék's firewalled hosting job.")
+		log_event(Loc.t("log.relationship_reference"))
 	else:
 		arc["outcome"] = "cautious"
 		deal["fee"] = maxi(1, int(round(float(int(deal["fee"])) * 0.9)))
 		deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.75)) - 0.2)
 		deal["term"] = mini(int(deal.get("term", 18)), 10)
-		log_event("RELATIONSHIP: Kiskacsa stayed after five healthy cycles, but the missing customer update left them cautious: ten percent less fee and no referral.")
+		log_event(Loc.t("log.relationship_cautious"))
 	customer_arcs["kiskacsa"] = arc
 	topology_changed.emit()
 
@@ -7419,7 +7419,7 @@ func give_up_guided_outage() -> String:
 		guided_outage["state"] = "complete"
 		stats["guided_outage_complete"] = 1
 		_guided_outage_note("cycle %d · the original port is no longer installed; incident closed" % cycle)
-		log_event("INCIDENT CLOSED: the port at fault is no longer installed. Re-cable Kiskacsa and the checkout can return.")
+		log_event(Loc.t("log.incident_closed"))
 		guided_outage_changed.emit()
 		return ""
 	iface.admin_down = false
@@ -7427,7 +7427,7 @@ func give_up_guided_outage() -> String:
 	guided_outage["assisted"] = true
 	guided_outage["state"] = "repairing"
 	_guided_outage_note("cycle %d · assisted restore re-enabled the known-safe access port" % cycle)
-	log_event("ASSISTED RESTORE: the access port is back up. Run one cycle to verify customer recovery; the campaign continues.")
+	log_event(Loc.t("log.assisted_restore"))
 	topology_changed.emit()
 	guided_outage_changed.emit()
 	return ""
@@ -7439,7 +7439,7 @@ func buy_spare(model: String) -> String:
 	if not try_spend(price):
 		return "a spare %s costs $%d" % [MODELS[model]["label"], price]
 	spares[model] = int(spares.get(model, 0)) + 1
-	log_event("SPARES: a %s is on the shelf." % MODELS[model]["label"])
+	log_event(Loc.t("log.spares_on_shelf") % MODELS[model]["label"])
 	return ""
 
 func swap_from_spares(dev: Net.NDevice) -> String:
@@ -7452,14 +7452,14 @@ func swap_from_spares(dev: Net.NDevice) -> String:
 	if int(latent_defects.get(dev.model, 0)) > 0:
 		latent_defects[dev.model] = int(latent_defects[dev.model]) - 1
 		firmware_bugs[dev.name] = {"since": cycle, "model": dev.model}
-		log_event("SECOND-HAND: the shelf unit that went into %s has a fault the last owner never mentioned."
+		log_event(Loc.t("log.second_hand_fault")
 			% dev.name)
 	dev.status = "active"
 	dev.installed_cycle = cycle
 	if not dev.startup.is_empty() and not is_ros(dev):
 		apply_device_config(dev, dev.startup)
 	device_log(dev, "replaced from spares")
-	log_event("SPARES: %s was swapped for a shelf unit%s." % [dev.name,
+	log_event(Loc.t("log.spares_swapped") % [dev.name,
 		" and restored from its saved configuration" if not dev.startup.is_empty()
 		else ", but it had no saved configuration"])
 	topology_changed.emit()
@@ -7529,7 +7529,7 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	var supported := cause_supported(String(inc["cause"]))
 	inc["supported"] = supported
 	reputation = mini(100, reputation + (3 if supported else 1))
-	log_event("POST-MORTEM: %s. Contributing cause recorded as %s. %s"
+	log_event(Loc.t("log.post_mortem_cause")
 		% [inc["summary"], inc["cause"], "Customers appreciate the candour."
 			if supported else "Nothing on the floor says that is what happened, and it reads that way."])
 	# the one moment the player is thinking about why: answer with the thing
@@ -7537,7 +7537,7 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	var follow := String(REVIEW_FOLLOW_UP.get(String(inc["cause"]), ""))
 	if follow != "":
 		inc["follow_up"] = follow
-		log_event("POST-MORTEM: %s" % follow)
+		log_event(Loc.t("log.post_mortem") % follow)
 	return ""
 
 func report_incident(kind: String, summary: String, by: String, text: String, delay: int) -> void:
@@ -7556,7 +7556,7 @@ func report_tick() -> void:
 			continue
 		pending_reports.erase(pending)
 		record_incident(String(pending["kind"]), String(pending["summary"]), String(pending["by"]))
-		log_event("%s (nobody mentioned it at the time)" % pending["text"])
+		log_event(Loc.t("log.nobody_mentioned") % pending["text"])
 
 func staff_named(name: String) -> Dictionary:
 	for member: Dictionary in staff:
@@ -7583,7 +7583,7 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 			reputation = mini(100, reputation + 2)
 			if not who.is_empty():
 				who["morale"] = maxi(0, int(who.get("morale", 70)) - 4)
-			log_event("BLAME: you told the customer what actually happened. Candour is cheaper than a story that unravels.")
+			log_event(Loc.t("log.blame_candour"))
 		"mine":
 			reputation = maxi(0, reputation - 4)
 			blame_fear = maxi(0, blame_fear - 1)
@@ -7591,16 +7591,16 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 				who["morale"] = mini(100, int(who.get("morale", 70)) + 12)
 				who["shielded"] = true
 				who.erase("cautious")
-				log_event("BLAME: you took it for %s. They will not forget that, and neither will the rest of the team."
+				log_event(Loc.t("log.blame_took_it")
 					% who["name"])
 				Staff.say(who, "defended")
 			else:
-				log_event("BLAME: you said it was yours, because it was. The team heard that too.")
+				log_event(Loc.t("log.blame_yours"))
 		"name":
 			if mine:
 				blame_fear = mini(5, blame_fear + 2)
 				reputation = mini(100, reputation + 1)
-				log_event("BLAME: your mistake landed on the team. They noticed exactly what that means for theirs.")
+				log_event(Loc.t("log.blame_on_team"))
 			elif who.is_empty():
 				return "they are not on the payroll any more"
 			else:
@@ -7608,7 +7608,7 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 				who["morale"] = maxi(0, int(who.get("morale", 70)) - 25)
 				who["cautious"] = true
 				who.erase("shielded")
-				log_event("BLAME: you gave the customer %s's name. Your reputation is intact and %s will be very careful what they mention from now on."
+				log_event(Loc.t("log.blame_named")
 					% [who["name"], who["name"]])
 				Staff.say(who, "blamed")
 		_:
@@ -7676,7 +7676,7 @@ func decommission(dev: Net.NDevice, steps: Array) -> Dictionary:
 	else:
 		data_risks.append({"device": dev.name, "model": dev.model, "cycle": cycle})
 		left_behind.append("no certificate of destruction")
-		log_event("DECOM: %s left the building with its disks intact. There is no certificate for it."
+		log_event(Loc.t("log.decom_disks_intact")
 			% dev.name)
 	if reclaimed:
 		var ips: Array = []
@@ -7694,13 +7694,13 @@ func decommission(dev: Net.NDevice, steps: Array) -> Dictionary:
 					other.static_routes.erase(route)
 	else:
 		left_behind.append("addresses, routes and checks still pointing at it")
-		log_event("DECOM: %s is gone but its addresses, routes and checks are not. Somebody will find those later."
+		log_event(Loc.t("log.decom_leftovers")
 			% dev.name)
 	if not tidy:
 		left_behind.append("its patch leads still in the cabinet")
 	uninstall_device(dev, false)
 	_refund(value)
-	log_event("DECOM: %s decommissioned for $%d.%s" % [dev.name, value,
+	log_event(Loc.t("log.decom_done") % [dev.name, value,
 		"" if left_behind.is_empty() else " Skipped: %s." % ", ".join(PackedStringArray(left_behind))])
 	return {"value": value, "skipped": left_behind, "certified": wiped}
 
@@ -7720,7 +7720,7 @@ func decommission_by_tech(dev: Net.NDevice) -> Dictionary:
 		steps.append("cabling")
 	if float(habits.get("saves", 0.5)) > 0.5:
 		steps.append("reclaim")
-	log_event("DECOM: %s took the decommission of %s. They did it their way."
+	log_event(Loc.t("log.decom_their_way")
 		% [who["name"], dev.name])
 	return decommission(dev, steps)
 
@@ -7755,7 +7755,7 @@ func decom_tick() -> void:
 		money -= 1500
 		money_changed.emit()
 		record_incident("data", "a disk from %s resurfaced with customer data on it" % risk["device"])
-		log_event("DATA INCIDENT: a disk from the decommissioned %s turned up on a resale site with customer data still on it. $1500 and a great deal of trust."
+		log_event(Loc.t("log.data_incident")
 			% risk["device"])
 		return
 
@@ -7862,7 +7862,7 @@ func housekeeping_tick() -> void:
 	if not bool(stats.get("tidy_noted", false)) and not racks.is_empty():
 		stats["tidy_noted"] = true
 		Sfx.play("good")
-		log_event("QUIET: the floor is dressed, blanked and labelled. Faults are rarer here and repairs are quicker.")
+		log_event(Loc.t("log.quiet_floor"))
 	elif tidy < 0.95:
 		stats["tidy_noted"] = false
 
@@ -7901,9 +7901,9 @@ func _maybe_upstream_event() -> void:
 		carrier_outage[party] = int(upstream["until"])
 	var friends := Rivals.friendly()
 	if not friends.is_empty():
-		log_event("HEADS UP: %s rang first: their circuits went the same way ten minutes ago. %s"
+		log_event(Loc.t("log.heads_up_rang")
 			% [friends[0]["name"], Rivals.temper_of(friends[0])["favour"]])
-	log_event("UPSTREAM: %s. This one is not yours to fix: open a case, chase it, and tell your customers before they ask."
+	log_event(Loc.t("log.upstream_not_yours")
 		% ("%s has a regional failure" % party if kind == "regional"
 			else "%s is down across the region" % party))
 	topology_changed.emit()
@@ -7932,7 +7932,7 @@ func open_upstream_case() -> String:
 		return "the case is already open"
 	upstream["opened"] = true
 	upstream["case"] = "%s-%d" % [String(upstream["party"]).substr(0, 3).to_upper(), cycle]
-	log_event("UPSTREAM: case %s raised with %s. Now you wait, and chase." % [upstream["case"],
+	log_event(Loc.t("log.upstream_case") % [upstream["case"],
 		upstream["party"]])
 	return ""
 
@@ -7947,9 +7947,9 @@ func chase_upstream() -> String:
 	upstream["chased"] = int(upstream["chased"]) + 1
 	if int(upstream["until"]) > cycle + 1:
 		upstream["until"] = int(upstream["until"]) - 1
-		log_event("UPSTREAM: you pushed %s for an update. Their estimate moved in." % upstream["party"])
+		log_event(Loc.t("log.upstream_pushed") % upstream["party"])
 	else:
-		log_event("UPSTREAM: %s says they are nearly there. They always say that." % upstream["party"])
+		log_event(Loc.t("log.upstream_nearly") % upstream["party"])
 	return ""
 
 func upstream_tick() -> void:
@@ -7964,16 +7964,16 @@ func upstream_tick() -> void:
 	var protected := bool(upstream.get("protected", false))
 	if protected:
 		reputation = mini(100, reputation + 2)
-		log_event("UPSTREAM CLEARED: %s is back. Your second path carried the traffic through it, which is exactly what you bought it for."
+		log_event(Loc.t("log.upstream_cleared_path")
 			% upstream["party"])
 	elif kept_talking:
 		reputation = mini(100, reputation + 2)
-		log_event("UPSTREAM CLEARED: %s is back. Your customers watched you handle somebody else's outage openly, and they will remember that."
+		log_event(Loc.t("log.upstream_cleared_open")
 			% upstream["party"])
 	else:
 		reputation = maxi(0, reputation - 8)
 		Skills.fumble("incident_comms")
-		log_event("UPSTREAM CLEARED: %s is back. You said nothing for %d cycles and your customers had to ask. That is the part they will remember."
+		log_event(Loc.t("log.upstream_cleared_silent")
 			% [upstream["party"], cycle - int(upstream["started"])])
 	record_incident("upstream", "%s failed upstream of you for %d cycles"
 		% [upstream["party"], cycle - int(upstream["started"])])
@@ -8036,7 +8036,7 @@ func _ageing_tick() -> void:
 			if support_lapsed():
 				payout = payout / 2  # no maintenance agreement, no help with the bill
 			earn_on("insurance", payout)
-		log_event("HARDWARE: %s failed after %d cycles.%s" % [d.name, age,
+		log_event(Loc.t("log.hardware_failed") % [d.name, age,
 			"  Insurance paid $%d for a replacement." % payout if insured
 			else "  You are not insured."])
 
@@ -8047,7 +8047,7 @@ func _attack_tick() -> void:
 		a["cycles_left"] = int(a["cycles_left"]) - 1
 		if int(a["cycles_left"]) <= 0:
 			attacks.erase(a)
-			log_event("ATTACK over: the flood against %s has stopped." % a["target"])
+			log_event(Loc.t("log.attack_over") % a["target"])
 	if FirstCustomer.protected_time() or stage < 1 or deals.is_empty() or attacks.size() >= 2 or randf() > 0.08:
 		return
 	var victim: Dictionary = deals[randi() % deals.size()]
@@ -8056,7 +8056,7 @@ func _attack_tick() -> void:
 		return
 	attacks.append({"target": ip, "customer": victim["customer"],
 		"mbps": 800 + randi() % 4000, "cycles_left": 3 + randi() % 4})
-	log_event("ATTACK: a flood is hitting %s (%s). Options: upstream scrubbing, a blackhole route, or ride it out."
+	log_event(Loc.t("log.attack")
 		% [ip, victim["customer"]])
 
 # ---------- the timeline, for working out what actually happened ----------
@@ -8143,14 +8143,14 @@ func lead_tick() -> void:
 		l["ttl"] = int(l["ttl"]) - 1
 		if int(l["ttl"]) <= 0:
 			leads.erase(l)
-			log_event("PIPELINE: %s went quiet. Somebody else got there first." % l["customer"])
+			log_event(Loc.t("log.pipeline_quiet") % l["customer"])
 	# The first pipeline lead is a named teaching story; once it has appeared,
 	# the normal uncertain word-of-mouth market takes over permanently.
 	if (contracts_done.size() >= 3 or (FirstCustomer.enabled() and "first_ping" in contracts_done)) and not bool(stats.get("guided_first_lead_seen", false)) \
 			and leads.is_empty() and deals.is_empty():
 		leads.append(Market.guided_first_lead())
 		stats["guided_first_lead_seen"] = true
-		log_event("PIPELINE: Kiskacsa Kft was referred by your first customers. Go and learn what they need.")
+		log_event(Loc.t("log.pipeline_kiskacsa"))
 		return
 	# bigger work arrives through people talking, not through a web form
 	if FirstCustomer.protected_time(): return
@@ -8192,12 +8192,12 @@ func qualify_lead(lead: Dictionary) -> String:
 		return "a site visit costs $%d" % Market.LEAD_QUALIFY_COST
 	if not bool(lead.get("guided", false)) and biz_roll() < 0.22:
 		leads.erase(lead)
-		log_event("PIPELINE: %s turned out to have no budget. That is the job."
+		log_event(Loc.t("log.pipeline_no_budget")
 			% lead["customer"])
 		return "nothing there"
 	lead["stage"] = "rfp"
 	lead["ttl"] = 5
-	log_event("PIPELINE: %s has put the work out to tender. %s"
+	log_event(Loc.t("log.pipeline_tender")
 		% [lead["customer"], Market.rfp_requirements(lead)])
 	return ""
 
@@ -8214,11 +8214,11 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 			lead["attempts"] = int(lead.get("attempts", 0)) + 1
 			lead["ttl"] = 5
 			lead["coach"] = String(result["why"])
-			log_event("PROPOSAL REVIEW: Kiskacsa did not sign yet: %s. Revise and resubmit."
+			log_event(Loc.t("log.proposal_review")
 				% sentence(String(result["why"])))
 			return "retry:" + String(result["why"])
 		leads.erase(lead)
-		log_event("LOST TENDER: %s. %s." % [lead["customer"], sentence(String(result["why"]))])
+		log_event(Loc.t("log.lost_tender") % [lead["customer"], sentence(String(result["why"]))])
 		return "lost:" + String(result["why"])
 	leads.erase(lead)
 	var deal := {
@@ -8236,12 +8236,12 @@ func submit_proposal(lead: Dictionary, price: int, committed_sla: int) -> String
 		customer_arcs["kiskacsa"] = {"beat": "arrival", "arrival_cycle": cycle,
 			"proposal_attempts": int(lead.get("attempts", 0)), "promised_sla": committed_sla,
 			"agreed_fee": price}
-		log_event("DELIVERY RESERVE: Kiskacsa set aside $%d for the server. It cannot be spent on anything else."
+		log_event(Loc.t("log.delivery_reserve_set")
 			% int(deal["delivery_credit"]))
 	deals.append(deal)
 	stats["deals"] = int(stats.get("deals", 0)) + 1
 	reputation = mini(100, reputation + 2)
-	log_event("WON TENDER: %s at $%d/cycle on a %s commitment. Now deliver it."
+	log_event(Loc.t("log.won_tender")
 		% [lead["customer"], price, Market.tier(committed_sla)["label"]])
 	topology_changed.emit()
 	return ""
@@ -8266,7 +8266,7 @@ func maybe_upsell() -> void:
 		var extra_load := int(float(int(deal.get("load", 200))) * (0.4 + biz_roll() * 0.5))
 		var extra_fee := int(float(int(deal["fee"])) * (0.25 + biz_roll() * 0.25))
 		deal["upsell"] = {"load": extra_load, "fee": extra_fee}
-		log_event("GROWTH: %s wants %d Mbps more for $%d/cycle more. Can you carry it?"
+		log_event(Loc.t("log.growth_wants")
 			% [deal["customer"], extra_load, extra_fee])
 		return
 
@@ -8306,7 +8306,7 @@ func maybe_dispute() -> void:
 		# played on autopilot.
 		deal["dispute"] = {"kind": String(kind["id"]), "warned": false, "raised": cycle,
 			"customer_right": biz_roll() < 0.25}
-		log_event("DISPUTE: %s %s. Put your advice in writing, concede, or hold firm."
+		log_event(Loc.t("log.dispute")
 			% [deal["customer"], kind["demand"]])
 		return
 
@@ -8318,7 +8318,7 @@ func warn_customer(deal: Dictionary) -> String:
 		return "your advice is already in writing"
 	dispute["warned"] = true
 	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.05)
-	log_event("ON RECORD: you wrote to %s explaining the risk. Nobody enjoys receiving that email."
+	log_event(Loc.t("log.on_record")
 		% deal["customer"])
 	return ""
 
@@ -8329,13 +8329,13 @@ func concede_dispute(deal: Dictionary) -> String:
 	deal.erase("dispute")
 	if bool(dispute.get("customer_right", false)):
 		deal["loyalty"] = minf(1.0, float(deal.get("loyalty", 0.6)) + 0.1)
-		log_event("CONCEDED: %s got their way, and they were right. Nothing breaks."
+		log_event(Loc.t("log.conceded_right")
 			% deal["customer"])
 		return ""
 	if bool(dispute.get("warned", false)):
 		deal["on_record"] = true
 	deal["predicted_failure"] = cycle + 3 + int(biz_roll() * 5.0)
-	log_event("CONCEDED: %s gets what they asked for. It will fail the way you said it would."
+	log_event(Loc.t("log.conceded_wrong")
 		% deal["customer"])
 	return ""
 
@@ -8352,16 +8352,16 @@ func hold_firm(deal: Dictionary) -> String:
 	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - (0.25 if right else 0.1))
 	if right:
 		reputation = maxi(0, reputation - 3)
-		log_event("HELD FIRM: you told %s that %s. They were right and you were not: that costs you."
+		log_event(Loc.t("log.held_firm_wrong")
 			% [deal["customer"], kind["stance"]])
 	else:
 		reputation = mini(100, reputation + (2 if bool(dispute.get("warned", false)) else 0))
-		log_event("HELD FIRM: %s backed down. The outage you predicted never happens, which nobody thanks you for."
+		log_event(Loc.t("log.held_firm_right")
 			% deal["customer"])
 	if biz_roll() < leave_chance:
 		deals.erase(deal)
 		reputation = maxi(0, reputation - 2)
-		log_event("LOST: %s took their business somewhere less argumentative." % deal["customer"])
+		log_event(Loc.t("log.lost_argumentative") % deal["customer"])
 	return ""
 
 func dispute_tick() -> void:
@@ -8375,12 +8375,12 @@ func dispute_tick() -> void:
 			continue
 		stats["faults"] = int(stats.get("faults", 0)) + 1
 		if bool(deal.get("on_record", false)):
-			log_event("PREDICTED FAILURE: %s is down exactly as you warned them in writing. This one is theirs."
+			log_event(Loc.t("log.predicted_theirs")
 				% deal["customer"])
 		else:
 			reputation = maxi(0, reputation - 4)
 			Skills.fumble("change_control")
-			log_event("PREDICTED FAILURE: %s is down the way you expected. You never wrote it down, so it is yours."
+			log_event(Loc.t("log.predicted_yours")
 				% deal["customer"])
 		record_incident("dispute", "%s went down after overruling your advice" % deal["customer"],
 			"" if bool(deal.get("on_record", false)) else "you")
@@ -8403,7 +8403,7 @@ func accept_upsell(deal: Dictionary) -> String:
 	deal["fee"] = int(deal["fee"]) + int(up["fee"])
 	deal.erase("upsell")
 	reputation = mini(100, reputation + 1)
-	log_event("GROWTH: %s upgraded to $%d/cycle. Their traffic goes up tonight."
+	log_event(Loc.t("log.growth_upgraded")
 		% [deal["customer"], int(deal["fee"])])
 	return ""
 
@@ -8412,7 +8412,7 @@ func decline_upsell(deal: Dictionary) -> String:
 		return "they have not asked for anything"
 	deal.erase("upsell")
 	deal["loyalty"] = maxf(0.0, float(deal.get("loyalty", 0.6)) - 0.2)
-	log_event("GROWTH: you turned %s down. They will remember that at renewal."
+	log_event(Loc.t("log.growth_turned_down")
 		% deal["customer"])
 	return ""
 
@@ -8428,7 +8428,7 @@ func reference_tick() -> void:
 			continue
 		references.append(String(deal["customer"]))
 		reputation = mini(100, reputation + 6)
-		log_event("REPUTATION: %s is willing to be a reference. That opens doors."
+		log_event(Loc.t("log.reputation_reference")
 			% deal["customer"])
 		return
 
@@ -8440,11 +8440,11 @@ func press_tick(rep: Dictionary) -> void:
 	var net := int(rep.get("net", 0))
 	if uptime >= 98 and net > 0:
 		reputation = mini(100, reputation + 4)
-		log_event("PRESS: a trade piece names you as one to watch. %d%% delivered on the quarter."
+		log_event(Loc.t("log.press_good")
 			% uptime)
 	elif uptime < 80:
 		reputation = maxi(0, reputation - 3)
-		log_event("PRESS: a piece about operators who overpromise. You are in it, at %d%% delivered."
+		log_event(Loc.t("log.press_bad")
 			% uptime)
 
 # ---------- tax, depreciation and the meter ----------
@@ -8501,7 +8501,7 @@ func _spot_market_tick() -> void:
 		return
 	var length := 3 + int(st[1]) % 4
 	spot_spike_until = cycle + 1 + length
-	log_event("ENERGY: the spot market has spiked. Power costs %.1fx for the next %d cycles%s."
+	log_event(Loc.t("log.energy_spike")
 		% [SPOT_SPIKE, length, "; your fixed tariff does not care" if fixed_tariff else ""])
 
 func energy_rate() -> float:
@@ -8526,14 +8526,14 @@ func buy_efficiency() -> String:
 	if not try_spend(price):
 		return "the retrofit costs $%d" % price
 	efficiency += 1
-	log_event("ENERGY: efficiency retrofit fitted. Draw is now %d%% of nameplate."
+	log_event(Loc.t("log.energy_retrofit")
 		% int(efficiency_factor() * 100.0))
 	topology_changed.emit()
 	return ""
 
 func set_fixed_tariff(on: bool) -> void:
 	fixed_tariff = on
-	log_event("ENERGY: switched to a %s tariff." % ("fixed" if on else "spot"))
+	log_event(Loc.t("log.energy_tariff") % ("fixed" if on else "spot"))
 
 func depreciation_this_cycle() -> int:
 	var total := 0
@@ -8544,7 +8544,7 @@ func depreciation_this_cycle() -> int:
 
 func hire_accountant(on: bool) -> void:
 	accountant = on
-	log_event("BOOKS: an accountant is %s." % ("on retainer" if on else "no longer retained"))
+	log_event(Loc.t("log.books") % ("on retainer" if on else "no longer retained"))
 
 func tax_due() -> int:
 	## profit for the quarter, less what the equipment wrote off. Without an
@@ -8558,7 +8558,7 @@ func settle_quarter() -> void:
 	if tax > 0:
 		money -= tax
 		last_pl["tax"] = -tax
-		log_event("TAX: $%d on a quarter's profit of $%d (allowances $%d)."
+		log_event(Loc.t("log.tax")
 			% [tax, quarter_profit, quarter_depreciation if accountant else quarter_depreciation / 2])
 		money_changed.emit()
 	quarter_profit = 0
@@ -8593,7 +8593,7 @@ func buy_ipv4_block() -> String:
 	if not try_spend(price):
 		return "a /29 now costs $%d and you do not have it" % price
 	ipv4_blocks += 1
-	log_event("ADDRESSES: bought a /29 for $%d. You now hold %d addresses."
+	log_event(Loc.t("log.addresses")
 		% [price, ipv4_total()])
 	topology_changed.emit()
 	return ""
@@ -8624,10 +8624,10 @@ func save_playbook(name: String, lines: Array) -> String:
 	for pb in playbooks:
 		if String(pb["name"]) == name:
 			pb["lines"] = clean
-			log_event("PLAYBOOK: '%s' updated (%d commands)." % [name, clean.size()])
+			log_event(Loc.t("log.playbook_updated") % [name, clean.size()])
 			return ""
 	playbooks.append({"name": name, "lines": clean})
-	log_event("PLAYBOOK: '%s' saved (%d commands)." % [name, clean.size()])
+	log_event(Loc.t("log.playbook_saved") % [name, clean.size()])
 	return ""
 
 func delete_playbook(name: String) -> void:
@@ -8685,7 +8685,7 @@ func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Diction
 		result["refused"] = "%d device(s) match and this runbook may touch %d" \
 			% [targets.size(), int(rb["max_devices"])]
 		result["log"].append("REFUSED: " + String(result["refused"]))
-		log_event("RUNBOOK '%s' refused: %s" % [rb["name"], result["refused"]])
+		log_event(Loc.t("log.runbook_refused") % [rb["name"], result["refused"]])
 		runbook_runs.append(result)
 		return result
 	if targets.is_empty():
@@ -8746,7 +8746,7 @@ func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Diction
 				if d2.name == name:
 					after[name] = device_config(d2)
 		result["after"] = after
-		log_event("RUNBOOK '%s': %d applied, %d skipped." % [rb["name"],
+		log_event(Loc.t("log.runbook_applied") % [rb["name"],
 			result["applied"].size(), result["skipped"].size()])
 	runbook_runs.append(result)
 	if runbook_runs.size() > 20:
@@ -8763,7 +8763,7 @@ func rollback_runbook(run: Dictionary) -> String:
 		for d: Net.NDevice in all_devices():
 			if d.name == name:
 				apply_device_config(d, run["before"][name])
-	log_event("RUNBOOK ROLLBACK: %d device(s) put back the way they were."
+	log_event(Loc.t("log.runbook_rollback")
 		% run["before"].size())
 	topology_changed.emit()
 	return ""
@@ -8790,7 +8790,7 @@ func run_playbook(pb: Dictionary, targets: Array) -> Dictionary:
 		ran += 1
 		if bad > 0:
 			failed += 1
-	log_event("PLAYBOOK: ran '%s' on %d device(s), %d with errors." % [pb["name"], ran, failed])
+	log_event(Loc.t("log.playbook_ran") % [pb["name"], ran, failed])
 	topology_changed.emit()
 	return {"ran": ran, "failed": failed, "log": trail}
 
@@ -8843,10 +8843,10 @@ func cert_tick() -> void:
 					rec["expires"] = cycle + CERT_LIFE  # renewed without anyone noticing
 				continue
 			if left == CERT_WARN:
-				log_event("CERTIFICATE: %s on %s expires in %d cycles."
+				log_event(Loc.t("log.certificate_expires")
 					% [name, d.name, CERT_WARN])
 			elif left == 0:
-				log_event("CERTIFICATE: %s on %s has EXPIRED. The service is up and every client refuses to talk to it."
+				log_event(Loc.t("log.certificate_expired")
 					% [name, d.name])
 	if auto_cost > 0:
 		last_pl["certificates"] = int(last_pl.get("certificates", 0)) - auto_cost
@@ -8890,7 +8890,7 @@ func hijack_tick() -> void:
 		h["cycles_left"] = int(h["cycles_left"]) - 1
 		if int(h["cycles_left"]) <= 0:
 			hijacks.erase(h)
-			log_event("SECURITY: the bogus announcement of %s/%d has been withdrawn."
+			log_event(Loc.t("log.security_withdrawn")
 				% [h["prefix"], int(h["plen"])])
 	var mine := announced_prefixes()
 	if mine.is_empty() or not hijacks.is_empty() or randf() > 0.05:
@@ -8900,12 +8900,12 @@ func hijack_tick() -> void:
 	var culprit := "AS%d" % (64600 + randi() % 300)
 	if hijack_protected(entry):
 		stats["hijacks_rejected"] = int(stats.get("hijacks_rejected", 0)) + 1
-		log_event("SECURITY: %s announced %s and was rejected: your ROA says it is not theirs."
+		log_event(Loc.t("log.security_rejected")
 			% [culprit, entry["cidr"]])
 		return
 	hijacks.append({"prefix": parts[0], "plen": int(parts[1]), "by": culprit,
 		"cycles_left": 2 + randi() % 4})
-	log_event("SECURITY: %s is announcing %s. Traffic for it is going to them, not you. Sign the prefix with a ROA and ask an upstream to validate."
+	log_event(Loc.t("log.security_hijack")
 		% [culprit, entry["cidr"]])
 
 # ---------- transit and peering ----------
@@ -8955,7 +8955,7 @@ func join_ixp() -> String:
 	if not try_spend(IXP_SETUP):
 		return "you cannot afford the $%d cross-connect and port" % IXP_SETUP
 	ixp = {"joined": true, "peers": 0}
-	log_event("PEERING: you have a port at the exchange ($%d/cycle). Now find networks to peer with."
+	log_event(Loc.t("log.peering_port")
 		% IXP_PORT_FEE)
 	topology_changed.emit()
 	return ""
@@ -8966,7 +8966,7 @@ func add_peering() -> String:
 	if int(ixp.get("peers", 0)) >= 6:
 		return "you are peering with everyone worth peering with here"
 	ixp["peers"] = int(ixp.get("peers", 0)) + 1
-	log_event("PEERING: another network agreed to peer. %d%% of your traffic now bypasses transit."
+	log_event(Loc.t("log.peering_agreed")
 		% int(peering_share() * 100.0))
 	topology_changed.emit()
 	return ""
@@ -9011,7 +9011,7 @@ func _maybe_poach() -> void:
 	deals.erase(deal)
 	rival["deals"] = int(rival["deals"]) + 1
 	reputation = maxi(0, reputation - 4)
-	log_event("POACHED: %s left for %s, who offered the same service for $%d instead of your $%d."
+	log_event(Loc.t("log.poached")
 		% [deal["customer"], rival["name"], their_price, int(deal["fee"])])
 
 func _field_fault() -> void:
@@ -9033,7 +9033,7 @@ func _field_fault() -> void:
 			device_log(rebooted, "system restarted after a power event")
 			Sfx.play("reboot")
 			stats["faults"] += 1
-			log_event("FIELD: %s rebooted after a power blip: %s" % [rebooted.name,
+			log_event(Loc.t("log.field_rebooted") % [rebooted.name,
 				"startup-config restored it." if had_startup
 				else "it had NO saved config and came back blank. Use 'write memory'!"])
 			if not had_startup:
@@ -9043,7 +9043,7 @@ func _field_fault() -> void:
 	link_fault(victim, "link fault")
 	device_log(victim.dev, "%s changed state to down (link fault)" % victim.name)
 	stats["faults"] += 1
-	log_event("FIELD: link fault on %s %s: port went down. Find it (Map, lldp, counters) and re-enable it!"
+	log_event(Loc.t("log.field_link_fault")
 		% [victim.dev.name, victim.name])
 	topology_changed.emit()
 
@@ -9182,7 +9182,7 @@ func sla_tick() -> void:
 		reputation = maxi(0, reputation - 2)
 		if not bool(stats.get("insolvent_told", false)):
 			stats["insolvent_told"] = true
-			log_event("BANK: you are insolvent ($%d): reputation bleeds 2 a cycle while it lasts. Below -$3000 the bank calls it after 5 cycles. Ways out: sell gear (half price back), take or extend the loan, or let a contract fee land." % money)
+			log_event(Loc.t("log.bank_insolvent") % money)
 	else:
 		stats["insolvent_told"] = false
 	for c in circuits:
@@ -9215,7 +9215,7 @@ func sla_tick() -> void:
 				ok = false
 				break
 		if sla_status.get(c["id"], true) and not ok:
-			log_event("SLA BREACH: '%s' (%s) is down: fees suspended." % [c["title"], c["customer"]])
+			log_event(Loc.t("log.sla_breach") % [c["title"], c["customer"]])
 		sla_status[c["id"]] = ok
 		if not ok:
 			customer_outage_now = true
@@ -9246,7 +9246,7 @@ func sla_tick() -> void:
 			for d in hot.slots:
 				if d != null and d.status == "active" and d.type != "cooling":
 					d.status = "offline"
-					log_event("HEAT: %s in %s tripped. That cabinet is running at %dW against %dW of cooling."
+					log_event(Loc.t("log.heat_tripped")
 						% [d.name, hot.name, rack_heat(hot), rack_cooling(hot)])
 					topology_changed.emit()
 					tripped = true
@@ -9261,7 +9261,7 @@ func sla_tick() -> void:
 	if not buyout_offer.is_empty():
 		buyout_offer["ttl"] = int(buyout_offer["ttl"]) - 1
 		if int(buyout_offer["ttl"]) <= 0:
-			log_event("APPROACH: %s has withdrawn their offer." % buyout_offer["rival"])
+			log_event(Loc.t("log.approach_withdrawn") % buyout_offer["rival"])
 			buyout_offer = {}
 	Rivals.maybe_offer_for_player()
 	Rivals.maybe_favour()
@@ -9345,7 +9345,7 @@ func sla_tick() -> void:
 				var state := "delivered" if first_delivery else "restored"
 				customer_service_changed.emit(String(deal["customer"]), state, int(deal["fee"]))
 				deal.erase("on_record")
-				log_event("SERVICE %s: %s is reachable. Billing %s at $%d/cycle."
+				log_event(Loc.t("log.service_reachable")
 					% [state.to_upper(), deal["customer"], "started" if first_delivery else "resumed",
 						int(deal["fee"])])
 		elif bool(deal.get("ever_healthy", false)) and not deal.has("renewal"):
@@ -9353,7 +9353,7 @@ func sla_tick() -> void:
 			deal["payment_state"] = "suspended"
 			if was_healthy:
 				customer_service_changed.emit(String(deal["customer"]), "suspended", int(deal["fee"]))
-				log_event("PAYMENT SUSPENDED: %s is down. No invoice will be raised until service returns."
+				log_event(Loc.t("log.payment_suspended")
 					% deal["customer"])
 		else:
 			deal["payment_state"] = "waiting"
@@ -9409,7 +9409,7 @@ func sla_tick() -> void:
 				last_pl["SLA penalties"] = int(last_pl.get("SLA penalties", 0)) - penalty
 				earned -= penalty
 				reputation = maxi(0, reputation - 3)
-				log_event("SLA PENALTY: %s is at %d%% uptime over the last %d cycles against a %s contract: $%d service credit."
+				log_event(Loc.t("log.sla_penalty")
 					% [deal["customer"], int(uptime * 100), SLA_WINDOW, sla["label"], penalty])
 				record_incident("sla", "%s missed their %s service level" % [deal["customer"], sla["label"]])
 			deal["penalised"] = true
@@ -9424,7 +9424,7 @@ func sla_tick() -> void:
 				rep_hit = maxi(1, rep_hit / 2)  # you warned them, in writing
 			reputation = maxi(0, reputation - rep_hit)
 			if not bool(deal.get("was_live", false)) and cycle % 2 == 0:
-				log_event("UNDELIVERED: %s is still waiting for the service they signed for: reputation -%d a cycle until it is live." % [deal["customer"], rep_hit])
+				log_event(Loc.t("log.undelivered") % [deal["customer"], rep_hit])
 			deal["degraded"] = false
 			if bool(deal.get("upstream_down", false)):
 				# somebody else's outage: they do not walk over it, and they
@@ -9435,15 +9435,15 @@ func sla_tick() -> void:
 			var missed: int = deal["missed"]
 			if bool(deal.get("guided", false)) and not bool(deal.get("ever_healthy", false)):
 				if missed == 3:
-					log_event("DELIVERY COACH: Kiskacsa is still waiting. Their protected server reserve and contract remain open while you finish the service.")
+					log_event(Loc.t("log.delivery_coach"))
 				deal["missed"] = mini(missed, 3)
 			elif missed == 3:
-				log_event("%s is losing patience: deliver their service or they walk in 2 cycles."
+				log_event(Loc.t("log.losing_patience")
 					% deal["customer"])
 			elif missed >= 5:
 				deals.erase(deal)
 				reputation = maxi(0, reputation - 10)
-				log_event("CANCELLED: %s gave up waiting and took their business elsewhere."
+				log_event(Loc.t("log.cancelled_waiting")
 					% deal["customer"])
 			continue
 		deal["missed"] = 0
@@ -9456,11 +9456,11 @@ func sla_tick() -> void:
 				l.a.out_drops += over
 				l.b.out_drops += over
 		if congested and not deal.get("degraded", false):
-			log_event("CONGESTION: %s's traffic exceeds a link's capacity: they pay half until you add bandwidth."
+			log_event(Loc.t("log.congestion")
 				% deal["customer"])
 		elif not congested and bool(deal.get("degraded", false)):
 			stats["congestion_relieved"] = int(stats.get("congestion_relieved", 0)) + 1
-			log_event("CONGESTION: %s runs at full speed again." % deal["customer"])
+			log_event(Loc.t("log.congestion_cleared") % deal["customer"])
 		deal["degraded"] = congested
 		if deal.has("renewal"):
 			continue  # nothing is billed while the customer is deciding
@@ -9573,7 +9573,7 @@ func _update_reliability_streak(outage_now: bool) -> void:
 		customer_outage_active = true
 		for member: Dictionary in staff:
 			member["morale"] = maxi(0, int(member.get("morale", 70)) - 3)
-		log_event("FLOOR SIGN: customer outage. The %d-cycle reliability streak is over." % current)
+		log_event(Loc.t("log.floor_sign_outage") % current)
 		Sfx.play("alert")
 	elif outage_now:
 		last_customer_outage_cycle = cycle  # an active outage keeps the counter at zero
@@ -9582,7 +9582,7 @@ func _update_reliability_streak(outage_now: bool) -> void:
 		customer_outage_active = false
 		best_outage_streak = maxi(best_outage_streak, cycles_since_customer_outage())
 		if recovered:
-			log_event("FLOOR SIGN: customer service restored. The counter is moving again.")
+			log_event(Loc.t("log.floor_sign_restored"))
 		# A long quiet run becomes a small shared source of pride, not an
 		# exploitable morale engine: one point at sparse ten-cycle milestones.
 		if cycle > 0 and cycle % 10 == 0 and cycles_since_customer_outage() >= 10:
@@ -9621,7 +9621,7 @@ func try_buy_device(model: String) -> bool:
 	var deal := guided_customer_deal()
 	deal["delivery_credit"] = int(deal.get("delivery_credit", 0)) - credit
 	money -= price - credit
-	log_event("DELIVERY RESERVE: $%d funded %s for %s; $%d remains protected."
+	log_event(Loc.t("log.delivery_reserve_funded")
 		% [credit, MODELS[model]["label"], deal["customer"], int(deal["delivery_credit"])])
 	money_changed.emit()
 	return true
@@ -9758,7 +9758,7 @@ func new_device(model: String, second_hand := false) -> Net.NDevice:
 			# else's licence: this one arrives already expired
 			lic["due"] = cycle - RENEWAL_GRACE
 			lic["lapsed"] = true
-			log_event("LICENCE: %s came second-hand with no transferable licence. It is capped until you buy one."
+			log_event(Loc.t("log.licence_capped")
 				% d.name)
 	return d
 
@@ -10011,7 +10011,7 @@ func link_devices(a: Net.NDevice, b: Net.NDevice) -> String:
 		else connect_ifaces(port_a, port_b)
 	if not ok:
 		return "there is nothing in the drawer to make that run with"
-	log_event("CABLED: %s %s to %s %s." % [a.name, port_a.name, b.name, port_b.name])
+	log_event(Loc.t("log.cabled") % [a.name, port_a.name, b.name, port_b.name])
 	return ""
 
 func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
@@ -10022,7 +10022,7 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	var kind := "patch" if rack_of(a.dev) == rack_of(b.dev) else "optic"
 	if not take_part(kind):
 		if not take_part("patch"):
-			log_event("BLOCKED: no %s left in the drawer. The run waits for a delivery."
+			log_event(Loc.t("log.blocked_drawer")
 				% PART_LABELS[kind])
 			return false
 		improvise_part(kind)
@@ -10114,7 +10114,7 @@ func add_ip(i: Net.Iface, cidr: String) -> bool:
 					other_if = oi
 		device_log(i.dev, "%" + ("IP-4-DUPADDR: Duplicate address %s on %s, sourced by %s" % [cidr.split("/")[0], i.name, other_if.mac if other_if else "?"]))
 		device_log(other_owner, "%" + ("IP-4-DUPADDR: Duplicate address %s on %s, sourced by %s" % [cidr.split("/")[0], other_if.name if other_if else "?", i.mac]))
-		log_event("DUPADDR: %s is now on both %s and %s. Two boxes with one address answer at random." % [cidr.split("/")[0], other_owner.name, i.dev.name])
+		log_event(Loc.t("log.dupaddr") % [cidr.split("/")[0], other_owner.name, i.dev.name])
 	topology_changed.emit()
 	return true
 
@@ -10416,7 +10416,7 @@ func save_blueprint(r: Net.Rack, name: String) -> String:
 			blueprints.erase(b)
 			break
 	blueprints.append({"name": name, "slots": slots})
-	log_event("BLUEPRINT: saved '%s' from rack %s." % [name, r.name])
+	log_event(Loc.t("log.blueprint_saved") % [name, r.name])
 	return ""
 
 func blueprint_price(b: Dictionary) -> int:
@@ -10439,7 +10439,7 @@ func apply_blueprint(r: Net.Rack, b: Dictionary) -> String:
 			r.slots[idx] = new_device(String(m))
 	if r.visual:
 		r.visual.queue_redraw()
-	log_event("BLUEPRINT: built '%s' into rack %s for $%d." % [b["name"], r.name, price])
+	log_event(Loc.t("log.blueprint_built") % [b["name"], r.name, price])
 	topology_changed.emit()
 	return ""
 
@@ -10464,7 +10464,7 @@ func save_template(d: Net.NDevice, name: String) -> String:
 			templates.erase(t)
 			break
 	templates.append({"name": name, "type": d.type, "cfg": device_config(d)})
-	log_event("TEMPLATE: saved '%s' from %s." % [name, d.name])
+	log_event(Loc.t("log.template_saved") % [name, d.name])
 	return ""
 
 func apply_template(d: Net.NDevice, t: Dictionary) -> String:
@@ -10494,7 +10494,7 @@ func apply_template(d: Net.NDevice, t: Dictionary) -> String:
 		target.port_security = bool(si.get("port_security", false))
 		target.lag = int(si.get("lag", 0))
 	topology_changed.emit()
-	log_event("TEMPLATE: applied '%s' to %s." % [t["name"], d.name])
+	log_event(Loc.t("log.template_applied") % [t["name"], d.name])
 	return ""
 
 func save_config_version(d: Net.NDevice) -> int:
@@ -11026,7 +11026,7 @@ func _apply(data: Dictionary) -> void:
 			links.append(restored)
 	while stage < STAGES.size() - 1 and _rack_outside_grid():
 		stage += 1  # grandfather old saves placed on the bigger legacy floor
-		log_event("Legacy floor grandfathered: you keep the %s you already built on." % STAGES[stage]["name"])
+		log_event(Loc.t("log.legacy_floor") % STAGES[stage]["name"])
 	for gk in grey_faults:  # the fault's visible side effects live on the interface, which was just rebuilt
 		if String(grey_faults[gk].get("kind", "")) == "dirty_optic":
 			var gi := iface_by_key(gk)
