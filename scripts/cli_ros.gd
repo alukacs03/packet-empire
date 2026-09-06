@@ -694,14 +694,20 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return out
 		"ip dns print":
 			return _kv_block([["servers", dev.resolver], ["dynamic-servers", ""], ["use-doh-server", ""],
-				["verify-doh-cert", "no"], ["allow-remote-requests", "no"], ["max-udp-packet-size", "4096"],
+				["verify-doh-cert", "no"], ["allow-remote-requests", "yes" if dev.services.has("dns") else "no"], ["max-udp-packet-size", "4096"],
 				["query-server-timeout", "2s"], ["query-total-timeout", "10s"], ["max-concurrent-queries", "100"],
 				["max-concurrent-tcp-sessions", "20"], ["cache-size", "2048KiB"], ["cache-max-ttl", "1w"],
 				["cache-used", "%dKiB" % (9 + dev.dns_cache.size())]])
 		"ip dns set":
 			if p.has("servers"):
 				dev.resolver = String(p["servers"]).split(",")[0]
-				Game.topology_changed.emit()
+			if p.has("allow-remote-requests"):
+				if String(p["allow-remote-requests"]) == "yes":
+					if not dev.services.has("dns"):
+						dev.services["dns"] = {"records": {}}  # the router forwards for its hosts
+				else:
+					dev.services.erase("dns")
+			Game.topology_changed.emit()
 			return ""
 		"ip dns cache print":
 			var out := "Flags: S - STATIC\nColumns: NAME, TYPE, DATA, TTL\n#   NAME                 TYPE  DATA             TTL\n"
@@ -798,7 +804,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return out
 		"interface vxlan add":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "input does not match any value of bridge\n"
 			if not p.has("name") or not p.has("vni"):
 				return "value of %s must be specified\n" % ("name" if not p.has("name") else "vni")
 			if not String(p["vni"]).is_valid_int() or int(p["vni"]) < 1 or int(p["vni"]) > 16777215:
@@ -1143,7 +1149,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return exec("/ip route print").replace("Flags: D - DYNAMIC; A - ACTIVE;", "Flags: D - DYNAMIC; A - ACTIVE, I - INACTIVE;")
 		"interface bridge settings print":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return ""  # no bridge: nothing to print, as on the box
 			return _kv_block([["use-ip-firewall", "no"], ["use-ip-firewall-for-vlan", "no"], ["use-ip-firewall-for-pppoe", "no"], ["allow-fast-path", "yes"],
 				["bridge-fast-path-active", "yes"], ["bridge-fast-path-packets", str(dev.ifaces[0].rx_frames if not dev.ifaces.is_empty() else 0)],
 				["bridge-fast-path-bytes", str((dev.ifaces[0].rx_frames if not dev.ifaces.is_empty() else 0) * 148)], ["bridge-fast-forward-active", "no"],
@@ -1425,7 +1431,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			if up:
 				var mbps := Game.iface_speed(i)
 				pairs += [["auto-negotiation", "done"], ["rate", ("%dMbps" % mbps) if mbps < 1000 else ("%dGbps" % (mbps / 1000))],
-					["full-duplex", "yes"], ["tx-flow-control", "no"], ["rx-flow-control", "no"],
+					["full-duplex", "no" if i.duplex == "half" else "yes"], ["tx-flow-control", "no"], ["rx-flow-control", "no"],
 					["advertising", "10M-baseT-half,10M-baseT-full,100M-baseT-half,100M-baseT-full,1G-baseT-full"],
 					["link-partner-advertising", "10M-baseT-half,10M-baseT-full,100M-baseT-half,100M-baseT-full,1G-baseT-full"]]
 			else:
@@ -1459,6 +1465,12 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				if not String(p["mtu"]).is_valid_int():
 					return "invalid value for argument mtu\n"
 				i.mtu = clampi(int(p["mtu"]), 576, 9216)
+			if p.has("auto-negotiation") or p.has("full-duplex"):
+				# auto-negotiation=no full-duplex=no is the classic mismatch; the counters will say so
+				if String(p.get("auto-negotiation", "no")) == "yes":
+					i.duplex = "auto"
+				else:
+					i.duplex = "half" if String(p.get("full-duplex", "yes")) == "no" else "full"
 			if p.has("arp"):
 				if String(p["arp"]) not in ["enabled", "proxy-arp", "reply-only", "disabled"]:
 					return "input does not match any value of arp\n"
@@ -1522,7 +1534,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return out if not groups.is_empty() else _empty("Flags: R - RUNNING\n")
 		"interface bridge add", "interface bridge set":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "input does not match any value of bridge\n" if path.ends_with("add") else "no such item\n"
 			if p.has("protocol-mode"):
 				if String(p["protocol-mode"]) not in ["none", "stp", "rstp", "mstp"]:
 					return "input does not match any value of protocol-mode\n"
@@ -1540,12 +1552,12 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return ""
 		"interface bridge print":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return ""  # no bridge: nothing to print, as on the box
 			return "Flags: X - disabled, R - running\n 0 R name=\"%s\" mtu=auto actual-mtu=1500 l2mtu=1592 arp=enabled arp-timeout=auto mac-address=%s protocol-mode=%s fast-forward=yes igmp-snooping=no auto-mac=yes ageing-time=5m priority=0x%x max-message-age=20s forward-delay=15s transmit-hold-count=6 vlan-filtering=yes pvid=1 frame-types=admit-all ingress-filtering=yes\n" % [
 				BRIDGE, _bridge_mac(), "mstp" if dev.stp_mode == "mst" else dev.stp_mode, dev.stp_priority]
 		"interface bridge vlan add":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "input does not match any value of bridge\n"
 			if not p.has("bridge"):
 				return "value of bridge must be specified\n"
 			if String(p["bridge"]) != BRIDGE:
@@ -1566,7 +1578,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return ""
 		"interface bridge vlan set":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "no such item\n"
 			var vids := _vids(String(p.get("vlan-ids", "")))
 			for a in args:  # by item number, the way print numbers them
 				if String(a).is_valid_int() and int(a) >= 0 and int(a) < _sorted_vids().size():
@@ -1583,7 +1595,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return ""
 		"interface bridge vlan remove":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "no such item\n"
 			var vids := _vids(String(p.get("vlan-ids", "")))
 			if vids.is_empty():
 				for a in args:  # by item number, the way print numbers them
@@ -1597,7 +1609,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return ""
 		"interface bridge vlan print":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return ""  # no bridge: nothing to print, as on the box
 			var out := "Flags: D - DYNAMIC\nColumns: BRIDGE, VLAN-IDS, CURRENT-TAGGED, CURRENT-UNTAGGED\n#   BRIDGE   VLAN-IDS  CURRENT-TAGGED           CURRENT-UNTAGGED\n"
 			var n := 0
 			for vid in _sorted_vids():
@@ -1615,7 +1627,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return out
 		"interface bridge port add", "interface bridge port set":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "input does not match any value of bridge\n" if path.ends_with("add") else "no such item\n"
 			var vx: Dictionary = dev.services.get("ros_vxlan", {})
 			if vx.has(String(p.get("interface", ""))):
 				# the vxlan interface as a bridge port: its pvid is the VLAN the VNI carries
@@ -1641,6 +1653,14 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					i.untagged_vlan = vid  # the untagged VLAN of a tagged port
 				else:
 					Game.set_access_vlan(i, vid)
+			if p.has("edge"):
+				if String(p["edge"]) not in ["yes", "no", "auto", "no-discover", "yes-discover"]:
+					return "input does not match any value of edge\n"
+				i.portfast = String(p["edge"]).begins_with("yes")
+			if p.has("horizon"):
+				if String(p["horizon"]) != "none" and not String(p["horizon"]).is_valid_int():
+					return "invalid value for argument horizon\n"
+				i.pvlan = "isolated" if String(p["horizon"]) != "none" and int(p["horizon"]) > 0 else ""
 			if p.has("disabled"):
 				_set_disabled(i, String(p["disabled"]) == "yes")
 			Game.topology_changed.emit()
@@ -1653,19 +1673,19 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return ""
 		"interface bridge port print":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return ""  # no bridge: nothing to print, as on the box
 			var out := "Flags: I - INACTIVE; H - HW-OFFLOAD\nColumns: INTERFACE, BRIDGE, HW, PVID, PRIORITY, PATH-COST, INTERNAL-PATH-COST, HORIZON\n#     INTERFACE  BRIDGE   HW   PVID  PRIORITY  PATH-COST  INTERNAL-PATH-COST  HORIZON\n"
 			var n := 0
 			for i: Net.Iface in dev.ifaces:
 				if not _bridge_member(i):
 					continue
-				out += "%-2d %s%s %-10s %-8s yes  %4d  0x80             10                  10  none\n" % [n,
-					" " if i.enabled else "I", "H", i.name, BRIDGE, i.untagged_vlan]
+				out += "%-2d %s%s %-10s %-8s yes  %4d  0x80             10                  10  %s%s\n" % [n,
+					" " if i.enabled else "I", "H", i.name, BRIDGE, i.untagged_vlan, "1" if i.pvlan == "isolated" else "none", "  edge=yes" if i.portfast else ""]
 				n += 1
 			return out
 		"interface bridge port monitor":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return "no such item\n"
 			var only := _target(args, p)
 			var out := ""
 			var n := 0
@@ -1686,7 +1706,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			return out
 		"interface bridge host print":
 			if dev.type != "switch":
-				return "failure: no bridge on this device\n"
+				return ""  # no bridge: nothing to print, as on the box
 			var out := "Flags: D - DYNAMIC\nColumns: MAC-ADDRESS, VID, ON-INTERFACE, BRIDGE\n#    MAC-ADDRESS        VID  ON-INTERFACE  BRIDGE\n"
 			var vids := dev.mac_table.keys()
 			vids.sort()
@@ -2534,7 +2554,7 @@ const PARAMS := {
 	"routing bfd configuration add": ["interfaces", "disabled", "addresses", "min-rx", "min-tx", "multiplier"],
 	"routing bfd configuration remove": ["interfaces"],
 	"interface set": ["disabled", "mtu", "arp", "name", "comment", "l2mtu"],
-	"interface ethernet set": ["disabled", "mtu", "arp", "name", "comment", "l2mtu", "default-name", "speed", "auto-negotiation"],
+	"interface ethernet set": ["disabled", "mtu", "arp", "name", "comment", "l2mtu", "default-name", "speed", "auto-negotiation", "full-duplex"],
 	"interface vlan add": ["name", "vlan-id", "interface", "mtu", "arp", "disabled", "comment", "use-service-tag"],
 	"interface vlan remove": ["name"],
 	"interface vrrp add": ["name", "interface", "vrid", "priority", "preemption-mode", "interval", "version", "authentication", "password", "comment"],

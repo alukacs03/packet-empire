@@ -40,7 +40,11 @@ class Iface:
 	var port_security := false  # sticky-MAC lockdown on an access port
 	var portfast := false  # edge port: forwards at once, no listening/learning wait
 	var bpduguard := false  # err-disable the port if a bridge ever talks on it
-	var secure_mac := ""  # the MAC this port is locked to
+	var secure_mac := ""  # the MAC this port is locked to (the first one learned)
+	var secure_macs: Array = []  # every MAC learned up to the maximum
+	var psec_max := 1  # switchport port-security maximum
+	var psec_violation := "shutdown"  # shutdown | restrict | protect
+	var err_since := 0  # the cycle the switch shut it, for errdisable recovery
 	var violations := 0
 	var parent := ""  # 802.1Q subinterface: name of the physical parent
 	var dot1q := 0  # subinterface VLAN tag

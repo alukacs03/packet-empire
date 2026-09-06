@@ -11413,6 +11413,10 @@ static func run() -> int:
 	check(not cs_status.contains("Vl56") and cs_status.contains("in Po3"), "show interfaces status: no SVI rows, and a bundled member names its channel")
 	check(css.exec("show running-config | include ethernet") == "" and css.exec("show running-config | include Ethernet7").contains("Ethernet7"), "pipe: include is case-sensitive, as the regex on the box is")
 	check(css.exec("show spanning-tree").begins_with("RSTP\n"), "show spanning-tree: rstp heads its block RSTP, not MST0")
+	check(css.exec("show spanning-tree garbage") == "% Invalid input\n" and css.exec("show ip interface brief now") == "% Invalid input\n" and css.exec("show lldp neighbors x") == "% Invalid input\n", "show: trailing junk is invalid on the other show commands too")
+	check(css.exec("show mac address-table vlan 999").contains("Total Mac Addresses for this criterion: 0") and css.exec("show mac address-table nonsense") == "% Invalid input\n", "show mac address-table: vlan narrows it, junk is invalid")
+	var t19_r := CLI.new_session(Game.new_device("rtr-lite"))
+	check(t19_r.exec("/interface bridge port print") == "" and t19_r.exec("/interface bridge port add bridge=bridge1 interface=ether1") == "input does not match any value of bridge\n", "ros: a router has no bridge: print is empty and add names the missing bridge")
 	# --- RouterOS parity: vrf, dhcp-relay, vxlan, ospf interface print ---
 	var t11_rp_rack := Game.add_rack(Vector2i(9, 11))
 	var t11_rp_r := Game.new_device("rtr-lite")
@@ -11519,6 +11523,72 @@ static func run() -> int:
 	t17_l.exec("ip link set eth1 down")
 	t17_l.exec("ip link set eth1 master bond0")
 	check(t17_s.ifaces[1].lag > 0 and t17_s.ifaces[1].lag_mode == "active" and t17_l.exec("cat /proc/net/bonding/bond0").contains("802.3ad"), "bond: mode 802.3ad negotiates LACP and the proc file says so")
+	# --- the commands that used to change nothing ---
+	var t18_es := CLI.new_session(t17_sw)
+	t18_es.exec("en")
+	t18_es.exec("conf t")
+	t18_es.exec("interface Ethernet2")
+	check(t18_es.exec("switchport port-security") == "" and t18_es.exec("switchport port-security maximum 2") == "" and t18_es.exec("switchport port-security violation restrict") == "",
+		"psec: maximum and violation mode are accepted")
+	check(t17_sw.ifaces[1].psec_max == 2 and t17_sw.ifaces[1].psec_violation == "restrict", "psec: they land on the port")
+	t18_es.exec("end")
+	check(t18_es.exec("show running-config").contains("switchport port-security maximum 2\n   switchport port-security violation restrict"), "psec: the running-config prints them")
+	Sim.flush_learned_state()
+	check(Sim.ping(t17_a, "10.79.0.254")["ok"] or true, "psec: warm-up")
+	var t18_stranger := Game.new_device("srv-1")
+	t17_rack.slots[4] = t18_stranger
+	Game.add_ip(t18_stranger.ifaces[0], "10.79.0.9/24")
+	Game.disconnect_iface(t17_sw.ifaces[1])
+	Game.connect_ifaces(t18_stranger.ifaces[0], t17_sw.ifaces[1])
+	Sim.flush_learned_state()
+	Sim.ping(t18_stranger, "10.79.0.254")
+	check(t17_sw.ifaces[1].secure_macs.size() <= 2 and not t17_sw.ifaces[1].err_disabled, "psec: with a maximum of two the stranger is learned, not shut")
+	t17_sw.ifaces[1].psec_max = 1
+	t17_sw.ifaces[1].secure_macs = [t17_a.ifaces[0].mac]
+	t17_sw.ifaces[1].secure_mac = t17_a.ifaces[0].mac
+	Sim.flush_learned_state()
+	check(not Sim.ping(t18_stranger, "10.79.0.254")["ok"] and not t17_sw.ifaces[1].err_disabled and t17_sw.ifaces[1].violations >= 1, "psec: restrict drops the stranger and keeps the port up")
+	t17_sw.ifaces[1].psec_violation = "shutdown"
+	Sim.flush_learned_state()
+	Sim.ping(t18_stranger, "10.79.0.254")
+	check(t17_sw.ifaces[1].err_disabled, "psec: shutdown mode err-disables it")
+	t18_es.exec("conf t")
+	check(t18_es.exec("errdisable recovery cause portsec") == "" and t18_es.exec("errdisable recovery interval 300") == "", "errdisable: recovery is configured")
+	t18_es.exec("end")
+	Game.cycle += 2
+	Game.errdisable_tick()
+	check(not t17_sw.ifaces[1].err_disabled and t17_sw.ifaces[1].enabled, "errdisable: the port comes back by itself after the interval")
+	Game.cycle -= 2
+	Game.disconnect_iface(t17_sw.ifaces[1])
+	Game.connect_ifaces(t17_a.ifaces[0], t17_sw.ifaces[1])
+	t17_sw.ifaces[1].port_security = false
+	t17_sw.ifaces[1].secure_macs = []
+	t17_sw.ifaces[1].secure_mac = ""
+	Sim.flush_learned_state()
+	t18_es.exec("conf t")
+	check(t18_es.exec("no dot1x system-auth-control") == "" and t17_sw.services.get("dot1x_global") == false, "dot1x: the global switch is stored")
+	t18_es.exec("end")
+	check(t18_es.exec("show running-config").contains("no dot1x system-auth-control"), "dot1x: and printed")
+	check(t17_l.exec("snmp-quick public") != "" or true, "svc: warm-up")
+	t17_s.snmp = "public"
+	check(t17_l.exec("systemctl stop snmpd") == "" and t17_s.snmp == "" and t17_l.exec("systemctl status snmpd").contains("inactive"), "svc: stopping snmpd stops it answering")
+	check(t17_l.exec("systemctl start snmpd") == "" and t17_s.snmp == "public", "svc: starting it hands the community back")
+	t17_rs.exec("/ip firewall filter remove 2")  # the icmp drop from the firewall block: ssh needs the reachability probe
+	Sim.flush_learned_state()
+	check(Sim.ping(t17_a, "10.79.0.254")["ok"], "ros fw: removing the drop rule lets the ping back")
+	check(t17_rs.exec("/ip service disable ssh") == "" and CLI.try_ssh(t17_l, "10.79.0.254").contains("Connection refused"), "ros: a disabled ssh service refuses the connection")
+	t17_rs.exec("/ip service enable ssh")
+	check(t17_rs.exec("/interface ethernet set ether1 auto-negotiation=no full-duplex=no") == "" and t17_r.ifaces[0].duplex == "half" and t17_rs.exec("/interface ethernet monitor ether1 once").contains("full-duplex: no"), "ros: duplex can be forced and the monitor says so")
+	t17_rs.exec("/interface ethernet set ether1 auto-negotiation=yes")
+	check(t17_r.ifaces[0].duplex == "auto", "ros: auto-negotiation puts it back")
+	check(t17_rs.exec("/ip dns set allow-remote-requests=yes") == "" and t17_r.services.has("dns") and t17_rs.exec("/ip dns print").contains("allow-remote-requests: yes"), "ros: allow-remote-requests makes the router a resolver")
+	var t18_rss := CLI.new_session(t17_sw)
+	check(t18_rss.exec("en") == "" or true, "warm-up")
+	var t18_ros_sw := Game.new_device("sw-lite")
+	t17_rack.slots[5] = t18_ros_sw
+	var t18_rs2 := CLI.new_session(t18_ros_sw)
+	check(t18_rs2.exec("/interface bridge port add bridge=bridge1 interface=ether2 edge=yes horizon=1") == "" and t18_ros_sw.ifaces[1].portfast and t18_ros_sw.ifaces[1].pvlan == "isolated", "ros: edge is portfast and horizon is isolation")
+	check(t18_rs2.exec("/interface bridge port print").contains("edge=yes"), "ros: bridge port print shows the edge flag")
 	# --- the four jobs for protocols the campaign never asked for ---
 	var t13_ids := {}
 	for c13 in Contracts.all():

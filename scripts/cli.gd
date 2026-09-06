@@ -18,6 +18,8 @@ static func try_ssh(session: Session, target: String) -> String:
 	var owner := Sim._ip_owner(ip)
 	if owner == null or owner == session.dev or not Sim.ping(session.dev, ip)["ok"]:
 		return "ssh: connect to host %s port 22: No route to host\n" % ip
+	if bool(owner.services.get("ros_services", {}).get("ssh", {}).get("disabled", false)):
+		return "ssh: connect to host %s port 22: Connection refused\n" % ip
 	var admit := Sim.aaa_admit(owner)
 	if not bool(admit["ok"]):
 		return "ssh: %s: authentication failed (%s)\n" % [owner.name, admit["why"]]
@@ -594,8 +596,8 @@ class EOS extends Session:
 				return ""},
 			{"m": ["rmap"], "p": ["set", "local-preference"], "h": func(r): return _rmap_set("local_pref", r)},
 			{"m": ["rmap"], "p": ["set", "as-path", "prepend"], "h": func(r): return _rmap_set("prepend", [str(r.size())] if not r.is_empty() else [])},
-			{"m": ["rmap"], "p": ["set", "community"], "h": func(_r): return ""},
-			{"m": ["rmap"], "p": ["set", "metric"], "h": func(_r): return ""},
+			{"m": ["rmap"], "p": ["set", "community"], "h": func(_r): return "% set community changes nothing here: set local-preference and set as-path prepend are what BGP reads\n"},
+			{"m": ["rmap"], "p": ["set", "metric"], "h": func(_r): return "% set metric changes nothing here: set local-preference and set as-path prepend are what BGP reads\n"},
 			{"m": ["rmap"], "p": ["match", "ip", "address", "prefix-list"], "h": func(r): return _rmap_set("prefix_list", r)},
 			{"m": ["rmap"], "p": ["description"], "h": func(_r): return ""},
 			{"m": EP, "p": ["show", "route-map"], "h": _show_route_maps},
@@ -803,7 +805,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["no", "switchport", "protected"], "h": func(_r): return _pvlan("")},
 			{"m": ["if"], "p": ["storm-control", "broadcast"], "h": _storm},
 			{"m": ["if"], "p": ["no", "storm-control", "broadcast"], "h": func(_r): return _storm([0])},
-			{"m": ["if"], "p": ["switchport", "port-security"], "h": func(_r): return _port_sec(true)},
+			{"m": ["if"], "p": ["switchport", "port-security"], "h": _port_sec_cmd},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
 			{"m": ["config"], "p": ["mlag", "configuration"], "h": func(_r):
@@ -822,7 +824,11 @@ class EOS extends Session:
 			{"m": ["vxlan"], "p": ["vxlan", "vlan"], "h": _cfg_vxlan_vlan},
 			{"m": ["vxlan"], "p": ["vxlan", "flood", "vtep"], "h": _vxlan_flood},
 			{"m": ["vxlan"], "p": ["no", "vxlan", "flood", "vtep"], "h": _vxlan_no_flood},
-			{"m": ["vxlan"], "p": ["vxlan", "udp-port"], "h": func(_r): return ""},
+			{"m": ["vxlan"], "p": ["vxlan", "udp-port"], "h": func(r):
+				if r.size() != 1 or not String(r[0]).is_valid_int():
+					return "% Invalid input\n"
+				_vtep()["port"] = int(r[0])
+				return ""},
 			{"m": ["vxlan"], "p": ["vxlan", "evpn"], "h": _cfg_vxlan_evpn},
 			{"m": EP, "p": ["show", "vxlan", "vtep"], "h": _show_vxlan_vtep},
 			{"m": EP, "p": ["show", "vxlan", "vni"], "h": _show_vxlan_vni},
@@ -838,7 +844,8 @@ class EOS extends Session:
 			{"m": ["priv"], "p": ["configure", "checkpoint", "save"], "h": _checkpoint_save},
 			{"m": ["priv"], "p": ["configure", "checkpoint", "restore"], "h": _checkpoint_restore},
 			{"m": EP, "p": ["show", "configuration", "checkpoints"], "h": _show_checkpoints},
-			{"m": ["config"], "p": ["dot1x", "system-auth-control"], "h": func(_r): return ""},
+			{"m": ["config"], "p": ["dot1x", "system-auth-control"], "h": func(_r): dev.services["dot1x_global"] = true; Game.topology_changed.emit(); return ""},
+			{"m": ["config"], "p": ["no", "dot1x", "system-auth-control"], "h": func(_r): dev.services["dot1x_global"] = false; Game.topology_changed.emit(); return ""},
 			{"m": ["if"], "p": ["dot1x", "pae", "authenticator"], "h": func(_r): return _dot1x(true)},
 			{"m": ["if"], "p": ["dot1x", "port-control"], "h": func(r): return _dot1x(r.is_empty() or String(r[0]) != "force-authorized")},
 			{"m": ["if"], "p": ["no", "dot1x", "pae"], "h": func(_r): return _dot1x(false)},
@@ -882,7 +889,8 @@ class EOS extends Session:
 					return "% Incomplete command\n"
 				dev.services["domain"] = String(r[0])
 				return ""},
-			{"m": ["config"], "p": ["errdisable", "recovery"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
+			{"m": ["config"], "p": ["errdisable", "recovery"], "h": _errdisable_recovery},
+			{"m": ["config"], "p": ["no", "errdisable", "recovery"], "h": func(_r): dev.services.erase("errdisable_recovery"); return ""},
 			{"m": ["config"], "p": ["management", "ssh"], "h": func(_r): return ""},
 			{"m": ["config"], "p": ["management", "api", "http-commands"], "h": func(_r): return ""},
 			{"m": ["config"], "p": ["enable", "secret"], "h": func(r): return "" if not r.is_empty() else "% Incomplete command\n"},
@@ -2047,7 +2055,35 @@ class EOS extends Session:
 			i.port_security = on
 			if not on:
 				i.secure_mac = ""
+				i.secure_macs = []
 			return "")
+
+	func _port_sec_cmd(r: Array) -> String:
+		## switchport port-security [maximum N | violation protect|restrict|shutdown | mac-address sticky]
+		if r.is_empty():
+			return _port_sec(true)
+		if dev.type != "switch":
+			return "% port security is a switchport feature\n"
+		if r.size() == 2 and String(r[0]) == "maximum" and String(r[1]).is_valid_int() and int(r[1]) >= 1:
+			return _each(func(i: Net.Iface) -> String:
+				i.psec_max = int(r[1])
+				return "")
+		if r.size() == 2 and String(r[0]) == "violation" and String(r[1]) in ["protect", "restrict", "shutdown"]:
+			return _each(func(i: Net.Iface) -> String:
+				i.psec_violation = String(r[1])
+				return "")
+		if r.size() >= 2 and String(r[0]) == "mac-address" and String(r[1]) == "sticky":
+			return _port_sec(true)  # sticky is how this port learns anyway
+		return "% Invalid input\n"
+
+	func _errdisable_recovery(r: Array) -> String:
+		if r.size() == 2 and String(r[0]) == "cause":
+			dev.services["errdisable_recovery"] = true
+			return ""
+		if r.size() == 2 and String(r[0]) == "interval" and String(r[1]).is_valid_int() and int(r[1]) >= 30:
+			dev.services["errdisable_interval"] = int(r[1])
+			return ""
+		return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
 
 	func _mlag_peer(other: String) -> String:
 		if dev.type != "switch":
@@ -3333,7 +3369,9 @@ class EOS extends Session:
 			return ""
 		return "% Invalid input\n"
 
-	func _show_bgp(_r: Array) -> String:
+	func _show_bgp(r: Array) -> String:
+		if not r.is_empty():
+			return "% Invalid input\n"
 		if dev.bgp.is_empty():
 			return ""
 		var out := "BGP summary information for VRF default\nRouter identifier %s, local AS number %d\nNeighbor Status Codes: m - Under maintenance\n" % [
@@ -3690,8 +3728,24 @@ class EOS extends Session:
 			out += "%-5d %-32s %-9s %s\n" % [vid, dev.vlans[vid], "active", ", ".join(PackedStringArray(ports))]
 		return out
 
-	func _show_mac(_r: Array) -> String:
-		## the two EOS frames, unicast and multicast, each with its total
+	func _show_mac(r: Array) -> String:
+		## the two EOS frames, unicast and multicast, each with its total;
+		## vlan <n> and interface <port> narrow it, anything else is invalid
+		var want_vlan := 0
+		var want_if := ""
+		var k := 0
+		while k < r.size():
+			var w := String(r[k])
+			if w == "vlan" and k + 1 < r.size() and String(r[k + 1]).is_valid_int():
+				want_vlan = int(r[k + 1])
+				k += 2
+			elif w == "interface" and k + 1 < r.size() and _find_iface(String(r[k + 1])) != null:
+				want_if = _find_iface(String(r[k + 1])).name
+				k += 2
+			elif w in ["dynamic", "static", "unicast"]:
+				k += 1
+			else:
+				return "% Invalid input\n"
 		var out := "          Mac Address Table\n------------------------------------------------------------------\n\nVlan    Mac Address       Type        Ports      Moves   Last Move\n----    -----------       ----        -----      -----   ---------\n"
 		var vlans := {}
 		for v in dev.mac_table:
@@ -3702,11 +3756,17 @@ class EOS extends Session:
 		vids.sort()
 		var rows := 0
 		for vlan in vids:
+			if want_vlan > 0 and int(vlan) != want_vlan:
+				continue
 			for mac in dev.mac_static.get(vlan, {}):
+				if want_if != "" and String(dev.mac_static[vlan][mac]) != want_if:
+					continue
 				rows += 1
 				out += "%4d    %-17s %-11s %s\n" % [vlan, Net.mac_dotted(mac), "STATIC", EOS._short(String(dev.mac_static[vlan][mac]))]
 			for mac in dev.mac_table.get(vlan, {}):
 				if dev.mac_static.get(vlan, {}).has(mac):
+					continue
+				if want_if != "" and dev.mac_table[vlan][mac].name != want_if:
 					continue
 				rows += 1
 				out += "%4d    %-17s %-11s %-10s %-7d %d:%02d:%02d ago\n" % [vlan, Net.mac_dotted(mac), "DYNAMIC", EOS._short(dev.mac_table[vlan][mac].name), 1,
@@ -3882,9 +3942,11 @@ class EOS extends Session:
 		Game.topology_changed.emit()
 		return ""
 
-	func _show_stp(_r: Array) -> String:
+	func _show_stp(r: Array) -> String:
 		## the EOS block per instance: Root ID, Bridge ID, timers, then the
 		## Interface / Role / State / Cost / Prio.Nbr / Type table
+		if not r.is_empty() and not (r.size() == 1 and String(r[0]) in ["detail", "brief"]):
+			return "% Invalid input\n"
 		if dev.type != "switch":
 			return "% Invalid input\n"
 		var root := Sim.stp_root_of(dev)
@@ -4042,9 +4104,11 @@ class EOS extends Session:
 			i.duplex = String(r[0])
 			return "")
 
-	func _show_lldp(_r: Array) -> String:
+	func _show_lldp(r: Array) -> String:
 		## the EOS table: the five summary lines, then Port / Neighbor Device
 		## ID / Neighbor Port ID / TTL, the far port unabbreviated
+		if not r.is_empty() and not (r.size() == 1 and String(r[0]) == "detail"):
+			return "% Invalid input\n"
 		var rows := ""
 		var n := 0
 		for i: Net.Iface in dev.ifaces:
@@ -4058,11 +4122,17 @@ class EOS extends Session:
 		out += "Port          Neighbor Device ID       Neighbor Port ID       TTL\n---------- ------------------------ ---------------------- ---\n"
 		return out + rows
 
-	func _show_arp(_r: Array) -> String:
+	func _show_arp(r: Array) -> String:
 		## Address / Age (sec) as h:mm:ss / Hardware Addr / Interface, full
-		## names, the SVI then the physical port for an entry on a VLAN
+		## names, the SVI then the physical port for an entry on a VLAN;
+		## show ip arp <address> is that one entry
+		var want := ""
+		if r.size() == 1 and String(r[0]).is_valid_ip_address():
+			want = String(r[0])
+		elif not r.is_empty():
+			return "% Invalid input\n"
 		var out := "%-15s %9s  %-15s %s\n" % ["Address", "Age (sec)", "Hardware Addr", "Interface"]
-		var arp_keys: Array = dev.arp.keys()
+		var arp_keys: Array = dev.arp.keys().filter(func(k): return want == "" or String(k).split("|")[-1] == want)
 		arp_keys.sort_custom(func(a, b): return CLI.arp_sort_key(String(a)) < CLI.arp_sort_key(String(b)))
 		for ip in arp_keys:
 			var age_cycles := Game.cycle - int(dev.arp_seen.get(ip, Game.cycle))
@@ -4159,7 +4229,9 @@ class EOS extends Session:
 				out += "%-30s %s\n" % [ip, dev.arp[ip]]
 		return out if any else "  (no neighbors discovered yet)\n"
 
-	func _show_ip_brief(_r: Array) -> String:
+	func _show_ip_brief(r: Array) -> String:
+		if not r.is_empty():
+			return "% Invalid input\n"
 		var out := "                                                                              Address\nInterface         IP Address           Status       Protocol           MTU    Owner\n----------------- -------------------- ------------ -------------- ----------- -------\n"
 		for i: Net.Iface in dev.ifaces:
 			if i.name == "lo":
@@ -4463,6 +4535,13 @@ class EOS extends Session:
 			out += "clock timezone %s\n!\n" % dev.services["timezone"]
 		if String(dev.services.get("motd", "")) != "":
 			out += "banner motd\n%s\nEOF\n!\n" % dev.services["motd"]
+		if dev.services.has("dot1x_global"):
+			out += "%sdot1x system-auth-control\n!\n" % ("" if bool(dev.services["dot1x_global"]) else "no ")
+		if bool(dev.services.get("errdisable_recovery", false)):
+			out += "errdisable recovery cause bpduguard\nerrdisable recovery cause portsec\n"
+			if dev.services.has("errdisable_interval"):
+				out += "errdisable recovery interval %d\n" % int(dev.services["errdisable_interval"])
+			out += "!\n"
 		if dev.type == "switch":
 			out += "spanning-tree mode %s\n!\n" % ("mstp" if dev.stp_mode == "mst" else "rstp")
 			if dev.stp_priority != 32768:
@@ -4570,8 +4649,18 @@ class EOS extends Session:
 				out += "   switchport access vlan %d\n" % i.untagged_vlan
 			if i.port_security:
 				out += "   switchport port-security\n"
+				if i.psec_max != 1:
+					out += "   switchport port-security maximum %d\n" % i.psec_max
+				if i.psec_violation != "shutdown":
+					out += "   switchport port-security violation %s\n" % i.psec_violation
 			if i.pvlan == "isolated":
 				out += "   switchport protected\n"
+			if i.qos:
+				out += "   qos priority-queueing\n"
+			if i.bfd:
+				out += "   bfd\n"
+			if i.ra:
+				out += "   ipv6 nd ra\n"
 			if i.lag > 0:
 				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
 			if i.mlag > 0:
@@ -4639,7 +4728,7 @@ class EOS extends Session:
 			out += "interface Vxlan1\n"
 			if String(dev.vtep.get("src_if", "")) != "":
 				out += "   vxlan source-interface %s\n" % dev.vtep["src_if"]
-			out += "   vxlan udp-port 4789\n"
+			out += "   vxlan udp-port %d\n" % int(dev.vtep.get("port", 4789))
 			for v in dev.vtep.get("map", {}):
 				out += "   vxlan vlan %d vni %d\n" % [int(v), int(dev.vtep["map"][v])]
 			if not dev.vtep.get("peers", []).is_empty():

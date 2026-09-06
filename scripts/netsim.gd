@@ -1249,6 +1249,7 @@ static func _stp_tree(instance: int) -> Dictionary:
 			if port.bpduguard and port.enabled and far.dev.type == "switch" and far.dev.stp_mode != "none" and far.enabled \
 					and far.dev.status == "active" and port.dev.status == "active":
 				port.err_disabled = true
+				port.err_since = Game.cycle
 				port.enabled = false
 				Game.device_log(port.dev, "%s: BPDU received on a bpduguard port from %s, err-disabled" % [port.name, far.dev.name])
 				Game.log_event("BPDU GUARD: %s %s heard a switch (%s) and shut itself." % [port.dev.name, port.name, far.dev.name])
@@ -2067,21 +2068,31 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			Game.device_log(dev, "storm control suppressed broadcast on %s" % in_if.name)
 			return
 	# 802.1X: nothing passes until the authentication server says who this is
-	if in_if.dot1x and String(frame["src"]) != in_if.dot1x_ok:
+	if in_if.dot1x and bool(dev.services.get("dot1x_global", true)) and String(frame["src"]) != in_if.dot1x_ok:
 		if not _dot1x_authorise(dev, in_if, String(frame["src"])):
 			return
 	if in_if.port_security:
-		if in_if.secure_mac == "":
-			in_if.secure_mac = frame["src"]  # sticky: learn the first device
-		elif in_if.secure_mac != frame["src"]:
-			in_if.violations += 1
-			in_if.err_disabled = true
-			in_if.enabled = false
-			Game.device_log(dev, "port-security violation on %s: saw %s" % [in_if.name, frame["src"]])
-			Game.log_event("PORT SECURITY: %s %s saw %s instead of %s and shut down."
-				% [dev.name, in_if.name, frame["src"], in_if.secure_mac])
-			Game.topology_changed.emit()
-			return
+		var known: Array = in_if.secure_macs
+		if in_if.secure_mac != "" and in_if.secure_mac not in known:
+			known.append(in_if.secure_mac)
+		if String(frame["src"]) not in known:
+			if known.size() < in_if.psec_max:
+				known.append(String(frame["src"]))  # sticky: learn up to the maximum
+				if in_if.secure_mac == "":
+					in_if.secure_mac = String(frame["src"])
+			else:
+				in_if.violations += 1
+				if in_if.psec_violation == "shutdown":
+					in_if.err_disabled = true
+					in_if.err_since = Game.cycle
+					in_if.enabled = false
+					Game.device_log(dev, "port-security violation on %s: saw %s" % [in_if.name, frame["src"]])
+					Game.log_event("PORT SECURITY: %s %s saw %s instead of %s and shut down."
+						% [dev.name, in_if.name, frame["src"], in_if.secure_mac])
+					Game.topology_changed.emit()
+				elif in_if.psec_violation == "restrict" and in_if.violations == 1:
+					Game.device_log(dev, "port-security violation on %s: dropped frames from %s (restrict)" % [in_if.name, frame["src"]])
+				return  # protect and restrict drop the stranger's frame and keep the port up
 	# membership reports teach a snooping switch where a group is wanted
 	if frame["type"] == "igmp":
 		var grp: String = String(frame["pl"]["group"])

@@ -1996,6 +1996,7 @@ func _systemctl(args: Array) -> String:
 					stamp.substr(4, 6), dev.name, stamp.substr(4, 6), dev.name, unit]
 			return out
 		"start", "restart", "reload":
+			_unit_toggle(unit, true)
 			if unit == "keepalived":
 				var conf: Dictionary = dev.services.get("keepalived", {})
 				var on: Net.Iface = _iface(String(conf.get("iface", ""))) if conf.has("iface") else null
@@ -2017,6 +2018,7 @@ func _systemctl(args: Array) -> String:
 				Game.topology_changed.emit()
 			return ""
 		"stop":
+			_unit_toggle(unit, false)
 			if unit == "keepalived" and dev.services.has("keepalived"):
 				var conf: Dictionary = dev.services["keepalived"]
 				var on: Net.Iface = _iface(String(conf.get("iface", "")))
@@ -2034,6 +2036,37 @@ func _systemctl(args: Array) -> String:
 				out += _systemctl(["start", unit])
 			return out
 	return "Unknown command verb %s.\n" % verb
+
+func _unit_toggle(unit: String, on: bool) -> void:
+	## stop parks what the daemon served; start hands it back. The running
+	## flag in _services follows the field, so status tells the truth.
+	var parked: Dictionary = dev.services.get("stopped_units", {})
+	match unit:
+		"snmpd":
+			if on and parked.has(unit):
+				dev.snmp = String(parked[unit])
+			elif not on:
+				parked[unit] = dev.snmp
+				dev.snmp = ""
+		"chrony":
+			if on and parked.has(unit):
+				dev.ntp_server = String(parked[unit])
+			elif not on:
+				parked[unit] = dev.ntp_server
+				dev.ntp_server = ""
+		"dnsmasq", "rsyslog", "freeradius", "tacacs":
+			var key: String = {"dnsmasq": "dns", "rsyslog": "syslog", "freeradius": "radius", "tacacs": "aaa"}[unit]
+			if on and parked.has(unit):
+				dev.services[key] = parked[unit]
+			elif not on and dev.services.has(key):
+				parked[unit] = dev.services[key]
+				dev.services.erase(key)
+		_:
+			return
+	if on:
+		parked.erase(unit)
+	dev.services["stopped_units"] = parked
+	Game.topology_changed.emit()
 
 static func _unit_desc(unit: String) -> String:
 	return {"ssh": "OpenBSD Secure Shell server", "isc-dhcp-server": "ISC DHCP IPv4 server", "dnsmasq": "dnsmasq - A lightweight DHCP and caching DNS server",

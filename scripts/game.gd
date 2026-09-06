@@ -2478,6 +2478,19 @@ func is_gateway_of(host: Net.NDevice, ip: String) -> bool:
 			return true
 	return false
 
+func errdisable_tick() -> void:
+	## errdisable recovery: a port the switch shut comes back by itself once the interval has passed
+	for d in all_devices():
+		if not bool(d.services.get("errdisable_recovery", false)):
+			continue
+		var cycles := maxi(1, int(d.services.get("errdisable_interval", 300)) / 300)  # five minutes is a cycle here
+		for i: Net.Iface in d.ifaces:
+			if i.err_disabled and cycle - i.err_since >= cycles:
+				i.err_disabled = false
+				i.enabled = not i.admin_down
+				device_log(d, "errdisable recovery: %s brought back up" % i.name)
+				topology_changed.emit()
+
 func lockout_tick() -> void:
 	# reachability is expensive to compute, and a lockout is not urgent news
 	if cycle % 4 != 0:
@@ -9082,6 +9095,7 @@ func sla_tick() -> void:
 	tac_tick()
 	remote_hands_tick()
 	lockout_tick()
+	errdisable_tick()
 	ticket_tick()
 	call_tick()
 	oncall_tick()
@@ -10571,6 +10585,8 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.dhcp_trusted = bool(si.get("dhcp_trusted", false))
 		target.portfast = bool(si.get("portfast", false))
 		target.bpduguard = bool(si.get("bpduguard", false))
+		target.psec_max = int(si.get("psec_max", 1))
+		target.psec_violation = String(si.get("psec_violation", "shutdown"))
 		target.tunnel_src = si.get("tunnel_src", "")
 		target.tunnel_dst = si.get("tunnel_dst", "")
 		target.wg_key = si.get("wg_key", "")
@@ -10589,7 +10605,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"tunnel_src": i.tunnel_src, "tunnel_dst": i.tunnel_dst,
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
-			"portfast": i.portfast, "bpduguard": i.bpduguard,
+			"portfast": i.portfast, "bpduguard": i.bpduguard, "psec_max": i.psec_max, "psec_violation": i.psec_violation,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
 			"dot1x_ok": i.dot1x_ok, "violations": i.violations,
@@ -10875,6 +10891,8 @@ func _apply(data: Dictionary) -> void:
 			i.port_security = si.get("port_security", false)
 			i.portfast = bool(si.get("portfast", false))
 			i.bpduguard = bool(si.get("bpduguard", false))
+			i.psec_max = int(si.get("psec_max", 1))
+			i.psec_violation = String(si.get("psec_violation", "shutdown"))
 			i.secure_mac = si.get("secure_mac", "")
 			i.tunnel_src = si.get("tunnel_src", "")
 			i.tunnel_dst = si.get("tunnel_dst", "")
