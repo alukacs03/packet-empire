@@ -323,6 +323,8 @@ static func reverse_lookup(dev: Net.NDevice, ip: String) -> String:
 			return r["answer"]
 	return ""
 
+static var last_resolve_error := ""  # "timeout" when no server answered the last lookup
+static var last_ttl := 0  # the TTL the last answer carried, for dig
 static var last_answer_kind := ""  # "native" | "cached" | "synthesized" | ""
 
 static func synth64(prefix: String, v4: String) -> String:
@@ -362,6 +364,8 @@ static func resolve(dev: Net.NDevice, name: String, use_cache := true, want_v6 :
 	## DNS lookup via the device's configured resolver, following delegations
 	## the way a real resolver does, and honouring the TTL it was given.
 	last_answer_kind = ""
+	last_resolve_error = ""
+	last_ttl = DEFAULT_TTL
 	if name.is_valid_ip_address():
 		return name
 	var cache_key := ("6|" if want_v6 else "") + name
@@ -385,9 +389,11 @@ static func resolve(dev: Net.NDevice, name: String, use_cache := true, want_v6 :
 		var answered := ""
 		var referred := ""
 		var ttl := DEFAULT_TTL
+		var heard := false
 		for r in _dns_results:
 			if r["id"] != _dns_id or r["q"] != name:
 				continue
+			heard = true
 			if r.has("referral"):
 				referred = String(r["referral"])
 			elif r.has("answer"):
@@ -396,11 +402,31 @@ static func resolve(dev: Net.NDevice, name: String, use_cache := true, want_v6 :
 				last_answer_kind = String(r.get("kind", "native"))
 		if answered != "":
 			dev.dns_cache[cache_key] = {"ip": answered, "expires": Game.cycle + maxi(0, ttl)}
+			last_ttl = ttl
 			return answered
+		if not heard:
+			last_resolve_error = "timeout"  # nothing came back at all: not the same as a name that does not exist
+			return ""
 		if referred == "":
 			return ""
 		server = referred  # follow the delegation and ask the next one down
 	return ""
+
+static var _vxlan_dynamic := {}  # "dev|vlan|mac" learned on the data plane; display only
+
+static func vxlan_learned_dynamic(dev: Net.NDevice, vlan: int, mac: String) -> bool:
+	return _vxlan_dynamic.has("%s|%d|%s" % [dev.name, vlan, mac])
+
+static func dhcp_release(mac: String) -> void:
+	## DHCPRELEASE: every server that holds a lease for this MAC frees it now
+	for d: Net.NDevice in Game.all_devices():
+		var svc: Dictionary = d.services.get("dhcp", {})
+		if svc.is_empty():
+			continue
+		if svc.get("leases", {}).has(mac):
+			svc["leases"].erase(mac)
+		if svc.get("since", {}).has(mac):
+			svc["since"].erase(mac)
 
 static func dns_cached(dev: Net.NDevice, name: String) -> bool:
 	var hit: Dictionary = dev.dns_cache.get(name, {})
@@ -2605,7 +2631,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			dev.nat_flows[fid] = fwd["src_ip"]
 			dev.nat_seq = 1024 if dev.nat_seq >= 65535 else dev.nat_seq + 1
 			dev.nat_xlate[fid] = {"proto": acl_proto(fwd["l4"]), "il": fwd["src_ip"], "ig": new_src,
-				"port": dev.nat_seq, "ol": fwd["dst_ip"]}
+				"port": dev.nat_seq, "ol": fwd["dst_ip"], "dport": acl_port(fwd["l4"])}
 			fwd["src_ip"] = new_src
 		_tx(out, {"src": out.mac, "dst": mac, "vlan": 0, "type": "ipv4", "pl": fwd})
 
@@ -2731,6 +2757,12 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary, outbound
 				"dns-resp":
 					desc = "IP %s.53 > %s.%d: %d %s (%d)" % [p["src_ip"], p["dst_ip"], 30000 + int(l4.get("id", 0)) % 30000,
 						int(l4.get("id", 0)) % 65536, ("1/0/0 A %s" % l4.get("answer", "")) if String(l4.get("answer", "")) != "" else "NXDomain 0/0/0", 46]
+				"vxlan":
+					desc = "IP %s.49152 > %s.4789: VXLAN, flags [I] (0x08), vni %d" % [p["src_ip"], p["dst_ip"], int(l4.get("vni", 0))]
+				"evpn":
+					desc = "IP %s.179 > %s.55432: Flags [P.], seq 1:64, ack 1, win 501, length 64: BGP, length: 64\n\tUpdate Message (2), length: 64" % [p["src_ip"], p["dst_ip"]]
+				"dhcp-relay":
+					desc = "IP %s.67 > %s.67: BOOTP/DHCP, Request from %s, length 300" % [p["src_ip"], p["dst_ip"], String(l4.get("mac", "")).to_lower()]
 				_:
 					desc = "%s %s > %s: %s, length 64" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"], proto.to_upper()]
 	var v6_frame: bool = frame["type"] == "ndp" or (frame["type"] not in ["arp", "dhcp"] and Net.is_v6(String(p.get("src_ip", ""))))
@@ -3140,6 +3172,7 @@ static func _vxlan_rx(dev: Net.NDevice, from_ip: String, l4: Dictionary) -> void
 	if not dev.remote_macs.has(vlan):
 		dev.remote_macs[vlan] = {}
 	dev.remote_macs[vlan][String(inner["src"])] = from_ip
+	_vxlan_dynamic["%s|%d|%s" % [dev.name, vlan, String(inner["src"])]] = true  # flood-and-learn, not the control plane
 	inner["vxlan_from"] = from_ip
 	inner["vlan"] = vlan
 	# into the bridge domain by its own forwarding table: the learned port for

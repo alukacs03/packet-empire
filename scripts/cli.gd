@@ -1593,7 +1593,7 @@ class EOS extends Session:
 		var out := "          Vxlan Mac Address Table\n----------------------------------------------------------------------\n\nVLAN  Mac Address     Type     Prt  VTEP             Moves   Last Move\n----  -----------     ----     ---  ----             -----   ---------\n"
 		for v2: int in dev.remote_macs:
 			for mac: String in dev.remote_macs[v2]:
-				out += "%4d  %-15s EVPN     Vx1  %-16s 1       0:00:%02d ago\n" % [v2, Net.mac_dotted(mac), dev.remote_macs[v2][mac], (Game.cycle * 3) % 60]
+				out += "%4d  %-15s %-8s Vx1  %-16s 1       0:00:%02d ago\n" % [v2, Net.mac_dotted(mac), "DYNAMIC" if Sim.vxlan_learned_dynamic(dev, v2, mac) else "EVPN", dev.remote_macs[v2][mac], (Game.cycle * 3) % 60]
 		return out + "Total Remote Mac Addresses for this criterion: %d\n" % dev.remote_macs.values().reduce(func(a, m): return a + m.size(), 0)
 
 	# ---- BGP policy objects and views ----
@@ -2691,8 +2691,9 @@ class EOS extends Session:
 		for fid in dev.nat_xlate:
 			var t: Dictionary = dev.nat_xlate[fid]
 			var port := int(t["port"])
+			var dport := int(t.get("dport", 0))
 			var statics: Array = _nat_cfg()["rules"].filter(func(rule): return String(rule.get("kind", "")) == "static" and String(rule.get("inside", "")) == String(t["il"]))
-			out += "%-15s %-12d %-16s %-17d %-16s %-16d %-9s %s\n" % [t["il"], port, t["ol"], port, t["ig"], port, t["proto"],
+			out += "%-15s %-12d %-16s %-17d %-16s %-16d %-9s %s\n" % [t["il"], port, t["ol"], dport if dport > 0 else port, t["ig"], port, t["proto"],
 				"static" if not statics.is_empty() else "dynamic"]
 		return out
 
@@ -3088,7 +3089,7 @@ class EOS extends Session:
 		if svc.is_empty() or String(svc.get("start", "")) == "":
 			return ""
 		var netw := Net.network_of("%s/%d" % [svc["start"], int(svc["plen"])])
-		var out := "DHCP Server Configuration\n  Enabled: yes\n  Lease time: 1 day\n  Subnets:\n    %s/%d\n      Range: %s - %s\n" % [
+		var out := ("DHCP Server Configuration\n  Enabled: yes\n  Lease time: %d cycles\n" % int(dev.services.get("dhcp", {}).get("lease_cycles", dev.services.get("dhcp_lease", Sim.DHCP_LEASE)))) + "  Subnets:\n    %s/%d\n      Range: %s - %s\n" % [
 			netw["prefix"], int(svc["plen"]), svc["start"], svc["end"]]
 		if String(svc.get("gw", "")) != "":
 			out += "      Default gateway: %s\n" % svc["gw"]
@@ -3107,7 +3108,7 @@ class EOS extends Session:
 			return out
 		var netw := Net.network_of("%s/%d" % [svc.get("start", "0.0.0.0"), int(svc.get("plen", 24))])
 		for mac in svc.get("leases", {}):
-			var left: int = Sim.DHCP_LEASE - (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle)))
+			var left: int = int(svc.get("lease_cycles", dev.services.get("dhcp_lease", Sim.DHCP_LEASE))) - (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle)))
 			out += "%-18s %-15s %-18s %-15s %s\n" % ["%s/%d" % [netw["prefix"], int(svc["plen"])], svc["leases"][mac], mac,
 				Sim.reverse_lookup(dev, String(svc["leases"][mac])), "%d cycle(s)" % maxi(0, left)]
 		return out
@@ -3169,7 +3170,7 @@ class EOS extends Session:
 			return "%-16s %-18s %-12s %s\n  (no bindings yet)\n" % ["IP address", "Client-ID/HW addr", "Lease left", "Type"]
 		var out := "%-16s %-18s %-12s %s\n" % ["IP address", "Client-ID/HW addr", "Lease left", "Type"]
 		for mac in svc["leases"]:
-			var left: int = Sim.DHCP_LEASE - (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle)))
+			var left: int = int(svc.get("lease_cycles", dev.services.get("dhcp_lease", Sim.DHCP_LEASE))) - (Game.cycle - int(svc.get("since", {}).get(mac, Game.cycle)))
 			out += "%-16s %-18s %-12s %s\n" % [svc["leases"][mac], mac, "%d cycle(s)" % maxi(0, left), "Automatic"]
 		return out
 

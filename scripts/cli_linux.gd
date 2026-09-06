@@ -2427,6 +2427,7 @@ func _dhclient(args: Array) -> String:
 					if r["prefix"] == "0.0.0.0" and int(r["plen"]) == 0 and String(r.get("via", "")) == String(lease["gw"]):
 						dev.static_routes.erase(r)
 			dev.services.erase("dhcp_lease")
+			Sim.dhcp_release(ifc.mac)  # the server frees the lease on the RELEASE
 			return head + ("DHCPRELEASE of %s on %s to %s port 67 (xid=0x%08x)\n" % [cidr.split("/")[0], ifn, lease.get("server", ""), (Game.cycle * 2654435761 + ifc.mac.hash()) % 0xFFFFFFFF] if verbose else "")
 		return head
 	var xid := "0x%08x" % ((Game.cycle * 2654435761 + ifc.mac.hash()) % 0xFFFFFFFF)
@@ -2687,14 +2688,17 @@ func _dig(args: Array) -> String:
 		qname = ".".join(oct) + ".in-addr.arpa"
 		answer = Sim.reverse_lookup(dev, name)
 	elif name != ".":
-		answer = Sim.resolve(dev, name, true, qtype == "AAAA") if qtype in ["A", "AAAA"] else ""
+		answer = Sim.resolve(dev, name, false, qtype == "AAAA") if qtype in ["A", "AAAA"] else ""  # dig never reads the cache
+	if answer == "" and Sim.last_resolve_error == "timeout":
+		var err := ";; communications error to %s#53: timed out\n" % server
+		return err + err + err + ";; no servers could be reached\n\n"
 	if short:
 		return (answer + "\n") if answer != "" else ""
 	var status := "NOERROR" if answer != "" or name == "." else "NXDOMAIN"
 	var out := "\n; <<>> DiG 9.18.24-1-Debian <<>> %s\n;; global options: +cmd\n;; Got answer:\n;; ->>HEADER<<- opcode: QUERY, status: %s, id: %d\n;; flags: qr%s rd ra; QUERY: 1, ANSWER: %d, AUTHORITY: 0, ADDITIONAL: 1\n\n;; OPT PSEUDOSECTION:\n; EDNS: version: 0, flags:; udp: 1232\n;; QUESTION SECTION:\n;%s.\t\t\tIN\t%s\n\n" % [
 		" ".join(PackedStringArray(args)), status, (name.hash() + Game.cycle) % 65536, " aa" if _authoritative(name) else "", 1 if answer != "" else 0, qname, qtype]
 	if answer != "":
-		out += ";; ANSWER SECTION:\n%s.\t\t%d\tIN\t%s\t%s%s\n\n" % [qname, Sim.DEFAULT_TTL * 60, qtype, answer, "." if reverse else ""]
+		out += ";; ANSWER SECTION:\n%s.\t\t%d\tIN\t%s\t%s%s\n\n" % [qname, maxi(1, Sim.last_ttl) * 60, qtype, answer, "." if reverse else ""]
 	return out + ";; Query time: 1 msec\n;; SERVER: %s#53(%s) (UDP)\n;; WHEN: %s\n;; MSG SIZE  rcvd: %d\n\n" % [server, server, _when(), 56 + qname.length()]
 
 func _when() -> String:

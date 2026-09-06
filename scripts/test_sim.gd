@@ -11995,6 +11995,26 @@ static func run() -> int:
 	check(t42_free != null and Game.move_link(t17_s.ifaces[0], t42_free) and Game.link_at(t17_s.ifaces[0]).other(t17_s.ifaces[0]) == t42_free and Game.parts_of("patch") == t42_parts,
 		"cabling: moving a lead to another jack keeps the lead and takes no part")
 	check(Game.move_link(t17_s.ifaces[0], t42_far) and Game.link_at(t42_far) != null, "cabling: and it moves back")
+	# dig asks every time, a release frees the server's lease, a tunnel starts at 1476
+	var t43_sw := Game.new_device("sw-8")
+	var t43_srv := Game.new_device("srv-1")
+	var t43_cli := Game.new_device("srv-1")
+	var t43_rack := Game.add_rack(Vector2i(9, 9))
+	t43_rack.slots[0] = t43_sw
+	t43_rack.slots[1] = t43_srv
+	t43_rack.slots[2] = t43_cli
+	Game.connect_ifaces(t43_srv.ifaces[0], t43_sw.ifaces[0])
+	Game.connect_ifaces(t43_cli.ifaces[0], t43_sw.ifaces[1])
+	var t43_ss := CLI.new_session(t43_srv)
+	var t43_cs := CLI.new_session(t43_cli)
+	t43_ss.exec("dhcp-quick eth0 10.43.0.10 10.43.0.99 24 10.43.0.1 10.43.0.5")
+	check(t43_cs.exec("dhclient eth0") != null and not t43_cli.ifaces[0].ips.is_empty() and t43_srv.services["dhcp"].get("leases", {}).has(t43_cli.ifaces[0].mac), "dhcp: the client is bound and the server holds the lease")
+	check(t43_cs.exec("dhclient -r eth0") == "" and not t43_srv.services["dhcp"].get("leases", {}).has(t43_cli.ifaces[0].mac), "dhcp: dhclient -r frees the lease on the server")
+	t43_cs.exec("ip addr add 10.43.0.50/24 dev eth0")
+	t43_cs.exec("echo \"nameserver 10.43.0.77\" > /etc/resolv.conf")
+	check(t43_cs.exec("dig shop.example").contains("no servers could be reached"), "dig: a resolver that never answers is a timeout, not NXDOMAIN")
+	var t43_rtr := Game.new_device("rtr-edge")
+	check(Game.add_tunnel(t43_rtr, 1) != null and Game.add_tunnel(t43_rtr, 1).mtu == 1476, "tunnel: a GRE interface starts at 1476")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

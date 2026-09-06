@@ -4389,6 +4389,7 @@ func add_tunnel(dev: Net.NDevice, num: int) -> Net.Iface:
 			return i
 	var t := Net.Iface.new(dev, name, _new_mac())
 	t.mode = "routed"
+	t.mtu = 1500 - Sim.GRE_OVERHEAD  # 1476: the outer header has to fit in the underlay's 1500
 	dev.ifaces.append(t)
 	topology_changed.emit()
 	return t
