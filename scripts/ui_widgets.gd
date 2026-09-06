@@ -407,13 +407,19 @@ class TopoMap extends Control:
 		return self
 
 	func _process(_dt: float) -> void:
-		if visible:
-			queue_redraw()
+		if visible and not Prefs.reduced_motion:
+			queue_redraw()  # the travelling dots; with reduced motion the map redraws on change only
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_VISIBILITY_CHANGED and not visible and drag_from != null:
+			drag_from = null  # hidden mid-drag: the release will never arrive, so the run is off
+			drag_note = ""
 
 	func _gui_input(e: InputEvent) -> void:
 		if e is InputEventMouseMotion and drag_from != null:
 			drag_to = e.position
 			drag_note = _preview(_dev_at(e.position))
+			queue_redraw()
 			return
 		if not (e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT):
 			return
@@ -672,7 +678,7 @@ class TopoMap extends Control:
 		var share := clampf(float(load) / float(cap), 0.03, 1.0)
 		var dots := 1 + int(share * 5.0)
 		var speed := 0.18 + share * 0.5  # laps per second
-		var t := Time.get_ticks_msec() / 1000.0
+		var t := 0.0 if Prefs.reduced_motion else Time.get_ticks_msec() / 1000.0  # still dots say how busy, without moving
 		for k in dots:
 			var f := fmod(t * speed + float(k) / dots, 1.0)
 			draw_circle(pa.lerp(pb, f), 2.6, Color(col.lightened(0.45), 0.9))
@@ -838,6 +844,8 @@ class RackSlot extends Control:
 		return Rect2(Vector2(bank_x + col * PITCH, bank_y + row * 15.0), JACK)
 
 	func port_at(local_pos: Vector2) -> Net.Iface:
+		if upper_half:
+			return null  # the ports are on the unit below
 		for iface: Net.Iface in _physical_ports():
 			if _port_rect(iface).grow(2.0).has_point(local_pos):
 				return iface
@@ -867,6 +875,13 @@ class RackSlot extends Control:
 		draw_string(_mono, Vector2(4, h / 2.0 + 4), "U%d" % u_num,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UIW.colour("muted"))
 		var inner := Rect2(RAIL + 2, 3, w - RAIL * 2 - 4, h - 6)
+		if dev != null and upper_half:
+			# the covered unit of a tall box: the same face, a vent grille, nothing to click on
+			draw_rect(inner, Color("2a3442").lightened(0.06 if hovered else 0.0))
+			draw_rect(inner, UIW.colour("border"), false, 1.0)
+			for gx in range(int(inner.position.x) + 14, int(inner.end.x) - 14, 12):
+				draw_line(Vector2(gx, inner.position.y + 6), Vector2(gx, inner.end.y - 6), Color("1c2430"), 3.0)
+			return
 		if dev == null:
 			if blanked:
 				# A fitted steel blank: shallow ribs, corner screws and a clean

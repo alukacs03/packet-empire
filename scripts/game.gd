@@ -6455,7 +6455,10 @@ func reset_run_state() -> void:
 func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	## start over from the state the game boots into, rather than trying to
 	## remember by hand which of the several dozen fields need clearing
-	Legacy.harvest("the company was wound up")  # the outgoing run, before it is gone
+	var carry: Array = Legacy.selected.duplicate()  # what the New Game pane ticked
+	if finale.is_empty():
+		Legacy.harvest("the company was wound up")  # the outgoing run, before it is gone; a finished one was harvested with its ending
+	Legacy.selected = carry
 	_apply(_pristine.duplicate(true))
 	company_name = company if company.strip_edges() != "" else "Packet Empire"
 	demo = is_demo
@@ -10161,6 +10164,28 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	observe_habit("windows", in_maintenance())
 	if in_maintenance():
 		Skills.observe("change_window")
+	return true
+
+func move_link(i: Net.Iface, new_far: Net.Iface) -> bool:
+	## re-dress the lead on i to another jack: the same lead, no part taken,
+	## and nothing is unplugged unless the new end is legal
+	var l := link_at(i)
+	if l == null:
+		return connect_ifaces(i, new_far)
+	if not can_link(i, new_far) or link_at(new_far) != null:
+		return false
+	for end in [l.a, l.b]:
+		if end.dot1x_ok != "":
+			end.dot1x_ok = ""
+			if end.dot1x_home > 0:
+				end.untagged_vlan = end.dot1x_home
+				end.dot1x_home = 0
+	links.erase(l)
+	links.append(Net.Link.new(i, new_far))
+	Challenge.note_change()
+	Sfx.play("cable")
+	Sim.topology_change()
+	topology_changed.emit()
 	return true
 
 func disconnect_iface(i: Net.Iface) -> void:

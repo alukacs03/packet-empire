@@ -11984,6 +11984,17 @@ static func run() -> int:
 	Game.drill_active = false
 	Game.reset_side_modes()
 	check(not Game.drill_active and Scenarios.active.is_empty() and Challenge.active.is_empty() and not Puzzle.active(), "modes: a fresh company carries no side mode")
+	# a lead is moved, not re-bought
+	var t42_far := Game.link_at(t17_s.ifaces[0]).other(t17_s.ifaces[0])
+	var t42_parts := Game.parts_of("patch")
+	var t42_free: Net.Iface = null
+	for t42_p: Net.Iface in t42_far.dev.ifaces:
+		if t42_p != t42_far and Game.link_at(t42_p) == null and not t42_p.name.begins_with("Management"):
+			t42_free = t42_p
+			break
+	check(t42_free != null and Game.move_link(t17_s.ifaces[0], t42_free) and Game.link_at(t17_s.ifaces[0]).other(t17_s.ifaces[0]) == t42_free and Game.parts_of("patch") == t42_parts,
+		"cabling: moving a lead to another jack keeps the lead and takes no part")
+	check(Game.move_link(t17_s.ifaces[0], t42_far) and Game.link_at(t42_far) != null, "cabling: and it moves back")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

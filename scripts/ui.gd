@@ -1118,6 +1118,10 @@ func close_rack() -> void:
 	cur_rack = null
 
 func _refresh_slots() -> void:
+	if rack_cable_from != null and rack_cable_layer.active:
+		rack_cable_layer.finish()  # a refresh mid-pull: the slot that owns the drag is about to be freed, so end the pull and draw the cable again
+		rack_cable_from = null
+		rack_cable_old_link = null
 	if sell_btn != null and cur_rack != null:
 		var installed := 0
 		for slot_dev in cur_rack.slots:
@@ -1237,14 +1241,18 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 		hud_toast(Loc.t("toast.plug_reseated") % [target.dev.name, target.name], true)
 		rack_cable_layer.confirm(rack_cable_from, target)
 	elif target and Game.can_link(rack_cable_from, target):
+		var ran := false
 		if rack_cable_old_link:
-			Game.disconnect_iface(rack_cable_from)
-		if Game.cabling_documented:
-			Game.connect_documented(rack_cable_from, target)
+			ran = Game.move_link(rack_cable_from, target)  # the same lead, re-dressed
+		elif Game.cabling_documented:
+			ran = Game.connect_documented(rack_cable_from, target)
 		else:
-			Game.connect_ifaces(rack_cable_from, target)
-		hud_toast(Loc.t("toast.cable_run") % [rack_cable_from.dev.name,
-			rack_cable_from.name, target.dev.name, target.name], true)
+			ran = Game.connect_ifaces(rack_cable_from, target)
+		if ran:
+			hud_toast(Loc.t("toast.cable_run") % [rack_cable_from.dev.name,
+				rack_cable_from.name, target.dev.name, target.name], true)
+		else:
+			hud_toast(Loc.t("toast.no_lead"), false)  # the drawer, the money or the jack said no; nothing was unplugged
 		_refresh_slots()
 		rack_cable_layer.confirm(rack_cable_from, target)
 	elif rack_cable_old_link:
@@ -4677,6 +4685,12 @@ func _rebuild_localised() -> void:
 	_build_help()
 	search_overlay.queue_free()
 	_build_search()
+	rack_overlay.queue_free()  # the inspectors bake their captions at build time
+	_build_rack_overlay()
+	dev_overlay.queue_free()
+	_build_dev_overlay()
+	if_overlay.queue_free()
+	_build_if_overlay()
 	_refresh_tutorial()
 	_refresh_contracts()
 	if ops_overlay.visible:

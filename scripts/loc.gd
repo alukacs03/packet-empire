@@ -2580,6 +2580,7 @@ const CATALOG := {
 	"We run events. Give our guests a wireless network called %s on its own VLAN, walled off from everything of the staff's.": {"en": "We run events. Give our guests a wireless network called %s on its own VLAN, walled off from everything of the staff's.", "hu": "Rendezvényeket szervezünk. Adjatok a vendégeinknek egy %s nevű vezeték nélküli hálózatot saját VLAN-on, elfalazva mindentől, ami a személyzeté."},
 	"An AirTurul AP3 ($700) trunked to a switch, and an SSID per VLAN. Cheap once the AP exists.": {"en": "An AirTurul AP3 ($700) trunked to a switch, and an SSID per VLAN. Cheap once the AP exists.", "hu": "Egy AirTurul AP3 (700 $) trunkölve egy switchre, és VLAN-onként egy SSID. Olcsó, ha már megvan az AP."},
 	"  Expected load ~%d Mbps.": {"en": "  Expected load ~%d Mbps.", "hu": "  Várható terhelés ~%d Mbps."},
+	"toast.no_lead": {"en": "That run could not be made: no lead in the drawer, no money for it, or the jack is taken. Nothing was unplugged.", "hu": "Ezt a kábelt nem lehetett behúzni: nincs kábel a fiókban, nincs rá pénz, vagy a port foglalt. Semmi sem lett kihúzva."},
 }
 
 static func languages() -> Array:
