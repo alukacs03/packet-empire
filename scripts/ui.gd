@@ -2048,9 +2048,9 @@ func _build_search() -> void:
 	search_overlay = _overlay()
 	var v := _card(search_overlay, 620)
 	var t := _header(v, func() -> void: search_overlay.visible = false)
-	t.text = "Find"
+	t.text = Loc.t("find.title")
 	search_input = _mono_edit(560)
-	search_input.placeholder_text = "device name, address, VLAN id, customer or site"
+	search_input.placeholder_text = Loc.t("find.placeholder")
 	search_input.text_changed.connect(func(_t: String) -> void: _refresh_search())
 	v.add_child(search_input)
 	search_box = VBoxContainer.new()
@@ -2083,31 +2083,31 @@ func _refresh_search() -> void:
 		c.queue_free()
 	var q := search_input.text.strip_edges().to_lower()
 	if q == "":
-		search_box.add_child(_label("  Type to search across every site.", 13, MUTED))
+		search_box.add_child(_label("  " + Loc.t("find.empty"), 13, MUTED))
 		return
 	var hits := 0
 	for d in Game.all_devices():
 		var why := ""
 		if q in d.name.to_lower():
-			why = "device"
+			why = Loc.t("find.why.device")
 		elif q in String(Game.MODELS[d.model]["label"]).to_lower():
-			why = "model"
+			why = Loc.t("find.why.model")
 		else:
 			for i: Net.Iface in d.ifaces:
 				for cidr: String in i.ips:
 					if q in cidr.to_lower():
-						why = "address %s on %s" % [cidr, i.name]
+						why = Loc.t("find.why.address", {"cidr": cidr, "iface": i.name})
 				if q in i.name.to_lower() and why == "":
-					why = "interface %s" % i.name
+					why = Loc.t("find.why.iface", {"iface": i.name})
 			for vid in d.vlans:
 				if q == str(vid):
-					why = "VLAN %s (%s)" % [vid, d.vlans[vid]]
+					why = "VLAN %s (%s)" % [vid, d.vlans[vid]]  # the protocol's own word
 			if why == "" and q in String(d.note.get("text", "")).to_lower():
-				why = "note: %s" % d.note["text"]
+				why = Loc.t("find.why.note", {"text": d.note["text"]})
 			if why == "":
 				for i2: Net.Iface in d.ifaces:
 					if q in String(i2.note.get("text", "")).to_lower():
-						why = "%s note: %s" % [i2.name, i2.note["text"]]
+						why = Loc.t("find.why.iface_note", {"iface": i2.name, "text": i2.note["text"]})
 		if why == "":
 			continue
 		hits += 1
@@ -2125,8 +2125,7 @@ func _refresh_search() -> void:
 	for deal: Dictionary in Game.deals:
 		if q in String(deal["customer"]).to_lower():
 			hits += 1
-			search_box.add_child(_label("  customer: %s (%s, $%d/cycle)" % [deal["customer"],
-				Market.label_for(deal["kind"]), int(deal["fee"])], 13, Color(0.7, 0.85, 0.75)))
+			search_box.add_child(_label("  " + Loc.t("find.customer", {"name": deal["customer"], "kind": Market.label_for(deal["kind"]), "fee": int(deal["fee"])}), 13, Color(0.7, 0.85, 0.75)))
 	if hits == 0:
 		search_box.add_child(_label("  Nothing matches that.", 13, Color(0.8, 0.6, 0.5)))
 	elif hits > 12:
@@ -2137,20 +2136,20 @@ func _refresh_search() -> void:
 func _device_alerts(d: Net.NDevice) -> Array:
 	var out: Array = []
 	if d.status != "active":
-		out.append("OFFLINE")
+		out.append(Loc.t("find.tag.offline"))
 	var down := 0
 	for i: Net.Iface in d.ifaces:
 		if not i.enabled and Game.link_at(i):
 			down += 1
 		if i.violations > 0 and not i.enabled:
-			out.append("port-security shutdown")
+			out.append(Loc.t("find.tag.psec"))
 	if down > 0:
 		out.append("%d cabled port(s) down" % down)
 	if Game.config_dirty(d):
-		out.append("unsaved config")
+		out.append(Loc.t("find.tag.unsaved"))
 	for l in Game.links:
 		if (l.a.dev == d or l.b.dev == d) and int(Game.last_link_load.get(l, 0)) > Game.link_capacity(l):
-			out.append("congested link")
+			out.append(Loc.t("find.tag.congested"))
 			break
 	return out
 
@@ -4564,6 +4563,8 @@ func _rebuild_localised() -> void:
 	_build_pedia()
 	help_overlay.queue_free()
 	_build_help()
+	search_overlay.queue_free()
+	_build_search()
 	_refresh_tutorial()
 	_refresh_contracts()
 	if ops_overlay.visible:
