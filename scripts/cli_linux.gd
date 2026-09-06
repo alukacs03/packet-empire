@@ -2190,10 +2190,24 @@ func _dhcpd_conf_line(t: Array) -> String:
 		var s := String(w).replace("{", " ").replace("}", " ").replace(";", " ")
 		for part in s.split(" ", false):
 			words.append(part)
+	# the global parameters come first: default-lease-time and max-lease-time in seconds
+	var lease_cycles := 0
+	while words.size() >= 2 and String(words[0]) in ["default-lease-time", "max-lease-time", "authoritative"]:
+		if String(words[0]) == "authoritative":
+			words.pop_front()
+			continue
+		if not String(words[1]).is_valid_int():
+			return "/etc/dhcp/dhcpd.conf line 1: expecting a number\n"
+		if String(words[0]) == "default-lease-time":
+			lease_cycles = maxi(1, int(words[1]) / 300)
+		words.pop_front()
+		words.pop_front()
 	if words.size() < 6 or String(words[0]) != "subnet" or String(words[2]) != "netmask":
 		return "/etc/dhcp/dhcpd.conf line 1: expecting a parameter or declaration\n"
 	var plen := CLI.mask_to_plen(String(words[3]))
 	var cfg := {"iface": "", "start": "", "end": "", "plen": plen, "gw": "", "dns": "", "leases": {}, "running": false}
+	if lease_cycles > 0:
+		cfg["lease_cycles"] = lease_cycles
 	var k := 4
 	while k < words.size():
 		var w := String(words[k])
@@ -2227,7 +2241,8 @@ func _dhcpd_conf() -> String:
 		return "cat: /etc/dhcp/dhcpd.conf: No such file or directory\n"
 	var plen := int(svc.get("plen", 24))
 	var net := String(Net.network_of(String(svc["start"]) + "/" + str(plen))["prefix"])
-	var out := "default-lease-time 600;\nmax-lease-time 7200;\nauthoritative;\n\nsubnet %s netmask %s {\n  range %s %s;\n" % [net, CLI.plen_to_mask(plen), svc["start"], svc["end"]]
+	var lease_secs := int(svc.get("lease_cycles", Sim.DHCP_LEASE)) * 300
+	var out := "default-lease-time %d;\nmax-lease-time %d;\nauthoritative;\n\nsubnet %s netmask %s {\n  range %s %s;\n" % [lease_secs, maxi(lease_secs, 7200), net, CLI.plen_to_mask(plen), svc["start"], svc["end"]]
 	if String(svc.get("gw", "")) != "":
 		out += "  option routers %s;\n" % svc["gw"]
 	if String(svc.get("dns", "")) != "":

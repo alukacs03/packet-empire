@@ -286,8 +286,9 @@ static func dhcp_tick() -> void:
 		var svc: Dictionary = d.services.get("dhcp", {})
 		if svc.is_empty() or not svc.has("since"):
 			continue
+		var life := int(svc.get("lease_cycles", d.services.get("dhcp_lease", DHCP_LEASE)))  # the configured lease time, in cycles
 		for mac in svc["leases"].keys():
-			if Game.cycle - int(svc["since"].get(mac, Game.cycle)) < DHCP_LEASE:
+			if Game.cycle - int(svc["since"].get(mac, Game.cycle)) < life:
 				continue
 			var holder := _mac_owner(String(mac))
 			var holds := holder != null and holder.ips.any(func(c): return String(c).split("/")[0] == String(svc["leases"][mac]))

@@ -510,6 +510,22 @@ func _bare_target(args: Array, p: Dictionary) -> String:
 			return String(a)
 	return ""
 
+static func _dur_secs(text: String) -> int:
+	## 10m, 1h30m, 2d -> seconds; 0 when it is not a duration
+	var total := 0
+	var num := ""
+	for ch in text:
+		if ch.is_valid_int():
+			num += ch
+		elif ch in ["d", "h", "m", "s"] and num != "":
+			total += int(num) * {"d": 86400, "h": 3600, "m": 60, "s": 1}[ch]
+			num = ""
+		else:
+			return 0
+	if num != "":
+		total += int(num)  # a bare number is seconds
+	return total
+
 static func _dur(secs: int) -> String:
 	## 10m, 1h5m12s, 2d3h: RouterOS drops the zero units in front
 	if secs <= 0:
@@ -722,7 +738,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var svc: Dictionary = dev.services.get("dhcp", {})
 			var out := "Columns: NAME, INTERFACE, ADDRESS-POOL, LEASE-TIME\n#   NAME   INTERFACE  ADDRESS-POOL  LEASE-TIME\n"
 			if rd.has("server"):
-				return out + "0   %-6s %-10s %-13s 10m\n" % [rd["server"]["name"], rd["server"]["iface"], rd["server"]["pool"]]
+				return out + "0   %-6s %-10s %-13s %s\n" % [rd["server"]["name"], rd["server"]["iface"], rd["server"]["pool"], rd["server"].get("lease", "10m")]
 			if svc.is_empty():
 				return out
 			return out + "0   dhcp1  %-10s pool1         1d\n" % String(svc.get("iface", ""))
@@ -916,8 +932,11 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			if on != BRIDGE and _iface(on) == null:
 				return "input does not match any value of interface\n"
 			var rd: Dictionary = dev.services.get("ros_dhcp", {"pools": {}})
+			var lease := String(p.get("lease-time", "10m"))
+			if _dur_secs(lease) <= 0:
+				return "invalid value for argument lease-time\n"
 			rd["server"] = {"name": String(p.get("name", "dhcp1")), "iface": on, "pool": String(p.get("address-pool", "static-only")),
-				"disabled": String(p.get("disabled", "no")) == "yes"}
+				"disabled": String(p.get("disabled", "no")) == "yes", "lease": lease}
 			dev.services["ros_dhcp"] = rd
 			_ros_dhcp_assemble()
 			return ""
@@ -2258,7 +2277,8 @@ func _ros_dhcp_assemble() -> void:
 	var iface := String(srv.get("iface", ""))
 	dev.services["dhcp"] = {"iface": "" if iface == BRIDGE else iface, "start": String(pool[0]), "end": String(pool[1]),
 		"plen": int(netw["plen"]), "gw": String(nw.get("gw", "")), "dns": String(nw.get("dns", "")),
-		"leases": dev.services.get("dhcp", {}).get("leases", {}), "since": dev.services.get("dhcp", {}).get("since", {}), "excluded": [], "running": true}
+		"leases": dev.services.get("dhcp", {}).get("leases", {}), "since": dev.services.get("dhcp", {}).get("since", {}), "excluded": [], "running": true,
+		"lease_cycles": maxi(1, _dur_secs(String(srv.get("lease", "10m"))) / 300)}
 	Game.topology_changed.emit()
 
 func _ros_filter_apply() -> void:

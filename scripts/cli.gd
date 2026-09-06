@@ -696,12 +696,12 @@ class EOS extends Session:
 				Game.topology_changed.emit()
 				return ""},
 			{"m": ["dhcpsrv"], "p": ["subnet"], "h": _dhcp_subnet},
-			{"m": ["dhcpsrv"], "p": ["lease", "time"], "h": func(_r): return ""},
+			{"m": ["dhcpsrv"], "p": ["lease", "time"], "h": _dhcp_lease_time},
 			{"m": ["dhcpsrv"], "p": ["dns", "server", "ipv4"], "h": func(r): return _dhcp_opt("dns", r)},
 			{"m": ["dhcpsub"], "p": ["range"], "h": _dhcp_range},
 			{"m": ["dhcpsub"], "p": ["default-gateway"], "h": func(r): return _dhcp_opt("gw", r)},
 			{"m": ["dhcpsub"], "p": ["name-server"], "h": func(r): return _dhcp_opt("dns", r)},
-			{"m": ["dhcpsub"], "p": ["lease", "time"], "h": func(_r): return ""},
+			{"m": ["dhcpsub"], "p": ["lease", "time"], "h": _dhcp_lease_time},
 			{"m": ["if"], "p": ["dhcp", "server", "ipv4"], "h": _if_dhcp_server},
 			{"m": EP, "p": ["show", "dhcp", "server"], "h": _show_dhcp_server},
 			{"m": EP, "p": ["show", "dhcp", "server", "leases"], "h": _show_dhcp_leases},
@@ -2901,6 +2901,19 @@ class EOS extends Session:
 			return "% a DHCP server lives on a router; a Linux host runs dhcpd\n"
 		_dhcp_svc()
 		mode = "dhcpsrv"
+		return ""
+
+	func _dhcp_lease_time(r: Array) -> String:
+		## lease time <days> <hours> <minutes>: how long a lease lasts, in this world's five-minute cycles
+		if r.size() != 3 or not r.all(func(x): return String(x).is_valid_int()):
+			return "% Invalid input\n"
+		var minutes := int(r[0]) * 1440 + int(r[1]) * 60 + int(r[2])
+		if minutes <= 0:
+			return "% Invalid input\n"
+		var cycles := maxi(1, minutes / 5)
+		dev.services["dhcp_lease"] = cycles
+		if dev.services.has("dhcp"):
+			dev.services["dhcp"]["lease_cycles"] = cycles
 		return ""
 
 	func _dhcp_subnet(r: Array) -> String:

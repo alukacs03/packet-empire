@@ -11589,6 +11589,27 @@ static func run() -> int:
 	var t18_rs2 := CLI.new_session(t18_ros_sw)
 	check(t18_rs2.exec("/interface bridge port add bridge=bridge1 interface=ether2 edge=yes horizon=1") == "" and t18_ros_sw.ifaces[1].portfast and t18_ros_sw.ifaces[1].pvlan == "isolated", "ros: edge is portfast and horizon is isolation")
 	check(t18_rs2.exec("/interface bridge port print").contains("edge=yes"), "ros: bridge port print shows the edge flag")
+	# --- lease time is a real setting, and leases expire by it ---
+	check(t17_l.exec("echo 'default-lease-time 1800 subnet 10.80.0.0 netmask 255.255.255.0 { range 10.80.0.10 10.80.0.20 }' > /etc/dhcp/dhcpd.conf") == "" and int(t17_s.services["dhcp"].get("lease_cycles", 0)) == 6,
+		"lease: dhcpd.conf default-lease-time lands on the server in cycles")
+	check(t17_l.exec("cat /etc/dhcp/dhcpd.conf").contains("default-lease-time 1800;"), "lease: the file prints the time it was given")
+	t17_rs.exec("/ip pool add name=p1 ranges=10.79.1.10-10.79.1.20")
+	t17_rs.exec("/ip dhcp-server network add address=10.79.1.0/24 gateway=10.79.1.1")
+	Game.add_ip(t17_r.ifaces[1], "10.79.1.1/24")
+	check(t17_rs.exec("/ip dhcp-server add name=d1 interface=ether2 address-pool=p1 lease-time=1h") == "" and int(t17_r.services.get("dhcp", {}).get("lease_cycles", 0)) == 12 and t17_rs.exec("/ip dhcp-server print").contains("1h"),
+		"lease: lease-time=1h is twelve cycles and prints back")
+	t17_r.services["dhcp"]["leases"]["AA:BB:CC:00:00:01"] = "10.79.1.10"
+	t17_r.services["dhcp"]["since"] = {"AA:BB:CC:00:00:01": Game.cycle - 13}
+	Sim.dhcp_tick()
+	check(not t17_r.services["dhcp"]["leases"].has("AA:BB:CC:00:00:01"), "lease: a lease whose holder is gone expires after its time")
+	t17_r.services["dhcp"]["leases"]["AA:BB:CC:00:00:02"] = "10.79.1.11"
+	t17_r.services["dhcp"]["since"]["AA:BB:CC:00:00:02"] = Game.cycle - 5
+	Sim.dhcp_tick()
+	check(t17_r.services["dhcp"]["leases"].has("AA:BB:CC:00:00:02"), "lease: one inside its time stays")
+	check(t17_rs.exec("/ip dhcp-server add name=d2 interface=ether2 address-pool=p1 lease-time=soon") == "invalid value for argument lease-time\n", "lease: a duration that is not one is refused")
+	t17_r.services.erase("dhcp")
+	t17_r.services.erase("ros_dhcp")
+	t17_s.services.erase("dhcp")
 	# --- the four jobs for protocols the campaign never asked for ---
 	var t13_ids := {}
 	for c13 in Contracts.all():
