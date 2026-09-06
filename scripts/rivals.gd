@@ -288,9 +288,9 @@ static func remember(r: Dictionary, delta: int, why: String) -> void:
 		Game.nemesis_reason = why
 		r["aggression"] = maxf(0.4, float(r.get("aggression", 1.0)) - 0.12)
 		Game.log_event("NEMESIS: %s has taken it personally: %s. %s"
-			% [r["name"], why, temper_of(r)["grudge"]])
+			% [r["name"], why, Loc.t(String(temper_of(r)["grudge"]))])
 	elif delta > 0 and int(r["standing"]) == 2:
-		Game.log_event("MARKET: %s owes you one. %s" % [r["name"], temper_of(r)["favour"]])
+		Game.log_event("MARKET: %s owes you one. %s" % [r["name"], Loc.t(String(temper_of(r)["favour"]))])
 
 static func friendly() -> Array:
 	var out: Array = []
@@ -312,13 +312,13 @@ static func maybe_favour() -> void:
 	Game.leads.append(Market.rival_referral_lead(String(r["name"])))
 	r["standing"] = maxi(0, int(r["standing"]) - 1)  # a favour spent is a favour spent
 	Game.log_event("REFERRAL: %s cannot take a job and sent it to you. %s"
-		% [r["name"], temper_of(r)["favour"]])
+		% [r["name"], Loc.t(String(temper_of(r)["favour"]))])
 
 static func nemesis_line() -> String:
 	var r := by_name(Game.nemesis)
 	if r.is_empty():
 		return ""
-	return "%s: %s" % [r["name"], temper_of(r)["grudge"]]
+	return "%s: %s" % [r["name"], Loc.t(String(temper_of(r)["grudge"]))]
 
 static func check_nemesis_beaten() -> void:
 	## Beaten specifically, not statistically: they lose their customers, or

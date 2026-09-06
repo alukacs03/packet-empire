@@ -304,7 +304,7 @@ func check_achievements() -> Array:
 		if _achievement_met(a["id"]):
 			achievements.append(a["id"])
 			newly.append(a)
-			log_event(Loc.t("log.achievement") % [a["name"], a["how"]])
+			log_event(Loc.t("log.achievement") % [Loc.t(String(a["name"])), Loc.t(String(a["how"]))])
 	return newly
 
 const LOAN_TRANCHE := 1000
@@ -621,14 +621,22 @@ func settle_quarter_goals() -> void:
 	if not quarter_goals.is_empty():
 		var names: Array = []
 		for g2: Dictionary in quarter_goals:
-			names.append(String(g2["label"]))
+			names.append(quarter_goal_label(g2))
 		log_event(Loc.t("log.board_targets") % "; ".join(PackedStringArray(names)))
+
+func quarter_goal_label(g: Dictionary) -> String:
+	## the board's wording in the current language; the save keeps the English
+	for pick: Dictionary in QUARTER_GOAL_POOL:
+		if String(pick["id"]) == String(g.get("id", "")):
+			var label := Loc.t(String(pick["label"]))
+			return label % int(g.get("target", 0)) if "%d" in label else label
+	return Loc.t(String(g.get("label", "")))
 
 func next_quarter_goal() -> String:
 	## the first target still open, for the status line once the campaign is done
 	for g: Dictionary in quarter_goals:
 		if not bool(quarter_goal_progress(g)["met"]):
-			return String(g["label"])
+			return quarter_goal_label(g)
 	return ""
 var staff: Array = []  # people on the payroll
 var candidates: Array = []  # the current hiring market
@@ -1122,7 +1130,7 @@ func change_tick() -> void:
 	record_incident("change", "a change window overran on %s" % change_window["summary"])
 	log_event(Loc.t("log.change_overrun")
 		% [change_window["summary"],
-			"You pushed past the rollback point. " if pushed else ""])
+			Loc.t("You pushed past the rollback point. ") if pushed else ""])
 	if not pushed:
 		abort_change()
 	else:
@@ -1337,38 +1345,38 @@ func duties_tick() -> void:
 			continue
 		var who := Staff.by_name(name)
 		if who.is_empty() or not Staff.on_shift(who):
-			last_digest.append("%s: nobody on shift to do it" % DUTIES[id]["label"])
+			last_digest.append(Loc.t("%s: nobody on shift to do it") % Loc.t(String(DUTIES[id]["label"])))
 			continue
 		var good := randf() < duty_quality(id)
 		match id:
 			"parts":
 				if good:
-					last_digest.append("%s kept the drawer stocked" % name)
+					last_digest.append(Loc.t("%s kept the drawer stocked") % name)
 				else:
 					# the wrong lengths, ordered in good faith
 					buy_parts("power", 5)
-					last_digest.append("%s restocked, and got the wrong parts in" % name)
+					last_digest.append(Loc.t("%s restocked, and got the wrong parts in") % name)
 			"facility":
-				last_digest.append("%s is keeping the facility schedule" % name if good
-					else "%s let a facility job slide this cycle" % name)
+				last_digest.append(Loc.t("%s is keeping the facility schedule") % name if good
+					else Loc.t("%s let a facility job slide this cycle") % name)
 				if not good:
 					for task: String in FACILITY_TASKS:
 						facility_auto[task] = false
 					facility_auto["filters"] = true
 			"renewals":
-				last_digest.append("%s is watching the renewals calendar" % name)
+				last_digest.append(Loc.t("%s is watching the renewals calendar") % name)
 			"receiving":
 				var waiting := crates_waiting()
 				if waiting.is_empty():
-					last_digest.append("%s: nothing on the dock" % name)
+					last_digest.append(Loc.t("%s: nothing on the dock") % name)
 				elif good:
 					check_crate(waiting[0])
 					if waiting[0] in crates:  # a damaged one went straight back
 						unpack_crate(waiting[0])
-					last_digest.append("%s checked and unpacked a crate" % name)
+					last_digest.append(Loc.t("%s checked and unpacked a crate") % name)
 				else:
 					unpack_crate(waiting[0])
-					last_digest.append("%s unpacked a crate without checking it against the order"
+					last_digest.append(Loc.t("%s unpacked a crate without checking it against the order")
 						% name)
 			"housekeeping":
 				last_digest.append(do_housekeeping(name, good))
@@ -1383,7 +1391,7 @@ func duties_tick() -> void:
 							i.note = {"text": "%s: patched %s" % [name, d.name], "cycle": cycle}
 							var lbl_rack := rack_of(d)
 							note_crew_focus(lbl_rack.name if lbl_rack != null else "", "labelling")
-							last_digest.append("%s labelled %s %s" % [name, d.name, i.name])
+							last_digest.append(Loc.t("%s labelled %s %s") % [name, d.name, i.name])
 						else:
 							# a tired tech puts the label on the wrong port, which
 							# is worse than no label and is found much later
@@ -1597,7 +1605,7 @@ func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 	var spec: Dictionary = VENDOR_TIERS[tier]
 	var price := order_estimate(model, tier) * qty
 	if not spend_on("hardware orders", price):
-		return "that order comes to $%d" % price
+		return Loc.t("that order comes to $%d") % price
 	for i in qty:
 		# a small proportion of every delivery is wrong or broken, and you only
 		# find out if somebody checks it against the order
@@ -1610,7 +1618,7 @@ func order_hardware(model: String, qty := 1, tier := "trade") -> String:
 			"checked": false, "damaged": damaged, "used": tier == "used",
 			"unpack_left": 2 if model in HEAVY_MODELS else 1})
 	log_event(Loc.t("log.ordered")
-		% [qty, MODELS[model]["label"], spec["label"], price,
+		% [qty, MODELS[model]["label"], Loc.t(String(spec["label"])), price,
 			int(spec["wait"][0]), int(spec["wait"][1])])
 	return ""
 
@@ -1980,8 +1988,8 @@ func _call_words(deal: Dictionary) -> String:
 	var biz := Market.business_for(deal)
 	var arc := story_arc(story_key(String(deal.get("customer", ""))))
 	if not arc.is_empty() and int(arc.get("outages", 0)) > 2:
-		return "This is the third time. I am not asking you to grovel, I am asking what is happening."
-	return "%s What do I tell people?" % String(biz["down"])
+		return Loc.t("This is the third time. I am not asking you to grovel, I am asking what is happening.")
+	return Loc.t("%s What do I tell people?") % String(biz["down"])
 
 func maybe_call(deal: Dictionary) -> void:
 	## They ring when it has gone on long enough to be somebody's problem, and
@@ -1995,13 +2003,13 @@ func maybe_call(deal: Dictionary) -> void:
 func answer_call(deal: Dictionary, answer: String) -> String:
 	var call: Dictionary = deal.get("call", {})
 	if call.is_empty():
-		return "nobody is on the phone"
+		return Loc.t("nobody is on the phone")
 	var known := false
 	for option: Dictionary in CALL_ANSWERS:
 		if String(option["id"]) == answer:
 			known = true
 	if not known:
-		return "that is not one of the things you can say"
+		return Loc.t("that is not one of the things you can say")
 	deal.erase("call")
 	deal["last_answer"] = answer
 	var said: Array = deal.get("said", [])
@@ -2039,11 +2047,11 @@ func night_call_tick() -> void:
 		return  # "it waits until morning" means the phone stays quiet until morning
 	var reason := ""
 	if customer_outage_active:
-		reason = "a customer of yours is off the air and there is nobody in the building"
+		reason = Loc.t("a customer of yours is off the air and there is nobody in the building")
 	elif not hazards.is_empty():
 		var h: Dictionary = hazards[0]
-		reason = "the panel is showing %s in %s and the floor is empty" % [
-			HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
+		reason = Loc.t("the panel is showing %s in %s and the floor is empty") % [
+			Loc.t(String(HAZARD_KINDS[h["kind"]]["label"])), h["rack"]]
 	else:
 		for d in all_devices():
 			if d.status != "active":
@@ -2057,7 +2065,7 @@ func night_call_tick() -> void:
 
 func answer_night_call(get_them_in: bool) -> String:
 	if night_call.is_empty():
-		return "nobody is on the phone"
+		return Loc.t("nobody is on the phone")
 	if not get_them_in:
 		night_call = {}
 		stats["phone_quiet_until"] = cycle + 4
@@ -2113,37 +2121,37 @@ func handover_lines() -> Array:
 		if happened.size() >= 3:
 			break
 	for h in happened:
-		lines.append("On our watch: %s" % h)
+		lines.append(Loc.t("On our watch: %s") % h)
 	if customer_down_now():
-		lines.append("A customer is off the air. That is the first thing.")
+		lines.append(Loc.t("A customer is off the air. That is the first thing."))
 	for h: Dictionary in hazards:
-		lines.append("%s in %s, severity %d%s." % [HAZARD_KINDS[h["kind"]]["label"], h["rack"],
-			int(h["severity"]), "" if bool(h.get("detected", false)) else ", nothing is watching for it"])
+		lines.append(Loc.t("%s in %s, severity %d%s.") % [Loc.t(String(HAZARD_KINDS[h["kind"]]["label"])), h["rack"],
+			int(h["severity"]), "" if bool(h.get("detected", false)) else Loc.t(", nothing is watching for it")])
 	var dead: Array = []
 	for d in all_devices():
 		if d.status != "active":
 			dead.append(d.name)
 	if not dead.is_empty():
-		lines.append("Down and not back: %s." % ", ".join(PackedStringArray(dead)))
+		lines.append(Loc.t("Down and not back: %s.") % ", ".join(PackedStringArray(dead)))
 	var down_links := 0
 	for l in links:
 		if not l.a.enabled or not l.b.enabled:
 			down_links += 1
 	if down_links > 0:
-		lines.append("%d port(s) left disabled. Somebody should find out why." % down_links)
+		lines.append(Loc.t("%d port(s) left disabled. Somebody should find out why.") % down_links)
 	if not tickets.is_empty():
-		lines.append("%d ticket(s) still open." % tickets.size())
+		lines.append(Loc.t("%d ticket(s) still open.") % tickets.size())
 	var waiting := crates_waiting().size()
 	if waiting > 0:
-		lines.append("%d crate(s) on the dock, unchecked against the order." % waiting)
+		lines.append(Loc.t("%d crate(s) on the dock, unchecked against the order.") % waiting)
 	var unsaved: Array = []
 	for d2 in all_devices():
 		if config_dirty(d2):
 			unsaved.append(d2.name)
 	if not unsaved.is_empty():
-		lines.append("Running on unsaved configuration: %s." % ", ".join(PackedStringArray(unsaved)))
+		lines.append(Loc.t("Running on unsaved configuration: %s.") % ", ".join(PackedStringArray(unsaved)))
 	if lines.is_empty():
-		lines.append("Nothing happened. Everything that was up is still up.")
+		lines.append(Loc.t("Nothing happened. Everything that was up is still up."))
 	return lines
 
 func handover_tick() -> void:
@@ -2164,7 +2172,7 @@ func handover_tick() -> void:
 	var going := "night" if slot == 2 else "day"
 	var written := handover_lines()
 	handover = {"cycle": cycle, "from": going, "lines": written, "read": false,
-		"substantive": 0 if written.size() == 1 and String(written[0]).begins_with("Nothing")
+		"substantive": 0 if written.size() == 1 and String(written[0]) == Loc.t("Nothing happened. Everything that was up is still up.")
 			else written.size()}
 	log_event(Loc.t("log.handover_notes")
 		% [going, handover["lines"].size(), "day" if going == "night" else "night"])
@@ -2173,9 +2181,9 @@ const TREND_WINDOW := 20  # far enough back that a slow measure has moved
 
 func _trend_word(now: float, before: float, higher_is_better: bool, slack := 0.04) -> String:
 	if absf(now - before) < slack:
-		return "holding"
+		return Loc.t("holding")
 	var better := (now > before) == higher_is_better
-	return "getting better" if better else "getting worse"
+	return Loc.t("getting better") if better else Loc.t("getting worse")
 
 func room_maturity() -> float:
 	## How settled the room looks: a long clear run, documentation that still
@@ -2195,13 +2203,13 @@ func trend_read() -> Array:
 		if int(h.get("cycle", 0)) <= cycle - TREND_WINDOW:
 			then = h
 	var out: Array = []
-	out.append("Reliability: %d cycle(s) clear, best %d." % [cycles_since_customer_outage(),
+	out.append(Loc.t("Reliability: %d cycle(s) clear, best %d.") % [cycles_since_customer_outage(),
 		best_streak()])
 	var tidy := floor_tidiness()
-	out.append("The floor: %d%% kept, %s." % [int(tidy * 100.0),
+	out.append(Loc.t("The floor: %d%% kept, %s.") % [int(tidy * 100.0),
 		_trend_word(tidy, float(then.get("tidy", tidy)), true)])
 	var drift := drift_factor()
-	out.append("Documentation: %d%% of it no longer matches the floor, %s." % [int(drift * 100.0),
+	out.append(Loc.t("Documentation: %d%% of it no longer matches the floor, %s.") % [int(drift * 100.0),
 		_trend_word(drift, float(then.get("drift", drift)), false)])
 	var best_habit := ""
 	var worst_habit := ""
@@ -2211,18 +2219,18 @@ func trend_read() -> Array:
 		if worst_habit == "" or float(habits[habit]) < float(habits[worst_habit]):
 			worst_habit = habit
 	if best_habit != "" and worst_habit != "":
-		out.append("What the team copies from you: %s most (%d%%), %s least (%d%%)." % [
+		out.append(Loc.t("What the team copies from you: %s most (%d%%), %s least (%d%%).") % [
 			best_habit, int(float(habits[best_habit]) * 100.0),
 			worst_habit, int(float(habits[worst_habit]) * 100.0)])
 	# the four above are also what the room itself looks like, which is worth
 	# saying out loud, because the floor is where the player actually is
 	var settled := room_maturity()
-	var room_word := "still new: nothing about it says anybody has been here long"
+	var room_word := Loc.t("still new: nothing about it says anybody has been here long")
 	if settled >= 0.6:
-		room_word = "settled: the aisle is walked clean and the matting is down"
+		room_word = Loc.t("settled: the aisle is walked clean and the matting is down")
 	elif settled >= 0.35:
-		room_word = "starting to look kept: there is a walked aisle down the middle"
-	out.append("The room reads as %s." % room_word)
+		room_word = Loc.t("starting to look kept: there is a walked aisle down the middle")
+	out.append(Loc.t("The room reads as %s.") % room_word)
 	return out
 
 func read_handover() -> void:
@@ -2298,9 +2306,9 @@ func ticket_area_for(cause: Dictionary) -> String:
 func triage_ticket(t: Dictionary, area: String) -> String:
 	## Guessing costs the one thing an incident does not give you: time.
 	if String(t["state"]) != "open":
-		return "that ticket is not open"
+		return Loc.t("that ticket is not open")
 	if area not in TICKET_AREAS:
-		return "that is not somewhere to look"
+		return Loc.t("that is not somewhere to look")
 	t["triaged"] = area
 	if area == ticket_area_for(t["cause"]):
 		t["state"] = "investigating"
@@ -2315,13 +2323,13 @@ func triage_ticket(t: Dictionary, area: String) -> String:
 func _ticket_hint(cause: Dictionary) -> String:
 	match String(cause.get("kind", "")):
 		"deal_down":
-			return "Their service is genuinely not reachable from here."
+			return Loc.t("Their service is genuinely not reachable from here.")
 		"congestion":
-			return "The path is up and over capacity: it is a bandwidth problem, not a fault."
+			return Loc.t("The path is up and over capacity: it is a bandwidth problem, not a fault.")
 		"upstream":
-			return "Your own tooling says the fault is past your edge."
+			return Loc.t("Your own tooling says the fault is past your edge.")
 		"none":
-			return "Everything of yours is healthy. This one is theirs."
+			return Loc.t("Everything of yours is healthy. This one is theirs.")
 	return ""
 
 func ticket_condition_live(t: Dictionary) -> bool:
@@ -2467,7 +2475,7 @@ func walk_to_device(d: Net.NDevice) -> String:
 	var cost := 0 if site == 0 else 350
 	var label := "a walk across the floor" if site == 0 else "a site visit to %s" % site_name(site)
 	if cost > 0 and not try_spend(cost):
-		return "%s costs $%d" % [label, cost]
+		return Loc.t("%s costs $%d") % [label, cost]
 	physical_access[d.name] = cycle + 2 - (1 if access_friction() > 0.3 else 0)
 	log_event(Loc.t("log.physical_access")
 		% [label.capitalize(), d.name, "" if cost == 0 else "  That cost $%d." % cost])
@@ -2521,8 +2529,8 @@ func lockout_tick() -> void:
 		# only a device that could be reached and now cannot has locked you out
 		if now and not was and not first_sight:
 			log_event(Loc.t("log.locked_out")
-				% [d.name, "There is a console cable on it." if console_reachable(d)
-					else "Console server, a walk to the rack, or a site visit."])
+				% [d.name, Loc.t("There is a console cable on it.") if console_reachable(d)
+					else Loc.t("Console server, a walk to the rack, or a site visit.")])
 			record_incident("lockout", "%s was cut off by its own configuration" % d.name)
 
 func _device_facts(d: Net.NDevice) -> Dictionary:
@@ -2681,9 +2689,9 @@ func investigate_orphan(orphan: Dictionary) -> String:
 	## Uses the tools already here: counters, logs, and asking somebody.
 	var level := orphan_intel_of(orphan)
 	if level >= 2:
-		return "you already know what that is"
+		return Loc.t("you already know what that is")
 	if not spend_on("investigation", 50):
-		return "an afternoon of somebody's time costs $50"
+		return Loc.t("an afternoon of somebody's time costs $50")
 	orphan_intel[String(orphan["key"])] = level + 1
 	if level + 1 < 2:
 		log_event(Loc.t("log.investigation_pulled")
@@ -2691,8 +2699,8 @@ func investigate_orphan(orphan: Dictionary) -> String:
 		return ""
 	var bearing := orphan_load_bearing(orphan)
 	log_event(Loc.t("log.investigation") % [orphan["label"],
-		("It is load bearing: %s." % bearing) if bearing != ""
-		else "Nothing has touched it and nothing depends on it. It can go."])
+		(Loc.t("It is load bearing: %s.") % bearing) if bearing != ""
+		else Loc.t("Nothing has touched it and nothing depends on it. It can go.")])
 	return ""
 
 func retire_orphan(orphan: Dictionary) -> String:
@@ -3008,26 +3016,26 @@ func identity_offered() -> bool:
 
 func choose_identity(id: String) -> String:
 	if not IDENTITIES.has(id):
-		return "there is no such company"
+		return Loc.t("there is no such company")
 	if identity != "":
-		return "you are already a %s: a rebrand is what changes that" % IDENTITIES[identity]["label"]
+		return Loc.t("you are already a %s: a rebrand is what changes that") % Loc.t(String(IDENTITIES[identity]["label"]))
 	identity = id
-	log_event(Loc.t("log.identity") % [IDENTITIES[id]["label"], IDENTITIES[id]["trade"]])
+	log_event(Loc.t("log.identity") % [Loc.t(String(IDENTITIES[id]["label"])), Loc.t(String(IDENTITIES[id]["trade"]))])
 	leads.append(Market.identity_lead(id))
 	return ""
 
 func rebrand(id: String) -> String:
 	## Expensive on purpose: it is a decision, and it is not a free respec.
 	if not IDENTITIES.has(id):
-		return "there is no such company"
+		return Loc.t("there is no such company")
 	if id == identity:
-		return "that is what you already are"
+		return Loc.t("that is what you already are")
 	if not try_spend(5000):
-		return "a rebrand costs $5000 and a hit to your standing"
+		return Loc.t("a rebrand costs $5000 and a hit to your standing")
 	reputation = maxi(0, reputation - 5)
 	identity = id
 	log_event(Loc.t("log.rebrand")
-		% IDENTITIES[id]["label"])
+		% Loc.t(String(IDENTITIES[id]["label"])))
 	leads.append(Market.identity_lead(id))
 	return ""
 
@@ -3063,10 +3071,10 @@ func set_access_policy(policy: String) -> String:
 		return "that is already the policy"
 	var cost := int(ACCESS_POLICIES[policy]["cost"])
 	if cost > 0 and not try_spend(cost):
-		return "%s costs $%d to put in" % [ACCESS_POLICIES[policy]["label"], cost]
+		return Loc.t("%s costs $%d to put in") % [Loc.t(String(ACCESS_POLICIES[policy]["label"])), cost]
 	access_policy = policy
-	log_event(Loc.t("log.access_floor") % [ACCESS_POLICIES[policy]["label"].to_lower(),
-		ACCESS_POLICIES[policy]["blurb"]])
+	log_event(Loc.t("log.access_floor") % [Loc.t(String(ACCESS_POLICIES[policy]["label"])).to_lower(),
+		Loc.t(String(ACCESS_POLICIES[policy]["blurb"]))])
 	return ""
 
 func buy_cameras() -> String:
@@ -3148,8 +3156,8 @@ func access_incident_tick() -> void:
 				device_log(d, "%s changed state to down (no change logged)" % i.name)
 				record_incident("access", "a cable was pulled in %s and nobody was badged" % r.name)
 				log_event(Loc.t("log.access_unplugged") % [r.name,
-					"The cameras have it." if cameras
-					else "There is no badge log and no camera, so that is where the investigation ends."])
+					Loc.t("The cameras have it.") if cameras
+					else Loc.t("There is no badge log and no camera, so that is where the investigation ends.")])
 				topology_changed.emit()
 				return
 
@@ -3209,21 +3217,21 @@ func buy_protection(kind: String) -> String:
 	if not PROTECTION.has(kind):
 		return "there is no such system"
 	if protection_fitted(kind):
-		return "%s is already fitted on this floor" % PROTECTION[kind]["label"]
+		return Loc.t("%s is already fitted on this floor") % Loc.t(String(PROTECTION[kind]["label"]))
 	if not spend_on("fire and water protection", int(PROTECTION[kind]["cost"])):
-		return "%s costs $%d" % [PROTECTION[kind]["label"], int(PROTECTION[kind]["cost"])]
+		return Loc.t("%s costs $%d") % [Loc.t(String(PROTECTION[kind]["label"])), int(PROTECTION[kind]["cost"])]
 	protection[protection_key(kind)] = {"installed": true, "serviced_cycle": cycle}
 	log_event(Loc.t("log.facility_fitted")
-		% PROTECTION[kind]["label"])
+		% Loc.t(String(PROTECTION[kind]["label"])))
 	return ""
 
 func service_protection(kind: String) -> String:
 	if not protection_fitted(kind):
 		return "that is not fitted on this floor"
 	if not spend_on("facility", int(PROTECTION[kind]["cost"]) / 6):
-		return "the inspection costs $%d" % (int(PROTECTION[kind]["cost"]) / 6)
+		return Loc.t("the inspection costs $%d") % (int(PROTECTION[kind]["cost"]) / 6)
 	protection[protection_key(kind)]["serviced_cycle"] = cycle
-	log_event(Loc.t("log.facility_inspected") % PROTECTION[kind]["label"])
+	log_event(Loc.t("log.facility_inspected") % Loc.t(String(PROTECTION[kind]["label"])))
 	return ""
 
 func hazard_risk(r: Net.Rack) -> float:
@@ -3250,7 +3258,7 @@ func start_hazard(r: Net.Rack, kind: String) -> Dictionary:
 	hazards.append(haz)
 	if bool(haz["detected"]):
 		log_event(Loc.t("log.alarm_detected")
-			% [HAZARD_KINDS[kind]["label"], r.name])
+			% [Loc.t(String(HAZARD_KINDS[kind]["label"])), r.name])
 		Sfx.play("alert")
 	else:
 		log_event(Loc.t("log.something_wrong")
@@ -3291,7 +3299,7 @@ func hazard_tick() -> void:
 		if not bool(haz["detected"]) and protection_ready("detection", haz_site):
 			haz["detected"] = true
 			log_event(Loc.t("log.alarm_picked_up")
-				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
+				% [Loc.t(String(HAZARD_KINDS[haz["kind"]]["label"])), haz["rack"]])
 		var responded := false
 		if String(haz["kind"]) in ["smoke", "fire"] and protection_ready("suppression", haz_site) \
 				and bool(haz["detected"]):
@@ -3313,7 +3321,7 @@ func hazard_tick() -> void:
 		if Staff.anyone_on_shift() and bool(haz["detected"]) and biz_roll() < 0.4:
 			hazards.erase(haz)
 			log_event(Loc.t("log.response_by_hand")
-				% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"]])
+				% [Loc.t(String(HAZARD_KINDS[haz["kind"]]["label"])), haz["rack"]])
 			continue
 		haz["severity"] = int(haz["severity"]) + 1
 		var cap := 3 if difficulty == 0 else 5  # Apprentice keeps a floor under it
@@ -3328,7 +3336,7 @@ func hazard_tick() -> void:
 					if d != null and d.status == "active":
 						d.status = "offline"
 						log_event(Loc.t("log.hazard_took_down")
-							% [HAZARD_KINDS[haz["kind"]]["label"], haz["rack"], d.name])
+							% [Loc.t(String(HAZARD_KINDS[haz["kind"]]["label"])), haz["rack"], d.name])
 						break
 			"device":
 				for d in rack.slots:
@@ -3435,7 +3443,7 @@ func maybe_offer_decision() -> void:
 	var pick: Dictionary = pool[int(biz_roll() * pool.size()) % pool.size()]
 	decisions_seen.append(String(pick["id"]))
 	decisions.append({"id": String(pick["id"]), "raised": cycle})
-	log_event(Loc.t("log.decision") % [pick["title"], pick["text"]])
+	log_event(Loc.t("log.decision") % [Loc.t(String(pick["title"])), Loc.t(String(pick["text"]))])
 
 func schedule_consequence(after: int, kind: String, note: String, data := {}) -> void:
 	## Foreshadowed on purpose: the player is told something will come of this.
@@ -4064,7 +4072,7 @@ func service_facility(task: String) -> String:
 	else:
 		if task == "aircon":
 			admit_visitor("Vas Elektro", "aircon service")
-		log_event(Loc.t("log.facility_done") % [FACILITY_TASKS[task]["label"], cost])
+		log_event(Loc.t("log.facility_done") % [Loc.t(String(FACILITY_TASKS[task]["label"])), cost])
 	return ""
 
 func generator_ready() -> bool:
@@ -4569,14 +4577,14 @@ func _first_light(deal: Dictionary) -> void:
 func _first_light_words(deal: Dictionary) -> String:
 	match String(Market.business_for(deal)["id"]):
 		"clinic":
-			return "Reception rang. They have booked eleven people since you left."
+			return Loc.t("Reception rang. They have booked eleven people since you left.")
 		"school":
-			return "The registers went in on time this morning. Nobody mentioned the network, which is the compliment."
+			return Loc.t("The registers went in on time this morning. Nobody mentioned the network, which is the compliment.")
 		"streaming":
-			return "We are live and the chat has stopped complaining. Thank you."
+			return Loc.t("We are live and the chat has stopped complaining. Thank you.")
 		"factory":
-			return "The line is moving. The supervisor says to tell you it is moving."
-	return "The first order came through while I was watching. The label printer made that noise."
+			return Loc.t("The line is moving. The supervisor says to tell you it is moving.")
+	return Loc.t("The first order came through while I was watching. The label printer made that noise.")
 
 func customer_eye(deal: Dictionary) -> Dictionary:
 	## Translate a real service state into the small human thing it carries.
@@ -4590,58 +4598,58 @@ func customer_eye(deal: Dictionary) -> Dictionary:
 	var current_load := maxi(0, int(round(float(int(deal.get("load", 0))) * day_factor())))
 	var eye := {
 		"name": "KISKACSA / CUSTOMER EYE",
-		"identity": "A small Budapest children's shop. Its web checkout sends each paid order straight to the label printer beside the packing table.",
+		"identity": Loc.t("A small Budapest children's shop. Its web checkout sends each paid order straight to the label printer beside the packing table."),
 		"time": day_name().to_upper(),
 		"state": "waiting",
-		"metric": "NO LIVE ORDERS YET",
-		"activity": "Their team is preparing products and waiting for the promised service.",
-		"voice": "“Tell us when it is ready; we would rather launch once than apologise twice.”",
+		"metric": Loc.t("NO LIVE ORDERS YET"),
+		"activity": Loc.t("Their team is preparing products and waiting for the promised service."),
+		"voice": Loc.t("“Tell us when it is ready; we would rather launch once than apologise twice.”"),
 	}
 	var arc: Dictionary = customer_arcs.get("kiskacsa", {})
 	match String(arc.get("beat", "arrival")):
 		"arrival":
-			eye["relationship"] = "ARRIVAL  /  FIRST PROMISE"
+			eye["relationship"] = Loc.t("ARRIVAL  /  FIRST PROMISE")
 			var attempts := int(arc.get("proposal_attempts", 0))
-			eye["memory"] = ("They remember that you revised the proposal instead of walking away."
-				if attempts > 0 else "They chose you for the first launch and are watching how you operate.")
+			eye["memory"] = (Loc.t("They remember that you revised the proposal instead of walking away.")
+				if attempts > 0 else Loc.t("They chose you for the first launch and are watching how you operate."))
 		"complication":
-			eye["relationship"] = "COMPLICATION  /  FIRST OUTAGE"
-			eye["memory"] = ("You told them what was happening before touching the network."
-				if guided_outage.has("status_cycle") else "They are still waiting to hear what is happening.")
+			eye["relationship"] = Loc.t("COMPLICATION  /  FIRST OUTAGE")
+			eye["memory"] = (Loc.t("You told them what was happening before touching the network.")
+				if guided_outage.has("status_cycle") else Loc.t("They are still waiting to hear what is happening."))
 		"recovery":
-			eye["relationship"] = "RECOVERY  /  PROVING THE FIX"
-			eye["memory"] = "They remember the %s you left behind. Trust now depends on several quiet, healthy cycles." \
+			eye["relationship"] = Loc.t("RECOVERY  /  PROVING THE FIX")
+			eye["memory"] = Loc.t("They remember the %s you left behind. Trust now depends on several quiet, healthy cycles.") \
 				% _kiskacsa_resilience_name(String(arc.get("resilience", "improvement")))
 		"payoff":
 			if String(arc.get("outcome", "")) == "trusted":
-				eye["relationship"] = "PAYOFF  /  TRUSTED OPERATOR"
-				eye["memory"] = "You communicated, repaired without a rescue, and proved the fix. Kiskacsa has sent Madaras Játék to your door."
+				eye["relationship"] = Loc.t("PAYOFF  /  TRUSTED OPERATOR")
+				eye["memory"] = Loc.t("You communicated, repaired without a rescue, and proved the fix. Kiskacsa has sent Madaras Játék to your door.")
 			else:
-				eye["relationship"] = "PAYOFF  /  CAUTIOUS CUSTOMER"
-				eye["memory"] = "Service is steady again, but the assisted restore made them renew cautiously and keep referrals close."
+				eye["relationship"] = Loc.t("PAYOFF  /  CAUTIOUS CUSTOMER")
+				eye["memory"] = Loc.t("Service is steady again, but the assisted restore made them renew cautiously and keep referrals close.")
 	if not delivered:
 		return eye
 	if not healthy:
 		eye["state"] = "down"
-		eye["metric"] = "CHECKOUT OFFLINE"
-		eye["activity"] = "Shoppers can browse cached pages, but checkout cannot submit an order. The packing table is quiet and new labels are not arriving."
-		eye["voice"] = "“We have paused the promotion. Please keep us updated; people are asking whether their order went through.”"
+		eye["metric"] = Loc.t("CHECKOUT OFFLINE")
+		eye["activity"] = Loc.t("Shoppers can browse cached pages, but checkout cannot submit an order. The packing table is quiet and new labels are not arriving.")
+		eye["voice"] = Loc.t("“We have paused the promotion. Please keep us updated; people are asking whether their order went through.”")
 		return eye
 	var shoppers := maxi(2, int(round(float(current_load) / 6.0)))
 	var orders := maxi(1, int(round(float(current_load) / 28.0)))
 	if degraded:
 		eye["state"] = "degraded"
-		eye["metric"] = "~%d SHOPPERS / CHECKOUT RETRYING" % shoppers
-		eye["activity"] = "Pages are slow and some shoppers retry payment. Orders reach the packing table in bursts instead of a steady queue."
-		eye["voice"] = "“It is working, but customers are pressing the button twice. Can you steady it?”"
+		eye["metric"] = Loc.t("~%d SHOPPERS / CHECKOUT RETRYING") % shoppers
+		eye["activity"] = Loc.t("Pages are slow and some shoppers retry payment. Orders reach the packing table in bursts instead of a steady queue.")
+		eye["voice"] = Loc.t("“It is working, but customers are pressing the button twice. Can you steady it?”")
 		return eye
 	eye["state"] = "live"
-	eye["metric"] = "~%d SHOPPERS  ·  ~%d ORDERS/H" % [shoppers, orders]
-	eye["activity"] = "Checkout is accepting orders. Each success becomes a fresh shipping label at the packing table."
+	eye["metric"] = Loc.t("~%d SHOPPERS  ·  ~%d ORDERS/H") % [shoppers, orders]
+	eye["activity"] = Loc.t("Checkout is accepting orders. Each success becomes a fresh shipping label at the packing table.")
 	if String(guided_outage.get("state", "")) in ["recovered", "choice", "complete"]:
-		eye["voice"] = "“The labels are moving again. Thank you for telling us what was happening while you fixed it.”"
+		eye["voice"] = Loc.t("“The labels are moving again. Thank you for telling us what was happening while you fixed it.”")
 	else:
-		eye["voice"] = "“The next label just printed. That little sound means the shop is working.”"
+		eye["voice"] = Loc.t("“The next label just printed. That little sound means the shop is working.”")
 	return eye
 
 ## Five customers who come back, remember, and want different things. The
@@ -4755,9 +4763,9 @@ func _general_customer_eye(deal: Dictionary) -> Dictionary:
 		"identity": "%s: %s." % [deal["customer"], biz["what"]],
 		"time": day_name().to_upper(),
 		"state": "waiting",
-		"metric": "NOT LIVE YET",
-		"activity": "They are waiting for the service they were promised.",
-		"voice": "“Tell us when it is ready.”",
+		"metric": Loc.t("NOT LIVE YET"),
+		"activity": Loc.t("They are waiting for the service they were promised."),
+		"voice": Loc.t("“Tell us when it is ready.”"),
 	}
 	var story := story_key(String(deal.get("customer", "")))
 	if story != "" and not story_arc(story).is_empty():
@@ -4765,42 +4773,42 @@ func _general_customer_eye(deal: Dictionary) -> Dictionary:
 		eye["relationship"] = "%s  /  %s" % [String(arc.get("beat", "arrival")).to_upper(),
 			String(STORY_CUSTOMERS[story].get("need", "service")).to_upper()]
 		if String(arc.get("beat", "")) == "complication":
-			eye["memory"] = "%s They have %d outage(s) of yours on record." \
+			eye["memory"] = Loc.t("%s They have %d outage(s) of yours on record.") \
 				% [STORY_CUSTOMERS[story]["complication"], int(arc.get("outages", 0))]
 		elif String(arc.get("outcome", "")) == "kept":
 			eye["memory"] = STORY_CUSTOMERS[story]["payoff"]
 		else:
-			eye["memory"] = "They are watching how this one goes."
+			eye["memory"] = Loc.t("They are watching how this one goes.")
 	if not event.is_empty():
 		eye["relationship"] = "%s  /  IN %d CYCLE%s" % [String(event["label"]).to_upper(),
 			int(event["cycle"]) - cycle, "" if int(event["cycle"]) - cycle == 1 else "S"]
-		eye["memory"] = "They have told you in advance: %s carries about %d times their normal traffic. They will remember how it went." \
+		eye["memory"] = Loc.t("They have told you in advance: %s carries about %d times their normal traffic. They will remember how it went.") \
 			% [event["label"], int(event["multiplier"])]
 	elif int(deal.get("peaks_carried", 0)) > 0:
 		eye["relationship"] = "CARRIED  /  %d BUSY NIGHT%s" % [int(deal["peaks_carried"]),
 			"" if int(deal["peaks_carried"]) == 1 else "S"]
-		eye["memory"] = "You held their busiest hours together, and they have said so out loud."
+		eye["memory"] = Loc.t("You held their busiest hours together, and they have said so out loud.")
 	if not delivered:
 		return eye
 	if not healthy:
 		eye["state"] = "down"
-		eye["metric"] = "%s STOPPED" % String(biz["unit"]).to_upper()
+		eye["metric"] = Loc.t("%s STOPPED") % String(biz["unit"]).to_upper()
 		eye["activity"] = String(biz["down"])
-		eye["voice"] = "“Please keep us updated; people are asking.”"
+		eye["voice"] = Loc.t("“Please keep us updated; people are asking.”")
 		return eye
 	var people := maxi(2, int(round(float(current_load) / 6.0)))
 	var units := maxi(1, int(round(float(current_load) / 28.0)))
 	if bool(deal.get("degraded", false)):
 		eye["state"] = "degraded"
-		eye["metric"] = "~%d %s / RETRYING" % [people, String(biz["who"]).to_upper()]
+		eye["metric"] = Loc.t("~%d %s / RETRYING") % [people, String(biz["who"]).to_upper()]
 		eye["activity"] = String(biz["slow"])
-		eye["voice"] = "“It works, but only just. Can you steady it?”"
+		eye["voice"] = Loc.t("“It works, but only just. Can you steady it?”")
 		return eye
 	eye["state"] = "live"
-	eye["metric"] = "~%d %s  ·  ~%d %s/H" % [people, String(biz["who"]).to_upper(), units,
+	eye["metric"] = Loc.t("~%d %s  ·  ~%d %s/H") % [people, String(biz["who"]).to_upper(), units,
 		String(biz["unit"]).to_upper()]
 	eye["activity"] = String(biz["live"])
-	eye["voice"] = "“Nobody here is thinking about the network, which is how we like it.”"
+	eye["voice"] = Loc.t("“Nobody here is thinking about the network, which is how we like it.”")
 	return eye
 
 func peak_event(deal: Dictionary) -> Dictionary:
@@ -4849,12 +4857,12 @@ func peak_tick(deal: Dictionary) -> void:
 func _kiskacsa_resilience_name(choice: String) -> String:
 	match choice:
 		"spare":
-			return "cold spare"
+			return Loc.t("cold spare")
 		"monitor":
-			return "permanent monitor"
+			return Loc.t("permanent monitor")
 		"config":
-			return "saved recovery configuration"
-	return "resilience improvement"
+			return Loc.t("saved recovery configuration")
+	return Loc.t("resilience improvement")
 
 func peak_factor() -> float:
 	return DAY_CURVE.max()
@@ -5387,21 +5395,21 @@ func finale_callouts(snap: Dictionary) -> Dictionary:
 			best = k
 	var losses: Array = []
 	if int(snap.get("open_reviews", 0)) > 0:
-		losses.append("%d incident(s) never written up" % int(snap["open_reviews"]))
+		losses.append(Loc.t("%d incident(s) never written up") % int(snap["open_reviews"]))
 	if int(snap.get("data_risks", 0)) > 0:
-		losses.append("%d unit(s) decommissioned without a certificate" % int(snap["data_risks"]))
+		losses.append(Loc.t("%d unit(s) decommissioned without a certificate") % int(snap["data_risks"]))
 	if int(snap.get("destruction_certs", 0)) > 0 and int(snap.get("data_risks", 0)) == 0:
-		losses.append("(every drive that left was wiped first: %d certificate(s) on file)" % int(snap["destruction_certs"]))
+		losses.append(Loc.t("(every drive that left was wiped first: %d certificate(s) on file)") % int(snap["destruction_certs"]))
 	if int(snap.get("cable_debt", 0)) > 4:
-		losses.append("%d pieces of cable debt nobody went back for" % int(snap["cable_debt"]))
+		losses.append(Loc.t("%d pieces of cable debt nobody went back for") % int(snap["cable_debt"]))
 	if float(snap.get("drift", 0.0)) > 0.4:
-		losses.append("documentation that stopped describing the floor")
+		losses.append(Loc.t("documentation that stopped describing the floor"))
 	if int(snap.get("uptime", 0)) < 95:
-		losses.append("%d%% uptime across the run" % int(snap.get("uptime", 0)))
+		losses.append(Loc.t("%d%% uptime across the run") % int(snap.get("uptime", 0)))
 	if int(snap.get("failovers_passed", 0)) == 0 and int(snap.get("sites", 1)) > 1:
-		losses.append("two rooms, and the failover never once tested")
+		losses.append(Loc.t("two rooms, and the failover never once tested"))
 	if int(snap.get("oncall_covered", 0)) == 0 and int(snap.get("staff", 0)) > 0:
-		losses.append("nobody was ever asked to carry the phone")
+		losses.append(Loc.t("nobody was ever asked to carry the phone"))
 	return {"strength": best, "losses": losses}
 
 const HISTORY_PATH := "user://run_history.json"
@@ -5477,14 +5485,14 @@ func compare_to_best(row: Dictionary) -> Array:
 		if previous.is_empty() or int(other["total"]) > int(previous["total"]):
 			previous = other
 	if previous.is_empty():
-		return ["This is the first run on record; the next one has something to beat."]
-	out.append("against %s (%d): %s%d overall" % [previous.get("company", "the last one"),
+		return [Loc.t("This is the first run on record; the next one has something to beat.")]
+	out.append(Loc.t("against %s (%d): %s%d overall") % [previous.get("company", Loc.t("the last one")),
 		int(previous["total"]), "+" if int(row["total"]) >= int(previous["total"]) else "",
 		int(row["total"]) - int(previous["total"])])
 	for k: String in row["categories"]:
 		var delta := int(row["categories"][k]) - int(previous.get("categories", {}).get(k, 0))
 		if delta != 0:
-			out.append("  %-12s %s%d" % [SCORE_LABELS.get(String(k), String(k)), "+" if delta > 0 else "", delta])
+			out.append("  %-12s %s%d" % [Loc.t(String(SCORE_LABELS.get(String(k), String(k)))), "+" if delta > 0 else "", delta])
 	return out
 
 func forget_run(at: int) -> void:
@@ -5646,14 +5654,14 @@ func _clab_iface(i: Net.Iface) -> String:
 func end_run(ending: String) -> String:
 	## Freeze it. The save is untouched: this is a report, not a deletion.
 	if not FINALE_ENDINGS.has(ending):
-		return "that is not an ending"
+		return Loc.t("that is not an ending")
 	if not finale.is_empty():
-		return "this run has already finished"
+		return Loc.t("this run has already finished")
 	finale = finale_snapshot(ending)
 	var scored := finale_score(finale)
 	finale["score"] = scored
 	finale["record"] = record_run(finale)
-	log_event(Loc.t("log.the_end") % [FINALE_ENDINGS[ending], company_name,
+	log_event(Loc.t("log.the_end") % [Loc.t(String(FINALE_ENDINGS[ending])), company_name,
 		int(scored["total"])])
 	Legacy.harvest(FINALE_ENDINGS[ending])
 	return ""
@@ -5664,18 +5672,18 @@ func finale_report() -> Array:
 	var scored := finale_score(finale)
 	var callouts := finale_callouts(finale)
 	var lines: Array = [
-		"%s  ·  %s  ·  %s" % [finale["company"], finale["identity"], finale["difficulty"]],
-		FINALE_ENDINGS.get(String(finale["ending"]), "It ended."),
-		"cycle %d   ·   score %d" % [int(finale["cycle"]), int(scored["total"])],
+		"%s  ·  %s  ·  %s" % [finale["company"], Loc.t(String(finale["identity"])), Loc.t(String(finale["difficulty"]))],
+		Loc.t(String(FINALE_ENDINGS.get(String(finale["ending"]), "It ended."))),
+		Loc.t("cycle %d   ·   score %d") % [int(finale["cycle"]), int(scored["total"])],
 	]
 	for k: String in scored["categories"]:
-		lines.append("  %-12s %d" % [SCORE_LABELS.get(String(k), String(k)), int(scored["categories"][k])])
-	lines.append("Customers at the end %d   ·   faults %d   ·   incidents %d   ·   longest clean streak %d cycles   ·   cash $%d" % [
+		lines.append("  %-12s %d" % [Loc.t(String(SCORE_LABELS.get(String(k), String(k)))), int(scored["categories"][k])])
+	lines.append(Loc.t("Customers at the end %d   ·   faults %d   ·   incidents %d   ·   longest clean streak %d cycles   ·   cash $%d") % [
 		int(finale.get("deals", 0)), int(finale.get("faults", 0)), int(finale.get("incidents", 0)),
 		int(finale.get("best_streak", 0)), int(finale.get("money", 0))])
-	lines.append("Strongest: %s" % callouts["strength"])
+	lines.append(Loc.t("Strongest: %s") % Loc.t(String(SCORE_LABELS.get(String(callouts["strength"]), String(callouts["strength"])))))
 	for loss: String in callouts["losses"]:
-		lines.append("Avoidable: %s" % loss)
+		lines.append(Loc.t("Avoidable: %s") % loss)
 	return lines
 
 func maybe_end_run() -> void:
@@ -5727,15 +5735,15 @@ func demo_summary() -> String:
 	var named: Array = []
 	for entry: Dictionary in Skills.CATALOG:
 		if int(skill_log.get(String(entry["id"]), {}).get("count", 0)) > 0:
-			named.append(String(entry["name"]))
-	var bits: Array = ["%d cycles on the floor" % cycle]
+			named.append(Loc.t(String(entry["name"])))
+	var bits: Array = [Loc.t("%d cycles on the floor") % cycle]
 	if int(stats.get("contracts", 0)) > 0:
-		bits.append("%d job(s) signed off" % int(stats.get("contracts", 0)))
+		bits.append(Loc.t("%d job(s) signed off") % int(stats.get("contracts", 0)))
 	if best_outage_streak > 0:
-		bits.append("a best run of %d cycles with nobody down" % best_outage_streak)
+		bits.append(Loc.t("a best run of %d cycles with nobody down") % best_outage_streak)
 	if not named.is_empty():
-		bits.append("and along the way you did %s" % ", ".join(PackedStringArray(named)))
-	return "This shift: " + ", ".join(PackedStringArray(bits)) + "."
+		bits.append(Loc.t("and along the way you did %s") % ", ".join(PackedStringArray(named)))
+	return Loc.t("This shift: ") + ", ".join(PackedStringArray(bits)) + "."
 
 func rank_citation() -> String:
 	## What this particular run did to earn it. Read off what the game already
@@ -5745,21 +5753,21 @@ func rank_citation() -> String:
 	for entry: Dictionary in Skills.CATALOG:
 		var seen: Dictionary = skill_log.get(String(entry["id"]), {})
 		if int(seen.get("count", 0)) >= Skills.RELIABLE:
-			reliable.append(String(entry["name"]))
+			reliable.append(Loc.t(String(entry["name"])))
 	if not reliable.is_empty():
-		bits.append("you do %s without thinking about it now" % reliable[reliable.size() - 1])
+		bits.append(Loc.t("you do %s without thinking about it now") % reliable[reliable.size() - 1])
 	if mastered_contracts.size() >= 2:
-		bits.append("%d job(s) finished the harder way" % mastered_contracts.size())
+		bits.append(Loc.t("%d job(s) finished the harder way") % mastered_contracts.size())
 	if references.size() > 0:
-		bits.append("%d customer(s) who will say so out loud" % references.size())
+		bits.append(Loc.t("%d customer(s) who will say so out loud") % references.size())
 	if best_outage_streak >= 20:
-		bits.append("a %d cycle stretch with nobody down" % best_outage_streak)
+		bits.append(Loc.t("a %d cycle stretch with nobody down") % best_outage_streak)
 	if not skill_fumbles.is_empty():
 		var fumble_ids: Array = skill_fumbles.keys()
-		bits.append("and %s, which the trade also notices"
-			% Skills.FUMBLES.get(String(fumble_ids[0]), "the odd bad night"))
+		bits.append(Loc.t("and %s, which the trade also notices")
+			% Loc.t(String(Skills.FUMBLES.get(String(fumble_ids[0]), "the odd bad night"))))
 	if bits.is_empty():
-		return "mostly on the money, which is one way to do it"
+		return Loc.t("mostly on the money, which is one way to do it")
 	return ", ".join(PackedStringArray(bits))
 
 func rank_tick() -> void:
@@ -5772,7 +5780,7 @@ func rank_tick() -> void:
 		return
 	rank_seen = now
 	log_event(Loc.t("log.promoted")
-		% [now.to_lower(), rank_citation()])
+		% [Loc.t(now).to_lower(), rank_citation()])
 	Sfx.play("good")
 
 func next_rank() -> Array:
@@ -5931,12 +5939,12 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 				if server_end != null:
 					patches.append("%s %s  ⇄  %s %s" % [server_end.dev.name, server_end.name,
 						switch_end.dev.name, switch_end.name])
-			base["proof"] = ["%s is physically installed with %d occupied device slots." % [rack.name,
-				rack.slots.filter(func(d): return d != null).size()], "Two seated access patches: %s." % ",  ".join(PackedStringArray(patches.slice(0, 2)))]
-			base["concept"] = "Physical layer first"
-			base["practice"] = "Trace and label both ends before configuring a protocol."
-			base["avoided"] = "No logical fix can rescue a server that is not physically patched."
-			base["mastery"] = "Label both ends of a cable run (a note on the port), or fit blanking panels in every unused rack unit."
+			base["proof"] = [Loc.t("%s is physically installed with %d occupied device slots.") % [rack.name,
+				rack.slots.filter(func(d): return d != null).size()], Loc.t("Two seated access patches: %s.") % ",  ".join(PackedStringArray(patches.slice(0, 2)))]
+			base["concept"] = Loc.t("Physical layer first")
+			base["practice"] = Loc.t("Trace and label both ends before configuring a protocol.")
+			base["avoided"] = Loc.t("No logical fix can rescue a server that is not physically patched.")
+			base["mastery"] = Loc.t("Label both ends of a cable run (a note on the port), or fit blanking panels in every unused rack unit.")
 		"first_ping":
 			var left := _iface_with_ip("10.0.0.1")
 			var right := _iface_with_ip("10.0.0.2")
@@ -5944,18 +5952,18 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 				return {}
 			var left_path := _switch_link_for(left.dev)
 			var right_path := _switch_link_for(right.dev)
-			var path := "%s %s (10.0.0.1)  →  switched network  →  %s %s (10.0.0.2)" % [
+			var path := Loc.t("%s %s (10.0.0.1)  →  switched network  →  %s %s (10.0.0.2)") % [
 				left.dev.name, left.name, right.dev.name, right.name]
 			if not left_path.is_empty() and not right_path.is_empty() \
 					and left_path["switch"] == right_path["switch"]:
 				path = "%s %s  →  %s %s / %s  →  %s %s" % [left.dev.name, left.name,
 					left_path["switch"].name, left_path["port"].name, right_path["port"].name,
 					right.dev.name, right.name]
-			base["proof"] = [path, "10.0.0.1 reached 10.0.0.2 on the live /24 without a gateway hop."]
-			base["concept"] = "Same-subnet switching"
+			base["proof"] = [path, Loc.t("10.0.0.1 reached 10.0.0.2 on the live /24 without a gateway hop.")]
+			base["concept"] = Loc.t("Same-subnet switching")
 			base["practice"] = "ping 10.0.0.2"
-			base["avoided"] = "A router was not added where one broadcast domain was enough."
-			base["mastery"] = "Keep both server route tables empty; this path needs no gateway."
+			base["avoided"] = Loc.t("A router was not added where one broadcast domain was enough.")
+			base["mastery"] = Loc.t("Keep both server route tables empty; this path needs no gateway.")
 		"two_tenants":
 			var sw: Net.NDevice = null
 			for dev in all_devices():
@@ -5973,13 +5981,13 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 					vlan10.append("%s%s" % [iface.name, " ⇄ " + peer if peer != "" else ""])
 				elif iface.untagged_vlan == 20:
 					vlan20.append("%s%s" % [iface.name, " ⇄ " + peer if peer != "" else ""])
-			base["proof"] = ["%s keeps VLAN 10 on %s." % [sw.name, ", ".join(PackedStringArray(vlan10))],
-				"%s keeps VLAN 20 on %s; the former ping is now correctly blocked." % [sw.name,
+			base["proof"] = [Loc.t("%s keeps VLAN 10 on %s.") % [sw.name, ", ".join(PackedStringArray(vlan10))],
+				Loc.t("%s keeps VLAN 20 on %s; the former ping is now correctly blocked.") % [sw.name,
 					", ".join(PackedStringArray(vlan20))]]
-			base["concept"] = "Separate broadcast domains"
+			base["concept"] = Loc.t("Separate broadcast domains")
 			base["practice"] = "/interface bridge vlan print" if String(MODELS[sw.model].get("os", "")) == "ros" else "show vlan"
-			base["avoided"] = "Sharing an IPv4 prefix did not punch through the VLAN boundary."
-			base["mastery"] = "Add 10.0.0.3 to VLAN 10 while keeping VLAN 20 isolated."
+			base["avoided"] = Loc.t("Sharing an IPv4 prefix did not punch through the VLAN boundary.")
+			base["mastery"] = Loc.t("Add 10.0.0.3 to VLAN 10 while keeping VLAN 20 isolated.")
 		"stretch_vlans":
 			var trunk: Net.Link = null
 			for link: Net.Link in links:
@@ -5993,13 +6001,13 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 				commands.append("%s: %s" % [trunk_dev.name,
 					"/interface bridge port print" if String(MODELS[trunk_dev.model].get("os", "")) == "ros"
 					else "show interfaces trunk"])
-			base["proof"] = ["Tagged path: %s %s  ⇄  %s %s; both ends are trunks." % [trunk.a.dev.name,
+			base["proof"] = [Loc.t("Tagged path: %s %s  ⇄  %s %s; both ends are trunks.") % [trunk.a.dev.name,
 				trunk.a.name, trunk.b.dev.name, trunk.b.name],
-				"10.0.0.3 reaches 10.0.0.1 across that link while 10.0.0.2 remains isolated."]
-			base["concept"] = "802.1Q trunks carry several VLANs"
+				Loc.t("10.0.0.3 reaches 10.0.0.1 across that link while 10.0.0.2 remains isolated.")]
+			base["concept"] = Loc.t("802.1Q trunks carry several VLANs")
 			base["practice"] = "  ·  ".join(PackedStringArray(commands))
-			base["avoided"] = "Both trunk ends agree; a one-sided trunk would silently drop tagged traffic."
-			base["mastery"] = "Prune every inter-switch trunk to VLANs 10 and 20 only."
+			base["avoided"] = Loc.t("Both trunk ends agree; a one-sided trunk would silently drop tagged traffic.")
+			base["mastery"] = Loc.t("Prune every inter-switch trunk to VLANs 10 and 20 only.")
 		"redundant_core":
 			var pair_links := _parallel_switch_group()
 			if pair_links.size() < 2:
@@ -6013,12 +6021,12 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 				elif Sim.stp_blocked(link.b):
 					blocked = "%s %s" % [link.b.dev.name, link.b.name]
 			var observe_dev: Net.NDevice = pair_links[0].a.dev
-			base["proof"] = ["Parallel paths: %s." % "  /  ".join(PackedStringArray(paths)),
-				"Spanning tree placed %s in discarding state; Alfa still has one forwarding path." % blocked]
-			base["concept"] = "A loop-free spare path"
+			base["proof"] = [Loc.t("Parallel paths: %s.") % "  /  ".join(PackedStringArray(paths)),
+				Loc.t("Spanning tree placed %s in discarding state; Alfa still has one forwarding path.") % blocked]
+			base["concept"] = Loc.t("A loop-free spare path")
 			base["practice"] = "/interface bridge port print" if String(MODELS[observe_dev.model].get("os", "")) == "ros" else "show spanning-tree"
-			base["avoided"] = "The second cable did not create a broadcast storm."
-			base["mastery"] = "Disable the forwarding member and prove Alfa still crosses the spare."
+			base["avoided"] = Loc.t("The second cable did not create a broadcast storm.")
+			base["mastery"] = Loc.t("Disable the forwarding member and prove Alfa still crosses the spare.")
 		"two_offices":
 			var office_a := _iface_with_ip("192.168.1.10")
 			var office_b := _iface_with_ip("192.168.2.10")
@@ -6028,14 +6036,14 @@ func _opening_contract_debrief(c: Dictionary) -> Dictionary:
 					or gw_a.dev != gw_b.dev:
 				return {}
 			var router := gw_a.dev
-			base["proof"] = ["%s %s (192.168.1.10)  →  gateway %s %s (192.168.1.1)." % [
+			base["proof"] = [Loc.t("%s %s (192.168.1.10)  →  gateway %s %s (192.168.1.1).") % [
 				office_a.dev.name, office_a.name, router.name, gw_a.name],
-				"%s routes into %s (192.168.2.1)  →  %s %s (192.168.2.10); replies return through the same router." % [
+				Loc.t("%s routes into %s (192.168.2.1)  →  %s %s (192.168.2.10); replies return through the same router.") % [
 					router.name, gw_b.name, office_b.dev.name, office_b.name]]
-			base["concept"] = "A router joins different IP subnets"
+			base["concept"] = Loc.t("A router joins different IP subnets")
 			base["practice"] = "/tool traceroute 192.168.2.10" if String(MODELS[router.model].get("os", "")) == "ros" else "traceroute 192.168.2.10"
-			base["avoided"] = "The hosts do not pretend remote addresses are on their local wire."
-			base["mastery"] = "Save the working configuration on %s." % router.name
+			base["avoided"] = Loc.t("The hosts do not pretend remote addresses are on their local wire.")
+			base["mastery"] = Loc.t("Save the working configuration on %s.") % router.name
 		_:
 			return _later_contract_debrief(c, base)
 	return base
@@ -6055,14 +6063,14 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 						neighbour = String(nb.get("ip", ""))
 			if speaker == null:
 				return {}
-			base["proof"] = ["%s holds an established eBGP session with %s." % [speaker.name,
+			base["proof"] = [Loc.t("%s holds an established eBGP session with %s.") % [speaker.name,
 				neighbour],
-				"Its table carries %d announced prefix(es), and a default arrives from upstream."
+				Loc.t("Its table carries %d announced prefix(es), and a default arrives from upstream.")
 					% speaker.bgp.get("networks", []).size()]
-			base["concept"] = "Somebody else's network, on purpose"
+			base["concept"] = Loc.t("Somebody else's network, on purpose")
 			base["practice"] = _dialect_cmd(speaker, "/routing bgp session print", "show ip bgp summary")
-			base["avoided"] = "The default route is learned, not invented, so it disappears when the session does."
-			base["mastery"] = "Keep the session up while announcing your own prefix."
+			base["avoided"] = Loc.t("The default route is learned, not invented, so it disappears when the session does.")
+			base["mastery"] = Loc.t("Keep the session up while announcing your own prefix.")
 		"hide_the_internals":
 			var outside: Net.Iface = null
 			for d2: Net.NDevice in all_devices():
@@ -6071,14 +6079,14 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 						outside = i
 			if outside == null:
 				return {}
-			base["proof"] = ["%s %s is the outside interface; private sources leave as %s." % [
+			base["proof"] = [Loc.t("%s %s is the outside interface; private sources leave as %s.") % [
 				outside.dev.name, outside.name,
-				outside.ips[0] if not outside.ips.is_empty() else "its own address"],
-				"Return traffic is matched back to the machine that sent it, which is why one address serves many."]
-			base["concept"] = "Source NAT, and the state it keeps"
+				outside.ips[0] if not outside.ips.is_empty() else Loc.t("its own address")],
+				Loc.t("Return traffic is matched back to the machine that sent it, which is why one address serves many.")]
+			base["concept"] = Loc.t("Source NAT, and the state it keeps")
 			base["practice"] = _dialect_cmd(outside.dev, "/ip firewall nat print", "show ip nat translations")
-			base["avoided"] = "Nothing inside had to be renumbered to reach the internet."
-			base["mastery"] = "Reach the internet from two machines behind the same address."
+			base["avoided"] = Loc.t("Nothing inside had to be renumbered to reach the internet.")
+			base["mastery"] = Loc.t("Reach the internet from two machines behind the same address.")
 		"dynamic_routing":
 			var ospf_devs: Array = []
 			for d3: Net.NDevice in all_devices():
@@ -6086,13 +6094,13 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 					ospf_devs.append(d3.name)
 			if ospf_devs.size() < 2:
 				return {}
-			base["proof"] = ["%s are running OSPF and have formed an adjacency." % ", ".join(
+			base["proof"] = [Loc.t("%s are running OSPF and have formed an adjacency.") % ", ".join(
 					PackedStringArray(ospf_devs.slice(0, 3))),
-				"Routes appear and disappear on their own, which is the entire difference from static."]
-			base["concept"] = "Routers telling each other what they know"
+				Loc.t("Routes appear and disappear on their own, which is the entire difference from static.")]
+			base["concept"] = Loc.t("Routers telling each other what they know")
 			base["practice"] = "show ip ospf neighbor"
-			base["avoided"] = "Nobody has to remember to add a static route when the topology changes."
-			base["mastery"] = "Break one path and watch the table reconverge without you."
+			base["avoided"] = Loc.t("Nobody has to remember to add a static route when the topology changes.")
+			base["mastery"] = Loc.t("Break one path and watch the table reconverge without you.")
 		"no_spof":
 			var vip := ""
 			var members: Array = []
@@ -6100,17 +6108,17 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 				for i2: Net.Iface in d4.ifaces:
 					if String(i2.vrrp.get("vip", "")) != "":
 						vip = String(i2.vrrp["vip"])
-						members.append("%s %s (priority %d)" % [d4.name, i2.name,
+						members.append(Loc.t("%s %s (priority %d)") % [d4.name, i2.name,
 							int(i2.vrrp.get("priority", 100))])
 			if members.size() < 2:
 				return {}
-			base["proof"] = ["Virtual address %s is served by %s." % [vip,
+			base["proof"] = [Loc.t("Virtual address %s is served by %s.") % [vip,
 					" and ".join(PackedStringArray(members))],
-				"The hosts point at one gateway address that outlives either router."]
-			base["concept"] = "A gateway that is not a single box"
+				Loc.t("The hosts point at one gateway address that outlives either router.")]
+			base["concept"] = Loc.t("A gateway that is not a single box")
 			base["practice"] = "show vrrp"
-			base["avoided"] = "Nothing had to be reconfigured on the hosts when the master changed."
-			base["mastery"] = "Take the master away and keep the hosts online."
+			base["avoided"] = Loc.t("Nothing had to be reconfigured on the hosts when the master changed.")
+			base["mastery"] = Loc.t("Take the master away and keep the hosts online.")
 		"double_the_pipe":
 			var bundle: Array = []
 			for l: Net.Link in links:
@@ -6118,36 +6126,36 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 					bundle.append("%s %s ⇄ %s %s" % [l.a.dev.name, l.a.name, l.b.dev.name, l.b.name])
 			if bundle.size() < 2:
 				return {}
-			base["proof"] = ["One logical link over %d members: %s." % [bundle.size(),
+			base["proof"] = [Loc.t("One logical link over %d members: %s.") % [bundle.size(),
 					"  /  ".join(PackedStringArray(bundle.slice(0, 3)))],
-				"Capacity is the sum of the live members, and losing one is a slowdown rather than an outage."]
-			base["concept"] = "Bundling links instead of blocking them"
+				Loc.t("Capacity is the sum of the live members, and losing one is a slowdown rather than an outage.")]
+			base["concept"] = Loc.t("Bundling links instead of blocking them")
 			base["practice"] = "show port-channel summary"
-			base["avoided"] = "Spanning tree did not throw the second cable away."
-			base["mastery"] = "Pull one member and keep the traffic flowing."
+			base["avoided"] = Loc.t("Spanning tree did not throw the second cable away.")
+			base["mastery"] = Loc.t("Pull one member and keep the traffic flowing.")
 		"two_sites":
 			if circuits.is_empty() or site_count() < 2:
 				return {}
 			var circuit: Dictionary = circuits[0]
-			base["proof"] = ["A %d Mbps circuit from %s joins %s and %s." % [
-					int(circuit.get("mbps", 0)), circuit.get("carrier", "a carrier"),
+			base["proof"] = [Loc.t("A %d Mbps circuit from %s joins %s and %s.") % [
+					int(circuit.get("mbps", 0)), circuit.get("carrier", Loc.t("a carrier")),
 					site_name(int(circuit.get("a", 0))), site_name(int(circuit.get("b", 1)))],
-				"The two floors are one network, and the circuit is billed whether you use it or not."]
-			base["concept"] = "Somebody else's fibre, rented by the cycle"
-			base["practice"] = "traceroute across the circuit and watch the latency"
-			base["avoided"] = "Neither site pretends the other is on its own wire."
-			base["mastery"] = "Keep both sites delivering while one carrier is down."
+				Loc.t("The two floors are one network, and the circuit is billed whether you use it or not.")]
+			base["concept"] = Loc.t("Somebody else's fibre, rented by the cycle")
+			base["practice"] = Loc.t("traceroute across the circuit and watch the latency")
+			base["avoided"] = Loc.t("Neither site pretends the other is on its own wire.")
+			base["mastery"] = Loc.t("Keep both sites delivering while one carrier is down.")
 		"dual_stack":
 			var v6 := _iface_with_ip("2001:db8:70::10")
 			if v6 == null:
 				return {}
-			base["proof"] = ["%s %s holds 2001:db8:70::10 alongside its IPv4 address." % [
+			base["proof"] = [Loc.t("%s %s holds 2001:db8:70::10 alongside its IPv4 address.") % [
 					v6.dev.name, v6.name],
-				"Neighbour Discovery does the work ARP used to, on the same wire, at the same time."]
-			base["concept"] = "Two protocols, one network"
+				Loc.t("Neighbour Discovery does the work ARP used to, on the same wire, at the same time.")]
+			base["concept"] = Loc.t("Two protocols, one network")
 			base["practice"] = "show ipv6 neighbors"
-			base["avoided"] = "Nothing had to be turned off to add the second family."
-			base["mastery"] = "Reach the far host over IPv6 with the IPv4 path shut."
+			base["avoided"] = Loc.t("Nothing had to be turned off to add the second family.")
+			base["mastery"] = Loc.t("Reach the far host over IPv6 with the IPv4 path shut.")
 		"v6_only_tenant":
 			var translator: Net.NDevice = null
 			for d5: Net.NDevice in all_devices():
@@ -6156,13 +6164,13 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 			if translator == null:
 				return {}
 			var n64 := Sim.nat64_of(translator)
-			base["proof"] = ["%s translates %s into IPv4 from the pool %s." % [translator.name,
+			base["proof"] = [Loc.t("%s translates %s into IPv4 from the pool %s.") % [translator.name,
 					n64.get("prefix", ""), n64.get("pool", "")],
-				"The tenant never received an IPv4 address, and the legacy service never learned IPv6."]
-			base["concept"] = "Naming and translation are two separate halves"
+				Loc.t("The tenant never received an IPv4 address, and the legacy service never learned IPv6.")]
+			base["concept"] = Loc.t("Naming and translation are two separate halves")
 			base["practice"] = "show nat64"
-			base["avoided"] = "No dual-stack was forced on either end to make them talk."
-			base["mastery"] = "Keep native IPv6 traffic out of the translator entirely."
+			base["avoided"] = Loc.t("No dual-stack was forced on either end to make them talk.")
+			base["mastery"] = Loc.t("Keep native IPv6 traffic out of the translator entirely.")
 		"overlay_tenant":
 			var vteps: Array = []
 			for d6: Net.NDevice in all_devices():
@@ -6174,13 +6182,13 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 			var vni := 0
 			for vlan: int in first.vtep.get("map", {}):
 				vni = int(first.vtep["map"][vlan])
-			base["proof"] = ["%s and %s carry VNI %d over a routed underlay." % [vteps[0].name,
+			base["proof"] = [Loc.t("%s and %s carry VNI %d over a routed underlay.") % [vteps[0].name,
 					vteps[1].name, vni],
-				"The tenant's segment crosses a network that has no idea it is carrying layer 2."]
-			base["concept"] = "A segment that does not need a cable between the switches"
+				Loc.t("The tenant's segment crosses a network that has no idea it is carrying layer 2.")]
+			base["concept"] = Loc.t("A segment that does not need a cable between the switches")
 			base["practice"] = "show vxlan"
-			base["avoided"] = "Nobody had to stretch a VLAN across the fabric to do it."
-			base["mastery"] = "Let the control plane advertise instead of flooding."
+			base["avoided"] = Loc.t("Nobody had to stretch a VLAN across the fabric to do it.")
+			base["mastery"] = Loc.t("Let the control plane advertise instead of flooding.")
 		"big_client":
 			var fw: Net.NDevice = null
 			for d7: Net.NDevice in all_devices():
@@ -6188,13 +6196,13 @@ func _later_contract_debrief(c: Dictionary, base: Dictionary) -> Dictionary:
 					fw = d7
 			if fw == null:
 				return {}
-			base["proof"] = ["%s enforces %d rule(s) in front of the customer segment." % [fw.name,
+			base["proof"] = [Loc.t("%s enforces %d rule(s) in front of the customer segment.") % [fw.name,
 					fw.acls.size()],
-				"Everything they audited (their VLAN, their address, the rule, the routing, the managed switch) is live at once."]
-			base["concept"] = "An estate, rather than a collection of devices"
+				Loc.t("Everything they audited (their VLAN, their address, the rule, the routing, the managed switch) is live at once.")]
+			base["concept"] = Loc.t("An estate, rather than a collection of devices")
 			base["practice"] = "show ip access-lists"
-			base["avoided"] = "No single requirement was met by breaking another one."
-			base["mastery"] = "Keep every one of their requirements true for a full quarter."
+			base["avoided"] = Loc.t("No single requirement was met by breaking another one.")
+			base["mastery"] = Loc.t("Keep every one of their requirements true for a full quarter.")
 		_:
 			return {}
 	return base
@@ -6417,20 +6425,20 @@ func arrival_note() -> void:
 		return
 	var seed_key := absi((company_name + DIFFICULTIES[difficulty]["name"]).hash())
 	var landlord: Dictionary = ARRIVAL_LANDLORDS[seed_key % ARRIVAL_LANDLORDS.size()]
-	log_event(Loc.t("log.arrival") % landlord["line"])
-	log_event(Loc.t("log.arrival") % ARRIVAL_LEFTOVERS[(seed_key / 3) % ARRIVAL_LEFTOVERS.size()])
+	log_event(Loc.t("log.arrival") % Loc.t(String(landlord["line"])))
+	log_event(Loc.t("log.arrival") % Loc.t(ARRIVAL_LEFTOVERS[(seed_key / 3) % ARRIVAL_LEFTOVERS.size()]))
 	# one line that is true only for this run
 	if identity != "":
 		log_event(Loc.t("log.arrival_shop")
-			% IDENTITIES[identity]["label"].to_lower())
+			% Loc.t(String(IDENTITIES[identity]["label"])).to_lower())
 	elif not Legacy.selected.is_empty() or not Legacy.epitaph.is_empty():
 		log_event(Loc.t("log.arrival_ran")
-			% [Legacy.epitaph.get("company", "The last company"),
+			% [Legacy.epitaph.get("company", Loc.t("The last company")),
 				int(Legacy.epitaph.get("cycles", 0))])
 	else:
 		log_event(Loc.t("log.arrival_footing")
-			% [company_name, String(DIFFICULTIES[difficulty]["name"]).to_lower(),
-				DIFFICULTIES[difficulty]["blurb"]])
+			% [company_name, Loc.t(String(DIFFICULTIES[difficulty]["name"])).to_lower(),
+				Loc.t(String(DIFFICULTIES[difficulty]["blurb"]))])
 	log_event(Loc.t("log.arrival_first_job"))
 
 func respond_offer(offer: Dictionary, quote: int) -> String:
@@ -6456,7 +6464,7 @@ func respond_offer(offer: Dictionary, quote: int) -> String:
 			if not rival.is_empty():
 				Rivals.remember(rival, -1, "you took %s off them" % offer["customer"])
 				log_event(Loc.t("log.market_heard") % [rival["name"], offer["customer"],
-					Rivals.temper_of(rival)["win"]])
+					Loc.t(String(Rivals.temper_of(rival)["win"]))])
 			_offer_to_deal(offer, quote)
 		"counter":
 			offer["state"] = "counter"
@@ -6653,7 +6661,7 @@ func hire(candidate: Dictionary) -> String:
 	candidates.erase(candidate)
 	candidate["hired_cycle"] = cycle
 	staff.append(candidate)
-	log_event(Loc.t("log.hired") % [candidate["name"], Staff.label(candidate),
+	log_event(Loc.t("log.hired") % [candidate["name"], Loc.t(Staff.label(candidate)),
 		int(candidate["salary"])])
 	money_changed.emit()
 	return ""
@@ -6703,7 +6711,7 @@ func _inherit_neglect(site: int, from_whom: String) -> void:
 		var behind := every + (site * 7 + spread * 11) % maxi(1, every / 2)
 		facility[facility_key(task, site)] = cycle - behind
 		if facility_due_in(task, site) < 0:
-			overdue.append(String(FACILITY_TASKS[task]["label"]).to_lower())
+			overdue.append(Loc.t(String(FACILITY_TASKS[task]["label"])).to_lower())
 	if not overdue.is_empty():
 		log_event(Loc.t("log.acquisition_diary")
 			% [from_whom, from_whom, ", ".join(PackedStringArray(overdue))])
@@ -6791,9 +6799,9 @@ func buy_rival(r: Dictionary) -> String:
 			"healthy": true, "acquired": true, "loyalty": stance})
 	if int(r["deals"]) > 0:
 		log_event(Loc.t("log.acquisition_told") % [r["name"],
-			"They were not being looked after and are prepared to like you."
-			if stance >= 0.65 else ("They are watching to see whether this was good news."
-			if stance >= 0.45 else "They did not ask to be sold, and it shows.")])
+			Loc.t("They were not being looked after and are prepared to like you.")
+			if stance >= 0.65 else (Loc.t("They are watching to see whether this was good news.")
+			if stance >= 0.45 else Loc.t("They did not ask to be sold, and it shows."))])
 	reputation = mini(100, reputation + 5)
 	if Rivals.has_site(r):
 		log_event(Loc.t("log.acquisition_site")
@@ -6844,11 +6852,11 @@ func integration_status(a: Dictionary) -> Array:
 		if config_dirty(td):
 			unsaved += 1
 	return [
-		{"d": "Their network is cabled to yours", "ok": linked},
-		{"d": "No duplicate addresses across the merged estate", "ok": duplicates.is_empty(),
+		{"d": Loc.t("Their network is cabled to yours"), "ok": linked},
+		{"d": Loc.t("No duplicate addresses across the merged estate"), "ok": duplicates.is_empty(),
 			"detail": "" if duplicates.is_empty() else "clashing: " + ", ".join(PackedStringArray(duplicates))},
-		{"d": "Inherited customers reachable from your side", "ok": reachable},
-		{"d": "Their gear has its configuration saved", "ok": unsaved == 0},
+		{"d": Loc.t("Inherited customers reachable from your side"), "ok": reachable},
+		{"d": Loc.t("Their gear has its configuration saved"), "ok": unsaved == 0},
 	]
 
 func try_complete_integration(a: Dictionary) -> bool:
@@ -7288,7 +7296,7 @@ func guided_outage_probe(layer: String) -> String:
 		return ""
 	var iface := guided_outage_iface()
 	if iface == null:
-		return "The original port is no longer installed. Inspect the current service path."
+		return Loc.t("The original port is no longer installed. Inspect the current service path.")
 	match layer:
 		"monitor":
 			_guided_outage_note("cycle %d · monitor confirms %s is unreachable from %s" % [cycle,
@@ -7530,14 +7538,14 @@ func review_incident(inc: Dictionary, cause_idx: int) -> String:
 	inc["supported"] = supported
 	reputation = mini(100, reputation + (3 if supported else 1))
 	log_event(Loc.t("log.post_mortem_cause")
-		% [inc["summary"], inc["cause"], "Customers appreciate the candour."
-			if supported else "Nothing on the floor says that is what happened, and it reads that way."])
+		% [inc["summary"], Loc.t(String(inc["cause"])), Loc.t("Customers appreciate the candour.")
+			if supported else Loc.t("Nothing on the floor says that is what happened, and it reads that way.")])
 	# the one moment the player is thinking about why: answer with the thing
 	# that would actually catch it next time, and name a tool that exists
 	var follow := String(REVIEW_FOLLOW_UP.get(String(inc["cause"]), ""))
 	if follow != "":
 		inc["follow_up"] = follow
-		log_event(Loc.t("log.post_mortem") % follow)
+		log_event(Loc.t("log.post_mortem") % Loc.t(follow))
 	return ""
 
 func report_incident(kind: String, summary: String, by: String, text: String, delay: int) -> void:
@@ -7612,7 +7620,7 @@ func blame_incident(inc: Dictionary, choice: String) -> String:
 					% [who["name"], who["name"]])
 				Staff.say(who, "blamed")
 		_:
-			return "that is not one of the things you can say"
+			return Loc.t("that is not one of the things you can say")
 	inc["blame"] = choice
 	return ""
 
@@ -7832,18 +7840,18 @@ func housekeeping_suggestion() -> String:
 	for r: Net.Rack in racks_on(current_site):
 		for idx in Net.Rack.SLOTS:
 			if r.slots[idx] == null and not bool(r.blanked.get(idx, false)):
-				return "%s has an open gap at U%d. A blanking panel would stop it breathing its own exhaust." \
+				return Loc.t("%s has an open gap at U%d. A blanking panel would stop it breathing its own exhaust.") \
 					% [r.name, idx + 1]
 		for d in r.slots:
 			if d == null:
 				continue
 			if config_dirty(d):
-				return "%s is running a configuration nobody has saved." % d.name
+				return Loc.t("%s is running a configuration nobody has saved.") % d.name
 			for i: Net.Iface in d.ifaces:
 				if link_at(i) != null and not i.name.begins_with("Management") and i.note.is_empty():
-					return "%s %s is patched and unlabelled. Future you will not remember what it is." \
+					return Loc.t("%s %s is patched and unlabelled. Future you will not remember what it is.") \
 						% [d.name, i.name]
-	return "The floor is in order. Walk it, watch the traffic move, and enjoy it."
+	return Loc.t("The floor is in order. Walk it, watch the traffic move, and enjoy it.")
 
 func fault_chance() -> float:
 	## A kept floor genuinely breaks less: cables are seated, gaps are blanked,
@@ -7902,7 +7910,7 @@ func _maybe_upstream_event() -> void:
 	var friends := Rivals.friendly()
 	if not friends.is_empty():
 		log_event(Loc.t("log.heads_up_rang")
-			% [friends[0]["name"], Rivals.temper_of(friends[0])["favour"]])
+			% [friends[0]["name"], Loc.t(String(Rivals.temper_of(friends[0])["favour"]))])
 	log_event(Loc.t("log.upstream_not_yours")
 		% ("%s has a regional failure" % party if kind == "regional"
 			else "%s is down across the region" % party))
@@ -8009,8 +8017,8 @@ func habit_tick() -> void:
 func blame_said(inc: Dictionary) -> String:
 	for say: Array in BLAME_CHOICES:
 		if String(say[0]) == String(inc.get("blame", "")):
-			return String(say[1])
-	return "nothing"
+			return Loc.t(String(say[1]))
+	return Loc.t("nothing")
 
 func device_age(d: Net.NDevice) -> int:
 	return maxi(0, cycle - d.installed_cycle)
@@ -8707,7 +8715,7 @@ func run_runbook(rb: Dictionary, dry_run := true, confirmed := false) -> Diction
 			continue
 		before[d.name] = device_config(d)
 		if dry_run:
-			result["log"].append("%s: would %s" % [d.name, RUNBOOK_ACTIONS[rb["action"]]["label"]])
+			result["log"].append(Loc.t("%s: would %s") % [d.name, Loc.t(String(RUNBOOK_ACTIONS[rb["action"]]["label"]))])
 			continue
 		match String(rb["action"]):
 			"bounce":
@@ -11034,7 +11042,7 @@ func _apply(data: Dictionary) -> void:
 			links.append(restored)
 	while stage < STAGES.size() - 1 and _rack_outside_grid():
 		stage += 1  # grandfather old saves placed on the bigger legacy floor
-		log_event(Loc.t("log.legacy_floor") % STAGES[stage]["name"])
+		log_event(Loc.t("log.legacy_floor") % Loc.t(String(STAGES[stage]["name"])))
 	for gk in grey_faults:  # the fault's visible side effects live on the interface, which was just rebuilt
 		if String(grey_faults[gk].get("kind", "")) == "dirty_optic":
 			var gi := iface_by_key(gk)

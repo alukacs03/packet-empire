@@ -71,7 +71,7 @@ static func recognition_tick() -> void:
 	if e.is_empty() or bool(Game.skill_log.get(id, {}).get("said", false)):
 		return
 	Game.skill_log[id]["said"] = true
-	Game.log_event("LEARNED: %s  (Learn → \"%s\")" % [e["line"], e["pedia"]])
+	Game.log_event("LEARNED: %s  (Learn → \"%s\")" % [Loc.t(String(e["line"])), e["pedia"]])
 
 static func profile() -> Array:
 	## How it would be said about an engineer, including the parts that did not
@@ -82,13 +82,13 @@ static func profile() -> Array:
 		var count := int(seen.get("count", 0))
 		if count == 0:
 			continue
-		lines.append("%s %s (%d time%s, first at cycle %d)"
-			% ["Reliably" if count >= RELIABLE else "Has once", e["claim"],
-				count, "" if count == 1 else "s", int(seen.get("first_cycle", 0))])
+		lines.append(Loc.t("%s %s (%d time%s, first at cycle %d)")
+			% [Loc.t("Reliably") if count >= RELIABLE else Loc.t("Has once"), Loc.t(String(e["claim"])),
+				count, "" if count == 1 else Loc.t("s"), int(seen.get("first_cycle", 0))])
 	for id: String in Game.skill_fumbles:
 		if FUMBLES.has(id):
-			lines.append("Also %s (%d time%s)" % [FUMBLES[id], int(Game.skill_fumbles[id]),
-				"" if int(Game.skill_fumbles[id]) == 1 else "s"])
+			lines.append(Loc.t("Also %s (%d time%s)") % [Loc.t(String(FUMBLES[id])), int(Game.skill_fumbles[id]),
+				"" if int(Game.skill_fumbles[id]) == 1 else Loc.t("s")])
 	if lines.is_empty():
-		lines.append("Nothing demonstrated yet. The profile fills in from work, not from time served.")
+		lines.append(Loc.t("Nothing demonstrated yet. The profile fills in from work, not from time served."))
 	return lines

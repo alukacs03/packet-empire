@@ -502,8 +502,8 @@ func _refresh_money() -> void:
 				else "NEXT  " + next_c
 		else:
 			var nr := Game.next_rank()
-			objective_lbl.text = "★ %s" % Game.rank() if nr.is_empty() \
-				else "★ %s  ·  $%d to %s" % [Game.rank(), int(nr[1]), nr[0]]
+			objective_lbl.text = "★ %s" % Loc.t(Game.rank()) if nr.is_empty() \
+				else "★ %s  ·  $%d to %s" % [Loc.t(Game.rank()), int(nr[1]), Loc.t(String(nr[0]))]
 			var qgoal := Game.next_quarter_goal()
 			if qgoal != "":
 				objective_lbl.text = "TARGET  ·  %s" % qgoal
@@ -518,7 +518,7 @@ func _refresh_money() -> void:
 				down = 1  # the teaching outage is a real customer off the air
 			if not Game.hazards.is_empty():
 				var h: Dictionary = Game.hazards[0]
-				objective_lbl.text = "HAZARD  ·  %s in %s  (click: Facility)" % [Game.HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
+				objective_lbl.text = "HAZARD  ·  %s in %s  (click: Facility)" % [Loc.t(String(Game.HAZARD_KINDS[h["kind"]]["label"])), h["rack"]]
 			else:
 				objective_lbl.text = "OUTAGE  ·  %d customer%s off the air" % [down, "" if down == 1 else "s"]
 		else:
@@ -576,8 +576,8 @@ func _refresh_money() -> void:
 		var nxt: Dictionary = Game.STAGES[Game.stage + 1]
 		expand_btn.text = ("+$%d" if hud_compact else "Expand ($%d)") % int(nxt["price"])
 		expand_btn.disabled = Game.money < int(nxt["price"])
-		expand_btn.tooltip_text = String(nxt["blurb"]) if not expand_btn.disabled \
-			else "%s   You are $%d short." % [nxt["blurb"], int(nxt["price"]) - Game.money]
+		expand_btn.tooltip_text = Loc.t(String(nxt["blurb"])) if not expand_btn.disabled \
+			else Loc.t("%s   You are $%d short.") % [Loc.t(String(nxt["blurb"])), int(nxt["price"]) - Game.money]
 		expand_btn.visible = true
 	else:
 		expand_btn.visible = false
@@ -1277,7 +1277,7 @@ func _pick_new_device(slot: int, at: Control) -> void:
 			line += "   CUSTOMER RESERVE $%d" % delivery_credit
 		var fits := Game.can_install(cur_rack, slot, k)
 		if locked:
-			line += "   🔒 needs %s" % Game.STAGES[int(mod["tier"])]["name"]
+			line += "   🔒 needs %s" % Loc.t(String(Game.STAGES[int(mod["tier"])]["name"]))
 		elif not fits:
 			line += "   ✋ needs %dU here" % height
 		m.add_item(line)
@@ -1287,7 +1287,7 @@ func _pick_new_device(slot: int, at: Control) -> void:
 		var mod2: Dictionary = Game.MODELS[keys[id]]
 		if int(mod2.get("tier", 0)) > Game.stage:
 			hud_toast(Loc.t("toast.needs_stage") % [mod2["label"],
-				Game.STAGES[int(mod2["tier"])]["name"]])
+				Loc.t(String(Game.STAGES[int(mod2["tier"])]["name"]))])
 			return
 		if not Game.can_install(cur_rack, slot, keys[id]):
 			hud_toast(Loc.t("toast.will_not_fit") % [mod2["label"],
@@ -2343,7 +2343,7 @@ func _refresh_ops() -> void:
 			12, MUTED, 780))
 		for qg: Dictionary in Game.quarter_goals:
 			var qp: Dictionary = Game.quarter_goal_progress(qg)
-			var ql := _label("  %s %-58s %-16s $%d" % ["✓" if bool(qp["met"]) else "○", qg["label"], qp["text"], int(qg["reward"])],
+			var ql := _label("  %s %-58s %-16s $%d" % ["✓" if bool(qp["met"]) else "○", Game.quarter_goal_label(qg), qp["text"], int(qg["reward"])],
 				12, Color(0.6, 0.85, 0.7) if bool(qp["met"]) else Color(0.78, 0.84, 0.9))
 			ql.add_theme_font_override("font", mono)
 			ops_box.add_child(ql)
@@ -2632,7 +2632,7 @@ func _refresh_ops() -> void:
 		# to score: the honest next move is a second company, one notch harder
 		var next_diff := mini(Game.difficulty + 1, Game.DIFFICULTIES.size() - 1)
 		var again := Button.new()
-		again.text = Loc.t("btn.second_company") % Game.DIFFICULTIES[next_diff]["name"]
+		again.text = Loc.t("btn.second_company") % Loc.t(String(Game.DIFFICULTIES[next_diff]["name"]))
 		again.tooltip_text = Loc.t("tip.second_company")
 		_accent(again)
 		again.pressed.connect(func() -> void:
@@ -2659,7 +2659,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(head_row)
 		for row: Dictionary in past_runs.slice(0, 6):
 			var rl := _label(Loc.t("body.history_row") % [row.get("company", ""),
-				row.get("identity", ""), row.get("difficulty", ""), Game.FINALE_ENDING_LABELS.get(String(row.get("ending", "")), row.get("ending", "")), int(row.get("cycle", 0)),
+				Loc.t(String(row.get("identity", ""))), Loc.t(String(row.get("difficulty", ""))), Loc.t(String(Game.FINALE_ENDING_LABELS.get(String(row.get("ending", "")), row.get("ending", "")))), int(row.get("cycle", 0)),
 				int(row.get("total", 0))], 12, Color(0.78, 0.84, 0.9))
 			rl.add_theme_font_override("font", mono)
 			ops_box.add_child(rl)
@@ -2684,7 +2684,7 @@ func _refresh_ops() -> void:
 				var irow2 := HBoxContainer.new()
 				irow2.add_theme_constant_override("separation", 8)
 				ops_box.add_child(irow2)
-				var il2 := _wrap("  %s: %s  (%s)" % [ident["label"], ident["blurb"], ident["trade"]],
+				var il2 := _wrap("  %s: %s  (%s)" % [Loc.t(String(ident["label"])), Loc.t(String(ident["blurb"])), Loc.t(String(ident["trade"]))],
 					12, Color(0.72, 0.8, 0.88), 560)
 				il2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				irow2.add_child(il2)
@@ -2700,7 +2700,7 @@ func _refresh_ops() -> void:
 				12, MUTED))
 	else:
 		var mine: Dictionary = Game.IDENTITIES[Game.identity]
-		ops_box.add_child(_wrap("  %s. %s  (%s)" % [mine["label"], mine["blurb"], mine["trade"]],
+		ops_box.add_child(_wrap("  %s. %s  (%s)" % [Loc.t(String(mine["label"])), Loc.t(String(mine["blurb"])), Loc.t(String(mine["trade"]))],
 			12, Color(0.72, 0.84, 0.8), 780))
 		var reb := Button.new()
 		reb.text = Loc.t("btn.rebrand")
@@ -2708,8 +2708,8 @@ func _refresh_ops() -> void:
 			var ids: Array = Game.IDENTITIES.keys()
 			var opts_i: Array = []
 			for id_o: String in ids:
-				opts_i.append("%s: %s" % [Game.IDENTITIES[id_o]["label"],
-					Game.IDENTITIES[id_o]["trade"]])
+				opts_i.append("%s: %s" % [Loc.t(String(Game.IDENTITIES[id_o]["label"])),
+					Loc.t(String(Game.IDENTITIES[id_o]["trade"]))])
 			_menu(reb, opts_i, func(id: int) -> void:
 				var err: String = Game.rebrand(String(ids[id]))
 				if err != "":
@@ -2718,8 +2718,8 @@ func _refresh_ops() -> void:
 				_refresh_money()))
 		ops_box.add_child(reb)
 	ops_box.add_child(_section("WHO IS ON THE FLOOR"))
-	ops_box.add_child(_wrap("  %s. %s%s" % [Game.ACCESS_POLICIES[Game.access_policy]["label"],
-		Game.ACCESS_POLICIES[Game.access_policy]["blurb"],
+	ops_box.add_child(_wrap("  %s. %s%s" % [Loc.t(String(Game.ACCESS_POLICIES[Game.access_policy]["label"])),
+		Loc.t(String(Game.ACCESS_POLICIES[Game.access_policy]["blurb"])),
 		"  Cameras up." if Game.cameras else ""], 12, Color(0.72, 0.8, 0.88), 780))
 	var acc_row := HBoxContainer.new()
 	acc_row.add_theme_constant_override("separation", 8)
@@ -2728,9 +2728,9 @@ func _refresh_ops() -> void:
 		if pol_id == Game.access_policy:
 			continue
 		var polb := Button.new()
-		polb.text = "%s ($%d)" % [Game.ACCESS_POLICIES[pol_id]["label"],
+		polb.text = "%s ($%d)" % [Loc.t(String(Game.ACCESS_POLICIES[pol_id]["label"])),
 			int(Game.ACCESS_POLICIES[pol_id]["cost"])]
-		polb.tooltip_text = String(Game.ACCESS_POLICIES[pol_id]["blurb"])
+		polb.tooltip_text = Loc.t(String(Game.ACCESS_POLICIES[pol_id]["blurb"]))
 		polb.pressed.connect(func() -> void:
 			var err: String = Game.set_access_policy(pol_id)
 			if err != "":
@@ -2770,11 +2770,11 @@ func _refresh_ops() -> void:
 		ops_box.add_child(prow2)
 		var fitted: bool = bool(Game.protection.get(prot_id, {}).get("installed", false))
 		var ready: bool = Game.protection_ready(prot_id)
-		var pl2 := _label("  %-30s %s" % [prot["label"],
+		var pl2 := _label("  %-30s %s" % [Loc.t(String(prot["label"])),
 			("not fitted" if not fitted else ("in date" if ready else "OVERDUE INSPECTION"))], 12,
 			Color(0.72, 0.84, 0.8) if ready else Color(1.0, 0.82, 0.5))
 		pl2.add_theme_font_override("font", mono)
-		pl2.tooltip_text = String(prot["blurb"])
+		pl2.tooltip_text = Loc.t(String(prot["blurb"]))
 		pl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		prow2.add_child(pl2)
 		var pbtn := Button.new()
@@ -2796,7 +2796,7 @@ func _refresh_ops() -> void:
 			% [r_risk.name, int(risk_here * 100.0)], 12, Color(1.0, 0.82, 0.5)))
 	for haz_i: Dictionary in Game.hazards:
 		ops_box.add_child(_label(Loc.t("body.live_hazard") % [
-			Game.HAZARD_KINDS[haz_i["kind"]]["label"], haz_i["rack"], int(haz_i["severity"]),
+			Loc.t(String(Game.HAZARD_KINDS[haz_i["kind"]]["label"])), haz_i["rack"], int(haz_i["severity"]),
 			"" if bool(haz_i["detected"]) else ", undetected"], 12, Prefs.bad_colour()))
 		var what_stops := Loc.t("body.suppression") if String(haz_i["kind"]) in ["smoke", "fire"] \
 			else Loc.t("body.drainage")
@@ -2851,11 +2851,11 @@ func _refresh_ops() -> void:
 		var frow := HBoxContainer.new()
 		frow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(frow)
-		var fl := _label("  %-22s %s" % [task["label"],
+		var fl := _label("  %-22s %s" % [Loc.t(String(task["label"])),
 			("due in %d cycle(s)" % due) if due > 0 else ("OVERDUE by %d" % -due)], 12,
 			Color(0.72, 0.8, 0.88) if due > 0 else Color(1.0, 0.72, 0.45))
 		fl.add_theme_font_override("font", mono)
-		fl.tooltip_text = String(task["blurb"])
+		fl.tooltip_text = Loc.t(String(task["blurb"]))
 		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		frow.add_child(fl)
 		var do_btn := Button.new()
@@ -2959,16 +2959,16 @@ func _refresh_ops() -> void:
 			var spec: Dictionary = Game.decision_by_id(String(dec["id"]))
 			if spec.is_empty():
 				continue
-			ops_box.add_child(_wrap("  %s  ·  %s" % [spec["title"], spec["text"]], 13,
+			ops_box.add_child(_wrap("  %s  ·  %s" % [Loc.t(String(spec["title"])), Loc.t(String(spec["text"]))], 13,
 				Color(1.0, 0.85, 0.5), 780))
 			for fact: String in spec["facts"]:
-				ops_box.add_child(_label("      · %s" % fact, 12, Color(0.72, 0.8, 0.88)))
+				ops_box.add_child(_label("      · %s" % Loc.t(fact), 12, Color(0.72, 0.8, 0.88)))
 			var decrow := HBoxContainer.new()
 			decrow.add_theme_constant_override("separation", 8)
 			ops_box.add_child(decrow)
 			for opt_i in spec["options"].size():
 				var ob := Button.new()
-				ob.text = String(spec["options"][opt_i]["label"])
+				ob.text = Loc.t(String(spec["options"][opt_i]["label"]))
 				ob.pressed.connect(func() -> void:
 					Game.decide(String(dec["id"]), opt_i)
 					_refresh_ops()
@@ -3001,7 +3001,7 @@ func _refresh_ops() -> void:
 		# columns are now real ones, and the label wraps inside its own
 		var cl3_row := HBoxContainer.new()
 		cl3_row.add_theme_constant_override("separation", 12)
-		var cl3_label := _label("  " + String(ctrl["label"]), 12, ctrl_colour)
+		var cl3_label := _label("  " + Loc.t(String(ctrl["label"])), 12, ctrl_colour)
 		cl3_label.custom_minimum_size = Vector2(300, 0)
 		cl3_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		cl3_label.add_theme_font_override("font", mono)
@@ -3015,7 +3015,7 @@ func _refresh_ops() -> void:
 		cl3_why.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cl3_why.add_theme_font_override("font", mono)
 		cl3_row.add_child(cl3_why)
-		cl3_row.tooltip_text = String(ctrl["blurb"])
+		cl3_row.tooltip_text = Loc.t(String(ctrl["blurb"]))
 		ops_box.add_child(cl3_row)
 	if not Game.audit.is_empty():
 		var aud: Dictionary = Game.audit
@@ -3061,12 +3061,12 @@ func _refresh_ops() -> void:
 		var drow := HBoxContainer.new()
 		drow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(drow)
-		var dl := _label("  %-34s %s" % [duty["label"],
+		var dl := _label("  %-34s %s" % [Loc.t(String(duty["label"])),
 			("by hand" if holder == "" else "%s (%d%% as good as you)"
 				% [holder, int(Game.duty_quality(duty_id) * 100.0)])], 12,
 			Color(0.72, 0.8, 0.88) if holder == "" else Color(0.78, 0.86, 0.78))
 		dl.add_theme_font_override("font", mono)
-		dl.tooltip_text = String(duty["blurb"])
+		dl.tooltip_text = Loc.t(String(duty["blurb"]))
 		dl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		drow.add_child(dl)
 		var assign := Button.new()
@@ -3080,7 +3080,7 @@ func _refresh_ops() -> void:
 			var name_opts: Array = []
 			for m_d: Dictionary in Game.staff:
 				names.append(String(m_d["name"]))
-				name_opts.append("%s  (%s, holding %d)" % [m_d["name"], Staff.label(m_d),
+				name_opts.append("%s  (%s, holding %d)" % [m_d["name"], Loc.t(Staff.label(m_d)),
 					Game.duty_load(String(m_d["name"]))])
 			if name_opts.is_empty():
 				_toast("nobody to give it to")
@@ -3180,9 +3180,9 @@ func _refresh_ops() -> void:
 			var tier_opts: Array = []
 			for t_id: String in tiers:
 				var spec: Dictionary = Game.VENDOR_TIERS[t_id]
-				tier_opts.append("%s   $%d   %d-%d cycles   %s" % [spec["label"],
+				tier_opts.append("%s   $%d   %d-%d cycles   %s" % [Loc.t(String(spec["label"])),
 					Game.order_estimate(model_pick, t_id), int(spec["wait"][0]),
-					int(spec["wait"][1]), spec["blurb"]])
+					int(spec["wait"][1]), Loc.t(String(spec["blurb"]))])
 			_menu(order_btn, tier_opts, func(tid: int) -> void:
 				var err: String = Game.order_hardware(model_pick, 1, String(tiers[tid]))
 				if err != "":
@@ -3330,8 +3330,8 @@ func _refresh_ops() -> void:
 		var actions: Array = Game.RUNBOOK_ACTIONS.keys()
 		var act_opts: Array = []
 		for act_id: String in actions:
-			act_opts.append("%s: %s" % [Game.RUNBOOK_ACTIONS[act_id]["label"],
-				Game.RUNBOOK_ACTIONS[act_id]["blurb"]])
+			act_opts.append("%s: %s" % [Loc.t(String(Game.RUNBOOK_ACTIONS[act_id]["label"])),
+				Loc.t(String(Game.RUNBOOK_ACTIONS[act_id]["blurb"]))])
 		_menu(rb_new, act_opts, func(id: int) -> void:
 			var target := cur_dev.name if cur_dev != null else ""
 			Game.make_runbook("%s %s" % [Game.RUNBOOK_ACTIONS[actions[id]]["label"],
@@ -3794,10 +3794,10 @@ func _build_menu() -> void:
 		var opts: Array = []
 		for i in Game.DIFFICULTIES.size():
 			var d: Dictionary = Game.DIFFICULTIES[i]
-			opts.append("%s%s: %s" % ["▸ " if i == Game.difficulty else "   ", d["name"], d["blurb"]])
+			opts.append("%s%s: %s" % ["▸ " if i == Game.difficulty else "   ", Loc.t(String(d["name"])), Loc.t(String(d["blurb"]))])
 		_menu(diff_btn, opts, func(id: int) -> void:
 			Game.apply_difficulty(id, false)
-			hud_toast(Loc.t("toast.difficulty_set") % Game.DIFFICULTIES[id]["name"], true)
+			hud_toast(Loc.t("toast.difficulty_set") % Loc.t(String(Game.DIFFICULTIES[id]["name"])), true)
 			_refresh_money()))
 	v.add_child(diff_btn)
 	v.add_child(_section(Loc.t("menu.section.share")))
@@ -4916,10 +4916,10 @@ func _build_business_tab() -> void:
 		run_pl.custom_minimum_size = Vector2(560, 0)
 		contracts_box.add_child(run_pl)
 	var nr2 := Game.next_rank()
-	contracts_box.add_child(_label(Loc.t("body.rank") % [Game.rank(),
-		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
+	contracts_box.add_child(_label(Loc.t("body.rank") % [Loc.t(Game.rank()),
+		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), Loc.t(String(nr2[0]))]],
 		13, Color(0.85, 0.8, 0.6)))
-	contracts_box.add_child(_wrap(Loc.t("body.company_summary") % [Game.identity_label(), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_wrap(Loc.t("body.company_summary") % [Loc.t(Game.identity_label()), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	contracts_box.add_child(_section("CAREER PROFILE"))
 	for line: String in Skills.profile():
 		contracts_box.add_child(_wrap("  %s" % line, 12, Color(0.72, 0.8, 0.88), 640))
@@ -5071,7 +5071,7 @@ func _build_business_tab() -> void:
 		Game.ACHIEVEMENTS.size()]))
 	for a: Dictionary in Game.ACHIEVEMENTS:
 		var got: bool = a["id"] in Game.achievements
-		contracts_box.add_child(_label("  %s  %-26s %s" % ["★" if got else "☆", a["name"], a["how"]],
+		contracts_box.add_child(_label("  %s  %-26s %s" % ["★" if got else "☆", Loc.t(String(a["name"])), Loc.t(String(a["how"]))],
 			12, Prefs.ok_colour() if got else Color(0.55, 0.58, 0.66)))
 	contracts_box.add_child(_section("HISTORY"))
 	if Game.history.size() < 2:
@@ -5121,13 +5121,13 @@ func _build_business_tab() -> void:
 			Prefs.bad_colour() if int(m.get("morale", 70)) < 30 else Color(0.78, 0.85, 0.8))
 		sl.add_theme_font_override("font", mono)
 		sl.tooltip_text = "%s\nShift: %s\nMarket rate: $%d\nCertifications: %s" % [
-			Staff.ROLES[m["role"]]["blurb"], Staff.SHIFTS[Staff.shift_of(m)]["label"],
+			Loc.t(String(Staff.ROLES[m["role"]]["blurb"])), Staff.SHIFTS[Staff.shift_of(m)]["label"],
 			Staff.market_rate(m),
 			", ".join(PackedStringArray(m.get("certs", []))) if not m.get("certs", []).is_empty()
 			else "none"]
 		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sl)
-		contracts_box.add_child(_wrap(Loc.t("body.staff_detail") % [Staff.label(m),
+		contracts_box.add_child(_wrap(Loc.t("body.staff_detail") % [Loc.t(Staff.label(m)),
 			state, "  (under market)" if under else "", Staff.habit_read(m)], 12,
 			Color(0.6, 0.68, 0.78), 640))
 		var oncall_btn := Button.new()
@@ -5163,10 +5163,10 @@ func _build_business_tab() -> void:
 			for course in Staff.COURSES:
 				var c: Dictionary = Staff.COURSES[course]
 				var off_role: bool = String(c.get("role", "")) != "" and String(c["role"]) != String(m["role"])
-				opts.append("%s   $%d, %d cycles off the floor%s" % [c["label"],
+				opts.append("%s   $%d, %d cycles off the floor%s" % [Loc.t(String(c["label"])),
 					int(c["cost"]) * 3 / 2 if off_role else int(c["cost"]),
 					int(c["cycles"]) + (1 if off_role else 0),
-					"   (written for a %s: dearer and longer)" % Staff.ROLES[c["role"]]["label"] if off_role else ""])
+					"   (written for a %s: dearer and longer)" % Loc.t(String(Staff.ROLES[c["role"]]["label"])) if off_role else ""])
 				keys.append(course)
 			_menu(train_btn, opts, func(id: int) -> void:
 				var err := Staff.start_course(m, String(keys[id]))
@@ -5189,7 +5189,7 @@ func _build_business_tab() -> void:
 	hire_btn.pressed.connect(func() -> void:
 		var opts: Array = []
 		for c: Dictionary in Game.candidates:
-			opts.append("%-18s %-18s skill %d   asking $%d/cycle%s" % [c["name"], Staff.label(c),
+			opts.append("%-18s %-18s skill %d   asking $%d/cycle%s" % [c["name"], Loc.t(Staff.label(c)),
 				int(c["skill"]), int(c["ask"]),
 				"   (they countered: $%d)" % int(c["counter"]) if c.has("counter") else ""])
 		if opts.is_empty():
@@ -5458,16 +5458,16 @@ func _build_market_tab() -> void:
 		var premises: String = ("site %dx%d" % [int(r["site"]["grid"][0]),
 			int(r["site"]["grid"][1])]) if Rivals.has_site(r) else "no premises"
 		var l := _label(Loc.t("body.competitor_row") % [r["name"],
-			strat["label"], int(r["deals"]), Rivals.racks_needed(r), premises, price],
+			Loc.t(String(strat["label"])), int(r["deals"]), Rivals.racks_needed(r), premises, price],
 			13, Color(0.8, 0.78, 0.7))
 		l.tooltip_text = ("%s\n\nBuying %s brings %d rack(s) and %d contract(s). %s" % [
-			strat["blurb"], r["name"], Rivals.racks_needed(r), int(r["deals"]),
+			Loc.t(String(strat["blurb"])), r["name"], Rivals.racks_needed(r), int(r["deals"]),
 			(Loc.t("body.rival_site") % r["site"]["name"])
 			if Rivals.has_site(r)
 			else Loc.t("body.rival_racks_fit")])
 		var temper: Dictionary = Rivals.temper_of(r)
 		var standing := int(r.get("standing", 0))
-		l.tooltip_text += "\n\n%s %s" % [temper["blurb"],
+		l.tooltip_text += "\n\n%s %s" % [Loc.t(String(temper["blurb"])),
 			Loc.t("body.nemesis") % Game.nemesis_reason if String(r["name"]) == Game.nemesis
 			else (Loc.t("body.owe_you") if standing >= 2
 				else (Loc.t("body.friction") if standing <= -1 else ""))]
@@ -5586,7 +5586,7 @@ func _build_log_tab() -> void:
 	for done_inc: Dictionary in Game.incidents:
 		if bool(done_inc.get("reviewed", false)) and String(done_inc.get("follow_up", "")) != "":
 			contracts_box.add_child(_wrap(Loc.t("body.written_up")
-				% [done_inc.get("cause", ""), done_inc["follow_up"]], 12,
+				% [Loc.t(String(done_inc.get("cause", ""))), Loc.t(String(done_inc["follow_up"]))], 12,
 				Color(0.62, 0.82, 0.72), 640))
 	var open_reviews: Array = []
 	for inc: Dictionary in Game.incidents:
@@ -5611,7 +5611,7 @@ func _build_log_tab() -> void:
 			var rbtn := Button.new()
 			rbtn.text = Loc.t("btn.write_up")
 			rbtn.pressed.connect(func() -> void:
-				_menu(rbtn, Game.REVIEW_CAUSES, func(id: int) -> void:
+				_menu(rbtn, Game.REVIEW_CAUSES.map(func(c): return Loc.t(String(c))), func(id: int) -> void:
 					Game.review_incident(inc, id)
 					_refresh_contracts()))
 			irow.add_child(rbtn)
@@ -5624,7 +5624,7 @@ func _build_log_tab() -> void:
 					13, Color(1.0, 0.72, 0.45), 420))
 				for say: Array in Game.BLAME_CHOICES:
 					var sbtn := Button.new()
-					sbtn.text = String(say[1])
+					sbtn.text = Loc.t(String(say[1]))
 					sbtn.pressed.connect(func() -> void:
 						Game.blame_incident(inc, String(say[0]))
 						_refresh_contracts())
@@ -5942,8 +5942,8 @@ func _build_jobs_tab() -> void:
 				call_box.add_child(call_row)
 				for option: Dictionary in Game.CALL_ANSWERS:
 					var ob2 := Button.new()
-					ob2.text = String(option["label"])
-					ob2.tooltip_text = String(option["blurb"])
+					ob2.text = Loc.t(String(option["label"]))
+					ob2.tooltip_text = Loc.t(String(option["blurb"]))
 					ob2.pressed.connect(func() -> void:
 						Game.answer_call(deal, String(option["id"]))
 						_refresh_contracts())
@@ -6378,7 +6378,7 @@ func _refresh_contracts() -> void:
 			if rank_shown > 3:
 				continue  # a few rank chips say what is coming; they do not use up the job window
 			contracts_box.add_child(_chip_row("RANK", Color(0.75, 0.65, 0.4),
-				"%s: %s   comes to a %s; you are a %s" % [Loc.t(String(c["title"])), c["customer"], String(c["rank"]), Game.rank()],
+				"%s: %s   comes to a %s; you are a %s" % [Loc.t(String(c["title"])), c["customer"], Loc.t(String(c["rank"])), Loc.t(Game.rank())],
 				14, Color(0.75, 0.7, 0.55)))
 			continue
 		active_shown += 1

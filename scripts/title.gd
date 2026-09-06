@@ -261,7 +261,7 @@ func show_new_game(is_demo: bool) -> void:
 		for i in Game.DIFFICULTIES.size():
 			var d: Dictionary = Game.DIFFICULTIES[i]
 			var b := Button.new()
-			b.text = "%s: %s" % [d["name"], d["blurb"]]
+			b.text = "%s: %s" % [Loc.t(String(d["name"])), Loc.t(String(d["blurb"]))]
 			b.toggle_mode = true
 			b.button_group = group
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -444,7 +444,7 @@ func _slot_row(i: int) -> Control:
 		v.add_child(_lbl("%s: %s" % [head, Loc.t("title.slots.empty")], 14, MUTED))
 		return pc
 	v.add_child(_lbl("%s: %s" % [head, info["company"]], 15))
-	var stage_name: String = Game.STAGES[mini(int(info["stage"]), Game.STAGES.size() - 1)]["name"]
+	var stage_name: String = Loc.t(String(Game.STAGES[mini(int(info["stage"]), Game.STAGES.size() - 1)]["name"]))
 	v.add_child(_lbl("cycle %d   %s   %s%s" % [int(info["cycle"]), stage_name,
 		_money(int(info["money"])), "   demo" if info.get("demo", false) else ""],
 		12, MUTED))

@@ -98,12 +98,12 @@ static func start_course(member: Dictionary, course: String) -> String:
 	var off_role := String(c.get("role", "")) != "" and String(c["role"]) != String(member["role"])
 	var cost := int(c["cost"]) * 3 / 2 if off_role else int(c["cost"])
 	if not Game.spend_on("training", cost):
-		return "the course costs $%d%s" % [cost, " for a %s" % ROLES[member["role"]]["label"] if off_role else ""]
+		return Loc.t("the course costs $%d%s") % [cost, Loc.t(" for a %s") % Loc.t(String(ROLES[member["role"]]["label"])) if off_role else ""]
 	member["training_left"] = int(c["cycles"]) + (1 if off_role else 0)
 	member["training"] = course
 	member["morale"] = mini(100, int(member.get("morale", 70)) + 10)  # being invested in helps
 	Game.log_event("TRAINING: %s starts %s. Off the floor for %d cycles."
-		% [member["name"], c["label"], int(c["cycles"])])
+		% [member["name"], Loc.t(String(c["label"])), int(c["cycles"])])
 	return ""
 
 static func give_raise(member: Dictionary, amount: int) -> String:
@@ -396,7 +396,7 @@ static func says(member: Dictionary, moment: String) -> String:
 		return ""
 	var lines: Array = VOICE[moment][voice_key(member)]
 	var pick: int = absi((String(member.get("name", "")) + moment).hash()) % lines.size()
-	return "%s: \"%s\"" % [member["name"], lines[pick]]
+	return "%s: \"%s\"" % [member["name"], Loc.t(String(lines[pick]))]
 
 static func say(member: Dictionary, moment: String) -> void:
 	var line := says(member, moment)
