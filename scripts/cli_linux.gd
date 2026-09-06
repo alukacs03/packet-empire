@@ -525,6 +525,9 @@ func _looks_failed(out: String) -> bool:
 			return true
 	return false
 
+## what an _exec_* helper returns when the first word is not one of its arms
+const NOT_MINE := "\u0001not-mine"
+
 func exec(line: String) -> String:
 	# a pipe into grep, head, tail or wc filters the left side's output
 	var pipe := line.find("|")
@@ -564,6 +567,22 @@ func exec(line: String) -> String:
 		if String(t[0]) == "wg" and "genkey" in t:
 			return _wg(["genkey", "|"])
 		return _redirect(t)
+	var res := _exec_shell(t)
+	if res != NOT_MINE:
+		return res
+	res = _exec_net(t)
+	if res != NOT_MINE:
+		return res
+	res = _exec_tools(t)
+	if res != NOT_MINE:
+		return res
+	res = _exec_services(t)
+	if res != NOT_MINE:
+		return res
+	return "-bash: %s: command not found\n" % t[0]
+
+func _exec_shell(t: Array) -> String:
+	## the shell itself: identity, files, paths; NOT_MINE when the word is not one of these
 	match String(t[0]):
 		"help":
 			return _help()
@@ -631,6 +650,11 @@ func exec(line: String) -> String:
 			return ""
 		"cat":
 			return _cat(t.slice(1))
+	return NOT_MINE
+
+func _exec_net(t: Array) -> String:
+	## the network tools: ping, ip, ss, the daemons and name lookups; NOT_MINE when the word is not one of these
+	match String(t[0]):
 		"ping", "ping6":
 			return _ping(t.slice(1), String(t[0]) == "ping6")
 		"traceroute":
@@ -701,6 +725,11 @@ func exec(line: String) -> String:
 				var gip := Sim.resolve(dev, String(t[2]))
 				return ("%-15s %s\n" % [gip, t[2]]) if gip != "" else ""
 			return "Usage: getent [OPTION...] database [key ...]\n"
+	return NOT_MINE
+
+func _exec_tools(t: Array) -> String:
+	## the clients, firewalls, tunnels, FRR and the session; NOT_MINE when the word is not one of these
+	match String(t[0]):
 		"curl":
 			return _curl(t.slice(1))
 		"nc", "ncat":
@@ -796,6 +825,11 @@ func exec(line: String) -> String:
 		"exit", "logout":
 			wants_exit = true
 			return ""
+	return NOT_MINE
+
+func _exec_services(t: Array) -> String:
+	## the game verbs: services this world has, spelled short; NOT_MINE when the word is not one of these
+	match String(t[0]):
 		# ---- game verbs: services this world has, spelled short ----
 		"nameserver":
 			if t.size() != 2 or not String(t[1]).is_valid_ip_address():
@@ -933,7 +967,7 @@ func exec(line: String) -> String:
 					any = true
 					out += "%-8s %-14s %s\n" % [i.name, l.other(i).dev.name, l.other(i).name]
 			return out if any else "(no neighbors detected)\n"
-	return "-bash: %s: command not found\n" % t[0]
+	return NOT_MINE
 
 func _pipe(text: String, tail: Array) -> String:
 	## grep, grep -v, head, tail, wc -l: the filters people put after a command

@@ -4665,6 +4665,32 @@ class EOS extends Session:
 	func _show_run(_r: Array) -> String:
 		## the sections in the order EOS prints them: identity, spanning tree,
 		## VLANs, interfaces, then routing and the services
+		var out := _run_globals()
+		out += _run_stp()
+		out += _run_vlans()
+		var acl_groups: Dictionary = dev.services.get("acl_groups", {})
+		var nat_rules_cfg: Array = dev.services.get("nat", {}).get("rules", [])
+		var ordered: Array = dev.ifaces.filter(func(i): return i.name != "lo")
+		ordered.sort_custom(func(a, b): return _if_rank(a.name) < _if_rank(b.name) if _if_rank(a.name) != _if_rank(b.name) else dev.ifaces.find(a) < dev.ifaces.find(b))
+		out += _run_port_channels()
+		var dhcp_on: Array = dev.services.get("dhcp", {}).get("on", [])
+		for i: Net.Iface in ordered:
+			out += _run_interface(i, acl_groups, nat_rules_cfg, dhcp_on)
+		out += _run_vxlan()
+		out += _run_mac_static()
+		out += _run_acl_lists()
+		out += _run_prefix_lists()
+		out += _run_mlag()
+		out += _run_static_routes()
+		out += _run_dhcp_server()
+		out += _run_firewall_nat()
+		out += _run_route_maps()
+		out += _run_bgp()
+		out += _run_ospf()
+		out += "end\n"
+		return out
+
+	func _run_globals() -> String:
 		var out := "! Command: show running-config\n! device: %s (%s, PacketOS EOS 0.3)\n!\nno aaa root\n!\n" % [
 			dev.name, Game.MODELS[dev.model]["label"]]
 		for user in dev.services.get("users", {}):
@@ -4698,6 +4724,10 @@ class EOS extends Session:
 			if dev.services.has("errdisable_interval"):
 				out += "errdisable recovery interval %d\n" % int(dev.services["errdisable_interval"])
 			out += "!\n"
+		return out
+
+	func _run_stp() -> String:
+		var out := ""
 		if dev.type == "switch":
 			out += "spanning-tree mode %s\n!\n" % ("mstp" if dev.stp_mode == "mst" else "rstp")
 			if dev.stp_priority != 32768:
@@ -4711,6 +4741,10 @@ class EOS extends Session:
 				for inst in dev.mst_instances:
 					out += "   instance %s vlan %s\n" % [inst, ",".join(PackedStringArray(dev.mst_instances[inst].map(func(v): return str(v))))]
 				out += "!\n"
+		return out
+
+	func _run_vlans() -> String:
+		var out := ""
 		var vids := dev.vlans.keys()
 		vids.sort()
 		for vid in vids:
@@ -4722,35 +4756,10 @@ class EOS extends Session:
 			out += "!\n"
 		for vrf_name in dev.vrfs:
 			out += "vrf instance %s\n!\n" % vrf_name
-		var plists: Dictionary = dev.services.get("prefix_lists", {})
-		var rmaps_text := ""
-		for rm_name in dev.services.get("route_maps", {}):
-			for seq in dev.services["route_maps"][rm_name]:
-				var e: Dictionary = dev.services["route_maps"][rm_name][seq]
-				rmaps_text += "route-map %s %s %s\n" % [rm_name, e.get("action", "permit"), seq]
-				if e.has("prefix_list"):
-					rmaps_text += "   match ip address prefix-list %s\n" % e["prefix_list"]
-				if e.has("local_pref"):
-					rmaps_text += "   set local-preference %d\n" % int(e["local_pref"])
-				if e.has("prepend"):
-					rmaps_text += "   set as-path prepend %s\n" % " ".join(PackedStringArray(_asn_repeat(int(e["prepend"]))))
-				rmaps_text += "!\n"
-		var acl_names: Array = []
-		for rule in dev.acls:
-			var nm := String(rule.get("list", ""))
-			if nm != "" and nm not in acl_names:
-				acl_names.append(nm)
-		var acl_text := ""
-		for nm in acl_names:
-			acl_text += "ip access-list %s\n" % nm
-			for rule in dev.acls:
-				if String(rule.get("list", "")) == nm:
-					acl_text += "   %d %s\n" % [int(rule.get("seq", 0)), CLI.acl_config_text(rule)]
-			acl_text += "!\n"
-		var acl_groups: Dictionary = dev.services.get("acl_groups", {})
-		var nat_rules_cfg: Array = dev.services.get("nat", {}).get("rules", [])
-		var ordered: Array = dev.ifaces.filter(func(i): return i.name != "lo")
-		ordered.sort_custom(func(a, b): return _if_rank(a.name) < _if_rank(b.name) if _if_rank(a.name) != _if_rank(b.name) else dev.ifaces.find(a) < dev.ifaces.find(b))
+		return out
+
+	func _run_port_channels() -> String:
+		var out := ""
 		# the Port-Channels first, as EOS prints them: the settings a member
 		# carries are the channel's, so they are printed once, on the channel
 		var groups: Array = []
@@ -4774,120 +4783,126 @@ class EOS extends Session:
 			if first.mlag > 0:
 				out += "   mlag %d\n" % first.mlag
 			out += "!\n"
-		for i: Net.Iface in ordered:
-			out += "interface %s\n" % i.name
-			if i.lag > 0:
-				# a member: its switching lives on the channel; its own description stays
-				var chan_first: Net.Iface = dev.ifaces.filter(func(x): return x.lag == i.lag)[0]
-				var chan_desc := String(chan_first.note.get("text", "")) if chan_first.note is Dictionary else ""
-				if i.note is Dictionary and String(i.note.get("text", "")) != "" and String(i.note["text"]) != chan_desc:
-					out += "   description %s\n" % i.note["text"]
-				if i.admin_down:
-					out += "   shutdown\n"
-				if i.mtu != 1500:
-					out += "   mtu %d\n" % i.mtu
-				out += "   channel-group %d mode %s\n!\n" % [i.lag, i.lag_mode]
-				continue
-			if i.note is Dictionary and String(i.note.get("text", "")) != "":
+		return out
+
+	func _run_interface(i: Net.Iface, acl_groups: Dictionary, nat_rules_cfg: Array, dhcp_on: Array) -> String:
+		var out := ""
+		out += "interface %s\n" % i.name
+		if i.lag > 0:
+			# a member: its switching lives on the channel; its own description stays
+			var chan_first: Net.Iface = dev.ifaces.filter(func(x): return x.lag == i.lag)[0]
+			var chan_desc := String(chan_first.note.get("text", "")) if chan_first.note is Dictionary else ""
+			if i.note is Dictionary and String(i.note.get("text", "")) != "" and String(i.note["text"]) != chan_desc:
 				out += "   description %s\n" % i.note["text"]
 			if i.admin_down:
 				out += "   shutdown\n"
 			if i.mtu != 1500:
 				out += "   mtu %d\n" % i.mtu
-			if i.parent != "":
-				out += "   encapsulation dot1q vlan %d\n" % i.dot1q
-			if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") \
-					and not i.name.begins_with("Vlan") and not i.name.begins_with("Loopback"):
-				out += "   no switchport\n"  # first: the address below depends on it
-			if i.mode == "trunk":
-				if i.untagged_vlan != 1:
-					out += "   switchport trunk native vlan %d\n" % i.untagged_vlan
-				if not i.tagged_vlans.is_empty():
-					out += "   switchport trunk allowed vlan %s\n" % EOS.vlan_ranges(i.tagged_vlans)
-				out += "   switchport mode trunk\n"
-			elif i.mode == "access" and i.untagged_vlan != 1:
-				out += "   switchport access vlan %d\n" % (i.dot1x_home if i.dot1x_home > 0 else i.untagged_vlan)
-			if i.port_security:
-				out += "   switchport port-security\n"
-				if i.psec_max != 1:
-					out += "   switchport port-security maximum %d\n" % i.psec_max
-				if i.psec_violation != "shutdown":
-					out += "   switchport port-security violation %s\n" % i.psec_violation
-			if i.pvlan == "isolated":
-				out += "   switchport protected\n"
-			if i.qos:
-				out += "   qos priority-queueing\n"
-			if i.bfd:
-				out += "   bfd\n"
-			if i.ra:
-				out += "   ipv6 nd ra\n"
-			if i.lag > 0:
-				out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
-			if i.mlag > 0:
-				out += "   mlag %d\n" % i.mlag
-			if i.vrf != "":
-				out += "   vrf %s\n" % i.vrf
-			for cidr in i.ips:
-				out += "   %s address %s\n" % ["ipv6" if Net.is_v6(cidr) else "ip", cidr]
-			if acl_groups.has(i.name):
-				out += "   ip access-group %s in\n" % acl_groups[i.name]
-			if acl_groups.has(i.name + "|out"):
-				out += "   ip access-group %s out\n" % acl_groups[i.name + "|out"]
-			var eos_nat := false
-			for rule in nat_rules_cfg:
-				if bool(rule.get("eos", false)) and String(rule.get("iface", "")) == i.name:
-					eos_nat = true
-					if String(rule.get("kind", "")) == "overload":
-						out += "   ip nat source dynamic access-list %s overload\n" % rule["list"]
-					elif String(rule.get("kind", "")) == "static":
-						out += "   ip nat source static %s %s\n" % [rule["inside"], rule["outside"]]
-			if i.nat != "" and not eos_nat:
-				out += "   ip nat %s\n" % i.nat
-			var dhcp_on: Array = dev.services.get("dhcp", {}).get("on", [])
-			if i.name in dhcp_on:
-				out += "   dhcp server ipv4\n"
-			if dev.ospf.get("costs", {}).has(i.name):
-				out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
-			if dev.ospf.get("priorities", {}).has(i.name):
-				out += "   ip ospf priority %d\n" % int(dev.ospf["priorities"][i.name])
-			if dev.ospf.get("hello", {}).has(i.name):
-				out += "   ip ospf hello-interval %d\n" % int(dev.ospf["hello"][i.name])
-			if dev.ospf.get("dead", {}).has(i.name):
-				out += "   ip ospf dead-interval %d\n" % int(dev.ospf["dead"][i.name])
-			if dev.ospf.get("net_type", {}).has(i.name):
-				out += "   ip ospf network %s\n" % dev.ospf["net_type"][i.name]
-			if i.name in dev.ospf.get("v6_ifaces", []):
-				out += "   ipv6 ospf 1 area %s\n" % Sim.ospf_area(dev)
-			if i.helper != "":
-				out += "   ip helper-address %s\n" % i.helper
-			if i.tunnel_src != "":
-				out += "   tunnel source %s\n   tunnel destination %s\n" % [i.tunnel_src, i.tunnel_dst]
-			for wp in i.wg_peers:
-				out += "   wireguard peer %s endpoint %s allowed %s\n" % [wp.get("key", ""),
-					wp.get("endpoint", ""), ",".join(PackedStringArray(wp.get("allowed", [])))]
-			if not i.vrrp.is_empty():
-				if int(i.vrrp.get("priority", 100)) != 100:
-					out += "   vrrp %d priority-level %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
-				out += "   vrrp %d ipv4 %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
-				if not bool(i.vrrp.get("preempt", true)):
-					out += "   vrrp %d preempt disabled\n" % int(i.vrrp["group"])
-			if i.portfast:
-				out += "   spanning-tree portfast\n"
-			if i.bpduguard:
-				out += "   spanning-tree bpduguard enable\n"
-			if i.dhcp_trusted:
-				out += "   ip dhcp snooping trust\n"
-			if i.dot1x:
-				out += "   dot1x pae authenticator\n   dot1x port-control auto\n"
-			if i.storm_limit > 0:
-				out += "   storm-control broadcast level %s\n" % (str(i.storm_limit / 10) if i.storm_limit % 10 == 0 else "%.1f" % (i.storm_limit / 10.0))
-			for storm_kind in ["multicast", "unknown-unicast"]:
-				var lvl := int(i.storm_types.get(storm_kind, 0))
-				if lvl > 0:
-					out += "   storm-control %s level %s\n" % [storm_kind, str(lvl / 10) if lvl % 10 == 0 else "%.1f" % (lvl / 10.0)]
-			if i.duplex != "auto":
-				out += "   duplex %s\n" % i.duplex
-			out += "!\n"
+			out += "   channel-group %d mode %s\n!\n" % [i.lag, i.lag_mode]
+			return out
+		if i.note is Dictionary and String(i.note.get("text", "")) != "":
+			out += "   description %s\n" % i.note["text"]
+		if i.admin_down:
+			out += "   shutdown\n"
+		if i.mtu != 1500:
+			out += "   mtu %d\n" % i.mtu
+		if i.parent != "":
+			out += "   encapsulation dot1q vlan %d\n" % i.dot1q
+		if dev.type == "switch" and i.mode == "routed" and not i.name.begins_with("Management") \
+				and not i.name.begins_with("Vlan") and not i.name.begins_with("Loopback"):
+			out += "   no switchport\n"  # first: the address below depends on it
+		if i.mode == "trunk":
+			if i.untagged_vlan != 1:
+				out += "   switchport trunk native vlan %d\n" % i.untagged_vlan
+			if not i.tagged_vlans.is_empty():
+				out += "   switchport trunk allowed vlan %s\n" % EOS.vlan_ranges(i.tagged_vlans)
+			out += "   switchport mode trunk\n"
+		elif i.mode == "access" and i.untagged_vlan != 1:
+			out += "   switchport access vlan %d\n" % (i.dot1x_home if i.dot1x_home > 0 else i.untagged_vlan)
+		if i.port_security:
+			out += "   switchport port-security\n"
+			if i.psec_max != 1:
+				out += "   switchport port-security maximum %d\n" % i.psec_max
+			if i.psec_violation != "shutdown":
+				out += "   switchport port-security violation %s\n" % i.psec_violation
+		if i.pvlan == "isolated":
+			out += "   switchport protected\n"
+		if i.qos:
+			out += "   qos priority-queueing\n"
+		if i.bfd:
+			out += "   bfd\n"
+		if i.ra:
+			out += "   ipv6 nd ra\n"
+		if i.lag > 0:
+			out += "   channel-group %d mode %s\n" % [i.lag, i.lag_mode]
+		if i.mlag > 0:
+			out += "   mlag %d\n" % i.mlag
+		if i.vrf != "":
+			out += "   vrf %s\n" % i.vrf
+		for cidr in i.ips:
+			out += "   %s address %s\n" % ["ipv6" if Net.is_v6(cidr) else "ip", cidr]
+		if acl_groups.has(i.name):
+			out += "   ip access-group %s in\n" % acl_groups[i.name]
+		if acl_groups.has(i.name + "|out"):
+			out += "   ip access-group %s out\n" % acl_groups[i.name + "|out"]
+		var eos_nat := false
+		for rule in nat_rules_cfg:
+			if bool(rule.get("eos", false)) and String(rule.get("iface", "")) == i.name:
+				eos_nat = true
+				if String(rule.get("kind", "")) == "overload":
+					out += "   ip nat source dynamic access-list %s overload\n" % rule["list"]
+				elif String(rule.get("kind", "")) == "static":
+					out += "   ip nat source static %s %s\n" % [rule["inside"], rule["outside"]]
+		if i.nat != "" and not eos_nat:
+			out += "   ip nat %s\n" % i.nat
+		if i.name in dhcp_on:
+			out += "   dhcp server ipv4\n"
+		if dev.ospf.get("costs", {}).has(i.name):
+			out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
+		if dev.ospf.get("priorities", {}).has(i.name):
+			out += "   ip ospf priority %d\n" % int(dev.ospf["priorities"][i.name])
+		if dev.ospf.get("hello", {}).has(i.name):
+			out += "   ip ospf hello-interval %d\n" % int(dev.ospf["hello"][i.name])
+		if dev.ospf.get("dead", {}).has(i.name):
+			out += "   ip ospf dead-interval %d\n" % int(dev.ospf["dead"][i.name])
+		if dev.ospf.get("net_type", {}).has(i.name):
+			out += "   ip ospf network %s\n" % dev.ospf["net_type"][i.name]
+		if i.name in dev.ospf.get("v6_ifaces", []):
+			out += "   ipv6 ospf 1 area %s\n" % Sim.ospf_area(dev)
+		if i.helper != "":
+			out += "   ip helper-address %s\n" % i.helper
+		if i.tunnel_src != "":
+			out += "   tunnel source %s\n   tunnel destination %s\n" % [i.tunnel_src, i.tunnel_dst]
+		for wp in i.wg_peers:
+			out += "   wireguard peer %s endpoint %s allowed %s\n" % [wp.get("key", ""),
+				wp.get("endpoint", ""), ",".join(PackedStringArray(wp.get("allowed", [])))]
+		if not i.vrrp.is_empty():
+			if int(i.vrrp.get("priority", 100)) != 100:
+				out += "   vrrp %d priority-level %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
+			out += "   vrrp %d ipv4 %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
+			if not bool(i.vrrp.get("preempt", true)):
+				out += "   vrrp %d preempt disabled\n" % int(i.vrrp["group"])
+		if i.portfast:
+			out += "   spanning-tree portfast\n"
+		if i.bpduguard:
+			out += "   spanning-tree bpduguard enable\n"
+		if i.dhcp_trusted:
+			out += "   ip dhcp snooping trust\n"
+		if i.dot1x:
+			out += "   dot1x pae authenticator\n   dot1x port-control auto\n"
+		if i.storm_limit > 0:
+			out += "   storm-control broadcast level %s\n" % (str(i.storm_limit / 10) if i.storm_limit % 10 == 0 else "%.1f" % (i.storm_limit / 10.0))
+		for storm_kind in ["multicast", "unknown-unicast"]:
+			var lvl := int(i.storm_types.get(storm_kind, 0))
+			if lvl > 0:
+				out += "   storm-control %s level %s\n" % [storm_kind, str(lvl / 10) if lvl % 10 == 0 else "%.1f" % (lvl / 10.0)]
+		if i.duplex != "auto":
+			out += "   duplex %s\n" % i.duplex
+		out += "!\n"
+		return out
+
+	func _run_vxlan() -> String:
+		var out := ""
 		if not dev.vtep.is_empty() and (dev.vtep.has("src_if") or not dev.vtep.get("map", {}).is_empty()):
 			out += "interface Vxlan1\n"
 			if String(dev.vtep.get("src_if", "")) != "":
@@ -4898,27 +4913,10 @@ class EOS extends Session:
 			if not dev.vtep.get("peers", []).is_empty():
 				out += "   vxlan flood vtep %s\n" % " ".join(PackedStringArray(dev.vtep["peers"]))
 			out += "!\n"
-		var mlag_text := ""
-		if dev.mlag_peer != "" or dev.services.has("mlag"):
-			var mc: Dictionary = dev.services.get("mlag", {})
-			mlag_text += "mlag configuration\n"
-			if String(mc.get("domain", "")) != "":
-				mlag_text += "   domain-id %s\n" % mc["domain"]
-			if String(mc.get("local_if", "")) != "":
-				mlag_text += "   local-interface %s\n" % mc["local_if"]
-			var peer_addr := String(mc.get("peer_addr", ""))
-			if peer_addr == "" and dev.mlag_peer != "":
-				for d in Game.all_devices():
-					if d.name == dev.mlag_peer:
-						peer_addr = CLI.first_ip_of(d)
-			if peer_addr != "" and peer_addr != "0.0.0.0":
-				mlag_text += "   peer-address %s\n" % peer_addr
-			var pl := Sim.mlag_peerlink(dev)
-			if String(mc.get("peer_link", "")) != "":
-				mlag_text += "   peer-link %s\n" % mc["peer_link"]
-			elif pl != null:
-				mlag_text += "   peer-link %s\n" % ("Port-Channel%d" % pl.lag if pl.lag > 0 else pl.name)
-			mlag_text += "!\n"
+		return out
+
+	func _run_mac_static() -> String:
+		var out := ""
 		var static_vids := dev.mac_static.keys()
 		static_vids.sort()
 		for svid in static_vids:
@@ -4926,7 +4924,26 @@ class EOS extends Session:
 				out += "mac address-table static %s vlan %d interface %s\n" % [Net.mac_dotted(smac), svid, dev.mac_static[svid][smac]]
 		if not static_vids.is_empty():
 			out += "!\n"
-		out += acl_text
+		return out
+
+	func _run_acl_lists() -> String:
+		var acl_names: Array = []
+		for rule in dev.acls:
+			var nm := String(rule.get("list", ""))
+			if nm != "" and nm not in acl_names:
+				acl_names.append(nm)
+		var out := ""
+		for nm in acl_names:
+			out += "ip access-list %s\n" % nm
+			for rule in dev.acls:
+				if String(rule.get("list", "")) == nm:
+					out += "   %d %s\n" % [int(rule.get("seq", 0)), CLI.acl_config_text(rule)]
+			out += "!\n"
+		return out
+
+	func _run_prefix_lists() -> String:
+		var out := ""
+		var plists: Dictionary = dev.services.get("prefix_lists", {})
 		if dev.ip_forwarding:
 			out += "ip routing\n!\n"
 		for pl_name in plists:
@@ -4936,12 +4953,43 @@ class EOS extends Session:
 				out += "   seq %d permit %s\n" % [seq, pfx]
 				seq += 10
 			out += "!\n"
-		out += mlag_text
+		return out
+
+	func _run_mlag() -> String:
+		var out := ""
+		if dev.mlag_peer != "" or dev.services.has("mlag"):
+			var mc: Dictionary = dev.services.get("mlag", {})
+			out += "mlag configuration\n"
+			if String(mc.get("domain", "")) != "":
+				out += "   domain-id %s\n" % mc["domain"]
+			if String(mc.get("local_if", "")) != "":
+				out += "   local-interface %s\n" % mc["local_if"]
+			var peer_addr := String(mc.get("peer_addr", ""))
+			if peer_addr == "" and dev.mlag_peer != "":
+				for d in Game.all_devices():
+					if d.name == dev.mlag_peer:
+						peer_addr = CLI.first_ip_of(d)
+			if peer_addr != "" and peer_addr != "0.0.0.0":
+				out += "   peer-address %s\n" % peer_addr
+			var pl := Sim.mlag_peerlink(dev)
+			if String(mc.get("peer_link", "")) != "":
+				out += "   peer-link %s\n" % mc["peer_link"]
+			elif pl != null:
+				out += "   peer-link %s\n" % ("Port-Channel%d" % pl.lag if pl.lag > 0 else pl.name)
+			out += "!\n"
+		return out
+
+	func _run_static_routes() -> String:
+		var out := ""
 		for r in dev.static_routes:
 			out += "ip route %s%s/%d %s%s\n" % [("vrf %s " % r["vrf"]) if String(r.get("vrf", "")) != "" else "", r["prefix"], int(r["plen"]), r["via"],
 				"" if int(r.get("ad", 1)) == 1 else " %d" % int(r["ad"])]
 		if not dev.static_routes.is_empty():
 			out += "!\n"
+		return out
+
+	func _run_dhcp_server() -> String:
+		var out := ""
 		var pool: Dictionary = dev.services.get("dhcp", {})
 		if not pool.is_empty() and String(pool.get("iface", "")) == "" and String(pool.get("start", "")) != "":
 			# the EOS block, whichever spelling built it
@@ -4958,6 +5006,10 @@ class EOS extends Session:
 			for ex in pool.get("excluded", []):
 				out += "      reserved-address %s\n" % ex
 			out += "!\n"
+		return out
+
+	func _run_firewall_nat() -> String:
+		var out := ""
 		if dev.stateful:
 			out += "firewall stateful\n!\n"
 		for rule in dev.acls:
@@ -4978,7 +5030,25 @@ class EOS extends Session:
 				out += "ip nat inside source list %s interface %s overload\n" % [rule["list"], rule["iface"]]
 			elif String(rule.get("kind", "")) == "static":
 				out += "ip nat inside source static %s %s\n" % [rule["inside"], rule["outside"]]
-		out += rmaps_text
+		return out
+
+	func _run_route_maps() -> String:
+		var out := ""
+		for rm_name in dev.services.get("route_maps", {}):
+			for seq in dev.services["route_maps"][rm_name]:
+				var e: Dictionary = dev.services["route_maps"][rm_name][seq]
+				out += "route-map %s %s %s\n" % [rm_name, e.get("action", "permit"), seq]
+				if e.has("prefix_list"):
+					out += "   match ip address prefix-list %s\n" % e["prefix_list"]
+				if e.has("local_pref"):
+					out += "   set local-preference %d\n" % int(e["local_pref"])
+				if e.has("prepend"):
+					out += "   set as-path prepend %s\n" % " ".join(PackedStringArray(_asn_repeat(int(e["prepend"]))))
+				out += "!\n"
+		return out
+
+	func _run_bgp() -> String:
+		var out := ""
 		if not dev.bgp.is_empty() and dev.type in ["router", "switch"]:
 			out += "router bgp %d\n" % int(dev.bgp["asn"])
 			if String(dev.bgp.get("router_id", "")) != "":
@@ -5008,6 +5078,10 @@ class EOS extends Session:
 				for net in v6_nets:
 					out += "      network %s\n" % net
 			out += "!\n"
+		return out
+
+	func _run_ospf() -> String:
+		var out := ""
 		if not dev.ospf.is_empty() and (not dev.ospf["networks"].is_empty() or not dev.ospf.has("v6_ifaces")):
 			out += "router ospf 1\n"
 			if String(dev.ospf.get("router_id", "")) != "":
@@ -5028,7 +5102,6 @@ class EOS extends Session:
 			if String(dev.ospf.get("router_id", "")) != "":
 				out += "   router-id %s\n" % dev.ospf["router_id"]
 			out += "!\n"
-		out += "end\n"
 		return out
 
 	## What '?' says next to each word, the way EOS explains itself
