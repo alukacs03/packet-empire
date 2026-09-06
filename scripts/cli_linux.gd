@@ -279,8 +279,12 @@ func _ipt_rule_args(rule: Dictionary) -> String:
 
 func _nft(a: Array) -> String:
 	var words: Array = []
+	var handles := false
 	for w in a:
 		var ws := String(w).replace("\\", "")  # the shell's \; arrives as ;
+		if ws in ["-a", "--handle"]:
+			handles = true  # list with the handle of every rule, so one can be deleted by it
+			continue
 		if ws != "":
 			words.append(ws)
 	if words.is_empty():
@@ -289,13 +293,20 @@ func _nft(a: Array) -> String:
 	match verb:
 		"list":
 			if words.size() >= 2 and String(words[1]) == "ruleset":
-				return _nft_ruleset()
+				return _nft_ruleset("", handles)
 			if words.size() >= 4 and String(words[1]) == "table":
-				return _nft_ruleset("%s %s" % [words[2], words[3]])
+				return _nft_ruleset("%s %s" % [words[2], words[3]], handles)
 			return "nft: Error: syntax error, unexpected end of file\n"
 		"flush":
 			if words.size() >= 2 and String(words[1]) == "ruleset":
 				dev.services["lx_fw"] = {"tables": {}}
+				_fw_apply()
+				return ""
+			if words.size() >= 5 and String(words[1]) == "chain":
+				var ftn := "%s %s" % [words[2], words[3]]
+				if not _fw()["tables"].has(ftn) or not _fw()["tables"][ftn]["chains"].has(String(words[4])):
+					return "Error: Could not process rule: No such file or directory\nflush chain %s %s %s\n            ^^^^^^^^^^^^^^^^\n" % [words[2], words[3], words[4]]
+				_fw()["tables"][ftn]["chains"][String(words[4])]["rules"] = []
 				_fw_apply()
 				return ""
 			if words.size() >= 4 and String(words[1]) == "table":
@@ -404,6 +415,22 @@ func _nft(a: Array) -> String:
 					return ""
 			return "Error: syntax error, unexpected %s\n" % words[1]
 		"delete":
+			if words.size() >= 7 and String(words[1]) == "rule" and String(words[5]) == "handle" and String(words[6]).is_valid_int():
+				var dtn := "%s %s" % [words[2], words[3]]
+				var want := int(words[6])
+				var n := 0
+				for tn in _fw()["tables"]:
+					for cn in _fw()["tables"][tn]["chains"]:
+						var rules: Array = _fw()["tables"][tn]["chains"][cn]["rules"]
+						for idx in rules.size():
+							n += 1
+							if n == want:
+								if String(tn) != dtn or String(cn) != String(words[4]):
+									return "Error: Could not process rule: No such file or directory\n"
+								rules.remove_at(idx)
+								_fw_apply()
+								return ""
+				return "Error: Could not process rule: No such file or directory\n"
 			if words.size() >= 4 and String(words[1]) == "table":
 				_fw()["tables"].erase("%s %s" % [words[2], words[3]])
 				_fw_apply()
@@ -417,9 +444,10 @@ func _nft(a: Array) -> String:
 			return "Error: syntax error, unexpected end of file\n"
 	return "nft: Error: syntax error, unexpected %s\n" % verb
 
-func _nft_ruleset(only := "") -> String:
+func _nft_ruleset(only := "", handles := false) -> String:
 	var out := ""
 	var fw := _fw()
+	var handle := 0  # numbered in listing order; the same order delete rule ... handle N walks
 	for tn in fw["tables"]:
 		if only != "" and String(tn) != only:
 			continue
@@ -447,7 +475,8 @@ func _nft_ruleset(only := "") -> String:
 				if rule.has("state"):
 					parts.append("ct state %s" % rule["state"])
 				parts.append(String(rule["action"]))
-				out += "\t\t%s\n" % " ".join(PackedStringArray(parts))
+				handle += 1
+				out += "\t\t%s%s\n" % [" ".join(PackedStringArray(parts)), " # handle %d" % handle if handles else ""]
 			out += "\t}\n"
 		out += "}\n"
 	return out

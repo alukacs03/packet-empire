@@ -11903,6 +11903,11 @@ static func run() -> int:
 	check(t17_l.exec("nft add table inet filter") == "" and t17_l.exec("nft add chain inet filter input { type filter hook input priority 0 \\; }") == ""
 		and t17_l.exec("nft add rule inet filter input iifname \"wg7\" accept") == "" and t17_l.exec("nft list ruleset").contains("wg7"),
 		"linux: an nft rule for an interface that does not exist yet is kept")
+	var t36_handles := t17_l.exec("nft -a list ruleset")
+	check(t36_handles.contains("# handle 1") and t17_l.exec("nft delete rule inet filter input handle 1") == "" and not t17_l.exec("nft list ruleset").contains("wg7"),
+		"linux: nft -a lists handles and delete rule ... handle N removes that rule")
+	check(t17_l.exec("nft add rule inet filter input tcp dport 22 accept") == "" and t17_l.exec("nft flush chain inet filter input") == "" and not t17_l.exec("nft list ruleset").contains("dport 22"),
+		"linux: nft flush chain empties one chain")
 	t17_l.exec("nft flush ruleset")
 	check(t17_l.exec("iptables -A OUTPUT -i eth0 -j DROP").contains("Can't use -i with OUTPUT") and t17_l.exec("iptables -A INPUT -o eth0 -j DROP").contains("Can't use -o with INPUT"),
 		"linux: iptables refuses -i on OUTPUT and -o on INPUT")
