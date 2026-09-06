@@ -49,6 +49,37 @@ static func run() -> void:
 		(translated % [3, "healthy", 1.25, 4]).contains("healthy"),
 		"localisation: pseudo text preserves formatting directives and named placeholders")
 	var f := fixture()
+	var test_link: Net.Link = Game.link_at(f["a"].ifaces[0])
+	SimTests.check(not UIW.TopoMap.link_unavailable(test_link), "map feedback: a working physical link is available")
+	test_link.a.admin_down = true
+	SimTests.check(UIW.TopoMap.link_unavailable(test_link), "map feedback: administrative shutdown cannot show flowing traffic")
+	test_link.a.admin_down = false
+	test_link.b.enabled = false
+	SimTests.check(UIW.TopoMap.link_unavailable(test_link), "map feedback: either disabled endpoint marks the link down")
+	test_link.b.enabled = true
+	test_link.b.dev.status = "offline"
+	SimTests.check(UIW.TopoMap.link_unavailable(test_link), "map feedback: an offline endpoint marks the link down")
+	test_link.b.dev.status = "active"
+	Game.site_feeds(0)["A"] = false
+	SimTests.check(UIW.TopoMap.link_unavailable(test_link), "map feedback: loss of facility power marks the link down")
+	Game.site_feeds(0)["A"] = true
+	var saved_blocks: Dictionary = Sim._stp_blocked.duplicate()
+	Sim._stp_blocked[test_link.a] = true
+	SimTests.check(not UIW.TopoMap.link_unavailable(test_link), "map feedback: intentional STP blocking is not a physical outage")
+	Sim._stp_blocked = saved_blocks
+	var remote_rack := Net.Rack.new("Remote", Vector2i(2, 1))
+	remote_rack.site = 1
+	var remote := Game.new_device("srv-1")
+	remote_rack.slots[0] = remote
+	Game.racks.append(remote_rack)
+	var wan := Net.Link.new(f["sw"].ifaces[2], remote.ifaces[0])
+	Game.links.append(wan)
+	SimTests.check(UIW.TopoMap.link_unavailable(wan), "map feedback: a cross-site cable needs an available WAN circuit")
+	Game.circuits = [{"a": 0, "b": 1, "mbps": 1000, "carrier": Game.CARRIERS[0]}]
+	SimTests.check(not UIW.TopoMap.link_unavailable(wan), "map feedback: a working WAN circuit carries the cross-site cable")
+	Game.carrier_outage[Game.CARRIERS[0]] = Game.cycle + 3
+	SimTests.check(UIW.TopoMap.link_unavailable(wan), "map feedback: a carrier outage stops the cross-site flow")
+	f = fixture()
 	FirstCustomer.tick()
 	SimTests.check(String(FirstCustomer.state()["phase"]) == "planning", "opening: a recovered customer invites the player to plan a sale")
 	SimTests.check(FirstCustomer.path(f["deal"]).size() == 1 and int(FirstCustomer.forecast()["headroom"]) == 1000,

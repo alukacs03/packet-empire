@@ -371,6 +371,20 @@ class Graph extends Control:
 # ================================================================ TopoMap ==
 
 class TopoMap extends Control:
+	static func device_online(dev: Net.NDevice) -> bool:
+		return dev.type == "panel" or (dev.status == "active" and Game.device_powered(dev))
+
+	static func link_unavailable(link: Net.Link) -> bool:
+		# Physical availability is distinct from STP's intentional forwarding block.
+		for port: Net.Iface in [link.a, link.b]:
+			if not port.enabled or port.admin_down or port.err_disabled or not device_online(port.dev):
+				return true
+			var far := Game.effective_peer(port)
+			if far == null or not far.enabled or not device_online(far.dev):
+				return true
+		var sites := Game.sites_of(link.a, link.b)
+		return sites[0] != sites[1] and Game.circuit_between(sites[0], sites[1]).is_empty()
+
 	var focus_customer_id := ""
 	var focus_links: Array = []
 	var focus_devices: Array = []
@@ -503,7 +517,7 @@ class TopoMap extends Control:
 		draw_line(Vector2(0, 73), Vector2(size.x, 73), Color(UIW.colour("accent"), 0.55), 1.0)
 		draw_rect(Rect2(30, 18, 4, 38), UIW.colour("accent"))
 		draw_string(_mono, Vector2(48, 31), "SERVICE NETWORK  /  " + focus_name.to_upper(),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("accent"))
+			HORIZONTAL_ALIGNMENT_LEFT, 350, 11, UIW.colour("accent"))
 		draw_string(_mono, Vector2(48, 55), "LOGICAL TOPOLOGY",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 22, UIW.colour("text_strong"))
 		draw_string(_mono, Vector2(size.x - 176, 45), "M / ESC  CLOSE",
@@ -512,12 +526,15 @@ class TopoMap extends Control:
 		var dev_count := Game.all_devices().size()
 		var down_count := 0
 		for dev: Net.NDevice in Game.all_devices():
-			if dev.status != "active":
+			if not device_online(dev):
 				down_count += 1
-		var metrics := "%02d RACKS    %02d DEVICES    %02d LINKS    %s" % [Game.racks.size(),
-			dev_count, Game.links.size(), "ALL SYSTEMS NOMINAL" if down_count == 0 else "%02d DEVICE ALERTS" % down_count]
-		draw_string(_mono, Vector2(48, 108), metrics, HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
-			UIW.colour("success") if down_count == 0 else UIW.colour("warning"))
+		var down_links := 0
+		for link: Net.Link in Game.links:
+			if link_unavailable(link): down_links += 1
+		var health := Loc.t("map.physical_ready") if down_count == 0 and down_links == 0 else Loc.t("map.physical_down") % [down_count, down_links]
+		var metrics := "%02d RACKS    %02d DEVICES    %02d LINKS    %s" % [Game.racks.size(), dev_count, Game.links.size(), health]
+		draw_string(_mono, Vector2(48, 108), metrics, HORIZONTAL_ALIGNMENT_LEFT, size.x - 350, 13,
+			UIW.colour("success") if down_count == 0 and down_links == 0 else UIW.colour("warning"))
 		draw_string(_mono, Vector2(size.x - 292, 108), "SELECT A DEVICE TO INSPECT",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
 
@@ -595,8 +612,9 @@ class TopoMap extends Control:
 				pa.y = ra.end.y if pb.y > pa.y else ra.position.y
 				pb.y = rb.position.y if pb.y > pa.y else rb.end.y
 			var col := Color(0.35, 0.7, 0.65, 0.8)
+			var unavailable := link_unavailable(l)
 			if not focus_customer_id.is_empty() and l in focus_links:
-				draw_line(pa, pb, Color(UIW.colour("accent"), 0.45), 12.0)
+				draw_line(pa, pb, Color(UIW.colour("danger" if unavailable else "accent"), 0.45), 12.0)
 			var blocked := false
 			if l.a.dev.type == "switch" and l.b.dev.type == "switch":
 				col = Color(1.0, 0.62, 0.2, 0.85)
@@ -607,7 +625,13 @@ class TopoMap extends Control:
 			if ls[0] != ls[1]:
 				col = Color(0.4, 0.9, 1.0, 0.9)  # rides a WAN circuit
 			var over: bool = Game.last_link_load.get(l, 0) > Game.link_capacity(l)
-			if over:
+			if unavailable:
+				var danger := UIW.colour("danger")
+				draw_dashed_line(pa, pb, danger, 2.0, 4.0)
+				var midpoint := (pa + pb) * 0.5
+				draw_line(midpoint - Vector2(4, 4), midpoint + Vector2(4, 4), danger, 2.0)
+				draw_line(midpoint - Vector2(4, -4), midpoint + Vector2(4, -4), danger, 2.0)
+			elif over:
 				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.22), 8.0)
 				draw_line(pa, pb, Color(0.95, 0.3, 0.25, 0.9), 3.0)
 				draw_string(_mono, (pa + pb) / 2.0 + Vector2(4, -4),
@@ -622,7 +646,7 @@ class TopoMap extends Control:
 			else:
 				draw_line(pa, pb, Color(col, 0.16), 7.0)
 				draw_line(pa, pb, col, 2.0)
-			if not blocked:
+			if not blocked and not unavailable:
 				_flow(pa, pb, col, int(Game.last_link_load.get(l, 0)), Game.link_capacity(l))
 		# nodes on top
 		for dev: Net.NDevice in _nodes:
@@ -634,9 +658,9 @@ class TopoMap extends Control:
 				draw_rect(rect.grow(4), UIW.colour("accent"), false, 2.0)
 			draw_rect(rect, fill)
 			draw_rect(Rect2(rect.position, Vector2(5, rect.size.y)), col)
-			draw_rect(rect, col if dev.status == "active" else UIW.colour("danger"), false, 1.5)
+			draw_rect(rect, col if device_online(dev) else UIW.colour("danger"), false, 1.5)
 			draw_circle(rect.position + Vector2(rect.size.x - 16, 14), 3.5,
-				UIW.colour("success") if dev.status == "active" else UIW.colour("danger"))
+				UIW.colour("success") if device_online(dev) else UIW.colour("danger"))
 			var ink := UIW.readable_on(fill, Color(identity["ink"]))
 			draw_string(_mono, rect.position + Vector2(13, 17), dev.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, ink)
 			draw_string(_mono, rect.position + Vector2(13, 32), _dev_info(dev), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
@@ -647,7 +671,7 @@ class TopoMap extends Control:
 			Color(UIW.colour("border"), 0.75), 1.0)
 		var ly := size.y - 24
 		draw_string(_mono, Vector2(30, ly),
-			"─ HOST LINK     ━ TRUNK / INTER-SWITCH     ┄ BLOCKED BY STP     ● LIVE DEVICE     outline: type   fill: vendor",
+			Loc.t("map.physical_legend"),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
 		draw_string(_mono, Vector2(30, ly - 16),
 			"SHIFT-DRAG BETWEEN TWO DEVICES TO RUN A CABLE",

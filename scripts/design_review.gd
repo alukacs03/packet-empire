@@ -112,6 +112,9 @@ static func run(world) -> void:
 	Game.sla_tick()
 	world.ui._refresh_tutorial()
 	await capture(world, "11-live-mixed-results")
+	world.ui.focus_customer(f["deal"])
+	await capture(world, "12-outage-network")
+	world.ui.close_everything()
 	host.ifaces[0].enabled = true
 	host.ifaces[0].admin_down = false
 	Game.sla_tick()
