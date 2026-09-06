@@ -783,7 +783,12 @@ class EOS extends Session:
 					return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
 				dev.bgp["router_id"] = String(r[0])
 				return ""},
-			{"m": ["router"], "p": ["maximum-paths"], "h": func(r): return "" if r.size() >= 1 and String(r[0]).is_valid_int() else "% Incomplete command\n"},
+			{"m": ["router"], "p": ["maximum-paths"], "h": func(r):
+				if r.size() < 1 or not String(r[0]).is_valid_int() or int(r[0]) < 1 or int(r[0]) > 128:
+					return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+				dev.bgp["maximum_paths"] = int(r[0])
+				Game.topology_changed.emit()
+				return ""},
 			{"m": ["router"], "p": ["bgp", "log-neighbor-changes"], "h": func(_r): return ""},
 			{"m": ["router"], "p": ["no", "bgp", "default", "ipv4-unicast"], "h": func(_r): return ""},
 			{"m": ["router"], "p": ["no", "network"], "h": _bgp_no_network},
@@ -3117,7 +3122,11 @@ class EOS extends Session:
 			return "" if String(r[2]).is_valid_int() else "% Invalid input\n"
 		if r.size() == 3 and String(r[1]) == "update-source":
 			return "" if _find_iface(String(r[2])) != null else "% Invalid input\n"
-		if r.size() >= 2 and String(r[1]) in ["next-hop-self", "send-community", "ebgp-multihop", "activate", "soft-reconfiguration"]:
+		if r.size() >= 2 and String(r[1]) == "ebgp-multihop":
+			nb["multihop"] = true  # the session may ride a route instead of a wire
+			Game.topology_changed.emit()
+			return ""
+		if r.size() >= 2 and String(r[1]) in ["next-hop-self", "send-community", "activate", "soft-reconfiguration"]:
 			return ""
 		if r.size() == 4 and "prefix-list".begins_with(r[1]) and String(r[3]) in ["in", "out"]:
 			# EOS order: neighbor X prefix-list NAME in
@@ -4529,8 +4538,12 @@ class EOS extends Session:
 			out += "router bgp %d\n" % int(dev.bgp["asn"])
 			if String(dev.bgp.get("router_id", "")) != "":
 				out += "   router-id %s\n" % dev.bgp["router_id"]
+			if int(dev.bgp.get("maximum_paths", 1)) != 1:
+				out += "   maximum-paths %d\n" % int(dev.bgp["maximum_paths"])
 			for nb in dev.bgp["neighbors"]:
 				out += "   neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
+				if bool(nb.get("multihop", false)):
+					out += "   neighbor %s ebgp-multihop\n" % nb["ip"]
 				if String(nb.get("description", "")) != "":
 					out += "   neighbor %s description %s\n" % [nb["ip"], nb["description"]]
 				for dir in ["in", "out"]:

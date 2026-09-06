@@ -185,7 +185,7 @@ static func _dhcp_serves(svc: Dictionary, iface: Net.Iface) -> bool:
 			return true
 	return false
 
-static func _dhcp_free_address(dev: Net.NDevice, iface: Net.Iface, svc: Dictionary) -> String:
+static func _dhcp_free_address(dev: Net.NDevice, iface: Net.Iface, svc: Dictionary, probe := true) -> String:
 	## the lowest address in the range that is not excluded, not held by a
 	## live lease, and not answering ARP already (a conflict, logged)
 	var taken := {}
@@ -202,7 +202,7 @@ static func _dhcp_free_address(dev: Net.NDevice, iface: Net.Iface, svc: Dictiona
 		var ip := Net.int_to_ip(n)
 		if taken.has(ip):
 			continue
-		if _arp_resolve(dev, iface, ip) != "":
+		if probe and _arp_resolve(dev, iface, ip) != "":
 			if ip not in svc.get("conflicts", []):
 				if not svc.has("conflicts"):
 					svc["conflicts"] = []
@@ -337,9 +337,17 @@ static func bgp_established(dev: Net.NDevice, nb: Dictionary) -> bool:
 	if int(nb["remote_as"]) != int(peer.bgp.get("asn", -1)):
 		return false
 	var out := _connected_iface(dev, nb["ip"])
+	var hop := String(nb["ip"])
+	if out == null and bool(nb.get("multihop", false)):
+		# ebgp-multihop: the session rides a route, the way a loopback peering does
+		var rt := _route_lookup(dev, String(nb["ip"]))
+		if rt.is_empty() or rt.get("next_hop", "") == "null0":
+			return false
+		out = rt["iface"]
+		hop = String(rt["next_hop"])
 	if out == null:
 		return false
-	if _arp_resolve(dev, out, nb["ip"]) == "":
+	if _arp_resolve(dev, out, hop) == "":
 		return false
 	if peer.type == "uplink":
 		return true
@@ -347,6 +355,12 @@ static func bgp_established(dev: Net.NDevice, nb: Dictionary) -> bool:
 		if _owns_ip_anywhere(dev, pnb["ip"]):
 			return true
 	return false
+
+static func bgp_router_id(dev: Net.NDevice) -> String:
+	## the configured id, else the highest address the router owns
+	if String(dev.bgp.get("router_id", "")) != "":
+		return String(dev.bgp["router_id"])
+	return ospf_router_id(dev)
 
 static func _bgp_learned(dev: Net.NDevice) -> Array:
 	## Routes this device learns from established sessions:
@@ -368,7 +382,8 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 				out.append({"prefix": parts[0], "plen": int(parts[1]), "via": nb["ip"],
 					"pref": int(nb.get("local_pref", 100)),
 					"cost": 1 + int(peer_nb.get("prepend", 0)),
-					"asn": int(peer.bgp.get("asn", 0)), "prepend": int(peer_nb.get("prepend", 0))})
+					"asn": int(peer.bgp.get("asn", 0)), "prepend": int(peer_nb.get("prepend", 0)),
+					"rid": Net.ip_to_int(bgp_router_id(peer)), "multipath": int(dev.bgp.get("maximum_paths", 1)) > 1})
 	for other in Game.all_devices():
 		if other == dev or other.bgp.is_empty():
 			continue
@@ -388,7 +403,9 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 					out.append({"prefix": parts[0], "plen": int(parts[1]), "via": via,
 						"pref": int(our_nb.get("local_pref", 100)),
 						"cost": 1 + int(onb.get("prepend", 0)),
-						"asn": int(other.bgp.get("asn", 0)), "prepend": int(onb.get("prepend", 0))})
+						"asn": int(other.bgp.get("asn", 0)), "prepend": int(onb.get("prepend", 0)),
+						"rid": Net.ip_to_int(bgp_router_id(other)), "multipath": int(dev.bgp.get("maximum_paths", 1)) > 1})
+
 	return out
 
 static func _neighbor_towards(dev: Net.NDevice, other: Net.NDevice) -> Dictionary:
@@ -457,7 +474,7 @@ static func _connected_iface(dev: Net.NDevice, ip: String, vrf := "") -> Net.Ifa
 			continue
 		for cidr: String in i.ips:
 			var parts := cidr.split("/")
-			if Net.same_subnet(ip, parts[0], int(parts[1])):
+			if Net.same_net(ip, parts[0], int(parts[1])):
 				return i
 	return null
 
@@ -465,7 +482,7 @@ static func _ip_of_on_subnet(dev: Net.NDevice, peer_ip: String) -> String:
 	for i: Net.Iface in dev.ifaces:
 		for cidr: String in i.ips:
 			var parts := cidr.split("/")
-			if Net.same_subnet(peer_ip, parts[0], int(parts[1])):
+			if Net.same_net(peer_ip, parts[0], int(parts[1])):
 				return parts[0]
 	return ""
 
@@ -483,7 +500,7 @@ static func ospf_covered_ifaces(dev: Net.NDevice) -> Array:
 		for cidr: String in i.ips:
 			for net in dev.ospf.get("networks", []):
 				var parts := String(net).split("/")
-				if Net.same_subnet(cidr.split("/")[0], parts[0], int(parts[1])):
+				if Net.same_net(cidr.split("/")[0], parts[0], int(parts[1])):
 					out.append(i)
 	return out
 
@@ -544,7 +561,7 @@ static func ospf_neighbors(dev: Net.NDevice) -> Array:
 						continue
 					for cidr_b: String in ib.ips:
 						var via := cidr_b.split("/")[0]
-						if not Net.same_subnet(via, pa[0], int(pa[1])):
+						if not Net.same_net(via, pa[0], int(pa[1])):
 							continue
 						# the hello has to arrive: no cable, no adjacency, whatever
 						# the two configurations agree on
@@ -1175,6 +1192,11 @@ static func _best_of(cands: Array) -> Array:
 			continue
 		seen[key] = true
 		out.append(cand)
+	# BGP installs one best path: the lowest router-id wins the final tie,
+	# unless maximum-paths asked for load sharing
+	if out.size() > 1 and out.all(func(c): return String(c.get("src", "")) == "B" and not bool(c.get("multipath", false))):
+		out.sort_custom(func(x, y): return int(x.get("rid", 0)) < int(y.get("rid", 0)))
+		out = [out[0]]
 	return out
 
 static func slaac(host: Net.NDevice, iface: Net.Iface) -> Dictionary:
@@ -1338,7 +1360,7 @@ static func _route_entries(dev: Net.NDevice, vrf := "") -> Array:
 			if via_if:
 				out.append({"src": code, "ad": ad, "iface": via_if, "next_hop": r["via"], "prefix": r["prefix"],
 					"plen": int(r["plen"]), "cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100)),
-					"vrf": vrf})
+					"vrf": vrf, "rid": int(r.get("rid", 0)), "multipath": bool(r.get("multipath", false))})
 	return out
 
 static func rib(dev: Net.NDevice) -> Array:
@@ -1927,7 +1949,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		if p["op"] == "req":
 			var lb_vip: String = String(dev.services.get("lb", {}).get("vip", ""))
 			var for_vip := not _iface_owns_ip(iface, p["tpa"]) and _vrrp_owns(dev, iface, p["tpa"])
-			if _iface_owns_ip(iface, p["tpa"]) or for_vip \
+			# a router proxy-ARPs on its outside port for every static NAT address
+			var for_nat := dev.ip_forwarding and iface.nat == "outside" and nat_static_inside(dev, String(p["tpa"])) != ""
+			if _iface_owns_ip(iface, p["tpa"]) or for_vip or for_nat \
 					or (lb_vip != "" and Net.addr_eq(lb_vip, String(p["tpa"]))):
 				_learn_neighbour(dev, nkey, p["sha"])
 				# the virtual address answers with the virtual MAC: that is why a
@@ -1952,7 +1976,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		# for transit and for packets addressed to the router itself
 		_icmp_unreachable(dev, p, "admin", iface.vrf)
 		return
-	if dev.ip_forwarding and _has_ip(dev, p["dst_ip"]):
+	var nat_inbound := dev.ip_forwarding and iface.nat == "outside" and not _has_ip(dev, p["dst_ip"]) \
+		and nat_static_inside(dev, String(p["dst_ip"])) != ""
+	if dev.ip_forwarding and (_has_ip(dev, p["dst_ip"]) or nat_inbound):
 		var flow_id: int = p["l4"].get("id", 0)
 		var lb_svc: Dictionary = dev.services.get("lb", {})
 		if not lb_svc.is_empty() and dev.nat_flows.has(flow_id):
@@ -1984,7 +2010,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			return
 		var out_if := _nat_outside(dev)
 		var static_in := nat_static_inside(dev, String(p["dst_ip"])) if out_if != null else ""
-		if out_if != null and (dev.nat_flows.has(flow_id) or static_in != "") and _iface_owns_ip(out_if, p["dst_ip"]):
+		if out_if != null and (dev.nat_flows.has(flow_id) or static_in != "") and (_iface_owns_ip(out_if, p["dst_ip"]) or static_in != ""):
 			var back := p.duplicate(true)
 			back["dst_ip"] = dev.nat_flows[flow_id] if dev.nat_flows.has(flow_id) else static_in
 			back["ttl"] -= 1
@@ -2071,11 +2097,19 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				if leases.has(l4["mac"]):
 					lease_ip = leases[l4["mac"]]
 				else:
-					var nxt := Net.ip_to_int(svc2["start"]) + leases.size()
-					if nxt > Net.ip_to_int(svc2["end"]):
+					# the same allocator the local path uses: exclusions, the relay's
+					# own address, conflicts; the probe leaves by the port facing the relay
+					var view: Dictionary = svc2.duplicate()
+					view["excluded"] = Array(svc2.get("excluded", [])) + [String(l4["giaddr"])]
+					var toward := _route_lookup(dev, String(l4["giaddr"]), "", iface.vrf)
+					# no probe: a server cannot ARP a segment behind a relay (the router would proxy-answer)
+					lease_ip = _dhcp_free_address(dev, toward["iface"] if not toward.is_empty() else iface, view, false)
+					if lease_ip == "":
 						return
-					lease_ip = Net.int_to_ip(nxt)
 					leases[l4["mac"]] = lease_ip
+				if not svc2.has("since"):
+					svc2["since"] = {}
+				svc2["since"][l4["mac"]] = Game.cycle
 				_send_ip(dev, p["src_ip"], 64, {"proto": "dhcp-relay", "op": "ack",
 					"mac": l4["mac"], "ip": lease_ip, "plen": svc2["plen"],
 					"gw": l4["giaddr"], "dns": svc2.get("dns", "")})

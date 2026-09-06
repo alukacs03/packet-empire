@@ -2385,6 +2385,66 @@ static func run() -> int:
 	Game.add_ip(dup_b.ifaces[0], "10.80.0.5/24")
 	check(dup_a.logs.any(func(l): return "DUPADDR" in String(l)) and dup_b.logs.any(func(l): return "DUPADDR" in String(l)),
 		"dupaddr: the same address twice is logged on both boxes")
+	# --- IPv6 next hops use IPv6 subnet math ---
+	check(not Net.same_subnet("2001:db8:1::10", "3fff:db8:2::1", 64), "v6: same_subnet is IPv4 only")
+	var v6peer2 := Game.new_device("srv-1")
+	Game.connect_ifaces(v6r.ifaces[1], v6peer2.ifaces[0])
+	Game.add_ip(v6r.ifaces[1], "2001:db8:2::1/64")
+	Game.add_static_route(v6r, "2001:db8:9::", 64, "2001:db8:2::10")
+	var v6_egress: Net.Iface = null
+	for v6e in Sim.rib(v6r):
+		if String(v6e["prefix"]) == "2001:db8:9::":
+			v6_egress = v6e["iface"]
+	check(v6_egress == v6r.ifaces[1], "v6: a static leaves by the interface whose subnet holds the next hop")
+	check(not Game.add_static_route(v6r, "10.66.0.0", 24, "10.66.0.1") or Sim.rib(v6r).all(func(e): return String(e["prefix"]) != "10.66.0.0"),
+		"v6: a v4 static with a next hop on no connected subnet is not installed through a v6 interface")
+	# --- static NAT: the outside port answers for the mapped address ---
+	var sn_r := Game.new_device("rtr-edge")
+	var sn_in := Game.new_device("srv-1")
+	var sn_out := Game.new_device("srv-1")
+	var t2_sn_rack := Game.add_rack(Vector2i(8, 7))
+	t2_sn_rack.slots[0] = sn_r
+	t2_sn_rack.slots[1] = sn_in
+	t2_sn_rack.slots[2] = sn_out
+	Game.connect_ifaces(sn_r.ifaces[0], sn_out.ifaces[0])
+	Game.connect_ifaces(sn_r.ifaces[1], sn_in.ifaces[0])
+	Game.add_ip(sn_r.ifaces[0], "203.0.113.1/24")
+	Game.add_ip(sn_r.ifaces[1], "10.0.0.1/24")
+	Game.add_ip(sn_out.ifaces[0], "203.0.113.9/24")
+	Game.add_ip(sn_in.ifaces[0], "10.0.0.5/24")
+	Game.add_static_route(sn_in, "0.0.0.0", 0, "10.0.0.1")
+	var t2_sn_s := CLI.new_session(sn_r)
+	t2_sn_s.exec("en")
+	t2_sn_s.exec("conf t")
+	t2_sn_s.exec("interface Ethernet1")
+	t2_sn_s.exec("ip nat outside")
+	t2_sn_s.exec("interface Ethernet2")
+	t2_sn_s.exec("ip nat inside")
+	t2_sn_s.exec("exit")
+	t2_sn_s.exec("ip nat inside source static 10.0.0.5 203.0.113.5")
+	t2_sn_s.exec("end")
+	Game.topology_changed.emit()
+	check(Sim.ping(sn_out, "203.0.113.5")["ok"], "nat: an outside host reaches the static mapping, because the router answers ARP for it")
+	check(Sim.ping(sn_in, "203.0.113.9")["ok"], "nat: the inside host gets its reply back through the static mapping")
+	# --- BGP: one best path, router-id breaks the tie, maximum-paths shares ---
+	var bgp_paths := [{"plen": 24, "ad": 20, "pref": 100, "cost": 1, "next_hop": "10.8.1.2", "iface": null, "src": "B", "rid": 200, "multipath": false, "prefix": "198.51.100.0"},
+		{"plen": 24, "ad": 20, "pref": 100, "cost": 1, "next_hop": "10.8.2.2", "iface": null, "src": "B", "rid": 100, "multipath": false, "prefix": "198.51.100.0"}]
+	var bp_best := Sim._best_of(bgp_paths)
+	check(bp_best.size() == 1 and String(bp_best[0]["next_hop"]) == "10.8.2.2", "bgp: one best path, the lower router-id wins the tie")
+	for bp_c in bgp_paths:
+		bp_c["multipath"] = true
+	check(Sim._best_of(bgp_paths).size() == 2, "bgp: maximum-paths shares the equal paths")
+	var mp_r := Game.new_device("rtr-edge")
+	t2_sn_rack.slots[3] = mp_r
+	var mp_s := CLI.new_session(mp_r)
+	mp_s.exec("en")
+	mp_s.exec("conf t")
+	mp_s.exec("router bgp 65001")
+	check(mp_s.exec("maximum-paths 4") == "" and int(mp_r.bgp.get("maximum_paths", 1)) == 4 and mp_s.exec("show running-config").contains("maximum-paths 4"),
+		"bgp: maximum-paths is stored and printed")
+	check(mp_s.exec("neighbor 10.9.9.9 remote-as 65002") == "" and mp_s.exec("neighbor 10.9.9.9 ebgp-multihop") == ""
+		and mp_s.exec("show running-config").contains("neighbor 10.9.9.9 ebgp-multihop"),
+		"bgp: ebgp-multihop is stored and printed")
 	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n").begins_with("! ")
 		and "LEARN: Routing & gateways" in CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n"),
 		"hints: an EOS error gets a ! comment line with the article to read")
@@ -2504,6 +2564,8 @@ static func run() -> int:
 	var rel_out: String = CLI.new_session(rel_cli).exec("dhclient -v eth0")
 	check("bound to 10.60.0.50 --" in rel_out, "relay: client leased across the router (got: %s)" % rel_out.strip_edges())
 	check(Sim.ping(rel_cli, "10.61.0.5")["ok"], "relay: leased client routes to the central DHCP server")
+	check(rel_srv.services["dhcp"].has("since") and not rel_srv.services["dhcp"]["since"].is_empty(),
+		"relay: a relayed lease carries a clock, so it can expire like a local one")
 
 	# --- capacity planning ---
 	check(Game.iface_speed(vr1.ifaces[0]) == 10000, "capacity: Junivista port is 10G")

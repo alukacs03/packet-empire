@@ -331,6 +331,10 @@ static func network_of(cidr: String) -> Dictionary:
 	return {"prefix": int_to_ip(ip_to_int(parts[0]) & mask), "plen": plen}
 
 static func same_subnet(ip: String, net_ip: String, plen: int) -> bool:
+	## IPv4 only: an IPv6 address or a prefix longer than 32 is never "the
+	## same subnet" here; same_net is the family-aware spelling
+	if is_v6(ip) or is_v6(net_ip) or plen > 32:
+		return false
 	if plen <= 0:
 		return true
 	var mask := (0xFFFFFFFF << (32 - plen)) & 0xFFFFFFFF
