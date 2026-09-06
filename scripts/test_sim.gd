@@ -11495,5 +11495,84 @@ static func run() -> int:
 	t13_src.ifaces[0].helper = ""
 	for i13s in t13_stash:
 		i13s.helper = t13_stash[i13s]
+	# --- IPv6 dynamic routing: OSPFv3 over link-locals, BGP address-family ipv6 ---
+	var t14_rack := Game.add_rack(Vector2i(9, 15))
+	var t14_ra := Game.new_device("rtr-edge")
+	var t14_rb := Game.new_device("rtr-edge")
+	var t14_ha := Game.new_device("srv-1")
+	var t14_hb := Game.new_device("srv-1")
+	t14_rack.slots[0] = t14_ra
+	t14_rack.slots[1] = t14_rb
+	t14_rack.slots[2] = t14_ha
+	t14_rack.slots[3] = t14_hb
+	Game.connect_ifaces(t14_ra.ifaces[0], t14_rb.ifaces[0])
+	Game.connect_ifaces(t14_ra.ifaces[1], t14_ha.ifaces[0])
+	Game.connect_ifaces(t14_rb.ifaces[1], t14_hb.ifaces[0])
+	Game.add_ip(t14_ra.ifaces[1], "2001:db8:a::1/64")
+	Game.add_ip(t14_rb.ifaces[1], "2001:db8:b::1/64")
+	Game.add_ip(t14_ha.ifaces[0], "2001:db8:a::10/64")
+	Game.add_ip(t14_hb.ifaces[0], "2001:db8:b::10/64")
+	Game.add_static_route(t14_ha, "::", 0, "2001:db8:a::1")
+	Game.add_static_route(t14_hb, "::", 0, "2001:db8:b::1")
+	var t14_sa := CLI.new_session(t14_ra)
+	var t14_sb := CLI.new_session(t14_rb)
+	for pair in [[t14_sa, "1.1.1.1"], [t14_sb, "2.2.2.2"]]:
+		var s14: CLI.Session = pair[0]
+		s14.exec("en")
+		s14.exec("conf t")
+		check(s14.exec("ipv6 router ospf 1") == "" and s14.exec("router-id %s" % pair[1]) == "", "ospf6: ipv6 router ospf opens the process and takes a router-id")
+		s14.exec("interface Ethernet1")
+		check(s14.exec("ipv6 ospf 1 area 0") == "", "ospf6: ipv6 ospf 1 area 0 enables it on the interface")
+		s14.exec("interface Ethernet2")
+		s14.exec("ipv6 ospf 1 area 0")
+		s14.exec("end")
+	check(Sim.ospf_neighbors(t14_ra).any(func(nb): return nb["dev"] == t14_rb and bool(nb.get("v6", false))), "ospf6: an adjacency forms over link-locals with no global address on the link")
+	check(Sim.rib(t14_ra).any(func(e): return e["src"] == "O" and String(e["prefix"]) == "2001:db8:b::" and int(e["plen"]) == 64 and String(e["next_hop"]).begins_with("fe80") and e["iface"] == t14_ra.ifaces[0]),
+		"ospf6: the far prefix is installed via the neighbour's link-local on the right interface")
+	check(Sim.ping(t14_ha, "2001:db8:b::10")["ok"], "ospf6: a host behind one router pings a host behind the other")
+	check(t14_sa.exec("show ipv6 route").contains("O3") and t14_sa.exec("show ipv6 route").contains("2001:db8:b::/64"), "ospf6: show ipv6 route prints the O3 route")
+	check(t14_sa.exec("show ipv6 ospf neighbor").contains("2.2.2.2") and not t14_sa.exec("show ip ospf neighbor").contains("fe80"), "ospf6: the v6 neighbour table lists the peer, the v4 one does not")
+	var t14_run := t14_sa.exec("show running-config")
+	check(t14_run.contains("ipv6 router ospf 1") and t14_run.contains("ipv6 ospf 1 area 0.0.0.0") and not t14_run.contains("\nrouter ospf 1\n"), "ospf6: the running-config carries the process and the interface lines, and no empty v2 block")
+	t14_sa.exec("conf t")
+	t14_sa.exec("interface Ethernet1")
+	t14_sa.exec("no ipv6 ospf 1")
+	t14_sa.exec("end")
+	check(not Sim.rib(t14_ra).any(func(e): return e["src"] == "O" and String(e["prefix"]) == "2001:db8:b::"), "ospf6: no ipv6 ospf on the link drops the adjacency and the route")
+	# BGP: v6 NLRI over a v4 session, only once both ends activate the family
+	var t14_rc := Game.new_device("rtr-edge")
+	var t14_rd := Game.new_device("rtr-edge")
+	var t14_hc := Game.new_device("srv-1")
+	t14_rack.slots[4] = t14_rc
+	t14_rack.slots[5] = t14_rd
+	t14_rack.slots[6] = t14_hc
+	Game.connect_ifaces(t14_rc.ifaces[0], t14_rd.ifaces[0])
+	Game.connect_ifaces(t14_rc.ifaces[1], t14_hc.ifaces[0])
+	Game.add_ip(t14_rc.ifaces[0], "10.99.9.1/30")
+	Game.add_ip(t14_rd.ifaces[0], "10.99.9.2/30")
+	Game.add_ip(t14_rc.ifaces[1], "2001:db8:c::1/64")
+	Game.add_ip(t14_hc.ifaces[0], "2001:db8:c::10/64")
+	var t14_sc := CLI.new_session(t14_rc)
+	var t14_sd := CLI.new_session(t14_rd)
+	t14_sc.exec("en")
+	t14_sc.exec("conf t")
+	t14_sc.exec("router bgp 65101")
+	t14_sc.exec("neighbor 10.99.9.2 remote-as 65102")
+	check(t14_sc.exec("address-family ipv6") == "" and t14_sc.exec("neighbor 10.99.9.2 activate") == "" and t14_sc.exec("network 2001:db8:c::/64") == "", "bgp6: address-family ipv6 takes activate and a v6 network")
+	t14_sc.exec("end")
+	t14_sd.exec("en")
+	t14_sd.exec("conf t")
+	t14_sd.exec("router bgp 65102")
+	t14_sd.exec("neighbor 10.99.9.1 remote-as 65101")
+	t14_sd.exec("end")
+	check(not Sim.rib(t14_rd).any(func(e): return e["src"] == "B" and String(e["prefix"]) == "2001:db8:c::"), "bgp6: a v6 prefix does not cross a session the receiver has not activated for it")
+	t14_sd.exec("conf t")
+	t14_sd.exec("router bgp 65102")
+	t14_sd.exec("address-family ipv6")
+	t14_sd.exec("neighbor 10.99.9.1 activate")
+	t14_sd.exec("end")
+	check(Sim.rib(t14_rd).any(func(e): return e["src"] == "B" and String(e["prefix"]) == "2001:db8:c::" and int(e["plen"]) == 64), "bgp6: activated on both ends, the v6 prefix is installed")
+	check(t14_sd.exec("show ipv6 route").contains("B E") and t14_sd.exec("show ipv6 route").contains("2001:db8:c::/64"), "bgp6: show ipv6 route prints the B E route")
+	check(t14_sc.exec("show running-config").contains("   address-family ipv6\n      neighbor 10.99.9.2 activate\n      network 2001:db8:c::/64"), "bgp6: the running-config prints the v6 family under router bgp")
 	print("---- %d failures" % fails)
 	return fails

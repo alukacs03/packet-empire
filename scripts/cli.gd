@@ -440,6 +440,7 @@ class EOS extends Session:
 	var mode := "exec"  # exec | priv | config | if | vlan | router | ospf | dhcp | acl | dhcpsrv | dhcpsub
 	var ctx_acl := ""  # the named access list being edited
 	var ctx_po := 0  # the Port-Channel being configured: its members are ctx_ifs
+	var af_v6 := false  # address-family ipv6 rather than ipv4
 	var ctx_rmap := ""  # the route-map being edited
 	var ctx_rmap_seq := 10
 	var ctx_subnet := ""  # the dhcp server subnet being edited
@@ -664,7 +665,12 @@ class EOS extends Session:
 			{"m": ["rmap"], "p": ["match", "ip", "address", "prefix-list"], "h": func(r): return _rmap_set("prefix_list", r)},
 			{"m": ["rmap"], "p": ["description"], "h": func(_r): return ""},
 			{"m": EP, "p": ["show", "route-map"], "h": _show_route_maps},
-			{"m": ["router"], "p": ["address-family", "ipv4"], "h": func(_r): mode = "af"; return ""},
+			{"m": ["router"], "p": ["address-family", "ipv4"], "h": func(_r): mode = "af"; af_v6 = false; return ""},
+			{"m": ["router"], "p": ["address-family", "ipv6"], "h": func(_r): mode = "af"; af_v6 = true; return ""},
+			{"m": ["config"], "p": ["ipv6", "router", "ospf"], "h": _cfg_router_ospf6},
+			{"m": ["if"], "p": ["ipv6", "ospf"], "h": func(r): return _if_ospf6(r, true)},
+			{"m": ["if"], "p": ["no", "ipv6", "ospf"], "h": func(r): return _if_ospf6(r, false)},
+			{"m": EP, "p": ["show", "ipv6", "ospf", "neighbor"], "h": _show_ospf6},
 			{"m": ["af"], "p": ["neighbor"], "h": _af_neighbor},
 			{"m": ["config"], "p": ["spanning-tree", "mst"], "h": _stp_mst},
 			{"m": EP, "p": ["show", "ip", "route"], "h": _show_ip_route},
@@ -1958,9 +1964,23 @@ class EOS extends Session:
 		nb["rmap_%s" % dir] = name
 
 	func _af_neighbor(r: Array) -> String:
-		## address-family ipv4: neighbor X activate, and the same neighbor commands as outside it
+		## address-family ipv4: neighbor X activate, and the same neighbor commands as outside it;
+		## address-family ipv6: activate is what lets v6 prefixes ride the session
 		if r.size() == 2 and String(r[1]) == "activate":
-			return "" if not _find_nb(String(r[0])).is_empty() else "% Invalid input\n"
+			var anb := _find_nb(String(r[0]))
+			if anb.is_empty():
+				return "% Invalid input\n"
+			if af_v6:
+				anb["v6"] = true
+				Game.topology_changed.emit()
+			return ""
+		if r.size() == 3 and String(r[0]) == "no" and String(r[2]) == "activate" and af_v6:
+			var dnb := _find_nb(String(r[1]))
+			if dnb.is_empty():
+				return "% Invalid input\n"
+			dnb.erase("v6")
+			Game.topology_changed.emit()
+			return ""
 		return _bgp_neighbor(r)
 
 	func _show_port_channel_if(group: int) -> String:
@@ -3070,6 +3090,57 @@ class EOS extends Session:
 		mode = "ospf"
 		return ""
 
+	func _cfg_router_ospf6(r: Array) -> String:
+		## ipv6 router ospf <n>: OSPFv3 is switched on per interface afterwards
+		if not dev.ip_forwarding or dev.type == "uplink":
+			return "% Invalid input\n"
+		if r.size() != 1 or not String(r[0]).is_valid_int():
+			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+		if dev.ospf.is_empty():
+			dev.ospf = {"networks": []}
+		if not dev.ospf.has("v6_ifaces"):
+			dev.ospf["v6_ifaces"] = []
+		mode = "ospf"
+		return ""
+
+	func _if_ospf6(r: Array, on: bool) -> String:
+		## ipv6 ospf <n> area <a> on the interface: that is the whole of OSPFv3 enablement
+		if not dev.ospf.has("v6_ifaces"):
+			return "% OSPFv3 not running: 'ipv6 router ospf 1' in config mode\n"
+		if r.size() < 1 or not String(r[0]).is_valid_int():
+			return "% Invalid input\n"
+		var v6_ifaces: Array = dev.ospf["v6_ifaces"]
+		if not on:
+			v6_ifaces.erase(ctx_if.name)
+			Game.topology_changed.emit()
+			return ""
+		if r.size() != 3 or String(r[1]) != "area":
+			return "% Incomplete command\n"
+		var area := String(r[2])
+		if area.is_valid_int():
+			area = Net.int_to_ip(int(area))
+		elif not area.is_valid_ip_address():
+			return "% Invalid input\n"
+		var have := Sim.ospf_area(dev)
+		if (not dev.ospf.get("networks", []).is_empty() or not v6_ifaces.is_empty()) and area != have:
+			return "%% multi-area OSPF is not supported here: this router is in area %s\n" % have
+		dev.ospf["areas"] = {"area": area}
+		if ctx_if.name not in v6_ifaces:
+			v6_ifaces.append(ctx_if.name)
+		Game.topology_changed.emit()
+		return ""
+
+	func _show_ospf6(_r: Array) -> String:
+		if not dev.ospf.has("v6_ifaces"):
+			return ""
+		var out := "OSPFv3 Neighbor Table\n\nNeighbor ID     Pri   State                  Dead Time   Interface   Instance ID\n"
+		var nbs: Array = Sim.ospf_neighbors(dev).filter(func(nb): return bool(nb.get("v6", false)))
+		for nb in nbs:
+			var far: Net.NDevice = nb["dev"]
+			out += "%-15s %-5d %-22s %-11s %-11s %d\n" % [Sim.ospf_router_id(far), Sim.ospf_priority(nb["far_if"]),
+				Sim.ospf_neighbor_state(dev, nb), "00:00:%02d" % (31 + (Game.cycle * 7 + nbs.find(nb)) % 9), EOS._short(nb["iface"].name), 0]
+		return out
+
 	func _ospf_network(r: Array) -> String:
 		# network <p/len> area <n>   |   network <addr> <wildcard> area <n>
 		var usage := "% Invalid input\n"
@@ -3108,7 +3179,7 @@ class EOS extends Session:
 		## Interface, full interface names; nothing at all when OSPF is off
 		if dev.ospf.is_empty():
 			return ""
-		var nbs := Sim.ospf_neighbors(dev)
+		var nbs: Array = Sim.ospf_neighbors(dev).filter(func(nb): return not bool(nb.get("v6", false)))
 		var out := "Neighbor ID     Instance VRF      Pri State                  Dead Time   Address         Interface\n"
 		for nb in nbs:
 			var far: Net.NDevice = nb["dev"]
@@ -4596,6 +4667,8 @@ class EOS extends Session:
 				out += "   ip ospf dead-interval %d\n" % int(dev.ospf["dead"][i.name])
 			if dev.ospf.get("net_type", {}).has(i.name):
 				out += "   ip ospf network %s\n" % dev.ospf["net_type"][i.name]
+			if i.name in dev.ospf.get("v6_ifaces", []):
+				out += "   ipv6 ospf 1 area %s\n" % Sim.ospf_area(dev)
 			if i.helper != "":
 				out += "   ip helper-address %s\n" % i.helper
 			if i.tunnel_src != "":
@@ -4727,9 +4800,18 @@ class EOS extends Session:
 					elif nb.has("prefix_%s_name" % dir):
 						out += "   neighbor %s prefix-list %s %s\n" % [nb["ip"], nb["prefix_%s_name" % dir], dir]
 			for net in dev.bgp["networks"]:
-				out += "   network %s\n" % net
+				if not Net.is_v6(String(net)):
+					out += "   network %s\n" % net
+			var v6_nbs: Array = dev.bgp["neighbors"].filter(func(nb): return bool(nb.get("v6", false)))
+			var v6_nets: Array = dev.bgp["networks"].filter(func(net): return Net.is_v6(String(net)))
+			if not v6_nbs.is_empty() or not v6_nets.is_empty():
+				out += "   !\n   address-family ipv6\n"
+				for nb in v6_nbs:
+					out += "      neighbor %s activate\n" % nb["ip"]
+				for net in v6_nets:
+					out += "      network %s\n" % net
 			out += "!\n"
-		if not dev.ospf.is_empty():
+		if not dev.ospf.is_empty() and (not dev.ospf["networks"].is_empty() or not dev.ospf.has("v6_ifaces")):
 			out += "router ospf 1\n"
 			if String(dev.ospf.get("router_id", "")) != "":
 				out += "   router-id %s\n" % dev.ospf["router_id"]
@@ -4744,6 +4826,11 @@ class EOS extends Session:
 			if dev.ospf.has("originate_default"):
 				out += "   default-information originate%s\n" % (" always" if String(dev.ospf["originate_default"]) == "always" else "")
 			out += "   max-lsa 12000\n!\n"
+		if dev.ospf.has("v6_ifaces"):
+			out += "ipv6 router ospf 1\n"
+			if String(dev.ospf.get("router_id", "")) != "":
+				out += "   router-id %s\n" % dev.ospf["router_id"]
+			out += "!\n"
 		out += "end\n"
 		return out
 

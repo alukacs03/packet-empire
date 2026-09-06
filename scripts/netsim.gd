@@ -397,10 +397,8 @@ static func _bgp_originated(dev: Net.NDevice) -> Array:
 			if not iface_up(i):
 				continue
 			for cidr: String in i.ips:
-				if Net.is_v6(cidr):
-					continue
-				var nw := Net.network_of(cidr)
-				if String(nw["prefix"]) == parts[0] and int(nw["plen"]) == int(parts[1]):
+				var nw := Net.network_of6(cidr) if Net.is_v6(cidr) else Net.network_of(cidr)
+				if Net.addr_eq(String(nw["prefix"]), parts[0]) and int(nw["plen"]) == int(parts[1]):
 					have = true
 		for r in dev.static_routes:
 			if String(r["prefix"]) == parts[0] and int(r["plen"]) == int(parts[1]):
@@ -468,6 +466,8 @@ static func _bgp_tables() -> Dictionary:
 					continue
 				if not _policy_allows(snb, "prefix_out", String(pfx)) or not _policy_allows(rnb, "prefix_in", String(pfx)):
 					continue
+				if Net.is_v6(String(pfx)) and ((not snb.is_empty() and not bool(snb.get("v6", false))) or (not rnb.is_empty() and not bool(rnb.get("v6", false)))):
+					continue  # the IPv6 family has to be activated on both ends; the handoff has it on
 				if receiver_asn in best["as_path"]:
 					continue  # loop prevention: the path already went through us
 				var prepend := 1 + int(snb.get("prepend", 0))
@@ -610,6 +610,14 @@ static func ospf_covered_ifaces(dev: Net.NDevice) -> Array:
 					out.append(i)
 	return out
 
+static func ospf6_ifaces(dev: Net.NDevice) -> Array:
+	## OSPFv3 is enabled per interface (ipv6 ospf 1 area 0), not by network statement
+	var out: Array = []
+	for i: Net.Iface in dev.ifaces:
+		if iface_up(i) and i.name in dev.ospf.get("v6_ifaces", []):
+			out.append(i)
+	return out
+
 static func ospf_area(dev: Net.NDevice) -> String:
 	## single-area model: the router's area id, backbone unless configured
 	for a in dev.ospf.get("areas", {}):
@@ -690,6 +698,24 @@ static func ospf_neighbors(dev: Net.NDevice) -> Array:
 							_ospf_once(dev, "%" + ("OSPF-4-DUP_RTRID: Router ID %s is also used by neighbor at %s" % [ospf_router_id(dev), via]))
 							continue
 						out.append({"dev": other, "via_ip": via, "iface": ia})
+	# OSPFv3: hellos ride link-local multicast, so an adjacency needs no
+	# global address at all, only a segment the two interfaces share
+	for ia: Net.Iface in ospf6_ifaces(dev):
+		if ia.name in passive:
+			continue
+		var seg := segment_ifaces(ia)
+		for other in Game.all_devices():
+			if other == dev or other.ospf.is_empty() or not other.ip_forwarding or other.status != "active":
+				continue
+			if ospf_area(other) != ospf_area(dev):
+				continue
+			for ib: Net.Iface in ospf6_ifaces(other):
+				if ib not in seg or ib.name in other.ospf.get("passive", []):
+					continue
+				if ospf_router_id(dev) == ospf_router_id(other):
+					_ospf_once(dev, "%" + ("OSPF6-4-DUP_RTRID: Router ID %s is also used by neighbor at %s" % [ospf_router_id(dev), link_local(ib)]))
+					continue
+				out.append({"dev": other, "via_ip": link_local(ib), "iface": ia, "far_if": ib, "v6": true})
 	if not _ospf_probing:
 		_ospf_cache[dev.name] = out
 	return out
@@ -730,9 +756,9 @@ static func ospf_segment_roles(dev: Net.NDevice, iface: Net.Iface) -> Dictionary
 	for nb in ospf_neighbors(dev):
 		if nb["iface"] == iface:
 			var far: Net.NDevice = nb["dev"]
-			var far_if: Net.Iface = null
+			var far_if: Net.Iface = nb.get("far_if")
 			for fi: Net.Iface in far.ifaces:
-				if fi.ips.any(func(c): return String(c).split("/")[0] == String(nb["via_ip"])):
+				if far_if == null and fi.ips.any(func(c): return String(c).split("/")[0] == String(nb["via_ip"])):
 					far_if = fi
 			members.append([ospf_priority(far_if) if far_if else 1, Net.ip_to_int(ospf_router_id(far)), far])
 	members = members.filter(func(m): return int(m[0]) > 0)  # priority 0 never becomes DR
@@ -774,7 +800,9 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 		for nb in ospf_neighbors(cur):
 			var far: Net.NDevice = nb["dev"]
 			var next_cost: int = int(dist[cur]) + ospf_cost(nb["iface"])
-			var hops_here: Array = [nb["via_ip"]] if cur == dev else first_hop.get(cur, []).duplicate()
+			# a v6 hop carries its interface: a link-local next hop is nothing without one
+			var hop_here: String = String(nb["via_ip"]) + ("%" + nb["iface"].name if bool(nb.get("v6", false)) else "")
+			var hops_here: Array = [hop_here] if cur == dev else first_hop.get(cur, []).duplicate()
 			if not dist.has(far) or next_cost < int(dist[far]):
 				dist[far] = next_cost
 				first_hop[far] = hops_here
@@ -791,8 +819,20 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 					continue
 				var netw := Net.network_of(cidr)
 				for via in first_hop.get(router, []):
+					if "%" in String(via):
+						continue  # OSPFv2 and OSPFv3 are two protocols: a v6 adjacency carries no v4 prefix
 					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via,
 						"cost": int(dist[router]) + ospf_cost(i)})
+		for i: Net.Iface in ospf6_ifaces(router):
+			for cidr: String in i.ips:
+				if not Net.is_v6(cidr) or cidr.to_lower().begins_with("fe80"):
+					continue
+				var n6 := Net.network_of6(cidr)
+				for via in first_hop.get(router, []):
+					if "%" not in String(via):
+						continue
+					out.append({"prefix": n6["prefix"], "plen": n6["plen"], "via": String(via).split("%")[0],
+						"dev": String(via).split("%")[1], "cost": int(dist[router]) + ospf_cost(i)})
 		# what that router redistributes arrives as external routes (O E2, metric
 		# 20 by default), and a default it originates as O*E2
 		var externals: Array = []
@@ -1518,7 +1558,7 @@ static func _route_entries_build(dev: Net.NDevice, vrf := "") -> Array:
 		if not iface_up(i) or i.vrf != vrf or bfd_down(i):
 			continue  # no line protocol, no connected route: a pulled cable withdraws it
 		for cidr: String in i.ips:
-			var netw := Net.network_of(cidr) if not Net.is_v6(cidr) else {"prefix": cidr.split("/")[0], "plen": int(cidr.split("/")[1])}
+			var netw := Net.network_of(cidr) if not Net.is_v6(cidr) else Net.network_of6(cidr)
 			out.append({"src": "C", "ad": 0, "iface": i, "next_hop": "", "prefix": netw["prefix"],
 				"plen": int(netw["plen"]), "cost": 0, "vrf": vrf})
 	var sources := [["S", dev.static_routes], ["B", _bgp_learned(dev)], ["O", _ospf_learned(dev)]]

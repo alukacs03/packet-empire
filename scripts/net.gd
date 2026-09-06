@@ -377,3 +377,17 @@ static func compress_ports(names: Array) -> String:
 		run_start = num
 		run_prev = num
 	return ",".join(PackedStringArray(out))
+
+static func network_of6(cidr: String) -> Dictionary:
+	## the prefix an IPv6 address sits in: 2001:db8:1::1/64 -> 2001:db8:1::/64
+	var parts := cidr.split("/")
+	var plen := int(parts[1]) if parts.size() > 1 else 128
+	var h := v6_hextets(parts[0])
+	if h.is_empty():
+		return {"prefix": parts[0], "plen": plen}
+	var groups: Array = []
+	for k in 8:
+		var bits := clampi(plen - k * 16, 0, 16)
+		var mask := 0 if bits == 0 else ((0xFFFF << (16 - bits)) & 0xFFFF)
+		groups.append("%x" % (int(h[k]) & mask))
+	return {"prefix": v6_compress(":".join(PackedStringArray(groups))), "plen": plen}

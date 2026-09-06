@@ -8805,7 +8805,7 @@ func announced_prefixes() -> Array:
 	var out: Array = []
 	for d in all_devices():
 		for net in d.bgp.get("networks", []):
-			if String(net) != "0.0.0.0/0":
+			if String(net) != "0.0.0.0/0" and String(net) != "::/0":
 				out.append({"cidr": String(net), "dev": d})
 	return out
 
@@ -9660,7 +9660,7 @@ func new_device(model: String, second_hand := false) -> Net.NDevice:
 		for other in all_devices():
 			if other.type == "uplink":
 				second = true
-		d.bgp = {"asn": 64501 if second else 64500, "neighbors": [], "networks": ["0.0.0.0/0"]}
+		d.bgp = {"asn": 64501 if second else 64500, "neighbors": [], "networks": ["0.0.0.0/0", "::/0"]}
 		d.set_meta("second_carrier", second)
 	for i in m["ports"]:
 		var pfx: String = m.get("if_prefix", spec["if_prefix"])
