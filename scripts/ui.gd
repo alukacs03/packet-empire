@@ -1047,7 +1047,7 @@ func _open_service_standards() -> void:
 	var box := _card(service_overlay, 660)
 	_header(box, func() -> void: service_overlay.visible = false).text = Loc.t("rack.services")
 	box.add_child(_wrap(Loc.t("services.lede"), 17, UIW.colour("text"), 600))
-	box.add_child(_wrap("The first standard is a local LAN: one SW5 or S8 and two to four R110 servers, in one VLAN. Routes and application services stay manual.", 14, UIW.colour("muted"), 600))
+	box.add_child(_wrap(Loc.t("service.first_standard"), 14, UIW.colour("muted"), 600))
 	var save := WorkspaceShell.button(Loc.t("services.save"), func() -> void:
 		var err := ServiceDesign.capture(target, target.name + " customer LAN")
 		hud_toast(err if err != "" else Loc.t("services.saved"), err == "")
@@ -1234,7 +1234,7 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 	var original_target: Net.Iface = rack_cable_old_link.other(rack_cable_from) if rack_cable_old_link else null
 	rack_cable_layer.finish()
 	if target != null and target == original_target:  # a fresh cable dropped on nothing has no original to reseat
-		hud_toast("Plug reseated: %s %s." % [target.dev.name, target.name], true)
+		hud_toast(Loc.t("toast.plug_reseated") % [target.dev.name, target.name], true)
 		rack_cable_layer.confirm(rack_cable_from, target)
 	elif target and Game.can_link(rack_cable_from, target):
 		if rack_cable_old_link:
@@ -1243,19 +1243,19 @@ func _rack_cable_release(screen_pos: Vector2) -> void:
 			Game.connect_documented(rack_cable_from, target)
 		else:
 			Game.connect_ifaces(rack_cable_from, target)
-		hud_toast("Cable run: %s %s ⇄ %s %s" % [rack_cable_from.dev.name,
+		hud_toast(Loc.t("toast.cable_run") % [rack_cable_from.dev.name,
 			rack_cable_from.name, target.dev.name, target.name], true)
 		_refresh_slots()
 		rack_cable_layer.confirm(rack_cable_from, target)
 	elif rack_cable_old_link:
 		var loose_end := original_target
 		Game.disconnect_iface(rack_cable_from)
-		hud_toast("Unplugged %s %s from %s %s." % [rack_cable_from.dev.name,
+		hud_toast(Loc.t("toast.unplugged") % [rack_cable_from.dev.name,
 			rack_cable_from.name, loose_end.dev.name, loose_end.name], true)
 		_refresh_slots()
 	else:
 		rack_cable_layer.reject(screen_pos, _rack_cable_reject_reason(screen_pos))
-		hud_toast("Drop the cable on a free port in this rack.")
+		hud_toast(Loc.t("toast.drop_free_port"))
 	rack_cable_from = null
 	rack_cable_old_link = null
 
@@ -1299,7 +1299,7 @@ func _pick_new_device(slot: int, at: Control) -> void:
 					mod2["label"], int(Game.stockouts[String(keys[id])])])
 				return
 			var available := Game.money + Game.delivery_credit_for_model(String(keys[id]))
-			hud_toast("Not enough available for a %s ($%d, cash and protected delivery funds total $%d)." % [
+			hud_toast(Loc.t("toast.not_enough_money") % [
 				mod2["label"], Game.shop_price(String(keys[id])), available])
 			return
 		Game.install_device(cur_rack, slot, Game.new_device(keys[id]))
@@ -1446,7 +1446,7 @@ func _build_dev_overlay() -> void:
 		_menu(template_btn, opts, func(id: int) -> void:
 			if id == 0:
 				Game.save_template(cur_dev, Game.unique_name("%s standard" % cur_dev.type, Game.templates))
-				hud_toast("Saved '%s standard' as a template." % cur_dev.type, true)
+				hud_toast(Loc.t("toast.saved_template") % cur_dev.type, true)
 			else:
 				var err: String = Game.apply_template(cur_dev, applicable[id - 1])
 				hud_toast(err if err != "" else "Template applied to %s." % cur_dev.name, err == "")
@@ -1472,7 +1472,7 @@ func _build_dev_overlay() -> void:
 		if err != "":
 			_toast(err)
 		else:
-			hud_toast("Confirmed commit %s on %s." % [
+			hud_toast(Loc.t("toast.confirmed_commit") % [
 				"armed" if Game.confirm_commits.has(cur_dev.name) else "confirmed", cur_dev.name],
 				true))
 	btn_row.add_child(confirm_btn)
@@ -1519,7 +1519,7 @@ func _build_dev_overlay() -> void:
 					out = Game.decommission(dev, [])
 				_:
 					out = Game.decommission_by_tech(dev)
-			hud_toast("Decommissioned for $%d.%s" % [int(out["value"]),
+			hud_toast(Loc.t("toast.decommissioned") % [int(out["value"]),
 				"" if out["skipped"].is_empty() else "  Skipped %d step(s)." % out["skipped"].size()],
 				out["skipped"].is_empty())
 			_refresh_money()
@@ -1629,7 +1629,7 @@ func _refresh_dev_header() -> void:
 func _rename_dev(new_name: String) -> void:
 	var was := cur_dev.name
 	if Game.rename_device(cur_dev, new_name):
-		hud_toast("Renamed %s to %s." % [was, cur_dev.name], true)
+		hud_toast(Loc.t("toast.renamed") % [was, cur_dev.name], true)
 		_refresh_dev_header()
 		if cli_box.visible and cli_session:
 			cli_prompt.text = cli_session.prompt() + " "
@@ -1737,7 +1737,7 @@ func _build_if_overlay() -> void:
 	var console_note := HBoxContainer.new()
 	console_note.add_theme_constant_override("separation", UIW.space("md"))
 	v.add_child(console_note)
-	var note := _wrap("Addressing, VLANs, MTU and policy are configured at the device console.",
+	var note := _wrap(Loc.t("device.console_note"),
 		13, UIW.colour("muted"), 420)
 	note.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	console_note.add_child(note)
@@ -1904,7 +1904,7 @@ func _cable_action() -> void:
 			continue  # the out-of-band port is not a data port; a server patched there reaches nothing
 		targets.append(candidate)  # this rack included: the first job says "click a port, Run cable"
 	if targets.is_empty():
-		hud_toast("No free ports anywhere to run a cable to.")
+		hud_toast(Loc.t("toast.no_free_ports"))
 		return
 	# group by device: one submenu per device, so a rack of 24-port switches
 	# does not become a hundred-row flat list
@@ -2068,7 +2068,7 @@ func toggle_search() -> void:
 		search_overlay.visible = false
 		return
 	if is_open():
-		hud_toast("Close the open panel first (Esc), then Find.")
+		hud_toast(Loc.t("toast.close_panel_find"))
 		return
 	_show_overlay(search_overlay)
 	search_input.text = ""
@@ -2626,7 +2626,7 @@ func _refresh_ops() -> void:
 		fin_copy.text = "Copy the report"
 		fin_copy.pressed.connect(func() -> void:
 			DisplayServer.clipboard_set("\n".join(PackedStringArray(Game.finale_report())))
-			hud_toast("The report is on your clipboard.", true))
+			hud_toast(Loc.t("toast.report_clipboard"), true))
 		ops_box.add_child(fin_copy)
 		# the world keeps ticking after the report, but there is nothing left
 		# to score: the honest next move is a second company, one notch harder
@@ -3354,7 +3354,7 @@ func _refresh_ops() -> void:
 			var out: Dictionary = Game.run_runbook(rb_i, true)
 			for line: String in out["log"]:
 				Game.log_event("DRY RUN: %s" % line)
-			hud_toast("Dry run: %d planned, %d would be skipped." % [out["planned"].size(),
+			hud_toast(Loc.t("toast.dry_run") % [out["planned"].size(),
 				out["skipped"].size()], String(out["refused"]) == "")
 			_refresh_ops())
 		rbrow.add_child(rb_dry)
@@ -3442,7 +3442,7 @@ func _refresh_ops() -> void:
 				filters.append(f)
 			_menu(run_btn, opts, func(id: int) -> void:
 				var res := Game.run_playbook(pb, Game.playbook_targets(String(filters[id])))
-				hud_toast("Ran '%s' on %d device(s), %d with errors." % [pb["name"],
+				hud_toast(Loc.t("toast.playbook_ran") % [pb["name"],
 					int(res["ran"]), int(res["failed"])], int(res["failed"]) == 0)
 				_refresh_ops()))
 		prow.add_child(run_btn)
@@ -3610,7 +3610,7 @@ func toggle_ops() -> void:
 		_refresh_ops()
 		_show_overlay(ops_overlay)
 	else:
-		hud_toast("Close the open panel first (Esc), then Ops.")
+		hud_toast(Loc.t("toast.close_panel_ops"))
 
 # ---------- keyboard help ----------
 
@@ -3703,11 +3703,11 @@ func _build_menu() -> void:
 				else "%s, cycle %d" % [info["company"], int(info["cycle"])]])
 		_menu(save_as, opts, func(id: int) -> void:
 			if Game.slot_info(id).get("broken", false):
-				hud_toast("Slot %d holds a damaged save. Delete it from the title screen before reusing it." % (id + 1), false)
+				hud_toast(Loc.t("toast.damaged_slot") % (id + 1), false)
 				return
 			Game.current_slot = id
 			Game.save_game()
-			hud_toast("Saved to slot %d." % (id + 1), true)))
+			hud_toast(Loc.t("toast.saved_slot") % (id + 1), true)))
 	v.add_child(save_as)
 	var title_btn := Button.new()
 	title_btn.text = Loc.t("menu.to_title")
@@ -3727,7 +3727,7 @@ func _build_menu() -> void:
 		_menu(scen_btn, opts, func(id: int) -> void:
 			menu_overlay.visible = false
 			if Game.drill_active:
-				hud_toast("Finish or abandon the drill first.")
+				hud_toast(Loc.t("toast.finish_drill_first"))
 				return
 			Scenarios.start(Scenarios.all()[id])
 			get_parent().rebuild_racks()
@@ -3741,7 +3741,7 @@ func _build_menu() -> void:
 		Game.log_event("SANDBOX: %s." % ("on, nothing costs anything" if Game.sandbox
 			else "off, the business is running again"))
 		menu_overlay.visible = false
-		hud_toast("Sandbox mode %s." % ("on" if Game.sandbox else "off"), Game.sandbox)
+		hud_toast(Loc.t("toast.sandbox_mode") % ("on" if Game.sandbox else "off"), Game.sandbox)
 		_refresh_money())
 	v.add_child(sandbox_btn)
 	var prefs_btn := Button.new()
@@ -3786,7 +3786,7 @@ func _build_menu() -> void:
 					Loc.language = Prefs.language
 					_rebuild_localised()
 			Prefs.apply()
-			hud_toast("Setting applied.", true)))
+			hud_toast(Loc.t("toast.setting_applied"), true)))
 	v.add_child(prefs_legacy_btn)
 	var diff_btn := Button.new()
 	diff_btn.text = Loc.t("menu.difficulty")
@@ -3797,7 +3797,7 @@ func _build_menu() -> void:
 			opts.append("%s%s: %s" % ["▸ " if i == Game.difficulty else "   ", d["name"], d["blurb"]])
 		_menu(diff_btn, opts, func(id: int) -> void:
 			Game.apply_difficulty(id, false)
-			hud_toast("Difficulty set to %s: fault rate, prices and cycle length change from now. The bank balance stays, and the run is scored at the preset it started on." % Game.DIFFICULTIES[id]["name"], true)
+			hud_toast(Loc.t("toast.difficulty_set") % Game.DIFFICULTIES[id]["name"], true)
 			_refresh_money()))
 	v.add_child(diff_btn)
 	v.add_child(_section(Loc.t("menu.section.share")))
@@ -3816,7 +3816,7 @@ func _build_menu() -> void:
 			if id <= 2:
 				DisplayServer.clipboard_set(Puzzle.export_state(
 					"review" if id == 1 else "solve", id == 2))
-				hud_toast("Copied. Paste it to whoever you are asking.", true)
+				hud_toast(Loc.t("toast.question_copied"), true)
 			elif id == 3:
 				var err: String = Puzzle.import_state(DisplayServer.clipboard_get())
 				hud_toast(err if err != "" else "Puzzle open. Nothing here can cost you anything.",
@@ -3824,17 +3824,17 @@ func _build_menu() -> void:
 				get_parent().rebuild_racks()
 			elif id == 4 and Puzzle.active():
 				DisplayServer.clipboard_set(Puzzle.solution())
-				hud_toast("Your fix is on the clipboard. Send it back.", true)
+				hud_toast(Loc.t("toast.fix_copied"), true)
 			elif id == 4:
 				var lines: Array = Puzzle.read_solution(DisplayServer.clipboard_get())
 				for line: String in lines:
 					Game.log_event("PUZZLE ANSWER: %s" % line)
-				hud_toast("Read %d line(s) of answer into the log." % lines.size(),
+				hud_toast(Loc.t("toast.answer_read") % lines.size(),
 					not lines.is_empty())
 			elif Puzzle.active():
 				Puzzle.close()
 				get_parent().rebuild_racks()
-				hud_toast("Back in your own datacenter.", true)))
+				hud_toast(Loc.t("toast.back_home"), true)))
 	v.add_child(puzzle_btn)
 	var drill_btn := Button.new()
 	drill_btn.text = "Incident drill  (+$%d)" % Drill.REWARD
@@ -3861,7 +3861,7 @@ func _build_menu() -> void:
 			return
 		DisplayServer.clipboard_set(body)
 		menu_overlay.visible = false
-		hud_toast("Topology exported and copied to the clipboard.", true))
+		hud_toast(Loc.t("toast.topology_exported"), true))
 	v.add_child(diagram)
 	var clab := Button.new()
 	clab.text = "Export to containerlab"
@@ -3873,7 +3873,7 @@ func _build_menu() -> void:
 			return
 		DisplayServer.clipboard_set(yaml)
 		menu_overlay.visible = false
-		hud_toast("Lab written to %s and the topology copied." % ProjectSettings.globalize_path("user://clab"), true))
+		hud_toast(Loc.t("toast.lab_written") % ProjectSettings.globalize_path("user://clab"), true))
 	v.add_child(clab)
 	var chal_btn := Button.new()
 	chal_btn.text = "Challenge code"
@@ -3896,7 +3896,7 @@ func _build_menu() -> void:
 				_show_drill_banner()
 			elif id == 2 and not Challenge.active.is_empty():
 				DisplayServer.clipboard_set(String(Challenge.active["code"]))
-				hud_toast("Code copied. The same code builds the same network.", true)
+				hud_toast(Loc.t("toast.code_copied"), true)
 			elif id == 3 and not Challenge.active.is_empty():
 				var result: Dictionary = Challenge.finish()
 				var lines: Array = Challenge.card(result)
@@ -3906,7 +3906,7 @@ func _build_menu() -> void:
 					Game.log_event("DRILL debrief: " + str(fault))
 				DisplayServer.clipboard_set("\n".join(PackedStringArray(lines)))
 				get_parent().rebuild_racks()
-				hud_toast("Scored %d. The card is on your clipboard." % int(result["total"]),
+				hud_toast(Loc.t("toast.scored") % int(result["total"]),
 					bool(result["solved"]))))
 	v.add_child(chal_btn)
 	var quit := Button.new()
@@ -3981,7 +3981,7 @@ func _show_scenario_banner() -> void:
 			Scenarios.finish(true)
 			get_parent().rebuild_racks()
 			scenario_panel.visible = false
-			hud_toast("Scenario passed: %s" % nm, true)
+			hud_toast(Loc.t("toast.scenario_passed") % nm, true)
 		else:
 			_show_scenario_banner())
 	row.add_child(check_btn)
@@ -4026,7 +4026,7 @@ func _show_drill_banner() -> void:
 		for si in floor_set:
 			floor_names.append(Game.site_name(int(si)))
 		if floor_set.size() > 1:
-			drill_box.add_child(_wrap("This network is on %d floors: %s. The switcher in the toolbar moves between them."
+			drill_box.add_child(_wrap(Loc.t("drill.floors")
 				% [floor_set.size(), ", ".join(PackedStringArray(floor_names))], 12,
 				UIW.colour("warm"), 620))
 	if Drill.outcome.has("survive_ip"):
@@ -4039,8 +4039,8 @@ func _show_drill_banner() -> void:
 		var client: Net.NDevice = Drill.outcome["client"]
 		drill_box.add_child(_label("%s must get an address by DHCP, resolve %s and reach it."
 			% [client.name, Drill.outcome["name"]], 13, Color(0.9, 0.88, 0.8)))
-	drill_box.add_child(_label("Something is broken. Restore connectivity between:", 13, Color(0.85, 0.8, 0.78))
-		if not Drill.targets.is_empty() else _label("Press Check when you believe it is fixed.",
+	drill_box.add_child(_label(Loc.t("drill.broken"), 13, Color(0.85, 0.8, 0.78))
+		if not Drill.targets.is_empty() else _label(Loc.t("drill.press_check"),
 			13, Color(0.85, 0.8, 0.78)))
 	for pair in Drill.targets:
 		var a := Sim._ip_owner(pair[0])
@@ -4127,7 +4127,7 @@ func toggle_map() -> void:
 	elif not is_open():
 		_show_overlay(map_overlay)
 	else:
-		hud_toast("Close the open panel first (Esc), then the map.")
+		hud_toast(Loc.t("toast.close_panel_map"))
 
 # ---------- tutorial checklist ----------
 
@@ -4154,7 +4154,7 @@ var tutorial_hidden := false
 
 func focus_customer(deal: Dictionary) -> void:
 	if not _feature_available("map"):
-		hud_toast("The network map unlocks after the first rack is physically delivered.")
+		hud_toast(Loc.t("toast.map_locked"))
 		return
 	close_everything()
 	for child in map_overlay.get_children():
@@ -4196,7 +4196,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 	var collected := deal.has("first_cash_cycle")
 	if not ever_live:
 		tutorial_box.add_child(_tutorial_head(Loc.t("brief.deliver", {"customer": String(deal["customer"]).to_upper()})))
-		tutorial_box.add_child(_wrap("Promise sold: %s" % String(deal["brief"]), 13,
+		tutorial_box.add_child(_wrap(Loc.t("tutorial.promise_sold") % String(deal["brief"]), 13,
 			UIW.colour("text"), 290))
 		for check: Dictionary in Market.delivery_checks(deal):
 			var check_ok := bool(check["ok"])
@@ -4279,7 +4279,7 @@ func _render_guided_outage() -> void:
 		tutorial_box.add_child(_label("●  Alert owned by you", 12, Color(0.48, 0.9, 0.62)))
 		tutorial_box.add_child(_wrap("CUSTOMER COMMS  /  Say what is affected, that you are investigating, and when you will update them again.",
 			12, UIW.colour("text"), 290))
-		tutorial_box.add_child(_wrap("Posting now makes the reputation loss visible and smaller: −2 instead of −4 per outage cycle.",
+		tutorial_box.add_child(_wrap(Loc.t("tutorial.post_now"),
 			11, UIW.colour("warm"), 290))
 		tutorial_box.add_child(_incident_button("Open status page", func() -> void:
 			contracts_tab = "Log"
@@ -4355,7 +4355,7 @@ func _render_guided_outage() -> void:
 			tutorial_box.add_child(_incident_button(String(option[1]), func() -> void:
 				var err := Game.choose_guided_resilience(String(option[0]))
 				if err != "": _toast(err)
-				else: hud_toast("First outage closed. The network is stronger for it.", true)
+				else: hud_toast(Loc.t("toast.first_outage_closed"), true)
 				_refresh_tutorial()))
 
 var _brief_hidden_for := ""  # what was on the brief when it was closed
@@ -4609,7 +4609,7 @@ func _build_demo_end() -> void:
 	var status := _section("OPENING ARC  /  NETWORK ONLINE  /  HANDOVER READY")
 	status.add_theme_color_override("font_color", UIW.colour("success"))
 	v.add_child(status)
-	var body := _wrap("You walked into an empty cage. You leave behind a routed, redundant tenant network, and every packet reached its destination for a real reason.",
+	var body := _wrap(Loc.t("finale.empty_cage"),
 		17, UIW.colour("text_strong"), 700)
 	v.add_child(body)
 	var achieved := HBoxContainer.new()
@@ -5304,13 +5304,13 @@ func _build_market_tab() -> void:
 	pipeline_anchor.add_theme_constant_override("separation", UIW.space("sm"))
 	contracts_box.add_child(pipeline_anchor)
 	if not Game.references.is_empty():
-		contracts_box.add_child(_wrap("Willing to be a reference: %s. Customers who have been happy for a long time are worth more than any advertising."
+		contracts_box.add_child(_wrap(Loc.t("business.reference")
 			% ", ".join(PackedStringArray(Game.references)), 13, Color(0.65, 0.88, 0.72), 560))
 	if Game.market_intel == 0:
-		contracts_box.add_child(_label("You have no read on competitor pricing yet: lose a bid and you will learn.",
+		contracts_box.add_child(_label(Loc.t("business.no_intel"),
 			13, Color(0.6, 0.62, 0.7)))
 	else:
-		contracts_box.add_child(_label("Market intelligence from %d observed bid(s)." % Game.market_intel,
+		contracts_box.add_child(_label(Loc.t("business.intel") % Game.market_intel,
 			13, Color(0.65, 0.85, 0.6)))
 	if not Game.buyout_offer.is_empty():
 		contracts_box.add_child(_section("AN APPROACH"))
@@ -5339,7 +5339,7 @@ func _build_market_tab() -> void:
 		_accent(refuse)
 		bo_row.add_child(refuse)
 	if Game.sold_out:
-		contracts_box.add_child(_wrap("You sold the company. Everything still runs, and none of it is yours.",
+		contracts_box.add_child(_wrap(Loc.t("business.sold_company"),
 			14, Color(0.7, 0.75, 0.85), 560))
 	pipeline_anchor.add_child(_section("PIPELINE"))
 	if Game.leads.is_empty():
@@ -5359,9 +5359,9 @@ func _build_market_tab() -> void:
 			Market.label_for(lead["kind"]),
 			"a lead" if lead["stage"] == "lead" else "out to tender"], 16, Color.WHITE))
 		if String(lead["stage"]) == "lead":
-			lv.add_child(_wrap("Word is: %s. Nobody has asked them what they actually need yet."
+			lv.add_child(_wrap(Loc.t("market.word_is")
 				% lead["heard"], 13, Color(0.75, 0.8, 0.85)))
-			lv.add_child(_label("Expires in %d cycle(s)." % int(lead["ttl"]), 12, MUTED))
+			lv.add_child(_label(Loc.t("market.expires") % int(lead["ttl"]), 12, MUTED))
 			var qbtn := Button.new()
 			qbtn.text = "Go and see them  ($%d)" % Market.LEAD_QUALIFY_COST
 			qbtn.tooltip_text = "Some of them turn out to have no budget. That is what qualifying is for."
@@ -5373,7 +5373,7 @@ func _build_market_tab() -> void:
 				_refresh_contracts())
 			lv.add_child(qbtn)
 			continue
-		lv.add_child(_wrap("They want: %s." % Market.rfp_requirements(lead), 13,
+		lv.add_child(_wrap(Loc.t("market.they_want") % Market.rfp_requirements(lead), 13,
 			Color(0.78, 0.83, 0.9)))
 		var serve := Market.cost_to_serve(lead)
 		var qualify_facts := HBoxContainer.new()
@@ -5392,11 +5392,11 @@ func _build_market_tab() -> void:
 				% Game.sentence(String(lead["coach"])), 12, UIW.colour("text_strong"), 600)
 			coaching.add_child(coaching_text)
 			lv.add_child(coaching)
-		lv.add_child(_label("Tender closes in %d cycle(s)." % int(lead["ttl"]), 12, MUTED))
+		lv.add_child(_label(Loc.t("market.tender_closes") % int(lead["ttl"]), 12, MUTED))
 		var prow := HBoxContainer.new()
 		prow.add_theme_constant_override("separation", 8)
 		lv.add_child(prow)
-		prow.add_child(_label("Your price:  $", 14))
+		prow.add_child(_label(Loc.t("market.your_price"), 14))
 		var pprice := _mono_edit(90)
 		pprice.placeholder_text = str(int(serve["floor"]) + 18)
 		pprice.tooltip_text = "A starting point above estimated break-even, not the customer's hidden budget."
@@ -5652,7 +5652,7 @@ func _build_log_tab() -> void:
 
 	Game.mark_events_read()
 	if Game.events.is_empty():
-		contracts_box.add_child(_label("Nothing has happened yet.", 13, MUTED))
+		contracts_box.add_child(_label(Loc.t("log.nothing_yet"), 13, MUTED))
 		return
 	contracts_box.add_child(_section("EVENT LOG"))
 	var filter_row := HBoxContainer.new()
@@ -5874,7 +5874,7 @@ func _build_jobs_tab() -> void:
 			var row := HBoxContainer.new()
 			row.add_theme_constant_override("separation", 8)
 			cv.add_child(row)
-			row.add_child(_label("Your price:  $", 14))
+			row.add_child(_label(Loc.t("market.your_price"), 14))
 			var quote := _mono_edit(90)
 			quote.placeholder_text = "75"
 			row.add_child(quote)
@@ -6143,7 +6143,7 @@ func _workshop_pick(id: int, rows: Array) -> void:
 			for scenario in pack["scenarios"]:
 				for prev: String in Pack.preview(pack, scenario):
 					Game.log_event("    %s" % prev)
-		hud_toast("Pack details are in the log.", bool(row["ok"]))
+		hud_toast(Loc.t("toast.pack_details"), bool(row["ok"]))
 		return
 	if id == rows.size():
 		Pack.load_all()
@@ -6156,7 +6156,7 @@ func _workshop_pick(id: int, rows: Array) -> void:
 		hud_toast(err if err != "" else "Imported. It is in your contracts now.", err == "")
 		return
 	DisplayServer.clipboard_set(Pack.diagnostic_report())
-	hud_toast("Diagnostics copied to the clipboard.", true)
+	hud_toast(Loc.t("toast.diagnostics_copied"), true)
 
 func _open_settings_card() -> void:
 	## the same switches the title screen has, in a card, so three settings
@@ -6238,14 +6238,14 @@ func _open_settings_card() -> void:
 func _save_with_feedback() -> void:
 	## the save button says what it did, and when it did nothing
 	if Game.drill_active:
-		hud_toast("Not saved: a drill is running. Finish or abandon it first.", false)
+		hud_toast(Loc.t("toast.not_saved_drill"), false)
 		return
 	if Puzzle.active():
-		hud_toast("Not saved: a puzzle is open. Close it to get your own world back first.", false)
+		hud_toast(Loc.t("toast.not_saved_puzzle"), false)
 		return
 	Game.save_game()
 	var slot_name := "the autosave" if Game.current_slot >= Game.SLOTS else "slot %d" % (Game.current_slot + 1)
-	hud_toast("Saved to %s at %s." % [slot_name, Time.get_time_string_from_system()], true)
+	hud_toast(Loc.t("toast.saved_to") % [slot_name, Time.get_time_string_from_system()], true)
 
 func _toast(text: String) -> void:
 	## an error where the player is looking: inside the Company panel when
@@ -6394,7 +6394,7 @@ func _refresh_contracts() -> void:
 		cv.add_child(_label("%s: %s      reward $%d" % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
 		var need_model := Contracts.needs_model(c)
 		if need_model != "" and Game.MODELS.has(need_model):
-			cv.add_child(_label("Needs: %s  ($%d)" % [Game.MODELS[need_model]["label"], int(Game.MODELS[need_model]["price"])], 13, Color(0.85, 0.8, 0.6)))
+			cv.add_child(_label(Loc.t("demo.needs") % [Game.MODELS[need_model]["label"], int(Game.MODELS[need_model]["price"])], 13, Color(0.85, 0.8, 0.6)))
 		var brief := _label(c["brief"], 14, Color(0.75, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
@@ -6441,12 +6441,12 @@ func _refresh_contracts() -> void:
 					if not r["t"].call():
 						why = String(r["d"])
 						break
-				hud_toast("Not yet: %s" % why if why != "" else "Not yet.", false)
+				hud_toast(Loc.t("toast.not_yet") % why if why != "" else "Not yet.", false)
 			_refresh_contracts()
 			check_demo_end())
 		cv.add_child(btn)
 	if not found_active:
-		contracts_box.add_child(_wrap("The demo arc is finished. The full game carries on from here."
+		contracts_box.add_child(_wrap(Loc.t("demo.finished")
 			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter, under Operations in its Board tab. The floor, the customers and the rivals carry on.",
 			14, Color(0.7, 0.85, 0.75), 640))
 
