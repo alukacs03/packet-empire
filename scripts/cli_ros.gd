@@ -149,10 +149,9 @@ static func _menu_word(s: String) -> bool:
 func exec(line: String) -> String:
 	var pipe := line.find("|")
 	if pipe > 0:
-		var tail := line.substr(pipe + 1).strip_edges().split(" ", false)
-		if tail.size() >= 2 and String(tail[0]) in ["include", "i", "grep"]:
-			return CLI.filter_output(exec(line.substr(0, pipe).strip_edges()),
-				" ".join(PackedStringArray(Array(tail).slice(1))))
+		var stages := CLI.parse_pipe_stages(line.substr(pipe + 1))
+		if not stages.is_empty():
+			return CLI.apply_pipe_stages(exec(line.substr(0, pipe).strip_edges()), stages)
 	var raw := line.strip_edges()
 	if raw == "":
 		return ""
@@ -453,19 +452,11 @@ static func fmt_ping(dev: Net.NDevice, target: String, count: int, size: int) ->
 		return "invalid value for argument address:\n    while resolving net address: could not get answer from dns server\n"
 	count = clampi(count, 1, 50)
 	var out := "  SEQ HOST                                     SIZE TTL TIME       STATUS\n"
-	var received := 0
-	var best := 9999.0
-	var worst := 0.0
-	var total := 0.0
-	for seq in count:
-		var r := Sim.ping(dev, ip, 64, "", size)
+	var series := Sim.ping_series(dev, ip, count, size)
+	for r in series:
+		var seq := int(r["seq"]) - 1
 		if bool(r["ok"]):
-			received += 1
-			var rtt := maxf(0.04, float(r.get("rtt", 0.1))) * (1.0 + 0.04 * seq)
-			best = minf(best, rtt)
-			worst = maxf(worst, rtt)
-			total += rtt
-			out += "%5d %-40s %4d %3d %-10s\n" % [seq, r["from"], size - 8, int(r.get("ttl", 64)), _us(rtt)]
+			out += "%5d %-40s %4d %3d %-10s\n" % [seq, r["from"], size - 8, int(r.get("ttl", 64)), _us(float(r["rtt"]))]
 			continue
 		var detail := String(r.get("detail", "timeout"))
 		var status := "timeout"
@@ -485,11 +476,10 @@ static func fmt_ping(dev: Net.NDevice, target: String, count: int, size: int) ->
 		else:
 			out += "%5d %-40s %4d %3d %-10s %s\n" % [seq, r.get("from", ip), size + 20, 64,
 				_us(maxf(0.04, float(r.get("rtt", 0.1)))), status]
-	var lost := count - received
-	out += "    sent=%d received=%d packet-loss=%d%%" % [count, received,
-		int(round(100.0 * float(lost) / float(count)))]
-	if received > 0:
-		out += " min-rtt=%s avg-rtt=%s max-rtt=%s" % [_us(best), _us(total / float(received)), _us(worst)]
+	var st := Sim.ping_stats(series)
+	out += "    sent=%d received=%d packet-loss=%d%%" % [st["sent"], st["received"], int(st["loss_pct"])]
+	if int(st["received"]) > 0:
+		out += " min-rtt=%s avg-rtt=%s max-rtt=%s" % [_us(st["min"]), _us(st["avg"]), _us(st["max"])]
 	return out + "\n"
 
 static func fmt_traceroute(dev: Net.NDevice, target: String, count: int) -> String:
@@ -500,12 +490,12 @@ static func fmt_traceroute(dev: Net.NDevice, target: String, count: int) -> Stri
 	var out := "Columns: ADDRESS, LOSS, SENT, LAST, AVG, BEST, WORST, STD-DEV, STATUS\n"
 	out += "#  ADDRESS          LOSS  SENT  LAST     AVG   BEST  WORST  STD-DEV  STATUS\n"
 	var n := 1
-	for hop in Sim.traceroute(dev, ip):
+	for h in Sim.trace(dev, ip):
+		var hop := String(h["hop"])
 		if hop == "*":
 			out += "%-2d %-16s 100%%  %4d  timeout\n" % [n, "", count]
 		else:
-			var probe := Sim.ping(dev, String(hop))
-			var rtt := maxf(0.04, float(probe.get("rtt", 0.1)))
+			var rtt := float(h["rtt"])
 			out += "%-2d %-16s 0%%    %4d  %-8s %-5s %-5s %-6s %s\n" % [n, hop, count, "%.1fms" % rtt,
 				"%.1f" % rtt, "%.1f" % (rtt * 0.98), "%.1f" % (rtt * 1.03), "0"]
 		n += 1
@@ -2421,9 +2411,7 @@ func _bgp_sync_networks() -> void:
 func _route_rows() -> Array:
 	## the installed table first, then statics that lost (present, not active)
 	var rows: Array = []
-	for e in Sim.rib(dev):
-		if String(e["vrf"]) != "":
-			continue
+	for e in Sim.fib(dev):
 		var row: Dictionary = e.duplicate()
 		row["active"] = true
 		rows.append(row)

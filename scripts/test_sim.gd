@@ -705,14 +705,18 @@ static func run() -> int:
 	var ttl1 := Sim.ping(a, "10.1.0.2", 1)
 	check(ttl1["detail"] == "ttl-exceeded" and ttl1["from"] == "10.0.0.254", "L3: ttl=1 dies at the router")
 	check(int(Sim.ping(a, "10.1.0.2").get("ttl", 0)) == 63, "L3: the reply's TTL lost one at the router")
-	check("ttl=63" in CLI.fmt_ping(a, "10.1.0.2"), "L3: ping prints the TTL the reply carried")
+	check("ttl=63" in CLI.fmt_ping_eos(a, "10.1.0.2", 3, 56), "L3: ping prints the TTL the reply carried")
+	var t15_ps := Sim.ping_series(a, "10.1.0.2", 4)
+	check(t15_ps.size() == 4 and int(Sim.ping_stats(t15_ps)["received"]) == 4 and int(Sim.ping_stats(t15_ps)["loss_pct"]) == 0, "sim: one probe loop serves every dialect, with its statistics")
+	check(Sim.trace(a, "10.1.0.2").size() == 2 and String(Sim.trace(a, "10.1.0.2")[0]["hop"]) == "10.0.0.254", "sim: one hop list serves every traceroute")
+	check(Sim.fib(rtr).all(func(e): return not Net.is_v6(String(e["prefix"])) and String(e["vrf"]) == ""), "sim: the installed table is one family and one VRF at a time")
 	var unr_net := Sim.ping(a, "10.9.0.1")
 	check(unr_net["detail"] == "unreachable-net" and unr_net["from"] == "10.0.0.254",
 		"L3: a router with no route says Destination Net Unreachable")
 	var unr_host := Sim.ping(a, "10.1.0.99")
 	check(unr_host["detail"] == "unreachable-host" and unr_host["from"] == "10.0.0.254",
 		"L3: the last-hop router says Destination Host Unreachable when ARP fails")
-	check("Destination Net Unreachable" in CLI.fmt_ping(a, "10.9.0.1"), "L3: ping prints the unreachable reason")
+	check("Destination Net Unreachable" in CLI.fmt_ping_eos(a, "10.9.0.1", 3, 56), "L3: ping prints the unreachable reason")
 	check(Sim.traceroute(a, "10.9.0.1") == ["10.0.0.254"], "L3: traceroute stops at the router that complained")
 	# proxy ARP: a host whose mask is too wide still gets through, because the router answers for the far side
 	var wide_ips: Array = a.ifaces[0].ips.duplicate()
@@ -10406,13 +10410,13 @@ static func run() -> int:
 	Game.add_static_route(dx_a2, "10.199.0.0", 24, "10.198.0.11")
 	Sim.flush_learned_state()
 	var dx_cli2 := CLI.new_session(dx_a2)
-	var clean := CLI.fmt_ping_repeat(dx_a2, "10.198.0.11", 10)
+	var clean := CLI.fmt_ping_eos(dx_a2, "10.198.0.11", 10, 56)
 	check(clean.contains("10 packets transmitted, 10 received, 0% packet loss") \
 			and clean.contains("rtt min/avg/max"),
 		"console: a repeated ping reports real loss and round-trip figures")
 	Game.grey_faults = {}
 	Game.inject_grey_fault(dx_sw2.ifaces[1], "loose_connector")
-	var flaky_out := CLI.fmt_ping_repeat(dx_a2, "10.198.0.11", 40)
+	var flaky_out := CLI.fmt_ping_eos(dx_a2, "10.198.0.11", 40, 56)
 	check(not flaky_out.contains("0% packet loss") and not flaky_out.contains("100% packet loss"),
 		"console: an intermittent fault reads as intermittent loss, which is how it is found")
 	var sw_cli2 := CLI.new_session(dx_sw2)

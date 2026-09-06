@@ -4,7 +4,9 @@ set -uo pipefail
 GODOT="${GODOT:-/Applications/Godot.app/Contents/MacOS/Godot}"
 OUT=$(PACKET_TEST=1 "$GODOT" --headless --path "$(dirname "$0")" --quit-after 1500 2>&1)
 RC=$?
-echo "$OUT" | grep -E "^(FAIL|SCRIPT ERROR|ERROR)" | head -20
+# a script error aborts the rest of the run: print the "at:" line under it so
+# the log names the function and line that stopped everything
+echo "$OUT" | grep -E -A1 "^(FAIL|SCRIPT ERROR|ERROR)" | grep -v '^--$' | head -30
 PASSES=$(echo "$OUT" | grep -c "^PASS")
 # grep -q exits on the first match, which SIGPIPEs the echo and, under
 # pipefail, made this check fail at random. Match on the string instead.

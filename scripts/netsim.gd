@@ -105,6 +105,64 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 
 static var last_trace_note := ""  # why the last traceroute stopped: unreachable-host|net|admin or ""
 
+static func ping_series(dev: Net.NDevice, ip: String, count: int, size := 64, src := "", scope := "") -> Array:
+	## count probes, each a separate trip through the world under one run id,
+	## with the small per-probe jitter a real ping shows; every dialect prints
+	## from this -> [{ok, from, ttl, rtt, detail, mtu, seq}]
+	var run_id := next_echo_id()
+	var out: Array = []
+	for seq in count:
+		src_override = src
+		ll_scope = scope
+		var r := ping(dev, ip, 64, "", size, run_id, seq + 1)
+		src_override = ""
+		ll_scope = ""
+		r["seq"] = seq + 1
+		r["rtt"] = maxf(0.04, float(r.get("rtt", 0.1))) * (1.0 + 0.04 * seq)
+		out.append(r)
+	return out
+
+static func ping_stats(series: Array) -> Dictionary:
+	## the summary every ping prints: sent, received, loss, min/avg/max/mdev
+	var rtts: Array = []
+	for r in series:
+		if bool(r["ok"]):
+			rtts.append(float(r["rtt"]))
+	var best := 9999.0
+	var worst := 0.0
+	var total := 0.0
+	for v in rtts:
+		best = minf(best, float(v))
+		worst = maxf(worst, float(v))
+		total += float(v)
+	var received := rtts.size()
+	var sent := series.size()
+	return {"sent": sent, "received": received, "lost": sent - received,
+		"loss_pct": int(round(100.0 * float(sent - received) / float(maxi(sent, 1)))),
+		"min": best if received > 0 else 0.0, "avg": (total / float(received)) if received > 0 else 0.0,
+		"max": worst, "mdev": ((worst - best) / 2.0) if received > 0 else 0.0}
+
+static func trace(dev: Net.NDevice, dst_ip: String) -> Array:
+	## the hops of a traceroute with a round trip each -> [{hop, rtt}]; "*" is
+	## a hop that never answered. last_trace_note says why the run stopped.
+	var out: Array = []
+	for hop in traceroute(dev, dst_ip):
+		if hop == "*":
+			out.append({"hop": "*", "rtt": 0.0})
+			continue
+		var probe := ping(dev, String(hop))
+		out.append({"hop": String(hop), "rtt": maxf(0.04, float(probe.get("rtt", 0.1)))})
+	return out
+
+static func fib(dev: Net.NDevice, vrf := "", v6 := false) -> Array:
+	## the installed table for one VRF and one address family: what every
+	## dialect's route printer walks, so they cannot disagree on what is in it
+	var out: Array = []
+	for e in rib(dev):
+		if String(e["vrf"]) == vrf and Net.is_v6(String(e["prefix"])) == v6:
+			out.append(e)
+	return out
+
 static func traceroute(dev: Net.NDevice, dst_ip: String, max_hops := 16) -> Array:
 	## -> array of hop strings ("10.0.0.1" or "*"), last is dst on success;
 	## last_trace_note carries the unreachable code a router answered with

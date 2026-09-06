@@ -26,33 +26,6 @@ static func try_ssh(session: Session, target: String) -> String:
 	var from := Sim._first_ip(Sim._connected_iface(session.dev, ip)) if Sim._connected_iface(session.dev, ip) != null else session.dev.name
 	return "Last login: %s from %s%s\n" % [Time.get_datetime_string_from_system(false, true).replace("T", " "), from, note]
 
-static func fmt_ping(dev: Net.NDevice, target: String, size := 64) -> String:
-	var ip := Sim.resolve(dev, target)
-	if ip == "":
-		return "ping: %s: Name or service not known\n" % target
-	var r := Sim.ping(dev, ip, 64, "", size)
-	# Linux counts the payload in the header (56 by default) and the whole
-	# ICMP message in the reply line (64): size here is the reply figure
-	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, size - 8, size + 20]
-	if r["ok"]:
-		var base: float = maxf(0.04, float(r.get("rtt", 0.1)))
-		var rtts: Array = []
-		for seq in [1, 2, 3]:
-			var rtt: float = base * (1.0 + 0.04 * seq)
-			rtts.append(rtt)
-			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n" % [size, r["from"], seq,
-				int(r.get("ttl", 64)), rtt]
-		return out + "\n--- %s ping statistics ---\n3 packets transmitted, 3 received, 0%% packet loss, time 2003ms\nrtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms\n" % [
-			target, rtts[0], (rtts[0] + rtts[1] + rtts[2]) / 3.0, rtts[2], (rtts[2] - rtts[0]) / 2.0]
-	if r["detail"] == "ttl-exceeded":
-		return out + "From %s icmp_seq=1 Time to live exceeded\n\n--- %s ping statistics ---\n3 packets transmitted, 0 received, +3 errors, 100%% packet loss, time 2003ms\n" % [r["from"], target]
-	if String(r["detail"]).begins_with("unreachable-"):
-		return out + "From %s icmp_seq=1 %s\n3 packets transmitted, 0 received, +3 errors, 100%% packet loss\n" % [
-			r["from"], unreachable_text(String(r["detail"]))]
-	if r["detail"] == "timeout":
-		return out + "\n--- %s ping statistics ---\n3 packets transmitted, 0 received, 100%% packet loss, time 2003ms\n" % target
-	return out + "ping: %s\n" % r["detail"]
-
 static func fold_mask(r: Array) -> Array:
 	## IOS spells a prefix as "10.0.0.0 255.255.255.0"; turn that into 10.0.0.0/24
 	## so the rest of the parser only ever sees CIDR.
@@ -231,10 +204,6 @@ static func topic_for(line: String) -> String:
 		return Loc.t("pedia.vlans.title")
 	return best
 
-static func filter_output(text: String, needle: String) -> String:
-	## EOS "| include": the lines that match, nothing when none do
-	return apply_pipe_stages(text, [["include", needle]])
-
 static func parse_pipe_stages(tail: String) -> Array:
 	## "section bgp | exclude neighbor" -> [["section","bgp"],["exclude","neighbor"]]
 	var stages: Array = []
@@ -307,82 +276,31 @@ static func fmt_ping_eos(dev: Net.NDevice, target: String, count: int, payload: 
 	if ip == "":
 		return "ping: %s: Name or service not known\n" % target
 	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, payload, payload + 28]
-	var received := 0
 	var errors := 0
-	var rtts: Array = []
-	for seq in count:
-		var r := Sim.ping(dev, ip, 64, "", payload + 8)
+	var series := Sim.ping_series(dev, ip, count, payload + 8)
+	for r in series:
 		if bool(r["ok"]):
-			received += 1
-			var rtt := maxf(0.04, float(r.get("rtt", 0.1))) * (1.0 + 0.03 * seq)
-			rtts.append(rtt)
-			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n" % [payload + 8, r["from"], seq + 1, int(r.get("ttl", 64)), rtt]
-		else:
-			var detail := String(r.get("detail", "timeout"))
-			if detail == "no route to host":
-				return "ping: connect: Network is unreachable\n"
-			if detail == "ttl-exceeded":
-				errors += 1
-				out += "From %s icmp_seq=%d Time to live exceeded\n" % [r["from"], seq + 1]
-			elif detail.begins_with("unreachable-"):
-				errors += 1
-				out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, unreachable_text(detail, int(r.get("mtu", 0)))]
-			elif detail.begins_with("host unreachable"):
-				errors += 1
-				out += "From %s icmp_seq=%d Destination Host Unreachable\n" % [first_ip_of(dev), seq + 1]
-	var lost := count - received
+			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n" % [payload + 8, r["from"], int(r["seq"]), int(r.get("ttl", 64)), float(r["rtt"])]
+			continue
+		var detail := String(r.get("detail", "timeout"))
+		if detail == "no route to host":
+			return "ping: connect: Network is unreachable\n"
+		if detail == "ttl-exceeded":
+			errors += 1
+			out += "From %s icmp_seq=%d Time to live exceeded\n" % [r["from"], int(r["seq"])]
+		elif detail.begins_with("unreachable-"):
+			errors += 1
+			out += "From %s icmp_seq=%d %s\n" % [r["from"], int(r["seq"]), unreachable_text(detail, int(r.get("mtu", 0)))]
+		elif detail.begins_with("host unreachable"):
+			errors += 1
+			out += "From %s icmp_seq=%d Destination Host Unreachable\n" % [first_ip_of(dev), int(r["seq"])]
+	var st := Sim.ping_stats(series)
 	out += "\n--- %s ping statistics ---\n%d packets transmitted, %d received, %s%d%% packet loss, time %dms\n" % [
-		target, count, received, ("+%d errors, " % errors) if errors > 0 else "", int(round(100.0 * float(lost) / float(count))), (count - 1) * 200 + 2]
-	if received > 0:
-		var best := 9999.0
-		var worst := 0.0
-		var total := 0.0
-		for v in rtts:
-			best = minf(best, float(v))
-			worst = maxf(worst, float(v))
-			total += float(v)
-		var avg := total / float(rtts.size())
-		out += "rtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms, ipg/ewma %.3f/%.3f ms\n" % [best, avg, worst, (worst - best) / 2.0, 200.0 + avg, avg]
+		target, st["sent"], st["received"], ("+%d errors, " % errors) if errors > 0 else "", int(st["loss_pct"]), (count - 1) * 200 + 2]
+	if int(st["received"]) > 0:
+		out += "rtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms, ipg/ewma %.3f/%.3f ms\n" % [st["min"], st["avg"], st["max"], st["mdev"], 200.0 + float(st["avg"]), st["avg"]]
 	elif errors > 0:
 		out += "pipe %d\n" % mini(count, 3)
-	return out
-
-static func fmt_ping_repeat(dev: Net.NDevice, target: String, count: int, size := 64) -> String:
-	## Real loss statistics: each probe is a separate trip through the
-	## simulation, so an intermittent fault shows up as intermittent.
-	var ip := Sim.resolve(dev, target)
-	if ip == "":
-		return "ping: %s: Name or service not known\n" % target
-	count = clampi(count, 1, 50)
-	var out := "PING %s (%s) %d(%d) bytes of data.\n" % [target, ip, size, size + 28]
-	var received := 0
-	var best := 9999.0
-	var worst := 0.0
-	var total := 0.0
-	var last_detail := ""
-	for seq in count:
-		var r := Sim.ping(dev, ip, 64, "", size)
-		if bool(r["ok"]):
-			received += 1
-			var rtt := maxf(0.04, float(r.get("rtt", 0.1)))
-			best = minf(best, rtt)
-			worst = maxf(worst, rtt)
-			total += rtt
-			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.2f ms\n" % [size, r["from"],
-				seq + 1, int(r.get("ttl", 64)), rtt]
-		else:
-			last_detail = String(r.get("detail", "timeout"))
-			if last_detail.begins_with("unreachable-"):
-				out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, unreachable_text(last_detail)]
-			else:
-				out += "icmp_seq=%d %s\n" % [seq + 1, last_detail]
-	var lost := count - received
-	out += "%d packets transmitted, %d received, %d%% packet loss\n" % [count, received,
-		int(round(100.0 * float(lost) / float(count)))]
-	if received > 0:
-		out += "rtt min/avg/max = %.2f/%.2f/%.2f ms\n" % [best, total / float(received), worst]
-	elif last_detail != "":
-		out += "every probe failed: %s\n" % last_detail
 	return out
 
 static func fmt_traceroute(dev: Net.NDevice, target: String, numeric := false) -> String:
@@ -390,18 +308,18 @@ static func fmt_traceroute(dev: Net.NDevice, target: String, numeric := false) -
 	if ip == "":
 		return "traceroute: %s: Name or service not known\n" % target
 	var out := "traceroute to %s (%s), 30 hops max, 60 byte packets\n" % [target, ip]
-	var hops := Sim.traceroute(dev, ip)
+	var hops := Sim.trace(dev, ip)
 	# a router that answered unreachable gets the annotation after each time
 	var mark := {"unreachable-host": " !H", "unreachable-net": " !N", "unreachable-admin": " !X"}.get(Sim.last_trace_note, "")
 	var n := 1
-	for hop in hops:
-		var tag := mark if n == hops.size() and String(hop) != ip else ""
+	for h in hops:
+		var hop := String(h["hop"])
+		var tag := mark if n == hops.size() and hop != ip else ""
 		if hop == "*":
 			out += "%2d  * * *\n" % n
 		else:
-			var probe := Sim.ping(dev, String(hop))
-			var rtt := maxf(0.04, float(probe.get("rtt", 0.1)))
-			var name := "" if numeric else Sim.reverse_lookup(dev, String(hop))
+			var rtt := float(h["rtt"])
+			var name := "" if numeric else Sim.reverse_lookup(dev, hop)
 			out += ("%2d  %s  %.3f ms%s  %.3f ms%s  %.3f ms%s\n" % [n, hop, rtt, tag, rtt * 1.03, tag, rtt * 0.98, tag]) if numeric \
 				else ("%2d  %s (%s)  %.3f ms%s  %.3f ms%s  %.3f ms%s\n" % [n, name if name != "" else hop, hop, rtt, tag, rtt * 1.03, tag, rtt * 0.98, tag])
 		n += 1
@@ -1835,9 +1753,7 @@ class EOS extends Session:
 			return "% Invalid input\n"
 		var out := _show_ip_route([]).split("\n")[0].replace("VRF: default", "VRF: %s" % vrf) + "\n"
 		out += ROUTE_CODES + "\nGateway of last resort is not set\n\n"
-		for e in Sim.rib(dev):
-			if String(e["vrf"]) != vrf:
-				continue
+		for e in Sim.fib(dev, vrf):
 			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
 			if e["src"] == "C":
 				out += " %-8s %s is directly connected, %s\n" % [e["src"], pfx, e["iface"].name]
@@ -4149,19 +4065,15 @@ class EOS extends Session:
 		var want := String(r[0]) if r.size() == 1 and String(r[0]).is_valid_ip_address() else ""
 		var chosen := {}
 		if want != "":
-			for e in Sim.rib(dev):
-				if String(e["vrf"]) == "" and Net.same_net(want, String(e["prefix"]), int(e["plen"])) \
+			for e in Sim.fib(dev):
+				if Net.same_net(want, String(e["prefix"]), int(e["plen"])) \
 						and (chosen.is_empty() or int(e["plen"]) > int(chosen["plen"])):
 					chosen = e
 		var out := "VRF: default\n" + ROUTE_CODES + "\n"
 		var any := false
 		var default_rows := ""
 		var rows := ""
-		for e in Sim.rib(dev):
-			if String(e["vrf"]) != "":
-				continue  # a VRF's table is 'show ip route vrf <name>'
-			if Net.is_v6(String(e["prefix"])):
-				continue  # the v6 table is 'show ipv6 route'
+		for e in Sim.fib(dev):  # a VRF's table is 'show ip route vrf <name>', the v6 one 'show ipv6 route'
 			if want != "" and e != chosen:
 				continue
 			any = true
@@ -4188,9 +4100,7 @@ class EOS extends Session:
 		## the installed IPv6 table, in the same shape as the v4 one
 		var out := "VRF: default\n" + ROUTE_CODES_V6 + "\n"
 		var rows := ""
-		for e in Sim.rib(dev):
-			if String(e["vrf"]) != "" or not Net.is_v6(String(e["prefix"])):
-				continue
+		for e in Sim.fib(dev, "", true):
 			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
 			var code := "B E" if e["src"] == "B" else ("O3" if e["src"] == "O" else String(e["src"]))
 			if e["src"] == "C":
