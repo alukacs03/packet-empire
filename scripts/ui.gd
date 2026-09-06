@@ -330,12 +330,13 @@ func _show_next_unlock_intro() -> void:
 	var colour := UIW.colour(String(intro["colour"]))
 	unlock_intro_panel.add_theme_stylebox_override("panel",
 		_flat_sb(Color(0.045, 0.075, 0.11, 0.97), Color(colour, 0.8), 2, 0))
-	unlock_intro_kicker.text = String(intro["kicker"])
+	var uk := "unlock." + _unlock_intro_active + "."  # the table is the English; the catalogue carries the rest
+	unlock_intro_kicker.text = Loc.t(uk + "kicker") if Loc.CATALOG.has(uk + "kicker") else String(intro["kicker"])
 	unlock_intro_kicker.add_theme_color_override("font_color", colour)
-	unlock_intro_title.text = String(intro["title"])
-	unlock_intro_body.text = String(intro["body"])
-	unlock_intro_where.text = String(intro["where"])
-	unlock_intro_action.text = String(intro["action"])
+	unlock_intro_title.text = Loc.t(uk + "title") if Loc.CATALOG.has(uk + "title") else String(intro["title"])
+	unlock_intro_body.text = Loc.t(uk + "body") if Loc.CATALOG.has(uk + "body") else String(intro["body"])
+	unlock_intro_where.text = Loc.t(uk + "where") if Loc.CATALOG.has(uk + "where") else String(intro["where"])
+	unlock_intro_action.text = Loc.t(uk + "action") if Loc.CATALOG.has(uk + "action") else String(intro["action"])
 	unlock_intro_panel.modulate.a = 0.0
 	unlock_intro_panel.visible = true
 	Sfx.play("open")
