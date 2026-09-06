@@ -561,6 +561,8 @@ class EOS extends Session:
 				dev.arp.clear()
 				return ""},
 			{"m": EP, "p": ["show", "capture"], "h": _show_capture, "hidden": true},
+			{"m": ["priv"], "p": ["tcpdump"], "h": _tcpdump_eos},
+			{"m": ["priv"], "p": ["bash", "tcpdump"], "h": _tcpdump_eos},
 			{"m": EP, "p": ["show", "acl"], "h": _show_acl, "hidden": true},
 			{"m": EP, "p": ["show", "ip", "access-lists"], "h": _show_acl},
 			{"m": EP, "p": ["show", "access-lists"], "h": _show_acl, "hidden": true},
@@ -3629,6 +3631,33 @@ class EOS extends Session:
 		Game.topology_changed.emit()
 		return ""
 
+	func _tcpdump_eos(r: Array) -> String:
+		## EOS: tcpdump interface Ethernet1 [filter], or bash tcpdump -i et1:
+		## the Linux underneath does the work, so the output is the Linux one
+		var args: Array = []
+		var k := 0
+		while k < r.size():
+			var w := String(r[k])
+			if w == "interface" and k + 1 < r.size():
+				var target := _find_iface(String(r[k + 1]))
+				if target == null:
+					return "% Invalid input\n"
+				args.append("-i")
+				args.append(target.name)
+				k += 2
+				continue
+			if w == "-i" and k + 1 < r.size():
+				var target2 := _find_iface(String(r[k + 1]))
+				if target2 == null:
+					return "tcpdump: %s: No such device exists\n" % r[k + 1]
+				args.append("-i")
+				args.append(target2.name)
+				k += 2
+				continue
+			args.append(w)
+			k += 1
+		return LinuxCLI.new(dev)._tcpdump(args)
+
 	func _show_capture(_r: Array) -> String:
 		if dev.capture.is_empty():
 			return "  (no frames captured: generate some traffic)\n"
@@ -4163,26 +4192,30 @@ class EOS extends Session:
 		return out if any else ""
 
 	func _show_tech_support(_r: Array) -> String:
-		## What a vendor asks for, collected once, read-only, and safe to run
-		## while everything is on fire.
-		var out := "===== tech-support: %s (%s) at cycle %d =====\n" % [dev.name,
-			Game.MODELS[dev.model]["label"], Game.cycle]
-		out += "\n--- interfaces ---\n" + _show_interfaces([])
-		out += "\n--- counters ---\n" + _show_counters([])
+		## what EOS prints: every show command in turn, each under its own
+		## dashed header, the way a TAC case wants it; nothing summarised
+		var sections: Array = [
+			["show version", _show_version([])],
+			["show clock", _show_clock([])],
+			["show running-config", _show_run([])],
+			["show startup-config", _show_startup([])],
+			["show interfaces status", _show_if_status([])],
+			["show interfaces", _show_interfaces([])],
+			["show interfaces counters", _show_counters([])],
+			["show ip interface brief", _show_ip_brief([])],
+			["show lldp neighbors", _show_lldp([])],
+			["show arp", _show_arp([])],
+		]
 		if dev.type == "switch":
-			out += "\n--- vlans ---\n" + _show_vlan([])
-			out += "\n--- mac address-table ---\n" + _show_mac([])
-			out += "\n--- spanning-tree ---\n" + _show_stp([])
-		out += "\n--- arp ---\n" + _show_arp([])
+			sections.append(["show vlan", _show_vlan([])])
+			sections.append(["show mac address-table", _show_mac([])])
+			sections.append(["show spanning-tree", _show_stp([])])
 		if dev.ip_forwarding:
-			out += "\n--- ip route ---\n" + _show_ip_route([])
-		out += "\n--- lldp neighbors ---\n" + _show_lldp([])
-		out += "\n--- configuration ---\n%s\n" % ("running configuration matches startup"
-			if not Game.config_dirty(dev) else "RUNNING CONFIGURATION IS NOT SAVED")
-		out += "\n--- log (most recent last) ---\n"
-		for line: String in dev.logs.slice(maxi(0, dev.logs.size() - 12)):
-			out += line + "\n"
-		out += "===== end tech-support =====\n"
+			sections.append(["show ip route", _show_ip_route([])])
+		sections.append(["show logging", _show_logging([])])
+		var out := ""
+		for sec in sections:
+			out += "------------- %s -------------\n\n%s\n" % [sec[0], sec[1]]
 		return out
 
 	func _show_logging(_r: Array) -> String:

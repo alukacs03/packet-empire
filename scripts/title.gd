@@ -69,7 +69,7 @@ func _ready() -> void:
 	var spacer_bot := Control.new()
 	spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(spacer_bot)
-	footer_lbl = _lbl(Loc.t("title.footer"), 12, UIW.colour("muted"))
+	footer_lbl = _lbl("%s   ·   v%s" % [Loc.t("title.footer"), ProjectSettings.get_setting("application/config/version", "dev")], 12, UIW.colour("muted"))
 	left.add_child(footer_lbl)
 
 	var right := UIW.CommandPanel.new().setup("overlay", "warm", 28)
@@ -135,7 +135,7 @@ func _relabel() -> void:
 	if esc_lbl:
 		esc_lbl.text = Loc.t("title.esc")
 	if footer_lbl:
-		footer_lbl.text = Loc.t("title.footer")
+		footer_lbl.text = "%s   ·   v%s" % [Loc.t("title.footer"), ProjectSettings.get_setting("application/config/version", "dev")]
 
 func _build_menu() -> void:
 	# queue_free is deferred, so the old buttons are still children while the

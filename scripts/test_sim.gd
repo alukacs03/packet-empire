@@ -2523,6 +2523,21 @@ static func run() -> int:
 	var pv_a_learned := Sim._bgp_learned(t7_pv_a)
 	check(pv_a_learned.all(func(lr): return String(lr["prefix"]) != "192.0.2.0"), "bgp: a path that already carries our AS is dropped, so our own prefix never comes back")
 	check(Sim.rib(t7_pv_c).any(func(e): return e["src"] == "B" and String(e["prefix"]) == "192.0.2.0"), "bgp: the transited prefix is installed on C")
+	# --- ops: slot headers, tech-support, tcpdump on EOS ---
+	Game.save_game()
+	check(FileAccess.file_exists(Game.slot_path(Game.current_slot) + ".meta"), "slots: a header is written beside the save")
+	var meta_info := Game.slot_info(Game.current_slot)
+	check(String(meta_info.get("company", "")) == Game.company_name and int(meta_info.get("cycle", -1)) == Game.cycle, "slots: the title reads the header, not the whole save")
+	check(String(ProjectSettings.get_setting("application/config/version", "")) != "", "build: the project carries a version")
+	var ts_s := CLI.new_session(t7_pv_c)
+	ts_s.exec("en")
+	var t8_ts := ts_s.exec("show tech-support")
+	check(t8_ts.contains("------------- show version -------------") and t8_ts.contains("------------- show running-config -------------") and t8_ts.contains("------------- show ip route -------------"),
+		"tech-support: the real concatenation of show commands under dashed headers")
+	Sim.ping(t7_pv_c, "10.9.2.1")
+	var t8_td := ts_s.exec("tcpdump interface Ethernet1")
+	check(t8_td.contains("listening on Ethernet1") or t8_td.contains("ICMP") or t8_td.contains("packets captured"), "tcpdump: EOS runs the Linux tcpdump on a named interface")
+	check(ts_s.exec("tcpdump interface Ethernet9").begins_with("% Invalid input"), "tcpdump: an interface the box does not have is refused")
 	# --- duplicate addresses are logged on both boxes ---
 	var dup_a := Game.new_device("srv-1")
 	var dup_b := Game.new_device("srv-1")
@@ -10104,11 +10119,11 @@ static func run() -> int:
 			and bundle.contains("mac address-table") and bundle.contains("spanning-tree") \
 			and bundle.contains("lldp") and bundle.contains("something worth reading later"),
 		"tech-support: one command collects the interfaces, counters, tables, neighbours and log")
-	check(bundle.contains("RUNNING CONFIGURATION IS NOT SAVED"),
-		"tech-support: it says plainly whether what is running was ever saved")
+	check(bundle.contains("------------- show startup-config -------------") and bundle.contains("No startup-config was found"),
+		"tech-support: the startup-config section shows plainly that nothing was ever saved")
 	ts_sw.startup = Game.device_config(ts_sw)
-	check(ts_cli.exec("show tech-support").contains("matches startup"),
-		"tech-support: and says so when it has been")
+	check(not ts_cli.exec("show tech-support").contains("No startup-config was found"),
+		"tech-support: and the section carries the saved configuration once there is one")
 	var ts_before := Game.snapshot()
 	ts_cli.exec("show tech-support")
 	check(Game.snapshot() == ts_before,

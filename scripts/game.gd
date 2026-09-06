@@ -10177,7 +10177,13 @@ func slot_info(i: int) -> Dictionary:
 	var path := slot_path(i)
 	if not FileAccess.file_exists(path):
 		return {"empty": true, "auto": i >= SLOTS}
-	var data: Variant = read_json_with_backup(path)
+	var data: Variant = null
+	if FileAccess.file_exists(path + ".meta"):
+		var j := JSON.new()
+		if j.parse(FileAccess.get_file_as_string(path + ".meta")) == OK and typeof(j.data) == TYPE_DICTIONARY:
+			data = j.data  # the header written with the save: enough for a button
+	if typeof(data) != TYPE_DICTIONARY:
+		data = read_json_with_backup(path)
 	if typeof(data) != TYPE_DICTIONARY:
 		return {"empty": true, "auto": i >= SLOTS, "broken": true}
 	var d: Dictionary = data
@@ -10196,7 +10202,7 @@ func import_legacy_save() -> void:
 
 func delete_slot(i: int) -> void:
 	var path := slot_path(i)
-	for suffix in ["", ".bak", ".tmp"]:
+	for suffix in ["", ".bak", ".tmp", ".meta", ".meta.bak", ".meta.tmp"]:
 		if FileAccess.file_exists(path + suffix):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path + suffix))
 
@@ -10227,6 +10233,10 @@ func save_game(slot := -1) -> void:
 	payload["saved_at"] = Time.get_datetime_string_from_system(false, true)
 	payload["save_version"] = SAVE_VERSION
 	write_text_atomic(slot_path(slot), JSON.stringify(payload, "  "))
+	# a small header beside the save, so the title screen never parses a
+	# several-hundred-kilobyte file just to print a button
+	write_text_atomic(slot_path(slot) + ".meta", JSON.stringify({"company_name": company_name, "cycle": cycle,
+		"money": money, "stage": stage, "demo": demo, "saved_at": payload["saved_at"]}))
 
 func _serialize() -> Dictionary:
 	var devs := {}  # name -> serialized (names are unique)
