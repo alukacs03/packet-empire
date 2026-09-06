@@ -8,6 +8,15 @@ static func check(ok: bool, description: String) -> void:
 	print(("PASS  " if ok else "FAIL  ") + "layout: " + description)
 	if not ok: failures += 1
 
+static func click(world: Node, position: Vector2) -> void:
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = position
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		world.get_viewport().push_input(event, true)
+		await world.get_tree().process_frame
+
 static func capture(world: Node, name: String) -> void:
 	world.ui._fit_cards.call_deferred()
 	for _i in 10: await world.get_tree().process_frame
@@ -62,6 +71,16 @@ static func run(world) -> void:
 	await capture(world, "04-sale-countdown")
 	world.ui.open_rack(f["rack"])
 	await capture(world, "05-rack")
+	await click(world, world.ui.hud_map_btn.get_global_rect().get_center())
+	check(world.ui.map_overlay.visible and not world.ui.rack_overlay.visible, "persistent navigation switches workspace with a real click")
+	world.ui.close_everything()
+	world.ui.open_rack(f["rack"])
+	for _i in 3: await world.get_tree().process_frame
+	var racks_before := Game.racks.size()
+	world.mode = 1
+	await click(world, Vector2(1100, 650))
+	check(Game.racks.size() == racks_before, "workspace scrim prevents a click from building a rack on the floor")
+	world.mode = 0
 	world.ui.open_dev(f["a"])
 	world.ui._toggle_cli()
 	await capture(world, "06-console")

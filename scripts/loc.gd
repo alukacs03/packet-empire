@@ -937,6 +937,7 @@ const CATALOG := {
 	"brief.packed_stock": {"en": "We have packed the stock. Now we need the checkout to hold up. How should we invite our shoppers?", "hu": "Becsomagoltuk az árut. Most az kell, hogy a pénztár kibírja. Hogyan hívjuk meg a vásárlóinkat?"},
 	"brief.forecast_note": {"en": "Forecast at the busiest normal shift. Other customers share this capacity.", "hu": "Előrejelzés a legforgalmasabb normál műszakra. Ezen a kapacitáson más ügyfelek is osztoznak."},
 	"brief.title": {"en": "Kiskacsa's big night", "hu": "A Kiskacsa nagy estéje"},
+	"brief.choose_plan": {"en": "Choose a launch plan", "hu": "Válassz indulási tervet"},
 	"brief.invitation": {"en": "Our first sale is ready. Invite shoppers in groups, or launch to everyone at once?", "hu": "Készen áll az első akciónk. Csoportokban hívjuk a vásárlókat, vagy mindenkit egyszerre?"},
 	"brief.available": {"en": "%d Mbps available", "hu": "%d Mbps elérhető"},
 	"brief.plan_terms": {"en": "$%d upfront · $%d bonus for all 3 waves", "hu": "%d $ előre · %d $ bónusz mindhárom hullámért"},

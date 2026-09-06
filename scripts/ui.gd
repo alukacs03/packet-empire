@@ -521,6 +521,14 @@ func _refresh_money() -> void:
 				objective_lbl.text = "HAZARD  ·  %s in %s  (click: Facility)" % [Loc.t(String(Game.HAZARD_KINDS[h["kind"]]["label"])), h["rack"]]
 			else:
 				objective_lbl.text = "OUTAGE  ·  %d customer%s off the air" % [down, "" if down == 1 else "s"]
+		elif FirstCustomer.active():
+			var arc := FirstCustomer.state()
+			var phase := String(arc.get("phase", "planning"))
+			var status := Loc.t("brief.choose_plan")
+			if phase == "countdown": status = Loc.t("brief.starts_in") % maxi(0, int(arc["starts"]) - Game.cycle)
+			elif phase == "live": status = Loc.t("brief.live_wave") % mini(3, Game.cycle - int(arc["starts"]) + 1)
+			elif phase == "debrief": status = Loc.t("brief.carried") % int(arc["successes"])
+			objective_lbl.text = Loc.t("brief.title") + "  ·  " + status
 		else:
 			var quiet_line := Game.housekeeping_suggestion()
 			if quiet_line != "":
