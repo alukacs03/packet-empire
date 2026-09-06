@@ -367,7 +367,7 @@ func _follow_unlock_intro() -> void:
 		"expand":
 			expand_btn.grab_focus()
 			_flash(expand_btn, Color(1.25, 1.12, 0.72), 0.7)
-			hud_toast("EXPAND  /  The next room is ready when the cash and timing are right.", true)
+			hud_toast(Loc.t("toast.expand_ready"), true)
 
 func _money_flash() -> void:
 	Sfx.play("money")
@@ -384,23 +384,23 @@ func _flash(ctrl: CanvasItem, colour: Color, dur: float) -> void:
 func _customer_service_feedback(customer: String, state: String, fee: int) -> void:
 	match state:
 		"delivered":
-			hud_toast("SERVICE LIVE  /  %s's promise is proven. Billing starts at $%d/cycle."
+			hud_toast(Loc.t("toast.service_live")
 				% [customer, fee], true)
 		"restored":
-			hud_toast("SERVICE RESTORED  /  %s is reachable again. Billing resumes this cycle."
+			hud_toast(Loc.t("toast.service_restored")
 				% customer, true)
 		"suspended":
-			hud_toast("PAYMENT SUSPENDED  /  %s is down. No invoice until service returns."
+			hud_toast(Loc.t("toast.payment_suspended")
 				% customer)
 	_refresh_tutorial()
 	_refresh_open()
 
 func _customer_cash_feedback(customer: String, state: String, amount: int) -> void:
 	if state == "invoiced":
-		hud_toast("INVOICE RAISED  /  %s owes $%d. Cash follows their payment terms."
+		hud_toast(Loc.t("toast.invoice_raised")
 			% [customer, amount], true)
 	elif state == "collected":
-		hud_toast("CASH ARRIVED  /  %s paid $%d. The working service remains yours to operate."
+		hud_toast(Loc.t("toast.cash_arrived")
 			% [customer, amount], true)
 	_refresh_tutorial()
 	_refresh_open()
@@ -1286,16 +1286,16 @@ func _pick_new_device(slot: int, at: Control) -> void:
 	m.id_pressed.connect(func(id: int) -> void:
 		var mod2: Dictionary = Game.MODELS[keys[id]]
 		if int(mod2.get("tier", 0)) > Game.stage:
-			hud_toast("%s needs the %s stage: expand first." % [mod2["label"],
+			hud_toast(Loc.t("toast.needs_stage") % [mod2["label"],
 				Game.STAGES[int(mod2["tier"])]["name"]])
 			return
 		if not Game.can_install(cur_rack, slot, keys[id]):
-			hud_toast("A %s is %dU and will not fit there." % [mod2["label"],
+			hud_toast(Loc.t("toast.will_not_fit") % [mod2["label"],
 				Game.model_height(keys[id])])
 			return
 		if not Game.try_buy_device(String(keys[id])):
 			if Game.stocked_out(String(keys[id])):
-				hud_toast("%s is on back order until around cycle %d. Order one for the dock, or pick a substitute." % [
+				hud_toast(Loc.t("toast.back_order") % [
 					mod2["label"], int(Game.stockouts[String(keys[id])])])
 				return
 			var available := Game.money + Game.delivery_credit_for_model(String(keys[id]))
@@ -2895,7 +2895,7 @@ func _refresh_ops() -> void:
 			al.add_theme_font_override("font", mono)
 			ops_box.add_child(al)
 		if any_hot:
-			ops_box.add_child(_wrap("  Cold air does not travel far. Put a cooling unit in or beside the hot row, and leave an aisle: cabinets pressed against each other recirculate their own exhaust.",
+			ops_box.add_child(_wrap(Loc.t("body.cold_air"),
 				12, Color(1.0, 0.82, 0.5), 780))
 	var talkers := Game.top_talkers(6)
 	if not talkers.is_empty():
@@ -2950,7 +2950,7 @@ func _refresh_ops() -> void:
 			if err != "":
 				_toast(err)
 			else:
-				hud_toast("UPS installed.", true)
+				hud_toast(Loc.t("toast.ups_installed"), true)
 			_refresh_ops())
 		ops_box.add_child(ups_btn)
 	if not Game.decisions.is_empty():
@@ -3602,7 +3602,7 @@ func _capacity_advice() -> String:
 
 func toggle_ops() -> void:
 	if not _feature_available("ops"):
-		hud_toast("OPS unlocks when your first live customer creates an operational duty.")
+		hud_toast(Loc.t("toast.ops_locked"))
 		return
 	if ops_overlay.visible:
 		ops_overlay.visible = false
@@ -4120,7 +4120,7 @@ func _build_map() -> void:
 
 func toggle_map() -> void:
 	if not _feature_available("map"):
-		hud_toast("MAP unlocks after the first rack is physically delivered.")
+		hud_toast(Loc.t("toast.map_locked_short"))
 		return
 	if map_overlay.visible:
 		map_overlay.visible = false

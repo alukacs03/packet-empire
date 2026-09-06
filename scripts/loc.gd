@@ -886,6 +886,19 @@ const CATALOG := {
 	"body.optional_mastery": {"en": "%s  OPTIONAL MASTERY  /  %s", "hu": "%s  OPCIONÁLIS MESTERFOK  /  %s"},
 	"body.more_jobs": {"en": "🔒  more jobs unlock as you finish these", "hu": "🔒  további feladatok nyílnak meg, ahogy ezeket befejezed"},
 	"body.job_reward": {"en": "%s: %s      reward $%d", "hu": "%s: %s      jutalom %d $"},
+	"toast.expand_ready": {"en": "EXPAND  /  The next room is ready when the cash and timing are right.", "hu": "BŐVÍTÉS  /  A következő terem készen áll, ha a pénz és az időzítés megfelelő."},
+	"toast.service_live": {"en": "SERVICE LIVE  /  %s's promise is proven. Billing starts at $%d/cycle.", "hu": "SZOLGÁLTATÁS ÉL  /  %s ígérete bizonyítva. A számlázás %d $/ciklus árral indul."},
+	"toast.service_restored": {"en": "SERVICE RESTORED  /  %s is reachable again. Billing resumes this cycle.", "hu": "SZOLGÁLTATÁS HELYREÁLLT  /  %s újra elérhető. A számlázás ebben a ciklusban folytatódik."},
+	"toast.payment_suspended": {"en": "PAYMENT SUSPENDED  /  %s is down. No invoice until service returns.", "hu": "FIZETÉS FELFÜGGESZTVE  /  %s kiesett. Nincs számla, amíg a szolgáltatás vissza nem tér."},
+	"toast.invoice_raised": {"en": "INVOICE RAISED  /  %s owes $%d. Cash follows their payment terms.", "hu": "SZÁMLA KIÁLLÍTVA  /  %s %d $-ral tartozik. A pénz a fizetési feltételeik szerint érkezik."},
+	"toast.cash_arrived": {"en": "CASH ARRIVED  /  %s paid $%d. The working service remains yours to operate.", "hu": "PÉNZ MEGÉRKEZETT  /  %s fizetett %d $-t. A működő szolgáltatást továbbra is te üzemelteted."},
+	"toast.needs_stage": {"en": "%s needs the %s stage: expand first.", "hu": "%s a(z) %s szakaszt igényli: előbb bővíts."},
+	"toast.will_not_fit": {"en": "A %s is %dU and will not fit there.", "hu": "Egy %s %dU magas, és nem fér oda."},
+	"toast.back_order": {"en": "%s is on back order until around cycle %d. Order one for the dock, or pick a substitute.", "hu": "%s utánrendelésen van nagyjából a(z) %d. ciklusig. Rendelj egyet a rakodóra, vagy válassz helyettesítőt."},
+	"body.cold_air": {"en": "  Cold air does not travel far. Put a cooling unit in or beside the hot row, and leave an aisle: cabinets pressed against each other recirculate their own exhaust.", "hu": "  A hideg levegő nem jut messzire. Tegyél hűtőegységet a meleg sorba vagy mellé, és hagyj folyosót: az egymáshoz préselt szekrények a saját kifújt levegőjüket keringetik."},
+	"toast.ups_installed": {"en": "UPS installed.", "hu": "UPS telepítve."},
+	"toast.ops_locked": {"en": "OPS unlocks when your first live customer creates an operational duty.", "hu": "Az ÜZEMELTETÉS akkor nyílik meg, amikor az első élő ügyfeled üzemeltetési feladatot hoz."},
+	"toast.map_locked_short": {"en": "MAP unlocks after the first rack is physically delivered.", "hu": "A TÉRKÉP az első rack tényleges kiszállítása után nyílik meg."},
 }
 
 static func languages() -> Array:
