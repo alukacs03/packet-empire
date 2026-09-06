@@ -11249,8 +11249,8 @@ static func run() -> int:
 	var ls_saved_mac: String = ls_port.secure_mac
 	lr_h1.ifaces[0].mac = "02:aa:bb:cc:dd:ee"
 	Sim.ping(lr_h1, "10.66.0.2")
-	check(ls_port.err_disabled and "err-disabled" in ls_ses.exec("show interfaces status"),
-		"link state: a port-security violation shows as err-disabled (%s)" % ls_saved_mac)
+	check(ls_port.err_disabled and "errdisabled" in ls_ses.exec("show interfaces status"),
+		"link state: a port-security violation shows as errdisabled (%s)" % ls_saved_mac)
 	ls_ses.exec("shutdown")
 	ls_ses.exec("no shutdown")
 	check(not ls_port.err_disabled and ls_port.enabled, "link state: shut / no shut clears the err-disable")
@@ -11393,6 +11393,18 @@ static func run() -> int:
 	Game.lockout_tick()
 	check(not cs_sw.vlans.has(57) and not Game.confirm_commits.has(cs_sw.name), "session: an unconfirmed timer reverts the session by itself")
 	Game.cycle -= 8
+	check(css.exec("show vlan 999") == "% VLAN 999 not found in current VLAN database\n", "show vlan: an unknown id gets the real not-found line")
+	check(css.exec("show vlan 56").contains("56") and not css.exec("show vlan 56").contains("default"), "show vlan <id> prints that VLAN alone")
+	check(css.exec("show vlan garbage") == "% Invalid input\n", "show vlan: trailing junk is invalid, not ignored")
+	css.exec("conf t")
+	css.exec("interface Vlan56")
+	css.exec("interface Ethernet7")
+	css.exec("channel-group 3 mode active")
+	css.exec("end")
+	var cs_status := css.exec("show interfaces status")
+	check(not cs_status.contains("Vl56") and cs_status.contains("in Po3"), "show interfaces status: no SVI rows, and a bundled member names its channel")
+	check(css.exec("show running-config | include ethernet") == "" and css.exec("show running-config | include Ethernet7").contains("Ethernet7"), "pipe: include is case-sensitive, as the regex on the box is")
+	check(css.exec("show spanning-tree").begins_with("RSTP\n"), "show spanning-tree: rstp heads its block RSTP, not MST0")
 	# --- RouterOS parity: vrf, dhcp-relay, vxlan, ospf interface print ---
 	var t11_rp_rack := Game.add_rack(Vector2i(9, 11))
 	var t11_rp_r := Game.new_device("rtr-lite")

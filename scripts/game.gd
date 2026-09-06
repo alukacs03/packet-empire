@@ -9854,7 +9854,7 @@ func iface_status_word(i: Net.Iface) -> String:
 	if i.admin_down:
 		return "disabled"
 	if i.err_disabled:
-		return "err-disabled"
+		return "errdisabled"  # Arista's spelling; the hyphenated one is IOS
 	if not i.enabled or effective_peer(i) == null:
 		return "notconnect"
 	return "connected"

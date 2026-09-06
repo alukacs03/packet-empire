@@ -238,21 +238,21 @@ static func apply_pipe_stages(text: String, stages: Array) -> String:
 		lines.pop_back()
 	for st in stages:
 		var verb := String(st[0])
-		var needle := String(st[1]).to_lower()
+		var needle := String(st[1])  # the EOS filter is a regex match, and case-sensitive
 		var kept: Array = []
 		match verb:
 			"include":
 				for l in lines:
-					if needle in String(l).to_lower():
+					if needle in String(l):
 						kept.append(l)
 			"exclude":
 				for l in lines:
-					if needle not in String(l).to_lower():
+					if needle not in String(l):
 						kept.append(l)
 			"begin":
 				var started := false
 				for l in lines:
-					if not started and needle in String(l).to_lower():
+					if not started and needle in String(l):
 						started = true
 					if started:
 						kept.append(l)
@@ -261,7 +261,7 @@ static func apply_pipe_stages(text: String, stages: Array) -> String:
 				for l in lines:
 					var ls := String(l)
 					if not ls.begins_with(" ") and not ls.begins_with("!"):
-						keep = needle in ls.to_lower()
+						keep = needle in ls
 					if keep and ls != "":
 						kept.append(ls)
 			"count":
@@ -555,6 +555,7 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["spanning-tree", "bpduguard"], "h": func(r): return _stp_edge("bpduguard", r.is_empty() or String(r[0]) != "disable")},
 			{"m": ["if"], "p": ["no", "spanning-tree", "bpduguard"], "h": func(_r): return _stp_edge("bpduguard", false)},
 			{"m": ["config"], "p": ["spanning-tree", "priority"], "h": _stp_priority},
+			{"m": ["config"], "p": ["spanning-tree", "mst", "0", "priority"], "h": _stp_priority},  # the spelling running-config prints
 			{"m": ["config"], "p": ["spanning-tree", "mst", "configuration"], "h": func(_r):
 				if dev.type != "switch":
 					return "% Invalid input\n"
@@ -3141,7 +3142,7 @@ class EOS extends Session:
 
 	func _show_ospf_database(_r: Array) -> String:
 		if dev.ospf.is_empty():
-			return "% OSPF not running: 'router ospf' in config mode\n"
+			return ""  # nothing at all for a protocol that is not running, as on the box
 		var out := "            OSPF Router with ID (%s)\n\n                Router Link States (Area %s)\n\n%-16s %-16s %-8s %s\n" % [
 			Sim.ospf_router_id(dev), Sim.ospf_area(dev), "Link ID", "ADV Router", "Age", "Link count"]
 		var routers: Array = [dev]
@@ -3636,8 +3637,15 @@ class EOS extends Session:
 				i.tx_frames, i.tx_frames * 148, i.tx_frames / 20, i.tx_frames / 50, i.collisions, i.collisions, i.out_drops]
 		return out
 
-	func _show_vlan(_r: Array) -> String:
+	func _show_vlan(r: Array) -> String:
 		if dev.type != "switch":
+			return "% Invalid input\n"
+		var want := 0
+		if r.size() == 1 and String(r[0]).is_valid_int():
+			want = int(r[0])
+			if not dev.vlans.has(want):
+				return "%% VLAN %d not found in current VLAN database\n" % want
+		elif not r.is_empty():
 			return "% Invalid input\n"
 		## access ports only, every one spelled out: trunk membership is what
 		## 'show interfaces trunk' is for
@@ -3646,6 +3654,8 @@ class EOS extends Session:
 		var vids := dev.vlans.keys()
 		vids.sort()
 		for vid in vids:
+			if want > 0 and int(vid) != want:
+				continue
 			# every port that carries the VLAN, trunks included, and Cpu when an SVI exists
 			var ports: Array = []
 			for i: Net.Iface in dev.ifaces:
@@ -3870,7 +3880,7 @@ class EOS extends Session:
 		var out := ""
 		var instances: Array = Sim.mst_instances() if dev.stp_mode == "mst" else [0]
 		for inst in instances:
-			out += "MST%d\n  Spanning tree enabled protocol %s\n" % [int(inst), proto]
+			out += "%s\n  Spanning tree enabled protocol %s\n" % [("MST%d" % int(inst)) if dev.stp_mode == "mst" else "RSTP", proto]
 			out += "  Root ID    Priority    %d\n             Address     %s\n" % [root.stp_priority if root else dev.stp_priority,
 				Net.mac_dotted(root.ifaces[0].mac) if root and not root.ifaces.is_empty() else "0000.0000.0000"]
 			if root == null or root == dev:
@@ -4230,13 +4240,15 @@ class EOS extends Session:
 		var out := "%-10s %-10s %-12s %-8s %-6s %-6s %-15s %-5s %s\n" % ["Port", "Name", "Status", "Vlan", "Duplex", "Speed", "Type", "Flags", "Encapsulation"]
 		var groups: Array = []
 		for i: Net.Iface in dev.ifaces:
-			if i.name == "lo":
-				continue
+			if i.name == "lo" or i.name.begins_with("Vlan") or i.name.begins_with("Loopback"):
+				continue  # SVIs and loopbacks are not in this table on the real box
 			var peer := Game.effective_peer(i)
 			var status := Game.iface_status_word(i)
 			var up := status == "connected"
 			var duplex_word := ("a-%s" % Sim.effective_duplex(i, peer) if i.duplex == "auto" else i.duplex) if up else ("auto" if i.duplex == "auto" else i.duplex)
-			var vlan_word := "routed" if i.mode == "routed" or i.name.begins_with("Management") or i.name.begins_with("Vlan") or i.name.begins_with("Loopback") else ("trunk" if i.mode == "trunk" else str(i.untagged_vlan))
+			var vlan_word := "routed" if i.mode == "routed" or i.name.begins_with("Management") else ("trunk" if i.mode == "trunk" else str(i.untagged_vlan))
+			if i.lag > 0:
+				vlan_word = "in Po%d" % i.lag  # a bundled member shows its channel, not a VLAN
 			var speed := Game.iface_speed(i)
 			var speed_text := ("%dG" % (speed / 1000)) if speed >= 1000 else "%dM" % speed
 			var speed_word := ("a-%s" % speed_text if i.duplex == "auto" else speed_text) if up else "auto"
@@ -4440,7 +4452,7 @@ class EOS extends Session:
 		if dev.type == "switch":
 			out += "spanning-tree mode %s\n!\n" % ("mstp" if dev.stp_mode == "mst" else "rstp")
 			if dev.stp_priority != 32768:
-				out += "spanning-tree priority %d\n!\n" % dev.stp_priority
+				out += "spanning-tree mst 0 priority %d\n!\n" % dev.stp_priority
 			if not dev.mst_instances.is_empty() or dev.services.has("mst"):
 				out += "spanning-tree mst configuration\n"
 				if String(dev.services.get("mst", {}).get("name", "")) != "":
