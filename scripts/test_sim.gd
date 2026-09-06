@@ -2186,6 +2186,8 @@ static func run() -> int:
 	check(Sim.ping(lh1, "10.50.0.2")["ok"], "lag: (bundle restored)")
 	var ros_bond := CLI.new_session(mkt_sw)
 	ros_bond.exec("/interface bonding add slaves=ether3,ether4")
+	check(ros_bond.exec("/interface bonding print").contains("bonding1") and ros_bond.exec("/interface print").contains("bonding1")
+		and "name=bonding1" in ros_bond.exec("export"), "ros: a bond is called bonding1 as on the box")
 	check(mkt_sw.ifaces[2].lag > 0 and mkt_sw.ifaces[2].lag == mkt_sw.ifaces[3].lag,
 		"lag: RouterOS bonding maps to the same model")
 
@@ -10928,6 +10930,17 @@ static func run() -> int:
 		and pts.exec("/interface wireguard peers add interface=wg0 public-key=peer-key endpoint-address=10.99.9.2 allowed-address=172.20.2.0/24,10.99.0.2/32") == ""
 		and pt.ifaces.any(func(i): return i.name == "wg0" and i.wg_peers.size() == 1),
 		"ros: wireguard interface and peer from the RouterOS paths")
+	check(pts.exec("/interface vrrp add interface=ether3 vrid=20 name=vrrp-b") == "" and "vrrp-b" in pts.exec("/interface vrrp print")
+		and "vrrp-b" in pts.exec("export") and pts.exec("/interface vrrp remove vrrp-b") == "" and pt.ifaces[2].vrrp.is_empty(),
+		"ros: a vrrp interface is known by its name, not its vrid")
+	check(pts.exec("/ip dns set servers=10.40.0.53,10.40.0.54") == "" and "10.40.0.53,10.40.0.54" in pts.exec("/ip dns print")
+		and "servers=10.40.0.53,10.40.0.54" in pts.exec("export") and pt.resolver == "10.40.0.53", "ros: dns keeps every server it was given")
+	check(pts.exec("/system ntp client set enabled=yes servers=10.40.0.5,10.40.0.6") == "" and "10.40.0.5,10.40.0.6" in pts.exec("/system ntp client print"),
+		"ros: the ntp client keeps its server list")
+	check(pts._dur(8 * 86400 + 3600) == "1w1d1h0m" and pts._dur(90) == "1m30s", "ros: durations past a week say so")
+	check(pts.exec("/interface wireguard add name=wg-office") == "" and pt.ifaces.any(func(i): return i.name == "wg-office"), "ros: a wireguard interface may carry any wg name")
+	check(pts.exec("/interface vlan print").contains("vlan60") and not pts.exec("/interface vlan print").contains("0 R "),
+		"ros: a vlan interface on an uncabled port is not running")
 	check("vrrp1" in pts.exec("export") and "vlan-id=60" in pts.exec("export") and "wg0" in pts.exec("export"),
 		"ros: export reads back the vlan, vrrp and wireguard configuration")
 	var v6_srv := Game.new_device("server")

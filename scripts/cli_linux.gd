@@ -1180,11 +1180,12 @@ func _ip_link(rest: Array, brief: bool, stats: bool, details := false) -> String
 	if verb == "add":
 		var name := String(kv.get("dev", words[1] if words.size() > 1 else ""))
 		if String(kv.get("type", "")) == "wireguard":
-			if not (name.begins_with("wg") and name.trim_prefix("wg").is_valid_int()):
-				return "RTNETLINK answers: Operation not supported\n"
+			if not name.begins_with("wg"):
+				return "RTNETLINK answers: Operation not supported\n"  # the sim tells a tunnel by its wg prefix
 			if _iface(name) != null:
 				return "RTNETLINK answers: File exists\n"
-			return "" if Game.add_wireguard(dev, int(name.trim_prefix("wg"))) != null else "RTNETLINK answers: Operation not supported\n"
+			var wg_num := int(name.trim_prefix("wg")) if name.trim_prefix("wg").is_valid_int() else 100 + dev.ifaces.filter(func(x): return x.name.begins_with("wg")).size()
+			return "" if Game.add_wireguard(dev, wg_num, name) != null else "RTNETLINK answers: Operation not supported\n"
 		if String(kv.get("type", "")) == "bond":
 			if _iface(name) != null:
 				return "RTNETLINK answers: File exists\n"

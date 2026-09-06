@@ -4762,7 +4762,7 @@ func _build_business_tab() -> void:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(row)
-		var due_in: int = int(inv["due"]) - Game.cycle
+		var due_in: int = int(inv.get("first_due", inv["due"])) - Game.cycle
 		var state := "overdue by %d" % -due_in if due_in < 0 else \
 			("due now" if due_in == 0 else "due in %d" % due_in)
 		var il := _label("  %-18s $%-7d %s" % [inv["customer"], int(inv["amount"]), state], 12,

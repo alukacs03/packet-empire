@@ -321,8 +321,8 @@ func borrow() -> bool:
 	return true
 
 func repay() -> bool:
-	var amount := mini(LOAN_TRANCHE, debt)
-	if amount <= 0 or money < amount:
+	var amount := mini(mini(LOAN_TRANCHE, debt), money)  # nearly clear: pay down what there is
+	if amount <= 0:
 		return false
 	debt -= amount
 	money -= amount
@@ -4332,12 +4332,12 @@ func migrate_vm(name: String, target: Net.NDevice) -> String:
 	topology_changed.emit()
 	return ""
 
-func add_wireguard(dev: Net.NDevice, num: int) -> Net.Iface:
+func add_wireguard(dev: Net.NDevice, num: int, wname := "") -> Net.Iface:
 	## a WireGuard interface: identified by a key, with peers rather than a
 	## single far end, and an allowed-IPs list that is also its routing policy
 	if not dev.ip_forwarding and dev.type != "server":
 		return null
-	var name := "wg%d" % num
+	var name := wname if wname != "" else "wg%d" % num
 	for i: Net.Iface in dev.ifaces:
 		if i.name == name:
 			return i
@@ -4502,7 +4502,7 @@ const DAY_NAMES := ["night", "early morning", "morning", "late morning",
 const SEASON_LENGTH := DAY_CYCLES * 12
 const SEASONS := [
 	{"id": "spring", "label": "spring", "cooling": 1.0, "work": 1.08, "contractors": 1.0,
-		"line": "Spring: the quarter everybody wants their project finished in."},
+		"line": "Spring: the season everybody wants their project finished in."},
 	{"id": "summer", "label": "summer", "cooling": 0.92, "work": 0.9, "contractors": 1.4,
 		"line": "Summer: hot enough to find out what your cooling is really worth, and half the country is away."},
 	{"id": "autumn", "label": "autumn", "cooling": 1.04, "work": 1.12, "contractors": 1.0,
@@ -4885,7 +4885,7 @@ func receivables() -> int:
 func overdue_invoices() -> Array:
 	var out: Array = []
 	for inv in invoices:
-		if int(inv["due"]) < cycle:
+		if int(inv.get("first_due", inv["due"])) < cycle:  # "due" moves every time it slips
 			out.append(inv)
 	return out
 
@@ -9163,7 +9163,6 @@ func sla_tick() -> void:
 	maybe_offer_decision()
 	consequence_tick()
 	story_tick()
-	maybe_end_run()
 	hazard_tick()
 	access_incident_tick()
 	visitor_tick()
@@ -9512,6 +9511,7 @@ func sla_tick() -> void:
 	if earned != 0:
 		money += earned
 		money_changed.emit()
+	maybe_end_run()  # after this cycle's income and bills: the bank reads the balance, not last cycle's
 	var up_deals := 0
 	var billed_deals := 0
 	for deal in deals:

@@ -52,14 +52,33 @@ func _bridge_member(i: Net.Iface) -> bool:
 		and not i.name.begins_with("wg")
 
 func _vrrp_iface(name: String) -> Net.Iface:
-	## vrrp1 is the interface carrying VRRP group 1
+	## the VRRP interface by its name (vrrp1, vrrp2 ... by creation, or name=)
+	for i: Net.Iface in dev.ifaces:
+		if not i.vrrp.is_empty() and _vrrp_name(i) == name:
+			return i
 	if not (name.begins_with("vrrp") and name.trim_prefix("vrrp").is_valid_int()):
 		return null
-	var group := int(name.trim_prefix("vrrp"))
+	var group := int(name.trim_prefix("vrrp"))  # older saves: the name was the vrid
 	for i: Net.Iface in dev.ifaces:
 		if int(i.vrrp.get("group", -1)) == group:
 			return i
 	return null
+
+func _wg_num(wname: String) -> int:
+	if wname.trim_prefix("wg").is_valid_int():
+		return int(wname.trim_prefix("wg"))
+	var n := 100  # named tunnels take ids past the numbered ones
+	for i: Net.Iface in dev.ifaces:
+		if i.name.begins_with("wg"):
+			n += 1
+	return n
+
+func _vrrp_name(i: Net.Iface) -> String:
+	return String(i.vrrp.get("name", "vrrp%d" % int(i.vrrp.get("group", 1))))
+
+func _bond_name(g: int) -> String:
+	## RouterOS calls a bond bonding1 unless name= said otherwise
+	return String(dev.services.get("bond_names", {}).get(str(g), "bonding%d" % g))
 
 func _target(args: Array, p: Dictionary) -> Net.Iface:
 	## the port a command is about: interface=, a bare name, or its number
@@ -155,7 +174,8 @@ func exec(line: String) -> String:
 	var raw := line.strip_edges()
 	if raw == "":
 		return ""
-	if " print" not in raw and not raw.trim_prefix("/").begins_with("ping") and not raw.trim_prefix("/").begins_with("tool") and not raw.trim_prefix("/").begins_with("export"):
+	var flat := " " + raw.replace("/", " ").strip_edges()  # /ip/address/print and ip address print are one command
+	if " print" not in flat and " monitor" not in flat and not flat.strip_edges().begins_with("ping") and not flat.strip_edges().begins_with("tool") and not flat.strip_edges().begins_with("export"):
 		Challenge.note_change()  # a challenge counts what you changed, whichever dialect
 	if raw == "..":
 		var up := Array(cwd.split(" ", false))
@@ -533,8 +553,10 @@ static func _dur(secs: int) -> String:
 	if secs <= 0:
 		return "0s"
 	var parts: Array = []
-	if secs >= 86400:
-		parts.append("%dd" % (secs / 86400))
+	if secs >= 604800:
+		parts.append("%dw" % (secs / 604800))
+	if (secs / 86400) % 7 > 0 or not parts.is_empty():
+		parts.append("%dd" % ((secs / 86400) % 7))
 	if (secs / 3600) % 24 > 0 or not parts.is_empty():
 		parts.append("%dh" % ((secs / 3600) % 24))
 	if (secs / 60) % 60 > 0 or not parts.is_empty():
@@ -711,14 +733,15 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				n += 1
 			return out
 		"ip dns print":
-			return _kv_block([["servers", dev.resolver], ["dynamic-servers", ""], ["use-doh-server", ""],
+			return _kv_block([["servers", String(dev.services.get("ros_dns_servers", dev.resolver))], ["dynamic-servers", ""], ["use-doh-server", ""],
 				["verify-doh-cert", "no"], ["allow-remote-requests", "yes" if dev.services.has("dns") else "no"], ["max-udp-packet-size", "4096"],
 				["query-server-timeout", "2s"], ["query-total-timeout", "10s"], ["max-concurrent-queries", "100"],
 				["max-concurrent-tcp-sessions", "20"], ["cache-size", "2048KiB"], ["cache-max-ttl", "1w"],
 				["cache-used", "%dKiB" % (9 + dev.dns_cache.size())]])
 		"ip dns set":
 			if p.has("servers"):
-				dev.resolver = String(p["servers"]).split(",")[0]
+				dev.resolver = String(p["servers"]).split(",")[0]  # the sim asks the first; the box remembers all
+				dev.services["ros_dns_servers"] = String(p["servers"])
 			if p.has("allow-remote-requests"):
 				if String(p["allow-remote-requests"]) == "yes":
 					if not dev.services.has("dns"):
@@ -1156,12 +1179,14 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"system ntp client set":
 			if p.has("servers"):
 				dev.ntp_server = String(p["servers"]).split(",")[0]
+				dev.services["ros_ntp_servers"] = String(p["servers"])
 			if String(p.get("enabled", "")) == "no":
 				dev.ntp_server = ""
+				dev.services.erase("ros_ntp_servers")
 			Game.topology_changed.emit()
 			return ""
 		"system ntp client print":
-			return _kv_block([["enabled", "yes" if dev.ntp_server != "" else "no"], ["mode", "unicast"], ["servers", dev.ntp_server], ["vrf", "main"],
+			return _kv_block([["enabled", "yes" if dev.ntp_server != "" else "no"], ["mode", "unicast"], ["servers", String(dev.services.get("ros_ntp_servers", dev.ntp_server))], ["vrf", "main"],
 				["freq-drift", "0 PPM"], ["status", "synchronized" if dev.ntp_server != "" else "stopped"], ["synced-server", dev.ntp_server],
 				["synced-stratum", "3" if dev.ntp_server != "" else "0"], ["system-offset", "0.12 ms" if dev.ntp_server != "" else "0 ms"]])
 		"system logging print":
@@ -1306,7 +1331,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var n := 0
 			for i: Net.Iface in dev.ifaces:
 				if i.parent != "":
-					out += "%d R %-8s %-5d enabled  %-8d %s\n" % [n, _dname(i), i.mtu, i.dot1q, i.parent]
+					out += "%d %s %-8s %-5d enabled  %-8d %s\n" % [n, "R" if Sim.iface_up(i) else " ", _dname(i), i.mtu, i.dot1q, i.parent]
 					n += 1
 			return out if n > 0 else _empty("Flags: R - RUNNING\n")
 		"interface vrrp add":
@@ -1317,8 +1342,13 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				return "input does not match any value of interface\n"
 			var vrid := int(p.get("vrid", "1")) if String(p.get("vrid", "1")).is_valid_int() else 1
 			var prio := int(p.get("priority", "100")) if String(p.get("priority", "100")).is_valid_int() else 100
+			var nth := 1
+			for other: Net.Iface in dev.ifaces:
+				if other != on and not other.vrrp.is_empty():
+					nth += 1
 			on.vrrp = {"group": vrid, "vip": String(on.vrrp.get("vip", "")), "priority": clampi(prio, 1, 254),
-				"preempt": String(p.get("preemption-mode", "yes")) != "no"}
+				"preempt": String(p.get("preemption-mode", "yes")) != "no",
+				"name": String(p.get("name", on.vrrp.get("name", "vrrp%d" % nth)))}
 			Game.topology_changed.emit()
 			return ""
 		"interface vrrp remove":
@@ -1338,15 +1368,15 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				var flag := " "
 				if vip != "":
 					flag = "M" if Sim.vrrp_master(vip, int(i.vrrp["group"]), i) == dev else "B"
-				out += "%d R%s vrrp%-3d %-10s %-5d %-9d 1s\n" % [n, flag, int(i.vrrp["group"]), i.name,
+				out += "%d R%s %-7s %-10s %-5d %-9d 1s\n" % [n, flag, _vrrp_name(i), i.name,
 					int(i.vrrp["group"]), int(i.vrrp.get("priority", 100))]
 				n += 1
 			return out if n > 0 else _empty("Flags: R - RUNNING; M - MASTER, B - BACKUP\n")
 		"interface wireguard add":
 			var wname := String(p.get("name", "wg0"))
-			if not (wname.begins_with("wg") and wname.trim_prefix("wg").is_valid_int()):
-				return "invalid value for argument name\n"
-			if Game.add_wireguard(dev, int(wname.trim_prefix("wg"))) == null:
+			if not wname.begins_with("wg"):
+				return "invalid value for argument name\n"  # the sim tells a tunnel by its wg prefix
+			if Game.add_wireguard(dev, _wg_num(wname), wname) == null:
 				return "failure: wireguard needs a router\n"
 			return ""
 		"interface wireguard remove":
@@ -1521,6 +1551,10 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			for nm in names:
 				_iface(nm).lag = group
 				_iface(nm).lag_mode = "active" if String(p.get("mode", "balance-rr")) == "802.3ad" else "on"
+			if p.has("name"):
+				var bond_names: Dictionary = dev.services.get("bond_names", {})
+				bond_names[str(group)] = String(p["name"])
+				dev.services["bond_names"] = bond_names
 			Game.topology_changed.emit()
 			return ""
 		"interface bonding remove":
@@ -1529,7 +1563,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var wanted := String(p.get("name", args[0] if not args.is_empty() else ""))
 			var n := 0
 			for g in groups:
-				if wanted == "bond%d" % g or wanted == str(n):
+				if wanted == _bond_name(g) or wanted == str(n):
 					which = int(g)
 				n += 1
 			if which < 0:
@@ -1549,7 +1583,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				for i: Net.Iface in dev.ifaces:
 					if i.lag == g and i.lag_mode != "on":
 						lacp = true
-				out += "%d R %-6s %-5d %-18s %-8s %-11s %-8s %s\n" % [n, "bond%d" % g, 1500, _iface(groups[g][0]).mac, "enabled",
+				out += "%d %s %-9s %-5d %-18s %-8s %-11s %-8s %s\n" % [n, _bond_flag(groups[g]), _bond_name(g), 1500, _iface(groups[g][0]).mac, "enabled",
 					"802.3ad" if lacp else "balance-rr", "", ",".join(PackedStringArray(groups[g]))]
 				n += 1
 			return out if not groups.is_empty() else _empty("Flags: R - RUNNING\n")
@@ -1866,7 +1900,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					out += "%-3d %-18s %-16s %s\n" % [n, cidr, Net.network_of(cidr)["prefix"], _dname(i)]
 					n += 1
 				if not i.vrrp.is_empty() and String(i.vrrp.get("vip", "")) != "":
-					out += "%-3d %-18s %-16s vrrp%d\n" % [n, i.vrrp["vip"] + "/32", i.vrrp["vip"], int(i.vrrp["group"])]
+					out += "%-3d %-18s %-16s %s\n" % [n, i.vrrp["vip"] + "/32", i.vrrp["vip"], _vrrp_name(i)]
 					n += 1
 			return out
 		"ip arp print":
@@ -2264,7 +2298,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var out := "Flags: X - disabled, I - inactive\n"
 			var n := 0
 			for nb in dev.bgp["neighbors"]:
-				out += " %d   name=\"%s\" remote.address=%s .as=%d local.role=ebgp as=%d%s\n" % [n,
+				out += " %d   name=\"%s\" remote.address=%s/32 .as=%d local.role=ebgp as=%d%s\n" % [n,
 					nb.get("name", "peer"), nb["ip"], int(nb["remote_as"]), int(dev.bgp["asn"]),
 					(" output.network=%s" % nb["out_list"]) if String(nb.get("out_list", "")) != "" else ""]
 				n += 1
@@ -2407,7 +2441,14 @@ func _edit_rows(rows: Array, path: String, args: Array, p: Dictionary, allowed: 
 	return ""
 
 func _run_flag(i: Net.Iface) -> String:
-	return "X" if i.admin_down else ("R" if i.enabled and Game.link_at(i) else " ")
+	return "X" if i.admin_down else ("R" if Sim.iface_up(i) else " ")
+
+func _bond_flag(members: Array) -> String:
+	for nm in members:
+		var m := _iface(String(nm))
+		if m != null and Sim.iface_up(m) and Game.link_at(m) != null:
+			return "R"
+	return " "
 
 func _set_disabled(i: Net.Iface, off: bool) -> void:
 	i.admin_down = off
@@ -2447,7 +2488,7 @@ func _interface_print() -> String:
 			l2 = ""
 		rows.append([_run_flag(i), slave, _dname(i), _itype(i), i.mtu, l2, i.mac])
 	for g in groups:
-		rows.append(["R", " ", "bond%d" % g, "bond", 1500, "1598", _iface(groups[g][0]).mac])
+		rows.append([_bond_flag(groups[g]), " ", _bond_name(g), "bond", 1500, "1598", _iface(groups[g][0]).mac])
 	var used := {}
 	for r in rows:
 		used[r[0]] = true
@@ -2716,7 +2757,7 @@ func _export() -> String:
 			"mstp" if dev.stp_mode == "mst" else dev.stp_mode, "yes" if bool(dev.services.get("vlan_filtering", true)) else "no"])
 	var bonds := _bond_groups()
 	for g in bonds:
-		add.call("/interface bonding", "add mode=802.3ad name=bond%d slaves=%s" % [g, ",".join(PackedStringArray(bonds[g]))])
+		add.call("/interface bonding", "add mode=802.3ad name=%s slaves=%s" % [_bond_name(g), ",".join(PackedStringArray(bonds[g]))])
 	for i: Net.Iface in dev.ifaces:
 		if i.parent != "":
 			add.call("/interface vlan", "add interface=%s name=%s vlan-id=%d" % [i.parent, _dname(i), i.dot1q])
@@ -2726,7 +2767,7 @@ func _export() -> String:
 	for i: Net.Iface in dev.ifaces:
 		if not i.vrrp.is_empty():
 			# alphabetical, defaults omitted, as compact export prints it
-			var vrrp_line := "add interface=%s name=vrrp%d" % [i.name, int(i.vrrp["group"])]
+			var vrrp_line := "add interface=%s name=%s" % [i.name, _vrrp_name(i)]
 			if not bool(i.vrrp.get("preempt", true)):
 				vrrp_line += " preemption-mode=no"
 			if int(i.vrrp.get("priority", 100)) != 100:
@@ -2795,9 +2836,9 @@ func _export() -> String:
 			else:
 				add.call("/ip address", "add address=%s interface=%s network=%s" % [cidr, _dname(i), Net.network_of(cidr)["prefix"]])
 		if not i.vrrp.is_empty() and String(i.vrrp.get("vip", "")) != "":
-			add.call("/ip address", "add address=%s/32 interface=vrrp%d network=%s" % [i.vrrp["vip"], int(i.vrrp["group"]), i.vrrp["vip"]])
+			add.call("/ip address", "add address=%s/32 interface=%s network=%s" % [i.vrrp["vip"], _vrrp_name(i), i.vrrp["vip"]])
 	if dev.resolver != "":
-		add.call("/ip dns", "set servers=%s" % dev.resolver)
+		add.call("/ip dns", "set servers=%s" % String(dev.services.get("ros_dns_servers", dev.resolver)))
 	if not dev.bgp.is_empty():
 		var lists: Dictionary = dev.bgp.get("lists", {})
 		for lname in lists:
@@ -2875,7 +2916,7 @@ func _export() -> String:
 			line += " port=%d" % int(conf["port"])
 		add.call("/ip service", line)
 	if dev.ntp_server != "":
-		add.call("/system ntp client", "set enabled=yes servers=%s" % dev.ntp_server)
+		add.call("/system ntp client", "set enabled=yes servers=%s" % String(dev.services.get("ros_ntp_servers", dev.ntp_server)))
 	for u in dev.services.get("ros_users", {}):
 		add.call("/user", "add group=%s name=%s" % [dev.services["ros_users"][u], u])
 	add.call("/system identity", "set name=%s" % dev.name)
