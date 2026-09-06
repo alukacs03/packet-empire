@@ -980,12 +980,12 @@ static func _campaign() -> Array:
 			"title": "Big packets only",
 			"customer": "Panonia Data (consulting)",
 			"reward": 2800,
-			"hint": "Every hop on the path: switch ports and router legs 'mtu 9216' under the interface (PacketTik: '/interface ethernet set etherN l2mtu=9216 mtu=9216'), hosts 'ip link set eth0 mtu 9000'. Then 'ping -s 9000 <far host>' from one host to the other. A small ping passing and a big one vanishing means one hop was missed.",
+			"hint": "Every hop on the path: switch ports and router legs 'mtu 9216' under the interface (PacketTik: '/interface ethernet set etherN l2mtu=9216 mtu=9216'), hosts 'ip link set eth0 mtu 9000'. Then 'ping -M do -s 8972 <far host>' from one host to the other: 8972 bytes of payload is a 9000-byte packet, and -M do forbids fragmenting it. A small ping passing and a big one vanishing means one hop was missed.",
 			"brief": "Panonia moves backups between two racks and wants jumbo frames: a 9000-byte packet carries six times the payload of a 1500-byte one for the same per-packet cost. The catch is that every port on the path must agree, and a port that does not simply drops the frame without a word. Put hosts at 10.61.1.10 and 10.61.2.10 in different subnets behind a router, raise the MTU on the hosts and on every hop between them, and prove a 9000-byte ping passes end to end.",
 			"reqs": [
 				{"d": "Hosts at 10.61.1.10 and 10.61.2.10 reach each other", "t": func() -> bool: return _ping("10.61.1.10", "10.61.2.10", true)},
 				{"d": "Both hosts run a jumbo MTU", "t": func() -> bool: return _jumbo_host("10.61.1.10") and _jumbo_host("10.61.2.10")},
-				{"d": "A 9000-byte ping passes end to end", "t": func() -> bool: return _big_ping("10.61.1.10", "10.61.2.10", 9000)},
+				{"d": "A 9000-byte packet passes end to end", "t": func() -> bool: return _big_ping("10.61.1.10", "10.61.2.10", 8972)},
 			],
 		},
 		{

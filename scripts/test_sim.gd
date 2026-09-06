@@ -11527,6 +11527,67 @@ static func run() -> int:
 	t20_dv.ifaces[1].mtu = 9216
 	Game.apply_device_config(t20_dv, {})
 	check(t20_dv.snmp == "" and not t20_dv.ifaces[1].port_security and t20_dv.ifaces[1].mtu == 1500 and not t20_dv.services.has("dhcp"), "persist: a reboot with no startup config is a factory-fresh box")
+	# --- layer 2 through a patch panel: spanning tree and MTU see the box behind the glass ---
+	Game.parts["patch"] = maxi(int(Game.parts.get("patch", 0)), 60)
+	var t21_rack := Game.add_rack(Vector2i(9, 19))
+	var t21_a := Game.new_device("sw-8")
+	var t21_b := Game.new_device("sw-8")
+	var t21_p := Game.new_device("panel-12")
+	var t21_h1 := Game.new_device("srv-1")
+	var t21_h2 := Game.new_device("srv-1")
+	t21_rack.slots[0] = t21_a
+	t21_rack.slots[1] = t21_b
+	t21_rack.slots[2] = t21_p
+	t21_rack.slots[3] = t21_h1
+	t21_rack.slots[4] = t21_h2
+	Game.connect_ifaces(t21_a.ifaces[0], t21_b.ifaces[0])  # the direct link
+	var t21_front: Net.Iface = t21_p.ifaces.filter(func(i): return i.name.begins_with("front"))[0]
+	var t21_rear: Net.Iface = Game.panel_partner(t21_front)
+	Game.connect_ifaces(t21_a.ifaces[1], t21_front)  # the second link runs through the panel
+	Game.connect_ifaces(t21_b.ifaces[1], t21_rear)
+	Game.connect_ifaces(t21_h1.ifaces[0], t21_a.ifaces[2])
+	Game.connect_ifaces(t21_h2.ifaces[0], t21_b.ifaces[2])
+	Game.add_ip(t21_h1.ifaces[0], "10.81.0.1/24")
+	Game.add_ip(t21_h2.ifaces[0], "10.81.0.2/24")
+	Sim.flush_learned_state()
+	check(Game.effective_peer(t21_a.ifaces[1]) == t21_b.ifaces[1], "panel: the run through the panel ends at the other switch")
+	var t21_blocked := 0
+	for t21_i in [t21_a.ifaces[0], t21_a.ifaces[1], t21_b.ifaces[0], t21_b.ifaces[1]]:
+		if Sim.stp_blocked(t21_i):
+			t21_blocked += 1
+	check(t21_blocked >= 1, "panel: spanning tree sees the loop through the panel and blocks one end")
+	check(Sim.ping(t21_h1, "10.81.0.2")["ok"] and not Sim.storm_seen, "panel: the hosts talk and nothing storms")
+	t21_a.ifaces[0].enabled = false
+	t21_b.ifaces[0].enabled = false
+	Sim.flush_learned_state()
+	t21_a.ifaces[1].mtu = 9216
+	t21_b.ifaces[1].mtu = 9216
+	t21_h1.ifaces[0].mtu = 9000
+	t21_h2.ifaces[0].mtu = 9000
+	t21_a.ifaces[2].mtu = 9216
+	t21_b.ifaces[2].mtu = 9216
+	check(Sim.ping(t21_h1, "10.81.0.2", 64, "", 8972)["ok"], "panel: a 9000-byte packet crosses the panel once both switches carry it; the panel has no MTU")
+	t21_a.ifaces[0].enabled = true
+	t21_b.ifaces[0].enabled = true
+	# a tagged frame at a host with no VLAN interface for it is discarded
+	var t21_h3 := Game.new_device("srv-1")
+	t21_rack.slots[5] = t21_h3
+	Game.connect_ifaces(t21_h3.ifaces[0], t21_a.ifaces[3])
+	Game.add_ip(t21_h3.ifaces[0], "10.81.30.3/24")
+	Game.add_vlan(t21_a, 30, "")
+	Game.set_access_vlan(t21_a.ifaces[2], 30)
+	Game.add_ip(t21_h1.ifaces[0], "10.81.30.1/24")
+	t21_a.ifaces[3].mode = "trunk"
+	t21_a.ifaces[3].untagged_vlan = 1
+	Sim.flush_learned_state()
+	check(not Sim.ping(t21_h1, "10.81.30.3")["ok"], "tag: a host on a trunk port with no VLAN 30 interface drops the tagged frame")
+	var t21_ls := CLI.new_session(t21_h3)
+	t21_ls.exec("ip addr del 10.81.30.3/24 dev eth0")
+	t21_ls.exec("ip link add link eth0 name eth0.30 type vlan id 30")
+	t21_ls.exec("ip link set eth0.30 up")
+	t21_ls.exec("ip addr add 10.81.30.3/24 dev eth0.30")
+	Sim.flush_learned_state()
+	check(Sim.ping(t21_h1, "10.81.30.3")["ok"], "tag: with a VLAN 30 interface the same frame is answered")
 	check(t12_l.exec("echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { 10.78.0.1/24 } }' > /etc/keepalived/keepalived.conf") == "", "keepalived: the conf is written by hand")
 	check(t12_l.exec("systemctl start keepalived") == "" and int(t12_s.ifaces[0].vrrp.get("group", 0)) == 51 and String(t12_s.ifaces[0].vrrp.get("vip", "")) == "10.78.0.1" and int(t12_s.ifaces[0].vrrp.get("priority", 0)) == 150, "keepalived: starting it is the VRRP the routers speak")
 	check(Sim.vrrp_master("10.78.0.1", 51) == t12_s, "keepalived: the server is master of its VIP")

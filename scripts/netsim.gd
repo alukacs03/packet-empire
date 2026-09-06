@@ -1255,11 +1255,27 @@ static func _stp_tree(instance: int) -> Dictionary:
 				Game.device_log(port.dev, "%s: BPDU received on a bpduguard port from %s, err-disabled" % [port.name, far.dev.name])
 				Game.log_event("BPDU GUARD: %s %s heard a switch (%s) and shut itself." % [port.dev.name, port.name, far.dev.name])
 	var sw_links: Array = []
-	for l in Game.links:
-		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and l.a.dev.stp_mode != "none" and l.b.dev.stp_mode != "none" and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
-			if l.a.lag > 0 and l.b.lag > 0 and not lag_compatible(l.a, l.b):
+	var seen_pairs := {}
+	for d in Game.all_devices():
+		if d.type != "switch" or d.status != "active" or d.stp_mode == "none":
+			continue
+		for a: Net.Iface in d.ifaces:
+			if not a.enabled or a.name.begins_with("Management"):
+				continue
+			var b := Game.effective_peer(a)  # a passive panel in the run is glass: BPDUs cross it
+			if b == null or b.dev.type != "switch" or b.dev == d or not b.enabled or b.name.begins_with("Management") \
+					or b.dev.stp_mode == "none" or b.dev.status != "active":
+				continue
+			if a.lag > 0 and b.lag > 0 and not lag_compatible(a, b):
 				continue  # suspended members carry nothing, not even BPDUs
-			sw_links.append(l)
+			var ends: Array = ["%s.%s" % [d.name, a.name], "%s.%s" % [b.dev.name, b.name]]
+			ends.sort()
+			var pair_key := "%s|%s" % [ends[0], ends[1]]
+			if seen_pairs.has(pair_key):
+				continue
+			seen_pairs[pair_key] = true
+			var direct := Game.link_at(a)
+			sw_links.append(direct if direct != null and direct.other(a) == b else Net.Link.new(a, b))
 	# each instance walks the links in its own order, so the alternate port
 	# lands on a different link per instance and both cables carry traffic
 	if instance > 0:
@@ -1696,7 +1712,7 @@ static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> Stri
 	_arp_pending["%s|%s" % [dev.name, key]] = true
 	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0,
 		"type": "ndp" if Net.is_v6(ip) else "arp",
-		"pl": {"op": "req", "spa": _first_ip(iface, Net.is_v6(ip)), "sha": iface.mac, "tpa": ip}})
+		"pl": {"op": "req", "spa": _src_on(iface, ip, Net.is_v6(ip)), "sha": iface.mac, "tpa": ip}})
 	return dev.arp.get(key, "")
 
 static var _arp_pending := {}  # neighbour keys with a request in flight
@@ -1838,7 +1854,9 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 	if peer.dev.type in ["switch", "ap"] and not peer.name.begins_with("Management") and peer.mode != "routed":
 		_switch_rx(peer.dev, peer, frame)  # a routed port on an L3 switch is a router interface
 	else:
-		_host_rx(peer.dev, _logical_rx_iface(peer, frame), frame)
+		var logical := _logical_rx_iface(peer, frame)
+		if logical != null:
+			_host_rx(peer.dev, logical, frame)
 	_depth -= 1
 
 static func wg_peer_for(w: Net.Iface, dst_ip: String) -> Dictionary:
@@ -1961,7 +1979,7 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 	var outs: Array = [known] if (known != null and frame["dst"] != BCAST) else dev.ifaces
 	var lags_done := {}
 	for o: Net.Iface in outs:
-		if o == svi or o.name.begins_with("Vlan") or o.name == "lo" or stp_blocked(o):
+		if o == svi or o.name.begins_with("Vlan") or o.name == "lo" or stp_blocked_for(o, vlan):
 			continue
 		if o.mlag > 0 and not _mlag_live(o):
 			continue  # the peer link will carry it to the surviving member
@@ -1981,9 +1999,8 @@ static func _svi_tx(dev: Net.NDevice, svi: Net.Iface, frame: Dictionary) -> void
 		else:
 			continue
 		_depth += 1
-		var l := Game.link_at(o)
-		if l and o.enabled:
-			var peer: Net.Iface = l.other(o)
+		var peer: Net.Iface = Game.effective_peer(o) if o.enabled else null
+		if peer != null:
 			if peer.enabled and peer.dev.status == "active":
 				o.tx_frames += 1
 				peer.rx_frames += 1
@@ -2024,7 +2041,7 @@ static func _reset_storm_counters() -> void:
 			i.storm_count = 0
 
 static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> void:
-	if stp_blocked(in_if) and _rx_instance_blocked(dev, in_if, frame):
+	if _rx_instance_blocked(dev, in_if, frame):
 		return  # spanning tree: discarding state for this frame's instance
 	var vlan: int
 	if in_if.mode == "access":
@@ -2188,7 +2205,7 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 static func _rx_instance_blocked(_dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> bool:
 	var vlan := int(frame.get("vlan", 0))
 	if vlan == 0:
-		vlan = in_if.untagged_vlan if in_if.mode == "access" else 1
+		vlan = in_if.untagged_vlan  # access or native: the untagged frame is classified first, then its instance is consulted
 	return stp_blocked_for(in_if, vlan)
 
 static func _logical_rx_iface(phys: Net.Iface, frame: Dictionary) -> Net.Iface:
@@ -2198,7 +2215,7 @@ static func _logical_rx_iface(phys: Net.Iface, frame: Dictionary) -> Net.Iface:
 	for sub: Net.Iface in phys.dev.ifaces:
 		if sub.parent == phys.name and sub.dot1q == int(frame["vlan"]) and sub.enabled:
 			return sub
-	return phys
+	return null  # a NIC with no VLAN interface for the tag discards the frame
 
 static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> void:
 	if String(frame["dst"]).begins_with(MCAST_PREFIX):
@@ -2507,9 +2524,8 @@ static func _too_big(iface: Net.Iface, frame: Dictionary) -> bool:
 	if size <= 0:
 		return false
 	var limits: Array = [[iface, iface.mtu]]
-	var l := Game.link_at(iface)
-	if l != null:
-		var far: Net.Iface = l.b if l.a == iface else l.a
+	var far := Game.effective_peer(iface)  # a panel has no MTU; the box behind it does
+	if far != null and far.dev.type != "panel":
 		limits.append([far, far.mtu])
 	for pair in limits:
 		var port: Net.Iface = pair[0]
