@@ -414,6 +414,7 @@ static func arp_iface_name(dev: Net.NDevice, ip: String) -> String:
 
 class Session:
 	var history: Array = []  # what was typed at this session, oldest first
+	var term_length := 0  # terminal length N: rows the console shows at once; 0 is the default
 	var dev: Net.NDevice
 	var pending_ssh: Net.NDevice = null
 	var wants_exit := false
@@ -943,7 +944,11 @@ class EOS extends Session:
 						out += "%-14s %s\n" % [i.name, i.helper]
 				return out},
 			{"m": EP, "p": ["show", "boot-config"], "h": func(_r): return "Software image: flash:/EOS-4.28.3M.swi\nConsole speed: (not set)\nAboot password (encrypted): (not set)\nMemory test iterations: (not set)\n"},
-			{"m": EP, "p": ["terminal", "length"], "h": func(_r): return ""},
+			{"m": EP, "p": ["terminal", "length"], "h": func(r):
+				if r.is_empty() or not String(r[0]).is_valid_int():
+					return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
+				term_length = clampi(int(r[0]), 0, 512)
+				return ""},
 			{"m": EP, "p": ["show", "ip", "route", "vrf"], "h": _show_ip_route_vrf},
 			{"m": ["config"], "p": ["mlag", "peer"], "h": func(r): return _mlag_peer(r[0] if r.size() > 0 else "")},
 			{"m": ["config"], "p": ["no", "mlag"], "h": func(_r): return _mlag_peer("")},
@@ -4651,6 +4656,30 @@ class EOS extends Session:
 
 	## What '?' says next to each word, the way EOS explains itself
 	const DESC := {
+		"access-group": "Apply an access list to the interface", "access-list": "Configure an access list", "address-family": "Enter address family mode",
+		"api": "Management API", "arp-cache": "ARP cache", "as-path": "AS path", "associations": "NTP associations",
+		"authentication": "Authentication settings", "authenticator": "802.1X authenticator", "banner": "Configure the login or motd banner",
+		"bash": "Run a command in the underlying Linux shell", "binding": "Snooping bindings", "boot-config": "Boot configuration",
+		"checkpoint": "Save a configuration checkpoint", "checkpoints": "Configuration checkpoints", "configuration": "Configuration",
+		"conflict": "Address conflicts", "connections": "Tracked connections", "dead-interval": "OSPF dead interval in seconds",
+		"default": "Set a command to its default", "default-gateway": "Default gateway for clients", "default-information": "Control distribution of default information",
+		"diffs": "Show differences", "disabled": "Disabled", "dns": "DNS", "domain": "Domain", "domain-id": "Domain id",
+		"domain-name": "Domain name", "dynamic": "Dynamic", "environment": "Environmental information", "errdisable": "Error-disable configuration",
+		"etherchannel": "Port channel", "evpn": "EVPN", "flood": "Flood", "for": "For an address", "heartbeat-interval": "Heartbeat interval",
+		"hello-interval": "OSPF hello interval in seconds", "history": "Command history", "hosts": "Hosts", "http-commands": "HTTP command API",
+		"inside": "Inside", "instance": "Instance", "inventory": "Hardware inventory", "ipv4": "IPv4", "ipv4-unicast": "IPv4 unicast address family",
+		"lease": "Lease", "leases": "Leases", "length": "Number of lines on the screen", "level": "Level", "local-interface": "Local interface",
+		"local-preference": "BGP local preference", "log-neighbor-changes": "Log neighbor up/down events", "login": "Login",
+		"management": "Management configuration", "match": "Match values", "maximum-paths": "Maximum number of equal-cost paths",
+		"metric": "Metric", "motd": "Message of the day", "name-server": "Name server", "originate": "Originate",
+		"pae": "Port access entity", "password": "Password", "peer-address": "Peer address", "port-control": "Port control",
+		"power": "Power", "prefix-list": "Prefix list", "prepend": "Prepend to the AS path", "range": "Range", "recovery": "Recovery",
+		"redistribute": "Redistribute routes from another source", "reload-delay": "Reload delay", "restore": "Restore a checkpoint",
+		"revision": "Revision", "route-map": "Route map", "run": "Run", "save": "Save", "secret": "Secret", "section": "Section",
+		"set": "Set values", "snmp": "SNMP", "source-interface": "Source interface", "statistics": "Statistics", "subnet": "Subnet",
+		"system-auth-control": "Enable 802.1X system-wide", "tcpdump": "Capture packets on an interface", "temperature": "Temperature",
+		"time": "Time", "timezone": "Time zone", "translation": "Translation", "translations": "Translations", "udp-port": "UDP port",
+		"unicast-routing": "Enable IPv6 unicast routing", "username": "Configure a user", "users": "Users", "vni": "VNI", "vtep": "VTEP",
 		"enable": "Turn on privileged commands", "disable": "Turn off privileged commands",
 		"configure": "Enter configuration mode", "terminal": "Configure from the terminal",
 		"show": "Display details of switch operation", "interfaces": "Interface status and configuration",

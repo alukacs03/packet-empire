@@ -1456,6 +1456,17 @@ func _build_dev_overlay() -> void:
 	cli_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cli_toggle.pressed.connect(_toggle_cli)
 	btn_row.add_child(cli_toggle)
+	var cli_size_btn := Button.new()
+	cli_size_btn.text = "▤ taller"
+	cli_size_btn.tooltip_text = "Cycle the console height (or type terminal length N)"
+	cli_size_btn.pressed.connect(func() -> void:
+		cli_rows_step = (cli_rows_step + 1) % 3
+		cli_size_btn.text = ["▤ taller", "▤ tallest", "▤ shorter"][cli_rows_step]
+		if cli_box.visible:
+			cli_out.custom_minimum_size.y = _console_height()
+			_fit_cards.call_deferred()
+			_ensure_visible.call_deferred(cli_in))
+	btn_row.add_child(cli_size_btn)
 	cli_learn_btn = Button.new()
 	cli_learn_btn.text = "LEARN ↗"
 	cli_learn_btn.tooltip_text = "Open the field manual at the article for what you last typed"
@@ -3694,6 +3705,9 @@ func _build_help() -> void:
 		["?", "show what is possible at this point"],
 		["Up / Down", "command history"],
 		["Ctrl-Z", "back to privileged exec, like a real console"],
+		["Ctrl-A / Ctrl-E", "start and end of the line"],
+		["Ctrl-U / Ctrl-K / Ctrl-W", "delete to the start, to the end, the previous word"],
+		["Ctrl-L / Ctrl-C", "clear the screen / abandon the line"],
 		["clear", "wipe the screen"],
 		["ssh <ip>", "jump into another device's CLI (exit returns)"],
 		["Esc", "close the console"],
@@ -6435,11 +6449,21 @@ func _ensure_visible(ctrl: Control) -> void:
 	if node != null:
 		(node as ScrollContainer).call_deferred("ensure_control_visible", ctrl)
 
+var cli_rows_step := 0  # the taller/shorter toggle: 0 default, 1 tall, 2 very tall
+
+func _console_height() -> float:
+	## terminal length N sets rows; the toggle steps through sizes; the card's
+	## remaining room is the ceiling in every case
+	var room := get_viewport().get_visible_rect().size.y - card_top() - 300.0
+	var want: float = [220.0, 380.0, 560.0][cli_rows_step]
+	if cli_session != null and int(cli_session.term_length) > 0:
+		want = float(cli_session.term_length) * 18.0
+	return clampf(minf(want, room), 120.0, 900.0)
+
 func _toggle_cli() -> void:
 	cli_box.visible = not cli_box.visible
 	if cli_box.visible:
-		var room := get_viewport().get_visible_rect().size.y - card_top() - 300.0
-		cli_out.custom_minimum_size.y = clampf(room, 120.0, 220.0)  # never taller than what is left under the header
+		cli_out.custom_minimum_size.y = _console_height()
 		_ensure_visible(cli_box)  # the console opens below the fold otherwise
 		cli_toggle.text = "Close console  ▤"
 		var kept: Dictionary = cli_sessions.get(cur_dev.name, {})
@@ -6496,6 +6520,33 @@ func _cli_key(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and e.keycode == KEY_Z and e.ctrl_pressed and cli_session != null:
 		cli_in.accept_event()
 		_cli_submit("end")  # Ctrl-Z: back to privileged exec, the way a real console does it
+		return
+	if e is InputEventKey and e.pressed and e.ctrl_pressed and e.keycode in [KEY_A, KEY_E, KEY_U, KEY_K, KEY_W, KEY_L, KEY_C]:
+		# the readline keys every operator's fingers know
+		cli_in.accept_event()
+		var col := cli_in.caret_column
+		match e.keycode:
+			KEY_A:
+				cli_in.caret_column = 0
+			KEY_E:
+				cli_in.caret_column = cli_in.text.length()
+			KEY_U:
+				cli_in.text = cli_in.text.substr(col)
+				cli_in.caret_column = 0
+			KEY_K:
+				cli_in.text = cli_in.text.substr(0, col)
+				cli_in.caret_column = cli_in.text.length()
+			KEY_W:
+				var head := cli_in.text.substr(0, col).rstrip(" ")
+				var cut := head.rfind(" ")
+				cli_in.text = (head.substr(0, cut + 1) if cut >= 0 else "") + cli_in.text.substr(col)
+				cli_in.caret_column = cut + 1 if cut >= 0 else 0
+			KEY_L:
+				cli_out.clear()
+			KEY_C:
+				cli_out.append_text("%s %s^C\n" % [cli_session.prompt() if cli_session else "", cli_in.text])
+				cli_in.text = ""
+				cli_in.caret_column = 0
 		return
 	if e is InputEventKey and e.pressed and e.keycode == KEY_DOWN:
 		cli_in.accept_event()
@@ -6595,6 +6646,8 @@ func _cli_submit(cmd: String) -> void:
 			cli_session = cli_stack.pop_back()
 			cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)
 	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
+	if cli_box.visible and int(cli_session.term_length) > 0:
+		cli_out.custom_minimum_size.y = _console_height()  # terminal length just changed the pane
 	_refresh_capture()
 	if not Sim.last_trace.is_empty():
 		get_parent().play_trace(Sim.last_trace)

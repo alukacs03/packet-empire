@@ -4339,9 +4339,9 @@ func add_tunnel(dev: Net.NDevice, num: int) -> Net.Iface:
 	topology_changed.emit()
 	return t
 
-func add_subiface(dev: Net.NDevice, parent_name: String, vid: int) -> Net.Iface:
-	## 802.1Q subinterface: router-on-a-stick
-	if not dev.ip_forwarding or vid < 1 or vid > 4094:
+func add_subiface(dev: Net.NDevice, parent_name: String, vid: int, host_ok := false) -> Net.Iface:
+	## 802.1Q subinterface: router-on-a-stick, or a server that hangs off a trunk
+	if (not dev.ip_forwarding and not host_ok) or vid < 1 or vid > 4094:
 		return null
 	var parent: Net.Iface = null
 	for i: Net.Iface in dev.ifaces:

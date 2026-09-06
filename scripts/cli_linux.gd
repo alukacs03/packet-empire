@@ -895,7 +895,7 @@ static func _kv(args: Array) -> Dictionary:
 	var k := 0
 	while k < args.size():
 		var w := String(args[k])
-		if w in ["dev", "via", "mtu", "src", "metric", "table", "type", "master", "brd", "scope", "proto"] and k + 1 < args.size():
+		if w in ["dev", "via", "mtu", "src", "metric", "table", "type", "master", "brd", "scope", "proto", "link", "name", "id"] and k + 1 < args.size():
 			out[w] = String(args[k + 1])
 			k += 2
 		else:
@@ -1069,6 +1069,8 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 		for i: Net.Iface in dev.ifaces:
 			if only == "" or i.name == only:
 				out += _addr_block(i, n, 0, true)
+				if i.parent != "" and i.dot1q > 0:
+					out += "    vlan protocol 802.1Q id %d <REORDER_HDR> \n" % i.dot1q
 				if stats:
 					out += "    RX:  bytes packets errors dropped  missed   mcast\n    %10d %7d %6d %7d %7d %7d\n    TX:  bytes packets errors dropped carrier collsns\n    %10d %7d %6d %7d %7d %7d\n" % [
 						i.rx_frames * 148, i.rx_frames, i.rx_errors, 0, 0, 0, i.tx_frames * 148, i.tx_frames, 0, i.out_drops, 0, 0]
@@ -1105,6 +1107,26 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 			return "" if Game.add_wireguard(dev, int(name.trim_prefix("wg"))) != null else "RTNETLINK answers: Operation not supported\n"
 		if String(kv.get("type", "")) == "bond":
 			dev.services["bond_pending"] = name
+			return ""
+		if String(kv.get("type", "")) == "vlan":
+			# ip link add link eth0 name eth0.10 type vlan id 10: a server on a trunk
+			var parent_name := String(kv.get("link", ""))
+			if parent_name == "" or _iface(parent_name) == null:
+				return "Cannot find device \"%s\"\n" % parent_name if parent_name != "" else "Error: argument \"link\" is required.\n"
+			if not String(kv.get("id", "")).is_valid_int():
+				return "Error: argument \"id\" is required.\n"
+			var vid := int(kv["id"])
+			if vid < 1 or vid > 4094:
+				return "Error: argument \"%s\" is wrong: Invalid VLAN ID.\n" % kv["id"]
+			var want_name := String(kv.get("name", "%s.%d" % [parent_name, vid]))
+			if _iface(want_name) != null:
+				return "RTNETLINK answers: File exists\n"
+			var sub := Game.add_subiface(dev, parent_name, vid, true)
+			if sub == null:
+				return "RTNETLINK answers: Operation not supported\n"
+			if sub.name != want_name:
+				sub.name = want_name
+			Game.topology_changed.emit()
 			return ""
 		return "RTNETLINK answers: Operation not supported\n"
 	if verb in ["del", "delete"]:

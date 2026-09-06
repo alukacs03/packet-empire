@@ -775,6 +775,11 @@ static func run() -> int:
 	check(ls.exec("hostname; hostname").count(ls.exec("hostname").strip_edges()) == 2, "Linux: ; runs both sides regardless")
 	ls.history.append("hostname")
 	check(ls.exec("history").contains("1  hostname"), "Linux: history lists what was typed, numbered")
+	check(ls.exec("ip link add link eth0 name eth0.10 type vlan id 10") == "" and ls.exec("ip -d link show eth0.10").contains("vlan protocol 802.1Q id 10"),
+		"Linux: a VLAN sub-interface hangs off a trunk the iproute2 way")
+	check(ls.exec("ip link add link eth0 name eth0.10 type vlan id 10").contains("File exists") and ls.exec("ip link add link eth9 name x type vlan id 10").contains("Cannot find device"),
+		"Linux: the sub-interface refuses a duplicate and a missing parent")
+	check(ls.exec("ip link add link eth0 name eth0.20 type vlan").contains("argument \"id\" is required"), "Linux: the VLAN id is not optional")
 	# --- a Linux NAT gateway and forward filter: iptables-nft and nft on the same engines ---
 	var fw_box := Game.new_device("srv-2")
 	fw_box.ip_forwarding = true
@@ -2276,6 +2281,9 @@ static func run() -> int:
 		"pipe: stages chain, | section then | exclude")
 	check(cs.exec("show running-config | begin interface Ethernet3").begins_with("interface Ethernet3"), "pipe: | begin starts the output at the match")
 	check(cs.exec("show running-config | count").begins_with("Count: "), "pipe: | count prints the line count")
+	check(cs.exec("terminal length 40") == "" and int(cs.term_length) == 40 and cs.exec("terminal length x").begins_with("% Invalid input"),
+		"console: terminal length is kept on the session")
+	check(cs.describe("show ip ospf ").contains("neighbor") and not cs.describe("ip ").contains("--\n"), "help: the description column has a word for every keyword")
 	# --- IPv6 static routes on EOS and RouterOS ---
 	var v6r := Game.new_device("rtr-edge")
 	var v6peer := Game.new_device("srv-1")
