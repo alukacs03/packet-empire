@@ -611,6 +611,13 @@ static func _owns_ip_anywhere(dev: Net.NDevice, ip: String) -> bool:
 				return true
 	return false
 
+static func forwards(dev: Net.NDevice, v6: bool) -> bool:
+	## ip_forward and net.ipv6.conf.all.forwarding are two sysctls on Linux;
+	## the v6 one follows the v4 flag until somebody sets it apart
+	if v6:
+		return bool(dev.services.get("ip6_forwarding", dev.ip_forwarding))
+	return dev.ip_forwarding
+
 static func iface_up(i: Net.Iface) -> bool:
 	## "line protocol up": enabled, and something on the far end of the wire.
 	## An SVI is up while any port in its VLAN is; a sub-interface follows its
@@ -2509,7 +2516,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 					_tx(i, {"src": i.mac, "dst": l4["mac"], "vlan": 0, "type": "dhcp",
 						"pl": {"op": "ack", "mac": l4["mac"], "ip": l4["ip"],
 							"plen": l4["plen"], "gw": l4["gw"], "dns": l4["dns"]}})
-	elif dev.ip_forwarding:
+	elif forwards(dev, Net.is_v6(String(p["dst_ip"]))):
 		var flow_key := "%s|%s|%s" % [str(p["l4"].get("id", 0)), p["dst_ip"], p["src_ip"]]
 		var is_return: bool = dev.stateful and dev.flows.has(flow_key)
 		if not is_return and not _acl_forward_permits(dev, iface, p):

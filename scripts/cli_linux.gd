@@ -1998,14 +1998,18 @@ func _sysctl(args: Array) -> String:
 		if not String(a).begins_with("-"):
 			expr = String(a)
 	if expr == "":
-		return "sysctl: no variable specified\n" if "-w" in args else "net.ipv4.ip_forward = %d\nnet.ipv6.conf.all.forwarding = %d\n" % [1 if dev.ip_forwarding else 0, 1 if dev.ip_forwarding else 0]
+		return "sysctl: no variable specified\n" if "-w" in args else "net.ipv4.ip_forward = %d\nnet.ipv6.conf.all.forwarding = %d\n" % [1 if dev.ip_forwarding else 0, 1 if Sim.forwards(dev, true) else 0]
 	var key := expr.split("=")[0]
 	if key not in ["net.ipv4.ip_forward", "net.ipv6.conf.all.forwarding", "net.ipv4.conf.all.forwarding"]:
 		return "sysctl: cannot stat /proc/sys/%s: No such file or directory\n" % key.replace(".", "/")
+	var v6 := key == "net.ipv6.conf.all.forwarding"
 	if "=" in expr:
-		dev.ip_forwarding = expr.split("=")[1] == "1"
+		if v6:
+			dev.services["ip6_forwarding"] = expr.split("=")[1] == "1"  # its own sysctl, as on Debian
+		else:
+			dev.ip_forwarding = expr.split("=")[1] == "1"
 		Game.topology_changed.emit()
-	return "%s = %d\n" % [key, 1 if dev.ip_forwarding else 0]
+	return "%s = %d\n" % [key, 1 if Sim.forwards(dev, v6) else 0]
 
 # ---------- services ----------
 

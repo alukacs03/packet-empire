@@ -1743,8 +1743,8 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			for i: Net.Iface in dev.ifaces:
 				if not _bridge_member(i):
 					continue
-				out += "%-2d %s%s %-10s %-8s yes  %4d  0x80             10                  10  %s%s\n" % [n,
-					" " if i.enabled else "I", "H", i.name, BRIDGE, i.untagged_vlan, "1" if i.pvlan == "isolated" else "none", "  edge=yes" if i.portfast else ""]
+				out += "%-2d %s%s %-10s %-8s yes  %4d  0x80             10                  10  %s\n" % [n,
+					" " if i.enabled else "I", "H", i.name, BRIDGE, i.untagged_vlan, "1" if i.pvlan == "isolated" else "none"]
 				n += 1
 			return out
 		"interface bridge port monitor":
@@ -2818,8 +2818,8 @@ func _export() -> String:
 	if dev.type == "switch":
 		for i: Net.Iface in dev.ifaces:
 			if _bridge_member(i):
-				add.call("/interface bridge port", "add bridge=%s interface=%s%s" % [BRIDGE, i.name,
-					(" pvid=%d" % i.untagged_vlan) if i.untagged_vlan != 1 else ""])
+				add.call("/interface bridge port", "add bridge=%s interface=%s%s%s" % [BRIDGE, i.name,
+					(" pvid=%d" % i.untagged_vlan) if i.untagged_vlan != 1 else "", " edge=yes" if i.portfast else ""])
 		for vid in _sorted_vids():
 			if vid == 1:
 				continue

@@ -11780,6 +11780,9 @@ static func run() -> int:
 	check(("LOWER_UP" in t33_sub) == ("LOWER_UP" in t17_l.exec("ip link show eth0")) and "NO-CARRIER" not in t33_sub.replace("NO-CARRIER", "") , "ip link: a sub-interface follows its parent's carrier")
 	check(t17_l.exec("ip link del eth0.30") == "" and t17_s.ifaces.filter(func(x): return x.name == "eth0.30").is_empty(), "ip link del removes a vlan sub-interface")
 	check(t17_l.exec("ip link del eth0").contains("Operation not supported"), "ip link del refuses a physical port")
+	check(t17_l.exec("sysctl -w net.ipv6.conf.all.forwarding=1") == "net.ipv6.conf.all.forwarding = 1\n" and t17_l.exec("sysctl net.ipv4.ip_forward") == "net.ipv4.ip_forward = 0\n"
+		and Sim.forwards(t17_s, true) and not Sim.forwards(t17_s, false), "sysctl: v6 forwarding is its own switch")
+	t17_l.exec("sysctl -w net.ipv6.conf.all.forwarding=0")
 	check(t17_l.exec("iptables -A INPUT -p tcp --dport 80 -j ACCEPT") == "" and t17_l.exec("iptables -I INPUT 1 -p tcp --dport 22 -j ACCEPT") == "", "iptables -I CHAIN N is accepted")
 	var t33_rules := t17_l.exec("iptables -S INPUT")
 	check(t33_rules.find("--dport 22") < t33_rules.find("--dport 80") and t33_rules.find("--dport 22") >= 0, "iptables -I INPUT 1 puts the rule first")
@@ -11864,7 +11867,7 @@ static func run() -> int:
 	t17_rack.slots[5] = t18_ros_sw
 	var t18_rs2 := CLI.new_session(t18_ros_sw)
 	check(t18_rs2.exec("/interface bridge port add bridge=bridge1 interface=ether2 edge=yes horizon=1") == "" and t18_ros_sw.ifaces[1].portfast and t18_ros_sw.ifaces[1].pvlan == "isolated", "ros: edge is portfast and horizon is isolation")
-	check(t18_rs2.exec("/interface bridge port print").contains("edge=yes"), "ros: bridge port print shows the edge flag")
+	check(not t18_rs2.exec("/interface bridge port print").contains("edge=") and "edge=yes" in t18_rs2.exec("export"), "ros: edge is not a column of the port table, and the export keeps it")
 	# vlan-filtering=no: a flat bridge where pvid means nothing and tags pass untouched
 	var t32_a := Game.new_device("srv-1")
 	var t32_b := Game.new_device("srv-1")
