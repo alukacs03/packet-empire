@@ -113,6 +113,7 @@ const DIALECT_HINTS := {
 		],
 	},
 	"lock_it_down": {
+		"model": "fw-1",
 		"device_type": "firewall",
 		"intro": "Two legs, two subnets, and a list that names what must never happen, followed by a permit for everything else. Without that last line the implicit deny drops the app server's traffic too.",
 		"after": "Test both directions: a stateless deny also kills replies, and that asymmetry is the lesson.",
@@ -155,7 +156,7 @@ const DIALECT_HINTS := {
 	},
 	"hide_the_internals": {
 		"device_type": "router",
-		"intro": "Withdraw the private prefix from BGP, then translate instead: on EOS gear (OpenRack, Arivista, Junivista) mark the inside and outside interfaces, write a standard list of who may be translated, and tie the list to the outside interface with overload. RouterOS masquerades everything leaving the outside interface.",
+		"intro": "Withdraw the private prefix from BGP, then translate instead: on EOS gear (OpenRack, Arivista, Junivista) write a standard list of who may be translated and tie it to the uplink interface with overload; the interface the rule is typed on is the outside, there is no inside mark. RouterOS masquerades everything leaving the outside interface.",
 		"after": "Substitute your real subnet and port names. The server keeps its private address and still reaches 8.8.8.8.",
 		"ros": [
 			"/ip firewall address-list remove [find address=10.3.0.0/24]",
@@ -283,7 +284,7 @@ const DIALECT_HINTS := {
 		"model": "ap-1",
 		"device_type": "switch",
 		"intro": "The access point's uplink is a trunk; each SSID maps to a VLAN. Guests and staff share the radio but not the network.",
-		"after": "The AP console takes the ssid lines; on each host type 'wifi join guest-wifi' or 'wifi join staff-wifi' and give it an address in that VLAN's subnet.",
+		"after": "The AP console takes the ssid lines; on each host type 'wifi join guest-wifi' or 'wifi join staff-wifi' and give both an address in the same 10.110.30.0/24; only the VLAN keeps them apart, which is the point.",
 		"eos": [
 			"enable",
 			"configure terminal",
@@ -430,6 +431,13 @@ const DIALECT_HINTS := {
 			"end",
 			"show vrf",
 		],
+		"ros": [
+			"/ip vrf add name=alfa interfaces=ether1",
+			"/ip vrf add name=beta interfaces=ether2",
+			"/ip address add address=10.0.0.1/24 interface=ether1",
+			"/ip address add address=10.0.0.1/24 interface=ether2",
+			"/ip vrf print",
+		],
 	},
 	"pull_either_cable": {
 		"model": "sw-24",
@@ -469,8 +477,13 @@ const DIALECT_HINTS := {
 			"end",
 			"show bfd",
 		],
+		"ros": [
+			"/routing bfd configuration add interfaces=ether2 disabled=no",
+			"/routing bfd session print",
+		],
 	},
 	"only_the_badged": {
+		"model": "sw-8",
 		"device_type": "switch",
 		"intro": "An authentication server holds the list of allowed MACs; the switch is pointed at it from an address that can reach it, and every customer port demands authentication.",
 		"after": "On the server: 'radius-users add <mac>' per allowed machine. The switch's Management address must reach the server.",
@@ -487,6 +500,7 @@ const DIALECT_HINTS := {
 		],
 	},
 	"the_home_router": {
+		"model": "sw-8",
 		"device_type": "switch",
 		"intro": "Snooping drops DHCP answers from every port but the trusted one, and ARP inspection believes only the bindings it learned that way.",
 		"after": "Trust exactly the port your real server is on; a client then re-runs 'dhclient -v eth0'.",
@@ -503,6 +517,7 @@ const DIALECT_HINTS := {
 		],
 	},
 	"who_goes_without": {
+		"model": "sw-8",
 		"device_type": "switch",
 		"intro": "Queueing does not make a link bigger; it decides who is served first when it is full. Turn it on under the ports on the shared path.",
 		"after": "Watch the Company screen at the busy part of the day: the strict tier stays green, the best-effort one degrades.",
@@ -527,6 +542,10 @@ const DIALECT_HINTS := {
 			"ipv6 nd ra",
 			"end",
 		],
+		"ros": [
+			"/ipv6 address add address=2001:db8:77::1/64 interface=ether1 advertise=yes",
+			"/ipv6 nd add interface=ether1",
+		],
 	},
 	"hand_the_subzone_over": {
 		"device_type": "server",
@@ -540,6 +559,7 @@ const DIALECT_HINTS := {
 		],
 	},
 	"two_transits": {
+		"model": "rtr-edge",
 		"device_type": "router",
 		"intro": "Two sessions from one router, then three policies: local-preference picks the carrier you send through, prepend makes the other path look longer to the world, and a prefix-list in says what you accept from each.",
 		"after": "The second handoff is 100.65.0.1/30 in AS64501; give the router's leg toward it 100.65.0.2/30. Check the winner with 'show ip bgp'.",
@@ -812,7 +832,7 @@ static func _campaign() -> Array:
 			"id": "hide_the_internals",
 			"title": "Hide the internals",
 			"customer": "Zeta Hosting (again)",
-			"reward": 2200,
+			"reward": 3200,
 			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: withdraw the private prefix from BGP, then masquerade instead. Source NAT on the router's uplink interface rewrites private sources to the router's own public address and untranslates the replies; on EOS an access list names who may be translated, on PacketTik a srcnat rule does. A private server must still ping 8.8.8.8, with NO announcement covering it.",
 			"reqs": [
 				{"d": "A NAT outside interface on a router", "t": func() -> bool: return _nat_router() != null},
@@ -836,6 +856,7 @@ static func _campaign() -> Array:
 			"id": "feel_the_heat",
 			"title": "Feeling the heat",
 			"customer": "Your own ops",
+			"hint": "No console for this one. Shop, Facility: buy a CoolRow CRAC and rack it; the HUD's draw and capacity figures must end with capacity on top.",
 			"reward": 2000,
 			"brief": "Now that you own the room (Server room stage), the racks dump heat into it and the bare walls only dissipate 400W. Exceed that and gear starts tripping offline every cycle. Buy a CoolRow CRAC unit ($600: it cools 1500W but draws 100W itself) and keep total cooling capacity above total power draw. The HUD shows ⚡draw / ❄capacity.",
 			"reqs": [
@@ -861,7 +882,7 @@ static func _campaign() -> Array:
 			"id": "double_the_pipe",
 			"title": "Double the pipe",
 			"customer": "Alfa Ltd (still growing)",
-			"reward": 1600,
+			"reward": 2200,
 			"brief": "Your redundant inter-switch link bothers Alfa's consultants: 'one link idle because of spanning tree? Bundle them!' A port-channel (LACP, bonding) aggregates parallel links into one logical pipe: full capacity AND redundancy, no blocked spare. On BOTH switches put both inter-switch ports in the same channel group. The port-channel status should list the members, and spanning tree should show nothing discarding between that pair.",
 			"reqs": [
 				{"d": "A 2+ member bundle between two switches", "t": func() -> bool: return _bundle_exists()},
@@ -872,7 +893,7 @@ static func _campaign() -> Array:
 			"id": "router_on_a_stick",
 			"title": "One port, two networks",
 			"customer": "Beta Kft",
-			"reward": 1900,
+			"reward": 2300,
 			"brief": "Beta needs their two VLANs (60 and 61) routed, and you have exactly one router port left. That is what router-on-a-stick is for: cable the router port to a switch TRUNK, then split it into 802.1Q subinterfaces, one per VLAN, each with the gateway address for that VLAN: 10.90.60.1/24 for VLAN 60 and 10.90.61.1/24 for VLAN 61. Put a server in each VLAN (10.90.60.10 and 10.90.61.10) pointing at those gateways. Both must reach each other over that single physical link.",
 			"reqs": [
 				{"d": "A router leg split into two 802.1Q subinterfaces", "t": func() -> bool: return _subiface_pair()},
@@ -884,7 +905,7 @@ static func _campaign() -> Array:
 			"id": "one_switch_two_nets",
 			"title": "Collapse the core",
 			"customer": "Alfa Ltd",
-			"reward": 2400,
+			"reward": 2600,
 			"brief": "Alfa's two VLANs each need a router leg, and you are running out of router ports. An Arivista 7024 is an L3 switch: it can route between VLANs itself with SVIs (virtual interfaces bound to a VLAN). Buy one, create VLANs 40 and 50 with a server in each (10.80.40.10/24 and 10.80.50.10/24), then in config mode 'interface Vlan40' + 'ip address 10.80.40.1/24' and the same for Vlan50. Point each server's default gateway at its SVI. The two servers must reach each other through the switch alone, no router involved.",
 			"reqs": [
 				{"d": "An L3 switch with SVIs for two VLANs", "t": func() -> bool: return _l3_switch_svis() >= 2},
@@ -1001,7 +1022,7 @@ static func _campaign() -> Array:
 			"reward": 3600,
 			"brief": "Obsidian's hypervisor has two NICs and they want both live, to two different switches, with no spanning tree blocking one. That is MLAG: pair two switches (an SVI on each for the peer address, then 'mlag configuration' with 'domain-id', 'local-interface', 'peer-address <the other switch>' and 'peer-link <the trunk between them>'), bond the server's two cables ('bond eth0 eth1' on the server), and put the two switch ports in the same MLAG group ('mlag 1' under each). Then prove it: another host must keep reaching the server with either of its cables pulled.",
 			"reqs": [
-				{"d": "Two switches paired as MLAG peers", "t": func() -> bool: return _mlag_pair() != null},
+				{"d": "Two switches paired as MLAG peers", "t": func() -> bool: return not _mlag_pair().is_empty()},
 				{"d": "A server bonded across both switches", "t": func() -> bool: return _mlag_server() != null},
 				{"d": "It stays reachable with either leg down", "t": func() -> bool: return _mlag_survives(), "once": true},
 			],
@@ -1037,7 +1058,7 @@ static func _campaign() -> Array:
 			"rank": "Senior network engineer",
 			"title": "The home router",
 			"customer": "Delta Media",
-			"reward": 2600,
+			"reward": 3000,
 			"brief": "Somebody in Delta's office plugged in a home router and it is handing out leases to the whole segment. DHCP snooping: 'ip dhcp snooping' on the switch, 'ip dhcp snooping trust' on exactly the port your real server sits behind, and 'ip arp inspection' so the bindings it learns are also the only ARP it believes. A client must still get a lease from the real server, and the switch must hold a binding for it.",
 			"reqs": [
 				{"d": "DHCP snooping on the switch with one trusted port", "t": func() -> bool: return _snooping_switch() != null},
@@ -1050,8 +1071,8 @@ static func _campaign() -> Array:
 			"rank": "Senior network engineer",
 			"title": "Who goes without",
 			"customer": "Strict Kft",
-			"reward": 2800,
-			"brief": "Strict Kft pays for the strict tier and shares a switch uplink with a best-effort customer who does not. At the busy part of the day that link is oversubscribed and both suffer equally, which is not what the strict tier bought. Turn on priority queueing ('qos priority-queueing' under the switch ports on the path): bandwidth is not created, it is allocated, and the strict customer is served first while the best-effort one degrades. Prove it during a busy cycle.",
+			"reward": 3000,
+			"brief": "Strict Kft pays for the strict tier and shares a switch uplink with a best-effort customer who does not. At the busy part of the day that link is oversubscribed and both suffer equally, which is not what the strict tier bought. You need both kinds of customer on the books at once: a strict-tier deal and a best-effort one. Turn on priority queueing ('qos priority-queueing' under the switch ports on the path): bandwidth is not created, it is allocated, and the strict customer is served first while the best-effort one degrades. Prove it during a busy cycle.",
 			"reqs": [
 				{"d": "Priority queueing on a switch port", "t": func() -> bool: return _qos_port() != null},
 				{"d": "A strict-tier customer served undegraded", "t": func() -> bool: return _strict_undegraded(), "once": true},
@@ -1063,7 +1084,7 @@ static func _campaign() -> Array:
 			"rank": "Senior network engineer",
 			"title": "Addresses nobody hands out",
 			"customer": "Hollo Media",
-			"reward": 2400,
+			"reward": 3000,
 			"brief": "Hollo Media's IPv6 hosts should configure themselves. No DHCP server, no lease database: the router advertises its /64 ('ipv6 nd ra' under the interface that owns the prefix) and each host builds its own address from the prefix and its MAC ('autoconf eth0'). A host must end up with an address inside the advertised /64 and reach the router over it.",
 			"reqs": [
 				{"d": "A router interface advertising a /64", "t": func() -> bool: return _ra_iface() != null},
@@ -1076,7 +1097,7 @@ static func _campaign() -> Array:
 			"rank": "Senior network engineer",
 			"title": "Hand the subzone over",
 			"customer": "Delta Media",
-			"reward": 2200,
+			"reward": 3000,
 			"brief": "Delta's European office wants to run its own names. The parent resolver keeps its zone and hands the subzone to a second server ('dns delegate eu.delta.hu <server ip>'); the second server holds the records ('dns add www.eu.delta.hu <ip>'). A client pointed at the parent ('nameserver <parent ip>') must resolve the delegated name by following the referral.",
 			"reqs": [
 				{"d": "A resolver that delegates a subzone", "t": func() -> bool: return _delegating_server() != null},
@@ -1192,7 +1213,7 @@ static func _campaign() -> Array:
 			"id": "build_a_fabric",
 			"title": "Build a fabric",
 			"customer": "Panonia Data (consulting)",
-			"reward": 4500,
+			"reward": 5400,
 			"brief": "Your core switch is one failure away from taking everything with it. Build a proper fabric instead: two spine routers, two leaf routers, and every leaf uplinked to BOTH spines on its own small transit subnet. Run OSPF across all four so each leaf learns the other's networks twice, once through each spine. Put a server under each leaf (10.251.1.10/24 and 10.251.2.10/24) and prove it: they must reach each other, and they must keep reaching each other with one spine switched off.",
 			"reqs": [
 				{"d": "Two leaves, each uplinked to two spines", "t": func() -> bool: return _fabric_shape()},
@@ -1206,7 +1227,7 @@ static func _campaign() -> Array:
 			"rank": "Datacenter architect",
 			"title": "Two transits, one decision",
 			"customer": "Panonia Data (consulting)",
-			"reward": 4800,
+			"reward": 5600,
 			"brief": "One upstream is one outage away from silence. Buy a second ISP Handoff: the second carrier comes as AS64501 at 100.65.0.1/30. Peer with both from one router, then make the decisions BGP exists for: prefer one carrier for outbound traffic with a higher local-preference, make the other path look longer to the world by prepending your AS on it, and filter what you accept from each with an inbound prefix-list ('ip prefix-list ONLY-DEFAULT seq 10 permit 0.0.0.0/0', then 'neighbor <ip> prefix-list ONLY-DEFAULT in': accept the default, nothing else). Prove the preference: the router's route to 8.8.8.8 must go out through the carrier you preferred.",
 			"reqs": [
 				{"d": "Sessions established with two different upstream ASNs", "t": func() -> bool: return _upstream_sessions() >= 2},
@@ -1221,7 +1242,7 @@ static func _campaign() -> Array:
 			"rank": "Datacenter architect",
 			"title": "At the exchange",
 			"customer": "Panonia Data (consulting)",
-			"reward": 5200,
+			"reward": 5800,
 			"hint": "Business tab, Peering: buy a port at the exchange ($%d plus $%d a cycle), then add peering sessions one at a time. Each one takes a share of your traffic off transit, and the transit bill on the 95th percentile falls with it." % [Game.IXP_SETUP, Game.IXP_PORT_FEE],
 			"brief": "Transit is billed on your 95th percentile, and most of what you send is going to networks that would happily take it for free. An internet exchange is a switch in a building where those networks meet. Get a port there, peer with enough of them that at least a third of your traffic bypasses transit, and read what the transit invoice does the next quarter.",
 			"reqs": [
@@ -1235,7 +1256,7 @@ static func _campaign() -> Array:
 			"rank": "Datacenter architect",
 			"title": "Somebody else announcing you",
 			"customer": "Tisza Bank",
-			"reward": 5600,
+			"reward": 6200,
 			"hint": "Under router bgp on the router that announces your prefixes: 'roa <prefix>/24' signs each one, and 'neighbor <upstream> rpki' asks that upstream to check origins against the signatures. A prefix nobody signed can be announced by anybody; a signed one is rejected when it is not you.",
 			"brief": "The bank's security team has read about prefix hijacks: another network announces your addresses and the internet believes the shorter path. The cure is a signed statement of who may originate each prefix (a ROA) and an upstream that validates against it. Sign every prefix you announce, ask every upstream to validate, and keep your own route table pointing at you.",
 			"reqs": [
@@ -1255,7 +1276,7 @@ static func _campaign() -> Array:
 			"reqs": [
 				{"d": "You own the Campus hall", "t": func() -> bool: return Game.stage >= Game.STAGES.size() - 1},
 				{"d": "Four spines, two leaves, every leaf to every spine", "t": func() -> bool: return _fabric_spines() >= 4},
-				{"d": "The leaves paired as MLAG peers", "t": func() -> bool: return _mlag_pair() != null},
+				{"d": "The leaves paired as MLAG peers", "t": func() -> bool: return not _mlag_pair().is_empty()},
 				{"d": "A server bonded across both leaves", "t": func() -> bool: return _mlag_server() != null},
 				{"d": "Hosts under different leaves reach each other", "t": func() -> bool: return _ping("10.252.1.10", "10.252.2.10", true)},
 			],
@@ -1264,6 +1285,7 @@ static func _campaign() -> Array:
 			"id": "prove_it",
 			"title": "The exercise",
 			"customer": "Tisza Bank",
+			"hint": "No console for this one. Ops, Drills: book the failover exercise, run it, and read the debrief; the contract wants the run, not the description.",
 			"reward": 4600,
 			"brief": "Tisza Bank has read your last outage report and would like the exercise run rather than described. Book a failover test (Operations, Facility), let it take your upstream out of service on the cycle you chose, and have every customer still served when it comes back. They want the result either way: a test you fail and act on is worth more to them than one you never ran.",
 			"reqs": [
@@ -1460,11 +1482,20 @@ static func _ap_ssids() -> int:
 	return best
 
 static func _wifi_clients() -> int:
-	var n := 0
+	## hosts on distinct SSIDs: two on the guest network are one network
+	var ssids := {}
 	for d in Game.all_devices():
 		if d.wifi != "":
-			n += 1
-	return n
+			ssids[d.wifi] = true
+	return ssids.size()
+
+static func _first_v4_of(d: Net.NDevice) -> String:
+	## the box's address, whichever port carries it
+	for i: Net.Iface in d.ifaces:
+		for cidr in i.ips:
+			if not Net.is_v6(cidr):
+				return String(cidr).split("/")[0]
+	return ""
 
 static func _wg_ifaces() -> Array:
 	var out: Array = []
@@ -1525,20 +1556,37 @@ static func _lb_healthy() -> int:
 	return best
 
 static func _fabric_shape() -> bool:
-	## at least two routers that each uplink to the same two other routers
-	var uplinks := {}
+	## two leaves (routers with hosts under them) that both uplink to the same
+	## two spines (routers with nothing but routers on them); a bare ring of
+	## four routers has no leaves and is not a fabric
+	var router_peers := {}
+	var has_hosts := {}
 	for l in Game.links:
-		if not l.a.dev.ip_forwarding or not l.b.dev.ip_forwarding:
-			continue
-		for pair in [[l.a.dev, l.b.dev], [l.b.dev, l.a.dev]]:
-			if not uplinks.has(pair[0]):
-				uplinks[pair[0]] = {}
-			uplinks[pair[0]][pair[1]] = true
+		for pair in [[l.a, l.b], [l.b, l.a]]:
+			var me: Net.Iface = pair[0]
+			var far: Net.Iface = pair[1]
+			if not me.dev.ip_forwarding or me.dev.type == "uplink":
+				continue
+			if far.dev.ip_forwarding and far.dev.type != "uplink":
+				if not router_peers.has(me.dev):
+					router_peers[me.dev] = {}
+				router_peers[me.dev][far.dev] = true
+			elif far.dev.type != "switch":
+				has_hosts[me.dev] = true
+	var spines := {}
 	var leaves := 0
-	for d in uplinks:
-		if uplinks[d].size() >= 2:
+	for d in router_peers:
+		if not has_hosts.has(d) or router_peers[d].size() < 2:
+			continue
+		var my_spines: Array = []
+		for s in router_peers[d]:
+			if not has_hosts.has(s) and router_peers.get(s, {}).size() >= 2:
+				my_spines.append(s)
+		if my_spines.size() >= 2:
 			leaves += 1
-	return leaves >= 4  # two leaves and two spines all see two peers
+			for s in my_spines:
+				spines[s] = true
+	return leaves >= 2 and spines.size() >= 2
 
 static func _fabric_ecmp() -> bool:
 	var src := _owner("10.251.1.10")
@@ -1665,7 +1713,7 @@ static func _all_upstreams_rpki() -> bool:
 				return false
 	return any
 
-static func _fabric_spines() -> int:
+static func _fabric_spines(min_peers := 4) -> int:
 	## a leaf is a router with four or more router peers; a spine is a router
 	## whose router peers are all leaves; the fabric is four spines seen by
 	## at least two leaves
@@ -1681,7 +1729,7 @@ static func _fabric_spines() -> int:
 		peers[l.b.dev][l.a.dev] = true
 	var leaves := {}
 	for d in peers:
-		if peers[d].size() >= 4:
+		if peers[d].size() >= min_peers:
 			leaves[d] = true
 	if leaves.size() < 2:
 		return 0
@@ -1744,11 +1792,18 @@ static func _relay_router() -> Net.NDevice:
 			return d
 	return null
 
+static func _dhcp_servers() -> Array:
+	return Game.all_devices().filter(func(d): return d.services.has("dhcp"))
+
 static func _relayed_client() -> Net.NDevice:
-	## a leased client that shares no subnet with the server: the lease crossed a router
-	var srv := _dhcp_server()
-	if srv == null:
-		return null
+	## a leased client that shares no subnet with its server: the lease crossed a router
+	for srv in _dhcp_servers():
+		var found := _relayed_client_of(srv)
+		if found != null:
+			return found
+	return null
+
+static func _relayed_client_of(srv: Net.NDevice) -> Net.NDevice:
 	for mac in srv.services["dhcp"]["leases"]:
 		var client := _mac_owner(mac)
 		if client == null:
@@ -1764,14 +1819,14 @@ static func _relayed_client() -> Net.NDevice:
 	return null
 
 static func _relayed_client_pings_server() -> bool:
-	var client := _relayed_client()
-	var srv := _dhcp_server()
-	if client == null or srv == null:
-		return false
-	for i: Net.Iface in srv.ifaces:
-		for ip in i.ips:
-			if not Net.is_v6(ip) and Sim.ping(client, String(ip).split("/")[0])["ok"]:
-				return true
+	for srv in _dhcp_servers():
+		var client := _relayed_client_of(srv)
+		if client == null:
+			continue
+		for i: Net.Iface in srv.ifaces:
+			for ip in i.ips:
+				if not Net.is_v6(ip) and Sim.ping(client, String(ip).split("/")[0])["ok"]:
+					return true
 	return false
 
 static func _jumbo_host(ip: String) -> bool:
@@ -1938,9 +1993,9 @@ static func _mlag_server() -> Net.NDevice:
 
 static func _mlag_survives() -> bool:
 	var srv := _mlag_server()
-	if srv == null or srv.ifaces[0].ips.is_empty():
+	if srv == null or _first_v4_of(srv) == "":
 		return false
-	var ip := String(srv.ifaces[0].ips[0]).split("/")[0]
+	var ip := _first_v4_of(srv)
 	var asker: Net.NDevice = null
 	for d in Game.all_devices():
 		if d.type == "server" and d != srv and Sim.ping(d, ip)["ok"]:
@@ -2013,9 +2068,9 @@ static func _dot1x_switch() -> Net.NDevice:
 
 static func _dot1x_authorised() -> bool:
 	var srv := _radius_server()
-	if srv == null or srv.ifaces[0].ips.is_empty():
+	if srv == null or _first_v4_of(srv) == "":
 		return false
-	var srv_ip := String(srv.ifaces[0].ips[0]).split("/")[0]
+	var srv_ip := _first_v4_of(srv)
 	for d in Game.all_devices():
 		if d.type != "switch":
 			continue
@@ -2058,10 +2113,11 @@ static func _snooping_binding() -> bool:
 	return false
 
 static func _qos_port() -> Net.Iface:
+	## queueing on a port with a cable in it; an unused port queues nothing
 	for d in Game.all_devices():
 		if d.type == "switch":
 			for i: Net.Iface in d.ifaces:
-				if i.qos:
+				if i.qos and Game.link_at(i) != null:
 					return i
 	return null
 
@@ -2138,9 +2194,9 @@ static func _delegate_record() -> String:
 static func _delegation_resolves() -> bool:
 	var parent := _delegating_server()
 	var name := _delegate_record()
-	if parent == null or name == "" or parent.ifaces[0].ips.is_empty():
+	if parent == null or name == "" or _first_v4_of(parent) == "":
 		return false
-	var parent_ip := String(parent.ifaces[0].ips[0]).split("/")[0]
+	var parent_ip := _first_v4_of(parent)
 	for d in Game.all_devices():
 		if d.type == "server" and d.resolver == parent_ip and d != parent:
 			var answer := Sim.resolve(d, name, false)
@@ -2273,11 +2329,20 @@ static func _overlay_mapped(vni: int) -> bool:
 
 static func _overlay_isolated() -> bool:
 	## A VLAN nobody mapped to a VNI stays where it is, which is the whole
-	## point of tenant separation.
+	## point of tenant separation: a host in VLAN 71 on a VTEP cannot reach the overlay tenant
 	for d: Net.NDevice in _overlay_vteps():
-		for vlan: int in d.vlans:
-			if int(vlan) == 71 and not d.vtep.get("map", {}).has(71):
-				return true
+		if d.vtep.get("map", {}).has(71):
+			continue
+		for i: Net.Iface in d.ifaces:
+			if i.mode != "access" or i.untagged_vlan != 71:
+				continue
+			var l := Game.link_at(i)
+			if l == null:
+				continue
+			var host: Net.NDevice = l.other(i).dev
+			if host.ip_forwarding or host.type == "switch" or l.other(i).ips.is_empty():
+				continue
+			return not Sim.ping(host, "192.168.70.10")["ok"]
 	return false
 
 static func _overlay_evpn() -> bool:
@@ -2409,8 +2474,17 @@ static func _parallel_sw_links() -> int:
 	return best
 
 static func _stp_blocking() -> bool:
-	for d in Game.all_devices():
-		if d.type == "switch":
+	## a blocked port on one of the two switches that share a doubled link, not anywhere in the room
+	for l in Game.links:
+		if l.a.dev.type != "switch" or l.b.dev.type != "switch" or l.a.dev == l.b.dev:
+			continue
+		var doubled := 0
+		for l2 in Game.links:
+			if (l2.a.dev == l.a.dev and l2.b.dev == l.b.dev) or (l2.a.dev == l.b.dev and l2.b.dev == l.a.dev):
+				doubled += 1
+		if doubled < 2:
+			continue
+		for d in [l.a.dev, l.b.dev]:
 			for i: Net.Iface in d.ifaces:
 				if Sim.stp_blocked(i):
 					return true
