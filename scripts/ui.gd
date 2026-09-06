@@ -969,57 +969,57 @@ func _build_rack_overlay() -> void:
 	var rack_metrics := HBoxContainer.new()
 	rack_metrics.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(rack_metrics)
-	rack_metrics.add_child(_rack_metric("CABINET LOAD", "units", "accent"))
-	rack_metrics.add_child(_rack_metric("POWER", "power", "warm"))
-	rack_metrics.add_child(_rack_metric("FEED BALANCE", "feeds", "success"))
+	rack_metrics.add_child(_rack_metric(Loc.t("rack.metric.load"), "units", "accent"))
+	rack_metrics.add_child(_rack_metric(Loc.t("rack.metric.power"), "power", "warm"))
+	rack_metrics.add_child(_rack_metric(Loc.t("rack.metric.feeds"), "feeds", "success"))
 	rack_airflow_lbl = _label("", 11, UIW.colour("success"))
 	rack_airflow_lbl.add_theme_font_override("font", mono)
 	v.add_child(rack_airflow_lbl)
 	var info_row := HBoxContainer.new()
 	v.add_child(info_row)
-	var info := _label("Click hardware to inspect, or an empty U to install something there. Grab any free jack and pull it to another device.", 13, MUTED)
+	var info := _label(Loc.t("rack.info"), 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.custom_minimum_size.x = 540
 	v.add_child(info)
 	rack_note_btn = Button.new()
 	rack_note_btn.text = "✎ LEAVE NOTE"
-	rack_note_btn.tooltip_text = "Leave short context for yourself on this cabinet"
+	rack_note_btn.tooltip_text = Loc.t("rack.note.tip")
 	rack_note_btn.pressed.connect(func() -> void: _open_note_card(rack_note_ui))
 	info_row.add_child(rack_note_btn)
 	var bp_btn := Button.new()
-	bp_btn.text = "Blueprints"
-	bp_btn.tooltip_text = "Save this rack's layout, or build a saved one into an empty rack"
+	bp_btn.text = Loc.t("rack.blueprints")
+	bp_btn.tooltip_text = Loc.t("rack.blueprints.tip")
 	bp_btn.pressed.connect(func() -> void:
-		var opts: Array = ["Save this rack as a blueprint (named after the rack)"]
+		var opts: Array = [Loc.t("rack.blueprints.save")]
 		var usable: Array = []
 		for b: Dictionary in Game.blueprints:
-			opts.append("Build '%s'   ($%d of hardware)" % [b["name"], Game.blueprint_price(b)])
+			opts.append(Loc.t("rack.blueprints.build", {"name": b["name"], "price": Game.blueprint_price(b)}))
 			usable.append(b)
 		_menu(bp_btn, opts, func(id: int) -> void:
 			if id == 0:
 				var err: String = Game.save_blueprint(cur_rack, Game.unique_name("rack %s layout" % cur_rack.name, Game.blueprints))
-				hud_toast(err if err != "" else "Blueprint saved.", err == "")
+				hud_toast(err if err != "" else Loc.t("rack.blueprints.saved"), err == "")
 			else:
 				var err2: String = Game.apply_blueprint(cur_rack, usable[id - 1])
-				hud_toast(err2 if err2 != "" else "Rack built from the blueprint.", err2 == "")
+				hud_toast(err2 if err2 != "" else Loc.t("rack.blueprints.built"), err2 == "")
 			_refresh_slots()))
 	info_row.add_child(bp_btn)
 	var service_btn := Button.new()
-	service_btn.text = "Service standards"
-	service_btn.tooltip_text = "Capture a working local LAN, or deploy it with fresh addresses and a customer VLAN."
+	service_btn.text = Loc.t("rack.services")
+	service_btn.tooltip_text = Loc.t("rack.services.tip")
 	service_btn.pressed.connect(_open_service_standards)
 	info_row.add_child(service_btn)
 	var sell := Button.new()
 	sell_btn = sell
-	sell.text = "Sell rack ($%d)" % (Game.RACK_PRICE / 2)
-	sell.tooltip_text = "Only empty racks can be sold"
+	sell.text = Loc.t("rack.sell", {"price": Game.RACK_PRICE / 2})
+	sell.tooltip_text = Loc.t("rack.sell.tip")
 	sell.pressed.connect(func() -> void:
 		if Game.sell_rack(cur_rack):
-			hud_toast("Rack sold for $%d." % (Game.RACK_PRICE / 2), true)
+			hud_toast(Loc.t("rack.sold", {"price": Game.RACK_PRICE / 2}), true)
 			close_rack()
 		else:
-			hud_toast("Empty the rack first: devices are still installed.", false))
+			hud_toast(Loc.t("rack.sell.full"), false))
 	info_row.add_child(sell)
 	var cabinet := PanelContainer.new()
 	var cab_sb := _sb(Color(0.08, 0.09, 0.12), Color(0.38, 0.42, 0.5), 4, 6)
@@ -1039,38 +1039,38 @@ func _open_service_standards() -> void:
 	if service_overlay != null and is_instance_valid(service_overlay): service_overlay.queue_free()
 	service_overlay = _overlay()
 	var box := _card(service_overlay, 660)
-	_header(box, func() -> void: service_overlay.visible = false).text = "Service standards"
-	box.add_child(_wrap("Build it once. Prove it. Give the next customer the same care, with fresh addresses.", 17, UIW.colour("text"), 600))
+	_header(box, func() -> void: service_overlay.visible = false).text = Loc.t("rack.services")
+	box.add_child(_wrap(Loc.t("services.lede"), 17, UIW.colour("text"), 600))
 	box.add_child(_wrap("The first standard is a local LAN: one SW5 or S8 and two to four R110 servers, in one VLAN. Routes and application services stay manual.", 14, UIW.colour("muted"), 600))
-	var save := WorkspaceShell.button("Save this cabinet's working LAN", func() -> void:
+	var save := WorkspaceShell.button(Loc.t("services.save"), func() -> void:
 		var err := ServiceDesign.capture(target, target.name + " customer LAN")
-		hud_toast(err if err != "" else "Working service saved with its cabling.", err == "")
+		hud_toast(err if err != "" else Loc.t("services.saved"), err == "")
 		if err == "": _open_service_standards())
 	box.add_child(save)
 	var designs: Array = Game.blueprints.filter(func(b): return b.has("service"))
 	if designs.is_empty():
-		box.add_child(UIW.make_empty_state("No service standards yet. Connect and address a small LAN, verify a ping, then save it here."))
+		box.add_child(UIW.make_empty_state(Loc.t("services.none")))
 	else:
-		box.add_child(_section("Deploy into " + target.name))
+		box.add_child(_section(Loc.t("services.deploy_into", {"rack": target.name})))
 		var choose := OptionButton.new()
 		for design: Dictionary in designs: choose.add_item(String(design["name"]))
 		box.add_child(choose)
 		var address := LineEdit.new()
 		address.text = "10.80.0"
-		address.placeholder_text = "Fresh /24 prefix, e.g. 10.80.0"
-		box.add_child(_label("Network prefix · three octets"))
+		address.placeholder_text = Loc.t("services.prefix.placeholder")
+		box.add_child(_label(Loc.t("services.prefix")))
 		box.add_child(address)
 		var vlan := SpinBox.new()
 		vlan.min_value = 1
 		vlan.max_value = 4094
 		vlan.value = 100
-		box.add_child(_label("Customer VLAN"))
+		box.add_child(_label(Loc.t("services.vlan")))
 		box.add_child(vlan)
 		var preview := _wrap("", 15, UIW.colour("text"), 600)
 		box.add_child(preview)
-		var deploy := WorkspaceShell.button("Deploy and verify connectivity", func() -> void:
+		var deploy := WorkspaceShell.button(Loc.t("services.deploy"), func() -> void:
 			var err := ServiceDesign.deploy(target, designs[choose.selected], address.text, int(vlan.value))
-			hud_toast(err if err != "" else "Service deployed. Every server passed its connectivity check.", err == "")
+			hud_toast(err if err != "" else Loc.t("services.deployed"), err == "")
 			_refresh_slots()
 			_open_service_standards(), true)
 		box.add_child(deploy)
