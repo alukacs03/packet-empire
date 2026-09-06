@@ -68,7 +68,7 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 			return {"ok": false, "why": "Address octets must be between 0 and 255."}
 	if int(parts[0]) == 0 or int(parts[0]) == 127 or int(parts[0]) >= 224:
 		return {"ok": false, "why": "Choose a unicast LAN prefix, such as 10.80.0."}
-	if vlan < 1 or vlan > 4094: return {"ok": false, "why": "Choose VLAN 1–4094."}
+	if vlan < 1 or vlan > 4094: return {"ok": false, "why": "Choose VLAN 1 to 4094."}
 	var normalized := "%d.%d.%d" % [int(parts[0]), int(parts[1]), int(parts[2])]
 	for dev: Net.NDevice in Game.all_devices():
 		for iface: Net.Iface in dev.ifaces:
@@ -106,7 +106,7 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 	var leads := int(spec["cables"].size())
 	price += leads * int(Game.PART_PRICES["patch"])
 	if not Game.sandbox and Game.money < price: return {"ok": false, "why": "This service costs $%d including patch leads; cash available $%d." % [price, Game.money]}
-	return {"ok": true, "why": "%d servers, one switch, %d patch leads. Addresses %s.10–%d/24, VLAN %d. Total $%d." % [host_count, leads, normalized, 9 + host_count, vlan, price],
+	return {"ok": true, "why": "%d servers, one switch, %d patch leads. Addresses %s.10 to %d/24, VLAN %d. Total $%d." % [host_count, leads, normalized, 9 + host_count, vlan, price],
 		"price": price, "prefix": normalized, "hosts": host_count, "leads": leads}
 
 static func deploy(rack: Net.Rack, design: Dictionary, prefix: String, vlan: int) -> String:
