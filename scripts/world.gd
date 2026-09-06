@@ -892,7 +892,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_Q:
 				mode = Mode.SELECT
 			KEY_R:
-				mode = Mode.PLACE_RACK
+				if not ui.is_open():
+					mode = Mode.PLACE_RACK  # a card on top hides the mode buttons; arming placement behind it is a trap
 			KEY_M:
 				ui.toggle_map()
 			KEY_O:

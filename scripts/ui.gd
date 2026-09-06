@@ -178,7 +178,8 @@ var cli_session: CLI.Session
 var cli_stack: Array = []  # ssh nesting
 var cli_learn_btn: Button
 var _last_cli_line := ""
-var cli_sessions := {}  # device name -> {session, stack}: a console survives closing the panel, like SSH does
+var _revealed_hints := {}  # contract id -> true once "show me the commands" was pressed; a refresh keeps it
+var cli_sessions := {}  # device -> {session, stack}: a console survives closing the panel, like SSH does (keyed by the object: renames happen)
 var cli_history: Array = []
 var cli_hist_idx := 0
 var money_lbl: Label
@@ -455,7 +456,7 @@ func _refresh_hud_layout(width_override := -1.0) -> void:
 	objective_lbl.custom_minimum_size.x = 150 if hud_compact else 260
 	clock_lbl.visible = not hud_compact
 	site_btn.custom_minimum_size.x = 80 if hud_compact else 120
-	hud_shortcut_hint.visible = false
+	hud_shortcut_hint.visible = not hud_compact
 	_refresh_attention()
 	_refresh_money()
 
@@ -619,8 +620,8 @@ func close_everything() -> void:
 	## next one from opening anything.
 	for panel in [rack_overlay, dev_overlay, if_overlay, contracts_overlay, welcome_overlay,
 			map_overlay, menu_overlay, pedia_overlay, help_overlay, ops_overlay,
-			search_overlay, demo_overlay]:
-		if panel != null:
+			search_overlay, demo_overlay, settings_overlay]:
+		if panel != null and is_instance_valid(panel):
 			panel.visible = false
 	cur_dev = null
 	cur_rack = null
@@ -629,7 +630,8 @@ func is_open() -> bool:
 	return rack_overlay.visible or dev_overlay.visible or if_overlay.visible \
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
 		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible \
-		or ops_overlay.visible or search_overlay.visible or demo_overlay.visible
+		or ops_overlay.visible or search_overlay.visible or demo_overlay.visible \
+		or (settings_overlay != null and is_instance_valid(settings_overlay) and settings_overlay.visible)
 
 # ---------- theme / widget helpers ----------
 
@@ -781,6 +783,7 @@ func _scroll_to_bottom() -> void:
 
 func _fit_cards() -> void:
 	## keep every card inside the window; content beyond that scrolls
+	_card_scrolls = _card_scrolls.filter(func(s): return is_instance_valid(s))  # rebuilt overlays leave dead entries behind
 	var vp := get_viewport().get_visible_rect().size
 	for scroll: ScrollContainer in _card_scrolls:
 		if scroll.get_child_count() == 0:
@@ -1396,8 +1399,8 @@ func _build_dev_overlay() -> void:
 	name_edit.placeholder_text = "hostname, Enter to apply"
 	name_edit.text_submitted.connect(_rename_dev)
 	name_edit.focus_exited.connect(func() -> void:
-		if cur_dev != null and name_edit.text.strip_edges() != cur_dev.name and name_edit.text.strip_edges() != "":
-			_rename_dev(name_edit.text))
+		if cur_dev != null and name_edit.text.strip_edges() != cur_dev.name:
+			name_edit.text = cur_dev.name)  # Enter applies, as the placeholder says; leaving reverts
 	name_row.add_child(name_edit)
 	name_row.add_child(_label("   Status:  ", 14, MUTED))
 	status_opt = OptionButton.new()
@@ -1453,6 +1456,9 @@ func _build_dev_overlay() -> void:
 	btn_row.add_child(dev_note_btn)
 	cli_toggle = Button.new()
 	cli_toggle.text = "Open console  ▤"
+	_last_cli_line = ""
+	if cli_learn_btn != null:
+		cli_learn_btn.visible = false  # the chip belongs to what was typed here, not on the last box
 	cli_toggle.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cli_toggle.pressed.connect(_toggle_cli)
 	btn_row.add_child(cli_toggle)
@@ -1460,6 +1466,8 @@ func _build_dev_overlay() -> void:
 	cli_size_btn.text = "▤ taller"
 	cli_size_btn.tooltip_text = "Cycle the console height (or type terminal length N)"
 	cli_size_btn.pressed.connect(func() -> void:
+		if cli_session != null:
+			cli_session.term_length = 0  # the button takes over from terminal length
 		cli_rows_step = (cli_rows_step + 1) % 3
 		cli_size_btn.text = ["▤ taller", "▤ tallest", "▤ shorter"][cli_rows_step]
 		if cli_box.visible:
@@ -1804,7 +1812,7 @@ func _build_if_overlay() -> void:
 	console_btn.text = "OPEN DEVICE CONSOLE"
 	_accent(console_btn)
 	console_btn.pressed.connect(func() -> void:
-		if_overlay.visible = false
+		close_iface()  # puts the device card's close button back
 		if not cli_box.visible:
 			_toggle_cli())
 	console_note.add_child(console_btn)
@@ -1914,8 +1922,8 @@ func _refresh_iface() -> void:
 	var peer := Game.peer_label(cur_if)
 	if peer == "":
 		if_cable_lbl.text = "Cable: not connected"
-		if_cable_btn.text = "Run remote cable…"
-		if_cable_btn.tooltip_text = "For devices in this rack, close to the rack view and drag directly between free ports."
+		if_cable_btn.text = "Run cable…"
+		if_cable_btn.tooltip_text = "Pick the free port on the far end, in this rack or another; dragging between port squares in the rack view works too."
 		if_peer_btn.visible = false
 	else:
 		var link := Game.link_at(cur_if)
@@ -1958,14 +1966,12 @@ func _cable_action() -> void:
 		_refresh_iface()
 		return
 	var targets: Array = []
-	var source_rack := Game.rack_of(cur_if.dev)
 	for candidate: Net.Iface in Game.free_ifaces(cur_if.dev):
 		if candidate.name.begins_with("Management") and not cur_if.name.begins_with("Management") and cur_if.dev.type != "console":
 			continue  # the out-of-band port is not a data port; a server patched there reaches nothing
-		if Game.rack_of(candidate.dev) != source_rack:
-			targets.append(candidate)
+		targets.append(candidate)  # this rack included: the first job says "click a port, Run cable"
 	if targets.is_empty():
-		hud_toast("No remote free ports. For this rack, drag a cable between port squares in the rack view.")
+		hud_toast("No free ports anywhere to run a cable to.")
 		return
 	# group by device: one submenu per device, so a rack of 24-port switches
 	# does not become a hundred-row flat list
@@ -2129,6 +2135,7 @@ func toggle_search() -> void:
 		search_overlay.visible = false
 		return
 	if is_open():
+		hud_toast("Close the open panel first (Esc), then Find.")
 		return
 	_show_overlay(search_overlay)
 	search_input.text = ""
@@ -3670,6 +3677,8 @@ func toggle_ops() -> void:
 	elif not is_open():
 		_refresh_ops()
 		_show_overlay(ops_overlay)
+	else:
+		hud_toast("Close the open panel first (Esc), then Ops.")
 
 # ---------- keyboard help ----------
 
@@ -3698,7 +3707,7 @@ func _build_help() -> void:
 		["click port", "inspect its state or arrange a remote cable run"],
 		["right-click blank", "remove a blanking panel"],
 		["Shift-drag (map)", "move a node on the topology map"],
-		["Esc", "back one level"],
+		["Esc", "close the panel on top (the console first, then the card)"],
 		["CONSOLE", ""],
 		["configuration", "addresses, VLANs, routing and policy live here"],
 		["Tab", "complete the command or list candidates"],
@@ -3709,7 +3718,10 @@ func _build_help() -> void:
 		["Ctrl-U / Ctrl-K / Ctrl-W", "delete to the start, to the end, the previous word"],
 		["Ctrl-L / Ctrl-C", "clear the screen / abandon the line"],
 		["clear", "wipe the screen"],
-		["ssh <ip>", "jump into another device's CLI (exit returns)"],
+		["!!", "run the last command again"],
+		["paste", "several lines pasted run one after another"],
+		["terminal length N", "size the pane to N rows (the ▤ button takes over again)"],
+		["ssh <ip> / vtysh", "jump into another device's CLI, or FRR's shell on a Linux box (exit returns)"],
 		["Esc", "close the console"],
 	]
 	for row in rows:
@@ -4140,6 +4152,8 @@ func toggle_map() -> void:
 		map_overlay.visible = false
 	elif not is_open():
 		_show_overlay(map_overlay)
+	else:
+		hud_toast("Close the open panel first (Esc), then the map.")
 
 # ---------- tutorial checklist ----------
 
@@ -4546,6 +4560,8 @@ func _rebuild_localised() -> void:
 	menu_overlay.queue_free()
 	_build_menu()
 	menu_overlay.visible = menu_was
+	pedia_overlay.queue_free()  # the chapter list is baked from the topics: rebuild it in the new language
+	_build_pedia()
 	_refresh_tutorial()
 	_refresh_contracts()
 	if ops_overlay.visible:
@@ -5861,8 +5877,10 @@ func _build_jobs_tab() -> void:
 			var send := Button.new()
 			send.text = "Send quote"
 			_accent(send)
+			quote.text_submitted.connect(func(_t: String) -> void: send.pressed.emit())
 			send.pressed.connect(func() -> void:
 				if not quote.text.strip_edges().is_valid_int():
+					_toast("Type a whole-dollar price per cycle, like 75, then send.")
 					return
 				var res: String = Game.respond_offer(offer, int(quote.text.strip_edges()))
 				_refresh_contracts()
@@ -6233,6 +6251,7 @@ func _toast(text: String) -> void:
 			contracts_box.add_child(_toast_lbl)
 			contracts_box.move_child(_toast_lbl, 0)
 		_toast_lbl.text = text
+		_ensure_visible.call_deferred(_toast_lbl)  # the sender sits far down a long panel
 		Sfx.play("bad")
 		return
 	hud_toast(text, false)
@@ -6387,8 +6406,14 @@ func _refresh_contracts() -> void:
 			hint_lbl.visible = false
 			var hint_btn := Button.new()
 			hint_btn.text = "Stuck? Show me the commands"
+			var hint_id := String(c.get("id", ""))
+			if _revealed_hints.has(hint_id):
+				hint_lbl.text = contract_hint
+				hint_lbl.visible = true
+				hint_btn.visible = false
 			hint_btn.pressed.connect(func() -> void:
 				Challenge.note_hint()
+				_revealed_hints[hint_id] = true
 				hint_lbl.text = contract_hint
 				hint_lbl.visible = true
 				hint_btn.visible = false)
@@ -6466,15 +6491,16 @@ func _toggle_cli() -> void:
 		cli_out.custom_minimum_size.y = _console_height()
 		_ensure_visible(cli_box)  # the console opens below the fold otherwise
 		cli_toggle.text = "Close console  ▤"
-		var kept: Dictionary = cli_sessions.get(cur_dev.name, {})
-		var resumed: bool = not kept.is_empty() and is_instance_valid(kept["session"].dev) and kept["session"].dev == cur_dev
+		var kept: Dictionary = cli_sessions.get(cur_dev, {})
+		var kept_base: CLI.Session = (kept["stack"][0] if not kept.get("stack", []).is_empty() else kept.get("session")) if not kept.is_empty() else null
+		var resumed: bool = kept_base != null and is_instance_valid(kept_base.dev) and kept_base.dev == cur_dev  # an ssh hop kept open comes back too
 		if resumed:
 			cli_session = kept["session"]
 			cli_stack = kept["stack"]
 		else:
 			cli_session = CLI.new_session(cur_dev)
 			cli_stack = []
-			cli_sessions[cur_dev.name] = {"session": cli_session, "stack": cli_stack}
+			cli_sessions[cur_dev] = {"session": cli_session, "stack": cli_stack}
 		cli_history = cli_session.history
 		cli_hist_idx = cli_history.size()
 		cli_prompt.text = cli_session.prompt() + " "
@@ -6624,33 +6650,39 @@ func _cli_submit(cmd: String) -> void:
 			cli_out.append_text("[color=#8da7ba]%s[/color]" % hint)
 	if cli_learn_btn != null:
 		var topic := CLI.topic_for(cmd)
-		cli_learn_btn.visible = topic != "" and Prefs.learner_hints
+		cli_learn_btn.visible = topic != ""  # the field manual is reference, not coaching: it stays with hints off
 		cli_learn_btn.text = "LEARN: %s ↗" % topic if topic != "" else "LEARN ↗"
 	if cli_session.pending_ssh:
 		var target: Net.NDevice = cli_session.pending_ssh
 		cli_session.pending_ssh = null
 		cli_stack.append(cli_session)
 		cli_session = CLI.new_session(target)
+		cli_history = cli_session.history  # the far box has its own history
+		cli_hist_idx = 0
 		cli_out.append_text(cli_session.banner())
 	elif cli_session.pending_sub != null:
 		var sub: CLI.Session = cli_session.pending_sub  # vtysh: a shell inside the shell, same box
 		cli_session.pending_sub = null
 		cli_stack.append(cli_session)
 		cli_session = sub
+		cli_history = cli_session.history
+		cli_hist_idx = 0
 		cli_out.append_text(cli_session.banner())
 	elif cli_session.wants_exit:
 		cli_session.wants_exit = false
 		if cli_stack.is_empty():
 			cli_out.append_text("logout\n")
-			cli_sessions.erase(cur_dev.name)  # a real logout: the next open starts fresh
+			cli_sessions.erase(cur_dev)  # a real logout: the next open starts fresh
 			cli_session = CLI.new_session(cur_dev)
-			cli_sessions[cur_dev.name] = {"session": cli_session, "stack": cli_stack}
+			cli_sessions[cur_dev] = {"session": cli_session, "stack": cli_stack}
 			cli_history = cli_session.history
 			cli_hist_idx = 0
 			cli_out.append_text(cli_session.banner())
 		else:
 			var left: CLI.Session = cli_session
 			cli_session = cli_stack.pop_back()
+			cli_history = cli_session.history
+			cli_hist_idx = cli_history.size()
 			if left.dev != cli_session.dev:
 				cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)
 	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
@@ -6683,6 +6715,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			pedia_overlay.visible = false
 		elif settings_overlay != null and is_instance_valid(settings_overlay) and settings_overlay.visible:
 			settings_overlay.visible = false
+		elif demo_overlay.visible:
+			demo_overlay.visible = false
 		elif menu_overlay.visible:
 			menu_overlay.visible = false
 		elif map_overlay.visible:
