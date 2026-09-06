@@ -529,14 +529,21 @@ class TopoMap extends Control:
 			if not device_online(dev):
 				down_count += 1
 		var down_links := 0
+		var first_down := ""
 		for link: Net.Link in Game.links:
-			if link_unavailable(link): down_links += 1
+			if link_unavailable(link):
+				down_links += 1
+				if first_down.is_empty():
+					first_down = "%s %s ↔ %s %s" % [link.a.dev.name, link.a.name, link.b.dev.name, link.b.name]
 		var health := Loc.t("map.physical_ready") if down_count == 0 and down_links == 0 else Loc.t("map.physical_down") % [down_count, down_links]
 		var metrics := "%02d RACKS    %02d DEVICES    %02d LINKS    %s" % [Game.racks.size(), dev_count, Game.links.size(), health]
 		draw_string(_mono, Vector2(48, 108), metrics, HORIZONTAL_ALIGNMENT_LEFT, size.x - 350, 13,
 			UIW.colour("success") if down_count == 0 and down_links == 0 else UIW.colour("warning"))
 		draw_string(_mono, Vector2(size.x - 292, 108), "SELECT A DEVICE TO INSPECT",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, UIW.colour("muted"))
+		if not first_down.is_empty():
+			draw_string(_mono, Vector2(48, 130), Loc.t("map.inspect_down") % first_down,
+				HORIZONTAL_ALIGNMENT_LEFT, size.x - 96, 12, UIW.colour("warning"))
 
 		# Pack uniform rack bays around the centre of the plotting surface.
 		const CARD_W := 300.0
