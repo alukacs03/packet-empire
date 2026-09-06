@@ -875,7 +875,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var out := "Flags: D - dynamic, P - passive\nColumns: INTERFACES, AREA, COST, PRIORITY, NETWORK-TYPE, STATE\n#     INTERFACES  AREA      COST  PRIORITY  NETWORK-TYPE  STATE\n"
 			var n := 0
 			var passive: Array = dev.ospf.get("passive", [])
-			for i: Net.Iface in Sim.ospf_covered_ifaces(dev):
+			for i: Net.Iface in Sim.ospf_covered_ifaces(dev) + Sim.ospf6_ifaces(dev):
 				var flag := "P" if i.name in passive else "D"
 				var state := "Down" if not Sim.iface_up(i) else ("PointToPoint" if Sim.ospf_is_p2p(i) else "DesignatedRouter")
 				out += "%-2d %s  %-11s %-9s %-5d %-9d %-13s %s\n" % [n, flag, _dname(i), _area_name(), Sim.ospf_cost(i), Sim.ospf_priority(i),
@@ -1980,7 +1980,15 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				return "value of name must be specified\n"
 			if dev.ospf.is_empty():
 				dev.ospf = {"networks": [], "areas": {}}
-			dev.ospf["instance"] = String(p["name"])
+			if String(p.get("version", "2")) == "3":
+				# OSPFv3 is its own instance: areas that belong to it enable interfaces, not networks
+				dev.ospf["v6_instance"] = String(p["name"])
+				if not dev.ospf.has("v6_ifaces"):
+					dev.ospf["v6_ifaces"] = []
+				if not dev.ospf.has("v6_areas"):
+					dev.ospf["v6_areas"] = []
+			else:
+				dev.ospf["instance"] = String(p["name"])
 			if p.has("router-id"):
 				dev.ospf["router_id"] = String(p["router-id"])
 			if p.has("originate-default"):
@@ -2013,6 +2021,8 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			if not p.has("name"):
 				return "value of name must be specified\n"
 			dev.ospf["areas"][String(p["name"])] = String(p.get("area-id", "0.0.0.0"))
+			if dev.ospf.has("v6_instance") and String(p.get("instance", "")) == String(dev.ospf["v6_instance"]):
+				dev.ospf["v6_areas"].append(String(p["name"]))
 			return ""
 		"routing ospf area remove":
 			var areas: Dictionary = dev.ospf.get("areas", {})
@@ -2041,6 +2051,16 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				return "input does not match any value of area\n"
 			if not dev.ospf.get("networks", []).is_empty() and String(dev.ospf.get("template_area", area)) != area:
 				return "failure: multi-area OSPF is not supported here: this router is in area %s\n" % dev.ospf.get("template_area", area)
+			if area in dev.ospf.get("v6_areas", []):
+				# an OSPFv3 area: the template names interfaces, and that is the enablement
+				for ifn6 in String(p.get("interfaces", "")).split(",", false):
+					var i6 := _iface(ifn6)
+					if i6 == null:
+						return "input does not match any value of interfaces\n"
+					if i6.name not in dev.ospf["v6_ifaces"]:
+						dev.ospf["v6_ifaces"].append(i6.name)
+				Game.topology_changed.emit()
+				return ""
 			dev.ospf["template_area"] = area
 			var nets := Array(String(p.get("networks", "")).split(",", false))
 			if nets.is_empty() and not p.has("interfaces"):
@@ -2723,6 +2743,13 @@ func _export() -> String:
 			add.call("/routing ospf area", "add area-id=%s disabled=no instance=%s name=%s" % [areas[a], inst, a])
 		for net in dev.ospf.get("networks", []):
 			add.call("/routing ospf interface-template", "add area=%s disabled=no networks=%s" % [_area_name(), net])
+		if dev.ospf.has("v6_instance"):
+			add.call("/routing ospf instance", "add disabled=no name=%s%s version=3" % [dev.ospf["v6_instance"],
+				(" router-id=%s" % dev.ospf["router_id"]) if dev.ospf.has("router_id") else ""])
+			var v6_area := String(dev.ospf["v6_areas"][0]) if not dev.ospf.get("v6_areas", []).is_empty() else "backbone-v3"
+			add.call("/routing ospf area", "add area-id=%s disabled=no instance=%s name=%s" % [Sim.ospf_area(dev), dev.ospf["v6_instance"], v6_area])
+			for ifn6 in dev.ospf.get("v6_ifaces", []):
+				add.call("/routing ospf interface-template", "add area=%s disabled=no interfaces=%s" % [v6_area, ifn6])
 	if dev.snmp != "":
 		add.call("/snmp community", "set [ find default=yes ] name=%s" % dev.snmp)
 		add.call("/snmp", "set enabled=yes")

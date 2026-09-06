@@ -11578,5 +11578,24 @@ static func run() -> int:
 	check(Sim.rib(t14_rd).any(func(e): return e["src"] == "B" and String(e["prefix"]) == "2001:db8:c::" and int(e["plen"]) == 64), "bgp6: activated on both ends, the v6 prefix is installed")
 	check(t14_sd.exec("show ipv6 route").contains("B E") and t14_sd.exec("show ipv6 route").contains("2001:db8:c::/64"), "bgp6: show ipv6 route prints the B E route")
 	check(t14_sc.exec("show running-config").contains("   address-family ipv6\n      neighbor 10.99.9.2 activate\n      network 2001:db8:c::/64"), "bgp6: the running-config prints the v6 family under router bgp")
+	# RouterOS: an OSPFv3 instance is version=3, and its interface-template names interfaces
+	var t16_rack := Game.add_rack(Vector2i(9, 16))
+	var t16_a := Game.new_device("rtr-lite")
+	var t16_b := Game.new_device("rtr-lite")
+	var t16_h := Game.new_device("srv-1")
+	t16_rack.slots[0] = t16_a
+	t16_rack.slots[1] = t16_b
+	t16_rack.slots[2] = t16_h
+	Game.connect_ifaces(t16_a.ifaces[0], t16_b.ifaces[0])
+	Game.connect_ifaces(t16_b.ifaces[1], t16_h.ifaces[0])
+	Game.add_ip(t16_b.ifaces[1], "2001:db8:d::1/64")
+	for pair16 in [[t16_a, "3.3.3.3"], [t16_b, "4.4.4.4"]]:
+		var s16 := CLI.new_session(pair16[0])
+		check(s16.exec("/routing ospf instance add name=v3 version=3 router-id=%s" % pair16[1]) == "" and s16.exec("/routing ospf area add name=bb3 area-id=0.0.0.0 instance=v3") == "", "ros ospf6: a version=3 instance and its area")
+		check(s16.exec("/routing ospf interface-template add area=bb3 interfaces=ether1,ether2") == "" and "ether1" in pair16[0].ospf["v6_ifaces"], "ros ospf6: the template names the interfaces it runs on")
+	check(Sim.rib(t16_a).any(func(e): return e["src"] == "O" and String(e["prefix"]) == "2001:db8:d::"), "ros ospf6: the far v6 prefix is learned")
+	var t16_x := CLI.new_session(t16_a).exec("/export")
+	check(t16_x.contains("add disabled=no name=v3 router-id=3.3.3.3 version=3") and t16_x.contains("add area=bb3 disabled=no interfaces=ether1"), "ros ospf6: export prints the v3 instance and its interface templates")
+	check(CLI.new_session(t16_a).exec("/routing ospf interface print").contains("ether1"), "ros ospf6: interface print lists the v3 interfaces")
 	print("---- %d failures" % fails)
 	return fails
