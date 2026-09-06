@@ -123,6 +123,8 @@ const LEARN_HINTS := {
 		"ping": "no reply: is the target in a connected subnet or reachable through /ip route, and is the port up?",
 	},
 	"linux": {
+		"vtysh": "vtysh opens FRR's shell: configure terminal, router ospf, network <p>/<len> area 0; sysctl -w net.ipv4.ip_forward=1 first or it routes nothing",
+		"systemctl start keepalived": "keepalived wants /etc/keepalived/keepalived.conf: echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { <vip>/24 } }' > /etc/keepalived/keepalived.conf",
 		"ip route add": "ip route add <dst>/<len> via <gw> dev eth0; the gateway must be on a connected subnet",
 		"ip route": "ip route add <dst>/<len> via <gw> dev eth0",
 		"ip addr add": "ip addr add a.b.c.d/24 dev eth0: prefix length and the dev keyword are both needed",
@@ -141,6 +143,8 @@ const LEARN_TOPICS := [
 	[["ip route", "/ip route", "ip -6 route", "ipv6 route", "traceroute", "tracepath", "/tool traceroute"], "Routing & gateways"],
 	[["switchport mode trunk", "switchport trunk", "show interfaces trunk", "tagged="], "Trunks"],
 	[["vlan", "switchport", "/interface bridge vlan", "/interface bridge port", "type vlan", "pvid"], "@vlans"],
+	[["ipv6 router ospf", "ipv6 ospf", "show ipv6 ospf", "version=3"], "OSPFv3 lives on link-locals"],
+	[["vrrp", "/interface vrrp", "keepalived"], "Two masters"],
 	[["spanning-tree", "/interface bridge port monitor", "bpduguard", "portfast"], "Spanning tree"],
 	[["router ospf", "/routing ospf", "ospf"], "OSPF"],
 	[["router bgp", "/routing bgp", "bgp"], "BGP & the internet"],
@@ -4868,6 +4872,8 @@ class Vtysh extends EOS:
 		if String(toks[0]) == "quit" or (mode == "priv" and "exit".begins_with(String(toks[0]))):
 			wants_exit = true
 			return ""
+		if toks.size() >= 2 and String(toks[0]) == "show" and "running-config".begins_with(String(toks[1])):
+			return _frr_running()
 		if toks.size() == 2 and String(toks[0]) == "show" and "version".begins_with(String(toks[1])):
 			return "FRRouting 8.4.4 (%s) on Linux(6.1.0-18-amd64).\nCopyright 1996-2005 Kunihiro Ishiguro, et al.\nconfigured with:\n    '--build=x86_64-linux-gnu' '--prefix=/usr' '--enable-vtysh' '--enable-ospfd' '--enable-bgpd'\n" % dev.name
 		if String(toks[0]) == "router" and not dev.ip_forwarding:
@@ -4878,6 +4884,31 @@ class Vtysh extends EOS:
 		if String(toks[0]) == "write" or String(toks[0]) == "copy":
 			return "Note: this version of vtysh never writes vtysh.conf\nBuilding Configuration...\nIntegrated configuration saved to /etc/frr/frr.conf\n[OK]\n"
 		return out
+
+	func _frr_running() -> String:
+		## frr.conf as vtysh shows it: only what the daemons own, nothing of the Linux underneath
+		var out := "Building configuration...\n\nCurrent configuration:\n!\nfrr version 8.4.4\nfrr defaults traditional\nhostname %s\nno ipv6 forwarding\n!\n" % dev.name
+		if not dev.ospf.is_empty():
+			out += "router ospf\n"
+			if String(dev.ospf.get("router_id", "")) != "":
+				out += " ospf router-id %s\n" % dev.ospf["router_id"]
+			for net in dev.ospf.get("networks", []):
+				out += " network %s area %s\n" % [net, Sim.ospf_area(dev)]
+			for pif in dev.ospf.get("passive", []):
+				out += " passive-interface %s\n" % pif
+			out += "exit\n!\n"
+		if not dev.bgp.is_empty():
+			out += "router bgp %d\n" % int(dev.bgp["asn"])
+			if String(dev.bgp.get("router_id", "")) != "":
+				out += " bgp router-id %s\n" % dev.bgp["router_id"]
+			for nb in dev.bgp.get("neighbors", []):
+				out += " neighbor %s remote-as %d\n" % [nb["ip"], int(nb["remote_as"])]
+			out += " !\n address-family ipv4 unicast\n"
+			for net in dev.bgp.get("networks", []):
+				if not Net.is_v6(String(net)):
+					out += "  network %s\n" % net
+			out += " exit-address-family\nexit\n!\n"
+		return out + "end\n"
 
 	func _allowed(toks: Array) -> bool:
 		for a in ALLOWED:

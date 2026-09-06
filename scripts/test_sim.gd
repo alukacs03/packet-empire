@@ -11444,6 +11444,8 @@ static func run() -> int:
 	check(t12_v.exec("exit") == "" and t12_v.wants_exit, "vtysh: exit at the enable prompt leaves the shell")
 	var t12_n := t12_l.exec("vtysh -c \"show ip ospf neighbor\"")
 	check(t12_n.contains("Neighbor ID"), "vtysh: -c runs one command and returns")
+	var t12_fr := t12_l.exec("vtysh -c \"show running-config\"")
+	check(t12_fr.contains("frr version") and t12_fr.contains("router ospf\n network 10.78.0.0/24 area 0.0.0.0") and not t12_fr.contains("interface eth0"), "vtysh: show running-config is frr.conf, not the Arista one")
 	check(t12_l.exec("echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { 10.78.0.1/24 } }' > /etc/keepalived/keepalived.conf") == "", "keepalived: the conf is written by hand")
 	check(t12_l.exec("systemctl start keepalived") == "" and int(t12_s.ifaces[0].vrrp.get("group", 0)) == 51 and String(t12_s.ifaces[0].vrrp.get("vip", "")) == "10.78.0.1" and int(t12_s.ifaces[0].vrrp.get("priority", 0)) == 150, "keepalived: starting it is the VRRP the routers speak")
 	check(Sim.vrrp_master("10.78.0.1", 51) == t12_s, "keepalived: the server is master of its VIP")
