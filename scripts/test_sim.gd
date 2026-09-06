@@ -11404,5 +11404,33 @@ static func run() -> int:
 	var t11_rsx := t11_rss.exec("/export")
 	check(t11_rsx.contains("add local-address=10.0.0.9 name=vxlan1 vni=10010") and t11_rsx.contains("add interface=vxlan1 remote-ip=10.0.0.10") and t11_rsx.contains("add bridge=bridge1 interface=vxlan1 pvid=10"), "ros: export prints the vxlan interface, its vteps and its bridge port")
 	check(t11_rss.exec("/interface vxlan remove name=vxlan1") == "" and t11_rp_sw.vtep["map"].is_empty(), "ros: removing the vxlan interface drops its map")
+	# --- Linux: FRR's vtysh and keepalived ---
+	var t12_rack := Game.add_rack(Vector2i(9, 12))
+	var t12_s := Game.new_device("srv-1")
+	var t12_sw := Game.new_device("sw-8")
+	t12_rack.slots[0] = t12_s
+	t12_rack.slots[1] = t12_sw
+	Game.connect_ifaces(t12_s.ifaces[0], t12_sw.ifaces[0])
+	var t12_l := CLI.new_session(t12_s)
+	t12_l.exec("ip addr add 10.78.0.2/24 dev eth0")
+	check(t12_l.exec("vtysh") == "" and t12_l.pending_sub != null and t12_l.pending_sub.prompt() == t12_s.name + "#", "vtysh: opens FRR's shell at the enable prompt")
+	var t12_v: CLI.Session = t12_l.pending_sub
+	t12_l.pending_sub = null
+	check(t12_v.exec("show version").contains("FRRouting"), "vtysh: show version is FRR's")
+	check(t12_v.exec("ip route 0.0.0.0/0 10.78.0.1").begins_with("% Unknown command"), "vtysh: what FRR does not have is unknown, not Arista's")
+	check(t12_v.exec("configure terminal") == "" and t12_v.exec("router ospf").begins_with("%") and t12_s.ospf.is_empty(), "vtysh: router ospf on a box that does not forward is refused with the sysctl to run")
+	t12_l.exec("sysctl -w net.ipv4.ip_forward=1")
+	check(t12_v.exec("router ospf") == "" and t12_v.exec("network 10.78.0.0/24 area 0") == "" and "10.78.0.0/24" in t12_s.ospf.get("networks", []), "vtysh: router ospf and network area drive the same OSPF the routers run")
+	t12_v.exec("end")
+	check(t12_v.exec("exit") == "" and t12_v.wants_exit, "vtysh: exit at the enable prompt leaves the shell")
+	var t12_n := t12_l.exec("vtysh -c \"show ip ospf neighbor\"")
+	check(t12_n.contains("Neighbor ID"), "vtysh: -c runs one command and returns")
+	check(t12_l.exec("echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { 10.78.0.1/24 } }' > /etc/keepalived/keepalived.conf") == "", "keepalived: the conf is written by hand")
+	check(t12_l.exec("systemctl start keepalived") == "" and int(t12_s.ifaces[0].vrrp.get("group", 0)) == 51 and String(t12_s.ifaces[0].vrrp.get("vip", "")) == "10.78.0.1" and int(t12_s.ifaces[0].vrrp.get("priority", 0)) == 150, "keepalived: starting it is the VRRP the routers speak")
+	check(Sim.vrrp_master("10.78.0.1", 51) == t12_s, "keepalived: the server is master of its VIP")
+	check(t12_l.exec("systemctl status keepalived").contains("active (running)"), "keepalived: status says running")
+	check(t12_l.exec("systemctl stop keepalived") == "" and t12_s.ifaces[0].vrrp.is_empty(), "keepalived: stopping it drops the VIP")
+	t12_s.services.erase("keepalived")
+	check(t12_l.exec("systemctl start keepalived").begins_with("Job for keepalived.service failed"), "keepalived: no conf, no daemon")
 	print("---- %d failures" % fails)
 	return fails

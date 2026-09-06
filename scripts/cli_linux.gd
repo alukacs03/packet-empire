@@ -654,6 +654,26 @@ func exec(line: String) -> String:
 				"yes" if dev.ntp_server != "" else "no", "active" if dev.ntp_server != "" else "inactive"]
 		"tcpdump":
 			return _tcpdump(t.slice(1))
+		"vtysh":
+			# FRR's shell: -c runs commands and returns, without it you are in it
+			dev.services["frr"] = true  # the package is there; whether it routes is the sysctl's business
+			if t.size() == 1:
+				pending_sub = CLI.Vtysh.new(dev)
+				return ""
+			var one := CLI.Vtysh.new(dev)
+			var vout := ""
+			var k := 1
+			while k < t.size():
+				if String(t[k]) == "-c" and k + 1 < t.size():
+					var words: Array = []
+					k += 1
+					while k < t.size() and String(t[k]) != "-c":
+						words.append(String(t[k]).replace("\"", "").replace("'", ""))
+						k += 1
+					vout += one.exec(" ".join(PackedStringArray(words)))
+					continue
+				k += 1
+			return vout
 		"ssh":
 			return CLI.try_ssh(self, t[1]) if t.size() == 2 else "usage: ssh [-46AaCfGgKkMNnqsTtVvXxYy] [-B bind_interface] [-b bind_address]\n           [-c cipher_spec] [-D [bind_address:]port] [-E log_file]\n           [-e escape_char] [-F configfile] [-I pkcs11] [-i identity_file]\n           [-J destination] [-L address] [-l login_name] [-m mac_spec]\n           [-O ctl_cmd] [-o option] [-P tag] [-p port] [-R address]\n           [-S ctl_path] [-W host:port] [-w local_tun[:remote_tun]]\n           destination [command [argument ...]]\n"
 		"exit", "logout":
@@ -1792,6 +1812,26 @@ func _redirect(t: Array) -> String:
 			dev.ip_forwarding = text.strip_edges() == "1"
 			Game.topology_changed.emit()
 			return ""
+		"/etc/keepalived/keepalived.conf":
+			# vrrp_instance VI_1 { interface eth0  virtual_router_id 51  priority 150  nopreempt  virtual_ipaddress { 10.0.0.1/24 } }
+			var words := Array(text.replace("{", " ").replace("}", " ").split(" ", false))
+			var conf: Dictionary = dev.services.get("keepalived", {}) if append else {}
+			for k in words.size():
+				var nxt := String(words[k + 1]) if k + 1 < words.size() else ""
+				match String(words[k]):
+					"interface":
+						conf["iface"] = nxt
+					"virtual_router_id":
+						conf["group"] = int(nxt)
+					"priority":
+						conf["priority"] = int(nxt)
+					"nopreempt":
+						conf["preempt"] = false
+					"virtual_ipaddress":
+						conf["vip"] = nxt.split("/")[0]
+			conf["running"] = false
+			dev.services["keepalived"] = conf
+			return ""
 		"/etc/hosts":
 			var hosts: Array = dev.services.get("hosts", []) if append else []
 			hosts.append(text)
@@ -1887,7 +1927,9 @@ func _services() -> Array:
 		["rsyslogd", "rsyslog", dev.services.has("syslog"), "udp", 514],
 		["freeradius", "freeradius", dev.services.has("radius"), "udp", 1812],
 		["tac_plus", "tacacs", dev.services.has("aaa"), "tcp", 49],
-		["chronyd", "chrony", dev.ntp_server != "", "udp", 123]]
+		["chronyd", "chrony", dev.ntp_server != "", "udp", 123],
+		["keepalived", "keepalived", bool(dev.services.get("keepalived", {}).get("running", false)), "vrrp", 112],
+		["zebra", "frr", dev.services.has("frr"), "raw", 0]]
 
 func _ss(args: Array) -> String:
 	## Netid only when more than one family is asked for; sshd also on [::]:22
@@ -1901,7 +1943,7 @@ func _ss(args: Array) -> String:
 		pid += 37
 		if not bool(s[2]):
 			continue
-		if (s[3] == "tcp" and not want_tcp) or (s[3] == "udp" and not want_udp):
+		if (s[3] == "tcp" and not want_tcp) or (s[3] == "udp" and not want_udp) or s[3] not in ["tcp", "udp"]:
 			continue
 		var locals: Array = [["0.0.0.0:%d" % int(s[4]), "0.0.0.0:*", 3]]
 		if s[0] == "sshd":
@@ -1945,6 +1987,18 @@ func _systemctl(args: Array) -> String:
 					stamp.substr(4, 6), dev.name, stamp.substr(4, 6), dev.name, unit]
 			return out
 		"start", "restart", "reload":
+			if unit == "keepalived":
+				var conf: Dictionary = dev.services.get("keepalived", {})
+				var on: Net.Iface = _iface(String(conf.get("iface", ""))) if conf.has("iface") else null
+				if on == null or String(conf.get("vip", "")) == "":
+					dev.services["failed_unit"] = unit
+					return "Job for keepalived.service failed because the control process exited with error code.\nSee \"systemctl status keepalived.service\" and \"journalctl -xeu keepalived.service\" for details.\n"
+				dev.services.erase("failed_unit")
+				on.vrrp = {"group": int(conf.get("group", 1)), "vip": String(conf["vip"]), "priority": clampi(int(conf.get("priority", 100)), 1, 254),
+					"preempt": bool(conf.get("preempt", true))}
+				conf["running"] = true
+				Game.topology_changed.emit()
+				return ""
 			if unit == "isc-dhcp-server":
 				if not dev.services.has("dhcp"):
 					dev.services["failed_unit"] = unit
@@ -1954,6 +2008,13 @@ func _systemctl(args: Array) -> String:
 				Game.topology_changed.emit()
 			return ""
 		"stop":
+			if unit == "keepalived" and dev.services.has("keepalived"):
+				var conf: Dictionary = dev.services["keepalived"]
+				var on: Net.Iface = _iface(String(conf.get("iface", "")))
+				if on != null:
+					on.vrrp = {}
+				conf["running"] = false
+				Game.topology_changed.emit()
 			if unit == "isc-dhcp-server" and dev.services.has("dhcp"):
 				dev.services["dhcp"]["running"] = false
 				Game.topology_changed.emit()
@@ -1968,7 +2029,8 @@ func _systemctl(args: Array) -> String:
 static func _unit_desc(unit: String) -> String:
 	return {"ssh": "OpenBSD Secure Shell server", "isc-dhcp-server": "ISC DHCP IPv4 server", "dnsmasq": "dnsmasq - A lightweight DHCP and caching DNS server",
 		"snmpd": "Simple Network Management Protocol (SNMP) Daemon.", "rsyslog": "System Logging Service", "freeradius": "FreeRADIUS multi-protocol policy server",
-		"tacacs": "TACACS+ authentication daemon", "chrony": "chrony, an NTP client/server", "networking": "Raise network interfaces"}.get(unit, unit)
+		"tacacs": "TACACS+ authentication daemon", "chrony": "chrony, an NTP client/server", "networking": "Raise network interfaces",
+		"keepalived": "Keepalive Daemon (LVS and VRRP)", "frr": "FRRouting"}.get(unit, unit)
 
 func _journalctl(args: Array) -> String:
 	var unit := ""
@@ -2768,7 +2830,7 @@ func complete(line: String) -> Array:
 				"dns", "nslookup", "dig", "host", "cat", "echo", "resolvectl", "ss", "sysctl", "systemctl", "journalctl",
 				"curl", "nc", "telnet", "lldp", "lldpcli", "ssh", "syslogd", "logging", "logs", "ntpd", "chronyc", "vm", "wg", "wg-quick",
 				"wifi", "nmcli", "radiusd", "igmp", "bond", "snmpd", "snmpwalk", "flows", "console", "aaad", "cert", "autoconf",
-				"uname", "sudo", "iptables", "nft", "ufw", "exit", "clear", "help"]
+				"uname", "sudo", "iptables", "nft", "ufw", "vtysh", "exit", "clear", "help"]
 		1:
 			match String(toks[0]):
 				"ip":

@@ -418,6 +418,7 @@ class Session:
 	var term_length := 0  # terminal length N: rows the console shows at once; 0 is the default
 	var dev: Net.NDevice
 	var pending_ssh: Net.NDevice = null
+	var pending_sub: Session = null  # a shell inside the shell: vtysh on a Linux box
 	var wants_exit := false
 	func _init(d: Net.NDevice) -> void:
 		dev = d
@@ -4841,4 +4842,55 @@ class EOS extends Session:
 		if typed_complete and line.ends_with(" "):
 			out += "  <cr>\n"
 		return out if out != "" else "% Invalid input\n"
+# ============================================================ vtysh ==
+
+class Vtysh extends EOS:
+	## FRR's shell on a Debian box: the IOS-shaped grammar, the router
+	## commands and the protocol shows; everything else is the Linux
+	## underneath, and vtysh does not have it
+	const ALLOWED := [["configure", "terminal"], ["router", "ospf"], ["router", "bgp"], ["no", "router", "ospf"], ["no", "router", "bgp"],
+		["show", "ip", "ospf"], ["show", "ip", "bgp"], ["show", "bgp"], ["show", "ip", "route"], ["show", "running-config"],
+		["show", "version"], ["exit"], ["end"], ["quit"], ["write"], ["copy", "running-config", "startup-config"]]
+
+	func _init(d: Net.NDevice) -> void:
+		super(d)
+		mode = "priv"
+
+	func banner() -> String:
+		return "\nHello, this is FRRouting (version 8.4.4).\nCopyright 1996-2005 Kunihiro Ishiguro, et al.\n\n"
+
+	func prompt() -> String:
+		return _bare_prompt()
+
+	func exec(line: String) -> String:
+		var toks := Array(line.strip_edges().split(" ", false))
+		if toks.is_empty():
+			return ""
+		if mode in ["priv", "config"] and not _allowed(toks):
+			return "%% Unknown command: %s\n" % line.strip_edges()
+		if String(toks[0]) == "quit" or (mode == "priv" and "exit".begins_with(String(toks[0]))):
+			wants_exit = true
+			return ""
+		if toks.size() == 2 and String(toks[0]) == "show" and "version".begins_with(String(toks[1])):
+			return "FRRouting 8.4.4 (%s) on Linux(6.1.0-18-amd64).\nCopyright 1996-2005 Kunihiro Ishiguro, et al.\nconfigured with:\n    '--build=x86_64-linux-gnu' '--prefix=/usr' '--enable-vtysh' '--enable-ospfd' '--enable-bgpd'\n" % dev.name
+		if String(toks[0]) == "router" and not dev.ip_forwarding:
+			return "%% this box does not forward: sysctl -w net.ipv4.ip_forward=1 first, or the daemons route nothing\n"
+		if toks.size() == 2 and String(toks[0]) == "router" and "ospf".begins_with(String(toks[1])):
+			line = "router ospf 1"  # FRR's router ospf has no process id; the Arista grammar underneath wants one
+		var out := super.exec(line)
+		if String(toks[0]) == "write" or String(toks[0]) == "copy":
+			return "Note: this version of vtysh never writes vtysh.conf\nBuilding Configuration...\nIntegrated configuration saved to /etc/frr/frr.conf\n[OK]\n"
+		return out
+
+	func _allowed(toks: Array) -> bool:
+		for a in ALLOWED:
+			var ok := true
+			for k in a.size():
+				if k >= toks.size() or not String(a[k]).begins_with(String(toks[k])):
+					ok = false
+					break
+			if ok:
+				return true
+		return false
+
 # ============================================================ Linux ==

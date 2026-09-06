@@ -6632,6 +6632,12 @@ func _cli_submit(cmd: String) -> void:
 		cli_stack.append(cli_session)
 		cli_session = CLI.new_session(target)
 		cli_out.append_text(cli_session.banner())
+	elif cli_session.pending_sub != null:
+		var sub: CLI.Session = cli_session.pending_sub  # vtysh: a shell inside the shell, same box
+		cli_session.pending_sub = null
+		cli_stack.append(cli_session)
+		cli_session = sub
+		cli_out.append_text(cli_session.banner())
 	elif cli_session.wants_exit:
 		cli_session.wants_exit = false
 		if cli_stack.is_empty():
@@ -6643,8 +6649,10 @@ func _cli_submit(cmd: String) -> void:
 			cli_hist_idx = 0
 			cli_out.append_text(cli_session.banner())
 		else:
+			var left: CLI.Session = cli_session
 			cli_session = cli_stack.pop_back()
-			cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)
+			if left.dev != cli_session.dev:
+				cli_out.append_text("Connection closed. Back on %s.\n" % cli_session.dev.name)
 	cli_prompt.text = cli_session.prompt() + " "  # mode/hostname may have changed
 	if cli_box.visible and int(cli_session.term_length) > 0:
 		cli_out.custom_minimum_size.y = _console_height()  # terminal length just changed the pane
