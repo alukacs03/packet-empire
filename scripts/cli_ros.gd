@@ -1016,11 +1016,18 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"ip neighbor discovery-settings print":
 			return _kv_block([["discover-interface-list", "!dynamic"], ["lldp-med-net-policy-vlan", "disabled"], ["protocol", "cdp,lldp,mndp"], ["mode", "tx-and-rx"]])
 		"ip firewall connection print":
+			## the tracked connections, not the traffic accounting: what a
+			## stateful policy is judging return traffic against
 			var out := "Columns: PROTOCOL, SRC-ADDRESS, DST-ADDRESS, TIMEOUT\n#   PROTOCOL  SRC-ADDRESS      DST-ADDRESS      TIMEOUT\n"
 			var n := 0
-			for tk in dev.talkers.keys().slice(0, 20):
-				var pair := String(tk).split(">")
-				out += "%-3d icmp      %-16s %-16s %ds\n" % [n, pair[0], pair[1] if pair.size() > 1 else "", 10]
+			for key in dev.flows:
+				var parts := String(key).split("|")
+				var f: Variant = dev.flows[key]
+				var meta: Dictionary = f if f is Dictionary else {}
+				var port := int(meta.get("port", 0))
+				out += "%-3d %-9s %-16s %-16s %ds\n" % [n, String(meta.get("proto", "icmp")),
+					parts[1] + (":%d" % port if port > 0 else ""), (parts[2] if parts.size() > 2 else "") + (":%d" % port if port > 0 else ""),
+					maxi(1, 10 - (Game.cycle - int(meta.get("cycle", Game.cycle))))]
 				n += 1
 			return out
 		"snmp set":
@@ -1813,6 +1820,17 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			dev.ospf["instance"] = String(p["name"])
 			if p.has("router-id"):
 				dev.ospf["router_id"] = String(p["router-id"])
+			if p.has("originate-default"):
+				if String(p["originate-default"]) in ["always", "if-installed"]:
+					dev.ospf["originate_default"] = "always" if String(p["originate-default"]) == "always" else "yes"
+				else:
+					dev.ospf.erase("originate_default")
+			if p.has("redistribute"):
+				var reds: Array = []
+				for red in String(p["redistribute"]).split(",", false):
+					if String(red) in ["static", "connected", "bgp"]:
+						reds.append(String(red))
+				dev.ospf["redistribute"] = reds
 			Game.topology_changed.emit()
 			return ""
 		"routing ospf instance remove":

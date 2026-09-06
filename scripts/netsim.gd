@@ -688,6 +688,44 @@ static func _ospf_learned(dev: Net.NDevice) -> Array:
 				for via in first_hop.get(router, []):
 					out.append({"prefix": netw["prefix"], "plen": netw["plen"], "via": via,
 						"cost": int(dist[router]) + ospf_cost(i)})
+		# what that router redistributes arrives as external routes (O E2, metric
+		# 20 by default), and a default it originates as O*E2
+		var externals: Array = []
+		for red in router.ospf.get("redistribute", []):
+			match String(red):
+				"static":
+					for r in router.static_routes:
+						if not Net.is_v6(String(r["prefix"])) and String(r.get("vrf", "")) == "":
+							externals.append([String(r["prefix"]), int(r["plen"])])
+				"connected":
+					for ci: Net.Iface in router.ifaces:
+						if not iface_up(ci) or ci in ospf_covered_ifaces(router):
+							continue
+						for ccidr: String in ci.ips:
+							if not Net.is_v6(ccidr):
+								var cn := Net.network_of(ccidr)
+								externals.append([String(cn["prefix"]), int(cn["plen"])])
+				"bgp":
+					for b in _bgp_learned(router):
+						if not Net.is_v6(String(b["prefix"])):
+							externals.append([String(b["prefix"]), int(b["plen"])])
+		var orig := String(router.ospf.get("originate_default", ""))
+		if orig != "":
+			var has_default := orig == "always"
+			if not has_default:
+				for r in router.static_routes:
+					if String(r["prefix"]) == "0.0.0.0" and int(r["plen"]) == 0:
+						has_default = true
+				for b in _bgp_learned(router):
+					if String(b["prefix"]) == "0.0.0.0" and int(b["plen"]) == 0:
+						has_default = true
+			if has_default:
+				externals.append(["0.0.0.0", 0])
+		for ext in externals:
+			if ext[0] == "0.0.0.0" and ext[1] == 0 and dev.static_routes.any(func(r): return String(r["prefix"]) == "0.0.0.0" and int(r["plen"]) == 0):
+				continue  # our own default outranks a learned one
+			for via in first_hop.get(router, []):
+				out.append({"prefix": ext[0], "plen": ext[1], "via": via, "cost": 20, "external": true})
 	return out
 
 static func snmp_poll(station: Net.NDevice, target_ip: String, community: String) -> Dictionary:
@@ -1378,7 +1416,8 @@ static func _route_entries_build(dev: Net.NDevice, vrf := "") -> Array:
 			if via_if:
 				out.append({"src": code, "ad": ad, "iface": via_if, "next_hop": r["via"], "prefix": r["prefix"],
 					"plen": int(r["plen"]), "cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100)),
-					"vrf": vrf, "rid": int(r.get("rid", 0)), "multipath": bool(r.get("multipath", false))})
+					"vrf": vrf, "rid": int(r.get("rid", 0)), "multipath": bool(r.get("multipath", false)),
+					"external": bool(r.get("external", false))})
 	return out
 
 static func rib(dev: Net.NDevice) -> Array:
@@ -2112,7 +2151,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			_icmp_unreachable(dev, p, "admin", iface.vrf)  # filtered by firewall policy
 			return
 		if dev.stateful:
-			dev.flows["%s|%s|%s" % [str(p["l4"].get("id", 0)), p["src_ip"], p["dst_ip"]]] = true
+			dev.flows["%s|%s|%s" % [str(p["l4"].get("id", 0)), p["src_ip"], p["dst_ip"]]] = {"cycle": Game.cycle, "proto": acl_proto(p["l4"]), "port": acl_port(p["l4"])}
 		if p["ttl"] <= 1:
 			_send_ip(dev, p["src_ip"], 64,
 				{"proto": "icmp", "type": "ttl-exceeded", "id": p["l4"].get("id", 0)}, iface.vrf)

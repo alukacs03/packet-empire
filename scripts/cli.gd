@@ -716,6 +716,18 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["ip", "nat", "source"], "h": _if_nat_source},
 			{"m": ["if"], "p": ["no", "ip", "nat", "source"], "h": func(_r): return _if_no_nat_source()},
 			{"m": EP, "p": ["show", "ip", "nat", "translation"], "h": _show_nat_eos},
+			{"m": EP, "p": ["show", "firewall", "connections"], "h": func(_r):
+				if dev.type != "firewall":
+					return "% Invalid input\n"
+				var out := "%-8s %-18s %-18s %-6s %-6s %s\n" % ["Id", "Source", "Destination", "Proto", "Port", "Age"]
+				for key in dev.flows:
+					var parts := String(key).split("|")
+					var f: Variant = dev.flows[key]
+					var meta: Dictionary = f if f is Dictionary else {}
+					out += "%-8s %-18s %-18s %-6s %-6s %d\n" % [parts[0], parts[1], parts[2] if parts.size() > 2 else "",
+						String(meta.get("proto", "icmp")), str(int(meta.get("port", 0))) if int(meta.get("port", 0)) > 0 else "-",
+						Game.cycle - int(meta.get("cycle", Game.cycle))]
+				return out},
 			{"m": ["config"], "p": ["dhcp", "server"], "h": _cfg_dhcp_server},
 			{"m": ["config"], "p": ["no", "dhcp", "server"], "h": func(_r):
 				dev.services.erase("dhcp")
@@ -774,6 +786,30 @@ class EOS extends Session:
 			{"m": ["ospf"], "p": ["no", "passive-interface"], "h": func(r): return _ospf_passive(r, false)},
 			{"m": ["ospf"], "p": ["auto-cost", "reference-bandwidth"], "h": _ospf_ref_bw},
 			{"m": ["ospf"], "p": ["no", "network"], "h": _ospf_no_network},
+			{"m": ["ospf"], "p": ["default-information", "originate"], "h": func(r):
+				dev.ospf["originate_default"] = "always" if r.size() >= 1 and String(r[0]) == "always" else "yes"
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["ospf"], "p": ["no", "default-information", "originate"], "h": func(_r):
+				dev.ospf.erase("originate_default")
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["ospf"], "p": ["redistribute"], "h": func(r):
+				if r.is_empty() or String(r[0]) not in ["static", "connected", "bgp"]:
+					return "% Invalid input\n" if not r.is_empty() else "% Incomplete command\n"
+				var reds: Array = dev.ospf.get("redistribute", [])
+				if String(r[0]) not in reds:
+					reds.append(String(r[0]))
+				dev.ospf["redistribute"] = reds
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["ospf"], "p": ["no", "redistribute"], "h": func(r):
+				var reds: Array = dev.ospf.get("redistribute", [])
+				if not r.is_empty():
+					reds.erase(String(r[0]))
+				dev.ospf["redistribute"] = reds
+				Game.topology_changed.emit()
+				return ""},
 			{"m": ["router"], "p": ["neighbor"], "h": _bgp_neighbor},
 			{"m": ["router"], "p": ["no", "neighbor"], "h": _bgp_no_neighbor},
 			{"m": ["router"], "p": ["roa"], "h": _bgp_roa, "hidden": true},
@@ -3924,7 +3960,7 @@ class EOS extends Session:
 				continue
 			any = true
 			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
-			var code := "B E" if e["src"] == "B" else String(e["src"])
+			var code := "B E" if e["src"] == "B" else ("O E2" if e["src"] == "O" and bool(e.get("external", false)) else String(e["src"]))
 			var row := ""
 			if e["src"] == "C":
 				row = " %-8s %s is directly connected, %s\n" % [code, pfx, e["iface"].name]
@@ -4564,6 +4600,10 @@ class EOS extends Session:
 				out += "   passive-interface %s\n" % pif
 			for net in dev.ospf["networks"]:
 				out += "   network %s area %s\n" % [net, Sim.ospf_area(dev)]
+			for red in dev.ospf.get("redistribute", []):
+				out += "   redistribute %s\n" % red
+			if dev.ospf.has("originate_default"):
+				out += "   default-information originate%s\n" % (" always" if String(dev.ospf["originate_default"]) == "always" else "")
 			out += "   max-lsa 12000\n!\n"
 		out += "end\n"
 		return out

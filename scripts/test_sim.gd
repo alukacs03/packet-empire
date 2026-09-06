@@ -2372,6 +2372,37 @@ static func run() -> int:
 	check(oas.exec("ip ospf network point-to-point") == "" and bool(Sim.ospf_segment_roles(oa, oa.ifaces[0]).get("p2p", false))
 		and oas.exec("show running-config").contains("ip ospf network point-to-point"),
 		"ospf: ip ospf network point-to-point overrides the /30 heuristic and prints in the config")
+	obs.exec("interface Ethernet1")
+	obs.exec("ip ospf network point-to-point")
+	oas.exec("exit")
+	oas.exec("router ospf 1")
+	check(oas.exec("default-information originate always") == "" and oas.exec("redistribute static") == ""
+		and oas.exec("show running-config").contains("default-information originate always") and oas.exec("show running-config").contains("redistribute static"),
+		"ospf: default-information originate and redistribute are accepted and printed")
+	Game.add_static_route(oa, "10.99.0.0", 24, "10.5.0.2")
+	Game.topology_changed.emit()
+	var ob_route := obs.exec("show ip route")
+	check(ob_route.contains("O E2     0.0.0.0/0") and ob_route.contains("O E2     10.99.0.0/24"),
+		"ospf: the neighbour learns the originated default and the redistributed static as O E2 (got: %s)" % ob_route.replace("\n", " | "))
+	oas.exec("no redistribute static")
+	oas.exec("no default-information originate")
+	oas.exec("end")
+	Game.remove_static_route(oa, "10.99.0.0", 24)
+	Game.topology_changed.emit()
+	check(not obs.exec("show ip route").contains("O E2"), "ospf: withdrawing them removes the externals")
+	# --- the connection table is visible ---
+	var ct_fw := Game.new_device("fw-1")
+	var ct_ros := Game.new_device("rtr-lite")
+	o_rack.slots[5] = ct_fw
+	o_rack.slots[6] = ct_ros
+	ct_fw.flows["7|10.1.0.5|10.2.0.9"] = {"cycle": Game.cycle, "proto": "tcp", "port": 443}
+	ct_ros.flows["8|10.3.0.5|10.4.0.9"] = {"cycle": Game.cycle, "proto": "icmp", "port": 0}
+	var ct_s := CLI.new_session(ct_fw)
+	ct_s.exec("en")
+	check(ct_s.exec("show firewall connections").contains("10.1.0.5") and ct_s.exec("show firewall connections").contains("443"),
+		"firewall: show firewall connections lists the tracked flows with their port")
+	check(CLI.new_session(ct_ros).exec("/ip firewall connection print").contains("10.3.0.5"),
+		"ros: /ip firewall connection print lists the tracked flows")
 	# --- duplicate addresses are logged on both boxes ---
 	var dup_a := Game.new_device("srv-1")
 	var dup_b := Game.new_device("srv-1")
