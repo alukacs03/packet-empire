@@ -1834,6 +1834,9 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var area := String(p.get("area", ""))
 			if not dev.ospf.get("areas", {}).has(area):
 				return "input does not match any value of area\n"
+			if not dev.ospf.get("networks", []).is_empty() and String(dev.ospf.get("template_area", area)) != area:
+				return "failure: multi-area OSPF is not supported here: this router is in area %s\n" % dev.ospf.get("template_area", area)
+			dev.ospf["template_area"] = area
 			var nets := Array(String(p.get("networks", "")).split(",", false))
 			if nets.is_empty() and not p.has("interfaces"):
 				return "value of networks must be specified\n"

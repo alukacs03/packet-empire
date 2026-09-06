@@ -10001,9 +10001,20 @@ func add_ip(i: Net.Iface, cidr: String) -> bool:
 	cidr = cidr.strip_edges()
 	if not Net.valid_cidr(cidr) or cidr in i.ips:
 		return false
+	var other_owner := Sim._ip_owner(cidr.split("/")[0])
 	i.ips.append(cidr)
 	Sim.forget_ip(cidr.split("/")[0])  # the new owner announces itself
 	Sim.forget_mac(i.mac)
+	if other_owner != null and other_owner != i.dev and other_owner.status == "active":
+		# the gratuitous ARP got an answer: both boxes say so, in the words their logs use
+		var other_if: Net.Iface = null
+		for oi: Net.Iface in other_owner.ifaces:
+			for oc: String in oi.ips:
+				if Net.addr_eq(oc.split("/")[0], cidr.split("/")[0]):
+					other_if = oi
+		device_log(i.dev, "%" + ("IP-4-DUPADDR: Duplicate address %s on %s, sourced by %s" % [cidr.split("/")[0], i.name, other_if.mac if other_if else "?"]))
+		device_log(other_owner, "%" + ("IP-4-DUPADDR: Duplicate address %s on %s, sourced by %s" % [cidr.split("/")[0], other_if.name if other_if else "?", i.mac]))
+		log_event("DUPADDR: %s is now on both %s and %s. Two boxes with one address answer at random." % [cidr.split("/")[0], other_owner.name, i.dev.name])
 	topology_changed.emit()
 	return true
 
@@ -10203,6 +10214,8 @@ func _serialize() -> Dictionary:
 			"slots": slot_names, "blanked": r.blanked.keys(), "note": r.note})
 	var link_data: Array = []
 	for l in links:
+		if not devs.has(l.a.dev.name) or not devs.has(l.b.dev.name):
+			continue  # a cable to a device that sits in no rack is not part of the world on disk
 		link_data.append([l.a.dev.name, l.a.name, l.b.dev.name, l.b.name, l.note])
 	return {"money": money, "stage": stage, "cycle": cycle,
 		"company_name": company_name, "demo": demo,

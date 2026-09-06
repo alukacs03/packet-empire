@@ -570,6 +570,19 @@ class EOS extends Session:
 			{"m": EP, "p": ["show", "ip", "ospf", "database"], "h": _show_ospf_database},
 			{"m": ["if"], "p": ["ip", "ospf", "cost"], "h": func(r): return _if_ospf("costs", r, 1, 65535)},
 			{"m": ["if"], "p": ["ip", "ospf", "priority"], "h": func(r): return _if_ospf("priorities", r, 0, 255)},
+			{"m": ["if"], "p": ["ip", "ospf", "hello-interval"], "h": func(r): return _if_ospf("hello", r, 1, 65535)},
+			{"m": ["if"], "p": ["ip", "ospf", "dead-interval"], "h": func(r): return _if_ospf("dead", r, 1, 65535)},
+			{"m": ["if"], "p": ["ip", "ospf", "network"], "h": func(r):
+				if dev.ospf.is_empty():
+					return "% OSPF not running: 'router ospf' in config mode\n"
+				if r.size() != 1 or String(r[0]) not in ["point-to-point", "broadcast"]:
+					return "% Invalid input\n"
+				if not dev.ospf.has("net_type"):
+					dev.ospf["net_type"] = {}
+				for i: Net.Iface in ctx_ifs:
+					dev.ospf["net_type"][i.name] = String(r[0])
+				Game.topology_changed.emit()
+				return ""},
 			{"m": EP, "p": ["show", "vrrp"], "h": _show_vrrp},
 			{"m": EP, "p": ["show", "vrrp", "brief"], "h": _show_vrrp_brief},
 			{"m": EP, "p": ["show", "interfaces", "trunk"], "h": _show_int_trunk},
@@ -692,9 +705,12 @@ class EOS extends Session:
 			{"m": ["acl"], "p": ["permit"], "h": func(r): return _cfg_acl(r, "permit", ctx_acl)},
 			{"m": ["acl"], "p": ["deny"], "h": func(r): return _cfg_acl(r, "deny", ctx_acl)},
 			{"m": ["if"], "p": ["ip", "access-group"], "h": _if_access_group},
-			{"m": ["if"], "p": ["no", "ip", "access-group"], "h": func(_r): return _each(func(i):
+			{"m": ["if"], "p": ["no", "ip", "access-group"], "h": func(r): return _each(func(i):
 				var groups: Dictionary = dev.services.get("acl_groups", {})
-				groups.erase(i.name)
+				if r.size() < 2 or String(r[r.size() - 1]) != "out":
+					groups.erase(i.name)
+				if r.size() < 2 or String(r[r.size() - 1]) != "in":
+					groups.erase(i.name + "|out")
 				dev.services["acl_groups"] = groups
 				return "")},
 			{"m": ["if"], "p": ["ip", "nat", "source"], "h": _if_nat_source},
@@ -2644,7 +2660,7 @@ class EOS extends Session:
 			return "% Invalid input\n"
 		return _each(func(i: Net.Iface) -> String:
 			var groups: Dictionary = dev.services.get("acl_groups", {})
-			groups[i.name] = String(r[0])
+			groups[i.name if String(r[1]) == "in" else i.name + "|out"] = String(r[0])
 			dev.services["acl_groups"] = groups
 			return "")
 
@@ -2927,9 +2943,14 @@ class EOS extends Session:
 			area = Net.int_to_ip(int(area))  # area 0 is 0.0.0.0, area 1 is 0.0.0.1
 		elif not area.is_valid_ip_address():
 			return usage
+		var have := Sim.ospf_area(dev)
+		if not dev.ospf.get("networks", []).is_empty() and area != have:
+			# the area belongs to the network statement; this model runs one area
+			# per router, and says so rather than rewriting the first statement
+			return "%% multi-area OSPF is not supported here: this router is in area %s\n" % have
 		if r[0] not in dev.ospf["networks"]:
 			dev.ospf["networks"].append(r[0])
-		dev.ospf["areas"] = {"area": area}  # one area per router in this model
+		dev.ospf["areas"] = {"area": area}
 		Game.topology_changed.emit()
 		return ""
 
@@ -4366,6 +4387,8 @@ class EOS extends Session:
 				out += "   %s address %s\n" % ["ipv6" if Net.is_v6(cidr) else "ip", cidr]
 			if acl_groups.has(i.name):
 				out += "   ip access-group %s in\n" % acl_groups[i.name]
+			if acl_groups.has(i.name + "|out"):
+				out += "   ip access-group %s out\n" % acl_groups[i.name + "|out"]
 			var eos_nat := false
 			for rule in nat_rules_cfg:
 				if bool(rule.get("eos", false)) and String(rule.get("iface", "")) == i.name:
@@ -4383,6 +4406,12 @@ class EOS extends Session:
 				out += "   ip ospf cost %d\n" % int(dev.ospf["costs"][i.name])
 			if dev.ospf.get("priorities", {}).has(i.name):
 				out += "   ip ospf priority %d\n" % int(dev.ospf["priorities"][i.name])
+			if dev.ospf.get("hello", {}).has(i.name):
+				out += "   ip ospf hello-interval %d\n" % int(dev.ospf["hello"][i.name])
+			if dev.ospf.get("dead", {}).has(i.name):
+				out += "   ip ospf dead-interval %d\n" % int(dev.ospf["dead"][i.name])
+			if dev.ospf.get("net_type", {}).has(i.name):
+				out += "   ip ospf network %s\n" % dev.ospf["net_type"][i.name]
 			if i.helper != "":
 				out += "   ip helper-address %s\n" % i.helper
 			if i.tunnel_src != "":

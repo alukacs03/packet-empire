@@ -423,9 +423,37 @@ static func _owns_ip_anywhere(dev: Net.NDevice, ip: String) -> bool:
 				return true
 	return false
 
+static func iface_up(i: Net.Iface) -> bool:
+	## "line protocol up": enabled, and something on the far end of the wire.
+	## An SVI is up while any port in its VLAN is; a sub-interface follows its
+	## parent; loopbacks, tunnels and virtual ports are up when enabled.
+	if not i.enabled:
+		return false
+	var dev := i.dev
+	if i.name.begins_with("Vlan"):
+		var vid := int(i.name.trim_prefix("Vlan"))
+		for port: Net.Iface in dev.ifaces:
+			if port == i or port.name.begins_with("Vlan") or port.parent != "" or not port.enabled:
+				continue
+			if (port.mode == "access" and port.untagged_vlan == vid) or (port.mode == "trunk" and (vid in port.tagged_vlans or port.untagged_vlan == vid)):
+				if Game.effective_peer(port) != null:
+					return true
+		return false
+	if i.parent != "":
+		var parent: Net.Iface = null
+		for port: Net.Iface in dev.ifaces:
+			if port.name == i.parent:
+				parent = port
+		return parent != null and iface_up(parent)
+	if i.name.begins_with("Loopback") or i.name.begins_with("Tunnel") or i.name.begins_with("wg") or i.name.begins_with("Vxlan") or i.vm != "" or i.lag > 0 or i.name.begins_with("bond"):
+		return true
+	if i.name.begins_with("Management") or i.name.begins_with("Ma"):
+		return true
+	return Game.effective_peer(i) != null
+
 static func _connected_iface(dev: Net.NDevice, ip: String, vrf := "") -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled or i.vrf != vrf or bfd_down(i):
+		if not iface_up(i) or i.vrf != vrf or bfd_down(i):
 			continue
 		for cidr: String in i.ips:
 			var parts := cidr.split("/")
@@ -450,7 +478,7 @@ static func ospf_covered_ifaces(dev: Net.NDevice) -> Array:
 	if dev.ospf.is_empty():
 		return out
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled:
+		if not iface_up(i):
 			continue
 		for cidr: String in i.ips:
 			for net in dev.ospf.get("networks", []):
@@ -467,6 +495,29 @@ static func ospf_area(dev: Net.NDevice) -> String:
 
 static var _ospf_cache := {}  # device name -> neighbours, until the topology moves
 static var _ospf_probing := false
+
+static func _ospf_once(dev: Net.NDevice, text: String) -> void:
+	## an adjacency problem is logged once, not on every recalculation
+	for l in dev.logs:
+		if text in String(l):
+			return
+	Game.device_log(dev, text)
+
+static func ospf_hello(iface: Net.Iface) -> int:
+	return int(iface.dev.ospf.get("hello", {}).get(iface.name, 10))
+
+static func ospf_dead(iface: Net.Iface) -> int:
+	return int(iface.dev.ospf.get("dead", {}).get(iface.name, ospf_hello(iface) * 4))
+
+static func ospf_is_p2p(iface: Net.Iface) -> bool:
+	## ip ospf network point-to-point, or a /30 and /31 by the usual heuristic
+	var forced := String(iface.dev.ospf.get("net_type", {}).get(iface.name, ""))
+	if forced != "":
+		return forced == "point-to-point"
+	for cidr in iface.ips:
+		if not Net.is_v6(cidr) and int(String(cidr).split("/")[1]) >= 30:
+			return true
+	return false
 
 static func ospf_neighbors(dev: Net.NDevice) -> Array:
 	## -> [{dev, via_ip, iface}] adjacent OSPF routers: a shared covered
@@ -503,6 +554,18 @@ static func ospf_neighbors(dev: Net.NDevice) -> Array:
 							_ospf_probing = false
 							if not heard:
 								continue
+						# what the hello carries has to agree too: the mask on a
+						# broadcast segment, the timers, and a router-id nobody else uses
+						var pb := cidr_b.split("/")
+						if not ospf_is_p2p(ia) and int(pa[1]) != int(pb[1]):
+							_ospf_once(dev, "%" + ("OSPF-4-ERRRCV: Received invalid packet: mismatched network mask from %s, %s (/%d vs /%d)" % [via, ia.name, int(pb[1]), int(pa[1])]))
+							continue
+						if ospf_hello(ia) != ospf_hello(ib) or ospf_dead(ia) != ospf_dead(ib):
+							_ospf_once(dev, "%" + ("OSPF-4-ERRRCV: Received invalid packet: mismatched hello or dead interval from %s, %s (hello %d/%d dead %d/%d)" % [via, ia.name, ospf_hello(ib), ospf_hello(ia), ospf_dead(ib), ospf_dead(ia)]))
+							continue
+						if ospf_router_id(dev) == ospf_router_id(other):
+							_ospf_once(dev, "%" + ("OSPF-4-DUP_RTRID: Router ID %s is also used by neighbor at %s" % [ospf_router_id(dev), via]))
+							continue
 						out.append({"dev": other, "via_ip": via, "iface": ia})
 	if not _ospf_probing:
 		_ospf_cache[dev.name] = out
@@ -538,11 +601,7 @@ static func ospf_priority(iface: Net.Iface) -> int:
 static func ospf_segment_roles(dev: Net.NDevice, iface: Net.Iface) -> Dictionary:
 	## DR and BDR on the segment this interface sits on: highest priority,
 	## then highest router-id; a /30 or /31 is point-to-point and has neither
-	var plen := 0
-	for cidr in iface.ips:
-		if not Net.is_v6(cidr):
-			plen = int(String(cidr).split("/")[1])
-	if plen >= 30:
+	if ospf_is_p2p(iface):
 		return {"p2p": true}
 	var members: Array = [[ospf_priority(iface), Net.ip_to_int(ospf_router_id(dev)), dev]]
 	for nb in ospf_neighbors(dev):
@@ -1257,8 +1316,8 @@ static func _route_entries(dev: Net.NDevice, vrf := "") -> Array:
 	## src is the show-ip-route code (C/S/B/O), ad the administrative distance.
 	var out: Array = []
 	for i: Net.Iface in dev.ifaces:
-		if not i.enabled or i.vrf != vrf or bfd_down(i):
-			continue
+		if not iface_up(i) or i.vrf != vrf or bfd_down(i):
+			continue  # no line protocol, no connected route: a pulled cable withdraws it
 		for cidr: String in i.ips:
 			var netw := Net.network_of(cidr) if not Net.is_v6(cidr) else {"prefix": cidr.split("/")[0], "plen": int(cidr.split("/")[1])}
 			out.append({"src": "C", "ad": 0, "iface": i, "next_hop": "", "prefix": netw["prefix"],
@@ -1774,8 +1833,8 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			continue
 		if int(svi.name.trim_prefix("Vlan")) != vlan:
 			continue
-		if frame["dst"] == svi.mac:
-			_host_rx(dev, svi, frame)  # unicast to us: consumed here
+		if frame["dst"] == svi.mac or _vrrp_mac_ours(dev, svi, String(frame["dst"])):
+			_host_rx(dev, svi, frame)  # unicast to us, or to the virtual gateway we are master of
 			return
 		if frame["dst"] == BCAST:
 			_host_rx(dev, svi, frame)  # e.g. ARP for the gateway; still flooded below
@@ -1888,6 +1947,11 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 			_learn_neighbour(dev, nkey, p["sha"])
 		return
 	# ipv4
+	if dev.ip_forwarding and not _acl_in_permits(dev, iface, p):
+		# an inbound list on the ingress port is judged before anything else,
+		# for transit and for packets addressed to the router itself
+		_icmp_unreachable(dev, p, "admin", iface.vrf)
+		return
 	if dev.ip_forwarding and _has_ip(dev, p["dst_ip"]):
 		var flow_id: int = p["l4"].get("id", 0)
 		var lb_svc: Dictionary = dev.services.get("lb", {})
@@ -2025,7 +2089,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 	elif dev.ip_forwarding:
 		var flow_key := "%s|%s|%s" % [str(p["l4"].get("id", 0)), p["dst_ip"], p["src_ip"]]
 		var is_return: bool = dev.stateful and dev.flows.has(flow_key)
-		if not is_return and not _acl_permits(dev, p):
+		if not is_return and not _acl_forward_permits(dev, iface, p):
 			_icmp_unreachable(dev, p, "admin", iface.vrf)  # filtered by firewall policy
 			return
 		if dev.stateful:
@@ -2060,6 +2124,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		if rt.get("next_hop", "") == "null0":
 			return  # deliberately discarded: a blackhole is silent
 		var out: Net.Iface = rt["iface"]
+		if not is_return and not _acl_out_permits(dev, out, p):
+			_icmp_unreachable(dev, p, "admin", iface.vrf)  # an outbound list on the egress port
+			return
 		var mac := _arp_resolve(dev, out, rt["next_hop"])
 		if mac == "":
 			_icmp_unreachable(dev, p, "host", iface.vrf)
@@ -2203,8 +2270,8 @@ static func vrrp_master(vip: String, group: int) -> Net.NDevice:
 		if not d.ip_forwarding or d.status != "active":
 			continue
 		for i: Net.Iface in d.ifaces:
-			if not i.enabled or i.vrrp.is_empty():
-				continue
+			if not iface_up(i) or i.vrrp.is_empty():
+				continue  # a router whose cable was pulled stops advertising; the backup takes over
 			if i.vrrp.get("vip", "") != vip or int(i.vrrp.get("group", -1)) != group:
 				continue
 			alive[d] = true
@@ -2319,11 +2386,48 @@ static func _nat_outside(dev: Net.NDevice) -> Net.Iface:
 			return i
 	return null
 
+const FORWARD_ONLY_LISTS := ["ros-forward", "lx-forward"]  # firewall forward chains: transit only
+
+static func _acl_rules_of(dev: Net.NDevice, list_name: String) -> Array:
+	return dev.acls.filter(func(rule): return String(rule.get("list", "")) == list_name)
+
+static func _acl_in_permits(dev: Net.NDevice, iface: Net.Iface, p: Dictionary) -> bool:
+	## the inbound list on the ingress port, for packets addressed to the router
+	## itself as well as transit; a firewall's forward chain is not applied here
+	var groups: Dictionary = dev.services.get("acl_groups", {})
+	var list_name := String(groups.get(iface.name, ""))
+	if list_name == "" or list_name in FORWARD_ONLY_LISTS:
+		return true
+	return _acl_permits_list(dev, _acl_rules_of(dev, list_name), p)
+
+static func _acl_forward_permits(dev: Net.NDevice, iface: Net.Iface, p: Dictionary) -> bool:
+	## what a firewall's forward chain and the old unattached rules see: transit only
+	var groups: Dictionary = dev.services.get("acl_groups", {})
+	var list_name := String(groups.get(iface.name, ""))
+	var rules: Array = dev.acls.filter(func(rule): return String(rule.get("list", "")) == "")
+	if list_name in FORWARD_ONLY_LISTS:
+		rules += _acl_rules_of(dev, list_name)
+	if rules.is_empty():
+		return true
+	return _acl_permits_list(dev, rules, p)
+
+static func _acl_out_permits(dev: Net.NDevice, out: Net.Iface, p: Dictionary) -> bool:
+	## the outbound list on the egress port: transit only
+	var groups: Dictionary = dev.services.get("acl_groups", {})
+	var list_name := String(groups.get(out.name + "|out", ""))
+	if list_name == "":
+		return true
+	return _acl_permits_list(dev, _acl_rules_of(dev, list_name), p)
+
 static func _acl_permits(dev: Net.NDevice, p: Dictionary) -> bool:
+	## every applied list at once: kept for the callers that ask "would this
+	## router pass it at all", not for the per-port evaluation above
+	return _acl_permits_list(dev, active_acls(dev), p)
+
+static func _acl_permits_list(dev: Net.NDevice, active: Array, p: Dictionary) -> bool:
 	## First match wins. With no list there is no policy and everything
 	## passes; once a list exists, anything it does not name is dropped:
 	## the implicit deny at the end of every real access list.
-	var active := active_acls(dev)
 	if active.is_empty():
 		return true
 	var l4: Dictionary = p.get("l4", {})

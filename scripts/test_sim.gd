@@ -2278,6 +2278,8 @@ static func run() -> int:
 	check(cs.exec("show running-config | count").begins_with("Count: "), "pipe: | count prints the line count")
 	# --- IPv6 static routes on EOS and RouterOS ---
 	var v6r := Game.new_device("rtr-edge")
+	var v6peer := Game.new_device("srv-1")
+	Game.connect_ifaces(v6r.ifaces[0], v6peer.ifaces[0])  # line protocol: a static needs its next hop on a live wire
 	var v6es := CLI.new_session(v6r)
 	v6es.exec("en")
 	v6es.exec("conf t")
@@ -2326,6 +2328,63 @@ static func run() -> int:
 	rs_fws.exec("/ip pool add name=pool1 ranges=10.5.0.10-10.5.0.20")
 	check(rs_fws.exec("/ip pool set pool1 ranges=10.5.0.50-10.5.0.60") == "" and rs_fws.exec("/ip pool print").contains("10.5.0.50-10.5.0.60"),
 		"ros: ip pool set changes the range")
+	# --- OSPF: one area per router said out loud, masks, timers, router-ids ---
+	var oa := Game.new_device("rtr-edge")
+	var ob := Game.new_device("rtr-edge")
+	var o_rack := Game.add_rack(Vector2i(8, 6))  # the fleet-wide lookups only see racked gear
+	o_rack.slots[0] = oa
+	o_rack.slots[1] = ob
+	Game.connect_ifaces(oa.ifaces[0], ob.ifaces[0])
+	Game.add_ip(oa.ifaces[0], "10.5.0.1/24")
+	Game.add_ip(ob.ifaces[0], "10.5.0.2/25")
+	var oas := CLI.new_session(oa)
+	var obs := CLI.new_session(ob)
+	for os_s in [oas, obs]:
+		os_s.exec("en")
+		os_s.exec("conf t")
+		os_s.exec("router ospf 1")
+		os_s.exec("network 10.5.0.0/16 area 0")
+	check(oas.exec("network 10.9.0.0/24 area 1").contains("multi-area") and oas.exec("show running-config").contains("network 10.5.0.0/16 area 0.0.0.0")
+		and not oas.exec("show running-config").contains("area 0.0.0.1"),
+		"ospf: a second area is refused out loud and the first statement is not rewritten")
+	Game.topology_changed.emit()
+	check(Sim.ospf_neighbors(oa).is_empty() and oa.logs.any(func(l): return "mismatched network mask" in String(l)),
+		"ospf: a mask mismatch on a broadcast segment never reaches adjacency, and the log says so")
+	Game.remove_ip(ob.ifaces[0], "10.5.0.2/25")
+	Game.add_ip(ob.ifaces[0], "10.5.0.2/24")
+	Game.topology_changed.emit()
+	check(Sim.ospf_neighbors(oa).size() == 1, "ospf: matching masks form the adjacency")
+	oas.exec("router-id 1.1.1.1")
+	obs.exec("router-id 1.1.1.1")
+	Game.topology_changed.emit()
+	check(Sim.ospf_neighbors(oa).is_empty() and oa.logs.any(func(l): return "DUP_RTRID" in String(l)),
+		"ospf: a duplicate router-id refuses the adjacency and logs it")
+	obs.exec("router-id 2.2.2.2")
+	oas.exec("interface Ethernet1")
+	check(oas.exec("ip ospf hello-interval 5") == "" and oas.exec("ip ospf dead-interval 20") == "", "ospf: hello and dead intervals are per interface")
+	Game.topology_changed.emit()
+	check(Sim.ospf_neighbors(oa).is_empty() and oa.logs.any(func(l): return "mismatched hello" in String(l)), "ospf: mismatched timers never form")
+	obs.exec("interface Ethernet1")
+	obs.exec("ip ospf hello-interval 5")
+	obs.exec("ip ospf dead-interval 20")
+	Game.topology_changed.emit()
+	check(Sim.ospf_neighbors(oa).size() == 1, "ospf: matching timers form again")
+	check(oas.exec("ip ospf network point-to-point") == "" and bool(Sim.ospf_segment_roles(oa, oa.ifaces[0]).get("p2p", false))
+		and oas.exec("show running-config").contains("ip ospf network point-to-point"),
+		"ospf: ip ospf network point-to-point overrides the /30 heuristic and prints in the config")
+	# --- duplicate addresses are logged on both boxes ---
+	var dup_a := Game.new_device("srv-1")
+	var dup_b := Game.new_device("srv-1")
+	var dup_sw := Game.new_device("sw-8")
+	o_rack.slots[2] = dup_a
+	o_rack.slots[3] = dup_b
+	o_rack.slots[4] = dup_sw
+	Game.connect_ifaces(dup_a.ifaces[0], dup_sw.ifaces[0])
+	Game.connect_ifaces(dup_b.ifaces[0], dup_sw.ifaces[1])
+	Game.add_ip(dup_a.ifaces[0], "10.80.0.5/24")
+	Game.add_ip(dup_b.ifaces[0], "10.80.0.5/24")
+	check(dup_a.logs.any(func(l): return "DUPADDR" in String(l)) and dup_b.logs.any(func(l): return "DUPADDR" in String(l)),
+		"dupaddr: the same address twice is logged on both boxes")
 	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n").begins_with("! ")
 		and "LEARN: Routing & gateways" in CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n"),
 		"hints: an EOS error gets a ! comment line with the article to read")
@@ -3286,6 +3345,9 @@ static func run() -> int:
 	fab_b_cli.exec("router ospf 1")
 	check(Sim.ospf_area(fab_r1b) == "0.0.0.1" and Sim.ospf_neighbors(fab_r1b).is_empty(),
 		"scenario: the router in area 1 hears nobody in the backbone")
+	check(fab_b_cli.exec("network 10.63.0.0/16 area 0").contains("multi-area"),
+		"scenario: the same network in another area is refused, the way IOS refuses an overlapping network")
+	fab_b_cli.exec("no network 10.63.0.0/16 area 1")
 	fab_b_cli.exec("network 10.63.0.0/16 area 0")
 	fab_b_cli.exec("interface Ethernet1")
 	fab_b_cli.exec("vrrp 1 priority-level 90")
@@ -3628,9 +3690,15 @@ static func run() -> int:
 	Game.add_ip(any_client_r.ifaces[2], "10.130.9.1/24")
 	Game.add_ip(any_client.ifaces[0], "10.130.9.10/24")
 	Game.add_static_route(any_client, "0.0.0.0", 0, "10.130.9.1")
-	# both instances answer on the same service address
-	Game.add_ip(any_near.ifaces[3], "10.130.100.100/32")
-	Game.add_ip(any_far.ifaces[3], "10.130.100.100/32")
+	# both instances answer on the same service address, on a loopback: a
+	# bare port with nothing plugged in has no line protocol and advertises nothing
+	for any_inst in [any_near, any_far]:
+		var any_cli := CLI.new_session(any_inst)
+		any_cli.exec("en")
+		any_cli.exec("conf t")
+		any_cli.exec("interface Loopback0")
+		any_cli.exec("ip address 10.130.100.100/32")
+		any_cli.exec("end")
 	for any_dev in [any_client_r, any_near, any_mid, any_far]:
 		any_dev.ospf = {"networks": ["10.130.0.0/16"]}
 	Game.topology_changed.emit()
