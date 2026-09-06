@@ -4480,7 +4480,7 @@ func _tutorial_head(text: String) -> Control:
 	h.add_child(sec)
 	var x := Button.new()
 	x.text = "×"
-	x.tooltip_text = "Hide this panel until the next job or outage (or click the objective line to bring it back)"
+	x.tooltip_text = Loc.t("brief.hide.tip")
 	x.flat = true
 	x.pressed.connect(func() -> void:
 		tutorial_hidden = true
@@ -4626,13 +4626,14 @@ func _build_demo_end() -> void:
 	beyond_box.add_theme_constant_override("separation", UIW.space("sm"))
 	beyond.add_child(beyond_box)
 	for line: String in [
-		"THE NETWORK  /  DHCP · DNS · NAT · BGP · OSPF · VRRP · MLAG · IPv6 · NAT64 · VXLAN · EVPN · WIREGUARD · 802.1X · MULTI-SITE WAN",
-		"THE BUSINESS  /  customers who remember how you treated them, rivals with grudges and favours, decisions whose bill arrives later",
-		"THE BUILDING  /  power, cooling, filters, fire, water, badges, contractors, and the paperwork somebody eventually asks to see",
-		"THE PEOPLE  /  a crew who copy your habits, standing duties, somebody carrying the phone at three in the morning, and who takes the blame when it was one of them",
-		"THE ROOMS  /  a second building with its own diary, its own fire protection and its own dock, and hardware that gets there on a van",
-		"PROVING IT  /  a failover test you book, that takes the upstream away on purpose, and customers who ask for the result in writing",
-		"THE RUN  /  it ends: sold, retired, or broke. It is scored, and something survives into the next one."]:
+		Loc.t("demo.beyond.0"),
+		Loc.t("demo.beyond.1"),
+		Loc.t("demo.beyond.2"),
+		Loc.t("demo.beyond.3"),
+		Loc.t("demo.beyond.4"),
+		Loc.t("demo.beyond.5"),
+		Loc.t("demo.beyond.6"),
+	]:
 		var l3 := _wrap(line, 12, UIW.colour("muted"), 700)
 		l3.add_theme_font_override("font", mono)
 		beyond_box.add_child(l3)
