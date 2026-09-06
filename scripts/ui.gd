@@ -3613,43 +3613,43 @@ func _build_help() -> void:
 	help_overlay = _overlay()
 	var v := _card(help_overlay, 620)
 	var t := _header(v, func() -> void: help_overlay.visible = false)
-	t.text = "Keys and controls"
+	t.text = Loc.t("help.title")
 	var rows := [
-		["FLOOR", ""],
-		["Q / R", "select mode / place-rack mode"],
-		["Space", "pause and resume"],
-		["1 / 2 / 3", "normal, fast and faster"],
-		["O", "operations dashboard (device health)"],
-		["F", "find a device, address, VLAN or customer"],
-		["M", "logical topology map"],
-		["F1", "this help"],
-		["Esc", "system menu (save, practice, share and export, quit)"],
-		["💾", "save the game to the current slot"],
-		["right / middle drag", "pan the floor"],
-		["scroll wheel", "zoom toward the cursor"],
-		["VIEWS", ""],
-		["click rack", "open the rack cabinet"],
-		["click device", "open its front panel"],
-		["drag rack ports", "pull a cable between two devices in the same cabinet"],
-		["click port", "inspect its state or arrange a remote cable run"],
-		["right-click blank", "remove a blanking panel"],
-		["Shift-drag (map)", "move a node on the topology map"],
-		["Esc", "close the panel on top (the console first, then the card)"],
-		["CONSOLE", ""],
-		["configuration", "addresses, VLANs, routing and policy live here"],
-		["Tab", "complete the command or list candidates"],
-		["?", "show what is possible at this point"],
-		["Up / Down", "command history"],
-		["Ctrl-Z", "back to privileged exec, like a real console"],
-		["Ctrl-A / Ctrl-E", "start and end of the line"],
-		["Ctrl-U / Ctrl-K / Ctrl-W", "delete to the start, to the end, the previous word"],
-		["Ctrl-L / Ctrl-C", "clear the screen / abandon the line"],
-		["clear", "wipe the screen"],
-		["!!", "run the last command again"],
-		["paste", "several lines pasted run one after another"],
-		["terminal length N", "size the pane to N rows (the ▤ button takes over again)"],
-		["ssh <ip> / vtysh", "jump into another device's CLI, or FRR's shell on a Linux box (exit returns)"],
-		["Esc", "close the console"],
+		[Loc.t("help.floor"), ""],
+		["Q / R", Loc.t("help.h1")],
+		["Space", Loc.t("help.h2")],
+		["1 / 2 / 3", Loc.t("help.h3")],
+		["O", Loc.t("help.h4")],
+		["F", Loc.t("help.h5")],
+		["M", Loc.t("help.h6")],
+		["F1", Loc.t("help.h7")],
+		["Esc", Loc.t("help.h8")],
+		["💾", Loc.t("help.h9")],
+		["right / middle drag", Loc.t("help.h10")],
+		["scroll wheel", Loc.t("help.h11")],
+		[Loc.t("help.views"), ""],
+		["click rack", Loc.t("help.h12")],
+		["click device", Loc.t("help.h13")],
+		["drag rack ports", Loc.t("help.h14")],
+		["click port", Loc.t("help.h15")],
+		["right-click blank", Loc.t("help.h16")],
+		["Shift-drag (map)", Loc.t("help.h17")],
+		["Esc", Loc.t("help.h18")],
+		[Loc.t("help.console"), ""],
+		["configuration", Loc.t("help.h19")],
+		["Tab", Loc.t("help.h20")],
+		["?", Loc.t("help.h21")],
+		["Up / Down", Loc.t("help.h22")],
+		["Ctrl-Z", Loc.t("help.h23")],
+		["Ctrl-A / Ctrl-E", Loc.t("help.h24")],
+		["Ctrl-U / Ctrl-K / Ctrl-W", Loc.t("help.h25")],
+		["Ctrl-L / Ctrl-C", Loc.t("help.h26")],
+		["clear", Loc.t("help.h27")],
+		["!!", Loc.t("help.h28")],
+		["paste", Loc.t("help.h29")],
+		["terminal length N", Loc.t("help.h30")],
+		["ssh <ip> / vtysh", Loc.t("help.h31")],
+		["Esc", Loc.t("help.h32")],
 	]
 	for row in rows:
 		if row[1] == "":
@@ -4562,6 +4562,8 @@ func _rebuild_localised() -> void:
 	menu_overlay.visible = menu_was
 	pedia_overlay.queue_free()  # the chapter list is baked from the topics: rebuild it in the new language
 	_build_pedia()
+	help_overlay.queue_free()
+	_build_help()
 	_refresh_tutorial()
 	_refresh_contracts()
 	if ops_overlay.visible:

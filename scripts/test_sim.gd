@@ -12030,6 +12030,9 @@ static func run() -> int:
 		if String(t26[0]) == "Trunks":
 			check(Pedia.article_text(t26).contains("The exercise:"), "manual: the teaching sentence survives the dialect examples replacing the Try line")
 	check(Loc.tidy_plurals("1 cycle(s) left, 3 device(s) down") == "1 cycle left, 3 devices down", "text: the (s) plurals resolve on the way to the screen")
+	Loc.language = "hu"
+	check(Loc.t("help.h5").begins_with("eszköz") and Loc.t("help.title") == "Billentyűk és vezérlés", "text: the keys card is in the catalogue with Hungarian")
+	Loc.language = "en"
 	check(Loc.t("rack.blank.fitted").contains("Blanking") and Loc.t("settings.motion.tip") != "settings.motion.tip", "text: the rack and settings tooltips come from the catalogue")
 	var t29_stats := int(Game.stats.get("guided_outage_complete", 0))
 	Game.guided_outage = {"state": "communicated", "device": "no-such-box", "iface": "Ethernet1", "deal": "", "evidence": []}
