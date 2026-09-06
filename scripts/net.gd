@@ -26,7 +26,7 @@ class Iface:
 	var dot1x_ok := ""
 	var dot1x_home := 0  # the VLAN the port had before RADIUS moved it; restored when the session ends  # the MAC currently authorised on this port
 	var pvlan := ""  # "" | "isolated" | "promiscuous": private VLAN role
-	var storm_limit := 0  # broadcast frames allowed per operation, 0 = unlimited
+	var storm_limit := 0  # storm-control level in tenths of a percent of the port's bandwidth, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation
 	var vm := ""  # a virtual machine's NIC, hosted on this server
 	var ra := false  # router: advertise this interface's v6 prefix to the segment

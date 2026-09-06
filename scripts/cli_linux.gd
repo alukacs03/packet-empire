@@ -897,6 +897,13 @@ func _iface(name: String) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
 		if i.name == name:
 			return i
+	# bondN is the bundle's face: its first member carries the address and the MAC
+	# ponytail: no separate interface object; the bond resolves to its first member until one exists
+	if name.begins_with("bond") and name.trim_prefix("bond").is_valid_int():
+		var gid := int(name.trim_prefix("bond")) + 1  # Linux counts bonds from 0; the bundle ids start at 1
+		for i: Net.Iface in dev.ifaces:
+			if i.lag == gid:
+				return i
 	return null
 
 func _up(i: Net.Iface) -> bool:
@@ -1099,6 +1106,10 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 		if stats and only == "":
 			out += "    RX:  bytes packets errors dropped  missed   mcast\n              0       0      0       0       0       0\n    TX:  bytes packets errors dropped carrier collsns\n              0       0      0       0       0       0\n"
 		var n := 2
+		if only.begins_with("bond") and _iface(only) != null:
+			var member := _iface(only)
+			return "%d: %s: <BROADCAST,MULTICAST,MASTER,UP,LOWER_UP> mtu %d qdisc noqueue state %s mode DEFAULT group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [
+				dev.ifaces.size() + 2, only, member.mtu, "UP" if _up(member) else "DOWN", member.mac.to_lower()]
 		for i: Net.Iface in dev.ifaces:
 			if only == "" or i.name == only:
 				out += _addr_block(i, n, 0, true)
@@ -1109,7 +1120,17 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 						i.rx_frames * 148, i.rx_frames, i.rx_errors, 0, 0, 0, i.tx_frames * 148, i.tx_frames, 0, i.out_drops, 0, 0]
 			n += 1
 		if only != "" and out == "":
+			if String(dev.services.get("bond_pending", "")) == only:
+				return "%s: no members yet: ip link set <port> down, then ip link set <port> master %s\n" % [only, only]
 			return "Device \"%s\" does not exist.\n" % only
+		if only == "":
+			var seen_lags := {}
+			for i: Net.Iface in dev.ifaces:
+				if i.lag > 0 and not seen_lags.has(i.lag):
+					seen_lags[i.lag] = true
+					out += "%d: bond%d: <BROADCAST,MULTICAST,MASTER,UP,LOWER_UP> mtu %d qdisc noqueue state %s mode DEFAULT group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [
+						n, i.lag - 1, i.mtu, "UP" if _up(i) else "DOWN", i.mac.to_lower()]
+					n += 1
 		return out
 	if verb == "set":
 		var name := String(kv.get("dev", words[1] if words.size() > 1 else ""))
@@ -1139,7 +1160,9 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 				return "RTNETLINK answers: File exists\n"
 			return "" if Game.add_wireguard(dev, int(name.trim_prefix("wg"))) != null else "RTNETLINK answers: Operation not supported\n"
 		if String(kv.get("type", "")) == "bond":
-			dev.services["bond_pending"] = name
+			if _iface(name) != null:
+				return "RTNETLINK answers: File exists\n"
+			dev.services["bond_pending"] = name  # the bond appears in ip link once a port is enslaved
 			# mode 802.3ad (4) negotiates LACP; the rest bundle blindly, which only pairs with a static far end
 			dev.services["bond_mode"] = "active" if String(kv.get("mode", "balance-rr")) in ["802.3ad", "4"] else "on"
 			return ""
@@ -2739,7 +2762,7 @@ func _bond(t: Array) -> String:
 		if idx > 0:
 			leg.mac = legs[0].mac  # a bond presents one address
 	Game.topology_changed.emit()
-	return "bond%d: %s\n" % [gid, " ".join(PackedStringArray(t.slice(1)))]
+	return "bond%d: %s\n" % [gid - 1, " ".join(PackedStringArray(t.slice(1)))]
 
 func _bond_status() -> String:
 	var members: Array = []

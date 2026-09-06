@@ -3963,6 +3963,14 @@ static func run() -> int:
 	pvs.exec("end")
 	check(pv_sw.ifaces[0].storm_limit == 1, "storm: the limit is stored")
 	check(pvs.exec("show run").contains("storm-control broadcast level 0.1"), "storm: it renders in the config as an EOS level")
+	check(Sim.storm_allowance(pv_sw.ifaces[0]) == 1, "storm: 0.1 percent of a gigabit port is one flooded frame an operation")
+	check(Sim._solicited_mac("2001:db8::1:2345") == "33:33:ff:01:23:45" and Sim._solicited_mac("fe80::a") == "33:33:ff:00:00:0a", "nd: the solicited-node group carries the target's low 24 bits")
+	pvs.exec("conf t")
+	pvs.exec("interface Ethernet1")
+	check(pvs.exec("storm-control broadcast level 1") == "" and pv_sw.ifaces[0].storm_limit == 10 and Sim.storm_allowance(pv_sw.ifaces[0]) == 10, "storm: the EOS level spelling is a percent, and one percent buys ten frames")
+	check(pvs.exec("storm-control multicast level 0.5") == "" and pvs.exec("storm-control broadcast level 200").begins_with("% Invalid"), "storm: multicast takes the same level, and more than a hundred percent is refused")
+	pvs.exec("storm-control broadcast 1")
+	pvs.exec("end")
 
 	# --- anycast: the same address in two places ---
 	var any_rack := Game.add_rack(Vector2i(24, 1))
@@ -11740,6 +11748,12 @@ static func run() -> int:
 	t17_l.exec("ip link set eth1 down")
 	t17_l.exec("ip link set eth1 master bond0")
 	check(t17_s.ifaces[1].lag > 0 and t17_s.ifaces[1].lag_mode == "active" and t17_l.exec("cat /proc/net/bonding/bond0").contains("802.3ad"), "bond: mode 802.3ad negotiates LACP and the proc file says so")
+	check(t17_l.exec("ip link show").contains("bond%d:" % (t17_s.ifaces[1].lag - 1)), "bond: ip link show lists the bond under its Linux name")
+	check(t17_l.exec("ip addr add 10.79.9.1/24 dev bond%d" % (t17_s.ifaces[1].lag - 1)) == "" and "10.79.9.1/24" in t17_s.ifaces[1].ips, "bond: an address on the bond lands on the bundle")
+	t17_l.exec("ip addr del 10.79.9.1/24 dev bond%d" % (t17_s.ifaces[1].lag - 1))
+	t17_l.exec("ip link add bond7 type bond mode 802.3ad")
+	check(t17_l.exec("ip link show bond7").contains("no members yet"), "bond: a bond with no members says what it needs")
+	t17_s.services.erase("bond_pending")
 	# the OUTPUT chain: what the box itself sends
 	check(t17_l.exec("iptables -A OUTPUT -d 10.79.0.2 -j DROP") == "" and not Sim.ping(t17_s, "10.79.0.2")["ok"] and t17_l.exec("ping -c 1 10.79.0.2").contains("Operation not permitted"), "fw: an OUTPUT drop stops the box sending, and ping says so the way iputils does")
 	t17_l.exec("iptables -F OUTPUT")
@@ -11818,6 +11832,24 @@ static func run() -> int:
 	var t18_rs2 := CLI.new_session(t18_ros_sw)
 	check(t18_rs2.exec("/interface bridge port add bridge=bridge1 interface=ether2 edge=yes horizon=1") == "" and t18_ros_sw.ifaces[1].portfast and t18_ros_sw.ifaces[1].pvlan == "isolated", "ros: edge is portfast and horizon is isolation")
 	check(t18_rs2.exec("/interface bridge port print").contains("edge=yes"), "ros: bridge port print shows the edge flag")
+	# vlan-filtering=no: a flat bridge where pvid means nothing and tags pass untouched
+	var t32_a := Game.new_device("srv-1")
+	var t32_b := Game.new_device("srv-1")
+	t17_rack.slots[6] = t32_a
+	t17_rack.slots[7] = t32_b
+	Game.connect_ifaces(t32_a.ifaces[0], t18_ros_sw.ifaces[2])
+	Game.connect_ifaces(t32_b.ifaces[0], t18_ros_sw.ifaces[3])
+	Game.add_ip(t32_a.ifaces[0], "10.85.0.1/24")
+	Game.add_ip(t32_b.ifaces[0], "10.85.0.2/24")
+	Game.add_vlan(t18_ros_sw, 10, "")
+	Game.add_vlan(t18_ros_sw, 20, "")
+	Game.set_access_vlan(t18_ros_sw.ifaces[2], 10)
+	Game.set_access_vlan(t18_ros_sw.ifaces[3], 20)
+	Sim.flush_learned_state()
+	check(not Sim.ping(t32_a, "10.85.0.2")["ok"], "ros bridge: with filtering on, two pvids are two networks")
+	check(t18_rs2.exec("/interface bridge set bridge1 vlan-filtering=no") == "" and Sim.ping(t32_a, "10.85.0.2")["ok"], "ros bridge: vlan-filtering=no is one flat bridge, pvid means nothing")
+	check(t18_rs2.exec("/interface bridge print").contains("vlan-filtering=no") and t18_rs2.exec("/export").contains("vlan-filtering=no"), "ros bridge: print and export say so")
+	check(t18_rs2.exec("/interface bridge set bridge1 vlan-filtering=yes") == "" and not Sim.ping(t32_a, "10.85.0.2")["ok"], "ros bridge: filtering back on separates them again")
 	# --- lease time is a real setting, and leases expire by it ---
 	check(t17_l.exec("echo 'default-lease-time 1800 subnet 10.80.0.0 netmask 255.255.255.0 { range 10.80.0.10 10.80.0.20 }' > /etc/dhcp/dhcpd.conf") == "" and int(t17_s.services["dhcp"].get("lease_cycles", 0)) == 6,
 		"lease: dhcpd.conf default-lease-time lands on the server in cycles")

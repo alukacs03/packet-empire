@@ -1562,6 +1562,14 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				if String(p["protocol-mode"]) != "none":
 					dev.stp_mode = "mst" if p["protocol-mode"] == "mstp" else String(p["protocol-mode"])
 					Sim.flush_learned_state()
+			if p.has("vlan-filtering"):
+				if String(p["vlan-filtering"]) not in ["yes", "no"]:
+					return "input does not match any value of vlan-filtering\n"
+				if String(p["vlan-filtering"]) == "no":
+					dev.services["vlan_filtering"] = false  # a flat bridge: tags pass through untouched and pvid means nothing
+				else:
+					dev.services.erase("vlan_filtering")
+				Sim.flush_learned_state()
 			if p.has("priority"):
 				var pr := String(p["priority"])
 				var val := pr.hex_to_int() if pr.begins_with("0x") else (int(pr) if pr.is_valid_int() else -1)
@@ -1574,8 +1582,9 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"interface bridge print":
 			if dev.type != "switch":
 				return ""  # no bridge: nothing to print, as on the box
-			return "Flags: X - disabled, R - running\n 0 R name=\"%s\" mtu=auto actual-mtu=1500 l2mtu=1592 arp=enabled arp-timeout=auto mac-address=%s protocol-mode=%s fast-forward=yes igmp-snooping=no auto-mac=yes ageing-time=5m priority=0x%x max-message-age=20s forward-delay=15s transmit-hold-count=6 vlan-filtering=yes pvid=1 frame-types=admit-all ingress-filtering=yes\n" % [
-				BRIDGE, _bridge_mac(), "mstp" if dev.stp_mode == "mst" else dev.stp_mode, dev.stp_priority]
+			return "Flags: X - disabled, R - running\n 0 R name=\"%s\" mtu=auto actual-mtu=1500 l2mtu=1592 arp=enabled arp-timeout=auto mac-address=%s protocol-mode=%s fast-forward=yes igmp-snooping=no auto-mac=yes ageing-time=5m priority=0x%x max-message-age=20s forward-delay=15s transmit-hold-count=6 vlan-filtering=%s pvid=1 frame-types=admit-all ingress-filtering=yes\n" % [
+				BRIDGE, _bridge_mac(), "mstp" if dev.stp_mode == "mst" else dev.stp_mode, dev.stp_priority,
+				"yes" if bool(dev.services.get("vlan_filtering", true)) else "no"]
 		"interface bridge vlan add":
 			if dev.type != "switch":
 				return "input does not match any value of bridge\n"
@@ -2703,8 +2712,8 @@ func _export() -> String:
 			groups[menu] = []
 		groups[menu].append(line)
 	if dev.type == "switch":
-		add.call("/interface bridge", "add name=%s protocol-mode=%s vlan-filtering=yes" % [BRIDGE,
-			"mstp" if dev.stp_mode == "mst" else dev.stp_mode])
+		add.call("/interface bridge", "add name=%s protocol-mode=%s vlan-filtering=%s" % [BRIDGE,
+			"mstp" if dev.stp_mode == "mst" else dev.stp_mode, "yes" if bool(dev.services.get("vlan_filtering", true)) else "no"])
 	var bonds := _bond_groups()
 	for g in bonds:
 		add.call("/interface bonding", "add mode=802.3ad name=bond%d slaves=%s" % [g, ",".join(PackedStringArray(bonds[g]))])

@@ -815,6 +815,8 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "protected"], "h": func(_r): return _pvlan("isolated")},
 			{"m": ["if"], "p": ["no", "switchport", "protected"], "h": func(_r): return _pvlan("")},
 			{"m": ["if"], "p": ["storm-control", "broadcast"], "h": _storm},
+			{"m": ["if"], "p": ["storm-control", "multicast"], "h": _storm},
+			{"m": ["if"], "p": ["storm-control", "unknown-unicast"], "h": _storm},
 			{"m": ["if"], "p": ["no", "storm-control", "broadcast"], "h": func(_r): return _storm([0])},
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": _port_sec_cmd},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
@@ -2073,12 +2075,19 @@ class EOS extends Session:
 			return "")
 
 	func _storm(r: Array) -> String:
+		## storm-control broadcast level <percent> is the EOS spelling; the bare
+		## number is this world's old shorthand in tenths of a percent
 		if dev.type != "switch":
 			return "% storm control is a switch feature\n"
-		if r.size() != 1 or not String(r[0]).is_valid_int():
-			return "% Incomplete command\n"
+		var tenths := -1
+		if r.size() == 2 and String(r[0]) == "level" and String(r[1]).is_valid_float():
+			tenths = int(round(float(r[1]) * 10.0))
+		elif r.size() == 1 and String(r[0]).is_valid_int():
+			tenths = int(r[0])
+		if tenths < 0 or tenths > 1000:
+			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
 		return _each(func(i: Net.Iface) -> String:
-			i.storm_limit = maxi(0, int(r[0]))
+			i.storm_limit = tenths
 			return "")
 
 	func _port_sec(on: bool) -> String:

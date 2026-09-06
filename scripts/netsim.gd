@@ -1237,8 +1237,12 @@ static func mst_instances() -> Array:
 	out.sort()
 	return out
 
-static func instance_of_vlan(vlan: int) -> int:
-	for d in Game.all_devices():
+static func instance_of_vlan(vlan: int, on: Net.NDevice = null) -> int:
+	## the instance a VLAN maps to on this switch; a switch whose mapping
+	## differs from its neighbour's is in another region, and the trees stop
+	## agreeing, which is the fault MST region mismatches produce for real
+	var scan: Array = [on] if on != null else Game.all_devices()
+	for d in scan:
 		if d.type != "switch":
 			continue
 		for inst in d.mst_instances:
@@ -1251,7 +1255,7 @@ static func stp_blocked_for(i: Net.Iface, vlan: int) -> bool:
 	## one set of VLANs and discarding for another. That is the whole point of
 	## it: two links between switches both carry traffic.
 	_stp_ensure()
-	var inst := instance_of_vlan(vlan)
+	var inst := instance_of_vlan(vlan, i.dev)
 	return _stp_blocked_inst.get(inst, {}).has(i)
 
 static var _stp_blocked_inst := {}  # instance -> {Iface: true}
@@ -1304,13 +1308,13 @@ static func _stp_tree(instance: int) -> Dictionary:
 	var sw_links: Array = []
 	var seen_pairs := {}
 	for d in Game.all_devices():
-		if d.type != "switch" or d.status != "active" or d.stp_mode == "none":
-			continue
+		if d.type not in ["switch", "ap"] or d.status != "active" or d.stp_mode == "none":
+			continue  # an access point bridges its ports too: a loop through it is a loop
 		for a: Net.Iface in d.ifaces:
 			if not a.enabled or a.name.begins_with("Management"):
 				continue
 			var b := Game.effective_peer(a)  # a passive panel in the run is glass: BPDUs cross it
-			if b == null or b.dev.type != "switch" or b.dev == d or not b.enabled or b.name.begins_with("Management") \
+			if b == null or b.dev.type not in ["switch", "ap"] or b.dev == d or not b.enabled or b.name.begins_with("Management") \
 					or b.dev.stp_mode == "none" or b.dev.status != "active":
 				continue
 			if a.lag > 0 and b.lag > 0 and not lag_compatible(a, b):
@@ -1761,7 +1765,7 @@ static func _arp_resolve(dev: Net.NDevice, iface: Net.Iface, ip: String) -> Stri
 	# a reply is only believed once we have asked; the flag stays until the
 	# answer lands, because a congested link can deliver it a while later
 	_arp_pending["%s|%s" % [dev.name, key]] = true
-	_tx(iface, {"src": iface.mac, "dst": BCAST, "vlan": 0,
+	_tx(iface, {"src": iface.mac, "dst": _solicited_mac(ip) if Net.is_v6(ip) else BCAST, "vlan": 0,
 		"type": "ndp" if Net.is_v6(ip) else "arp",
 		"pl": {"op": "req", "spa": _src_on(iface, ip, Net.is_v6(ip)), "sha": iface.mac, "tpa": ip}})
 	return dev.arp.get(key, "")
@@ -2088,6 +2092,12 @@ static func _dot1x_authorise(sw: Net.NDevice, port: Net.Iface, mac: String) -> b
 		" into VLAN %d" % vid if vid > 0 else ""])
 	return true
 
+static func storm_allowance(i: Net.Iface) -> int:
+	## flooded frames one operation may carry at this level: 0.1% of a gigabit
+	## port is one frame, 1% is ten, and a ten-gig port ten times that
+	## ponytail: the interval is the operation, not a second; the ratio is what the lesson needs
+	return maxi(1, int(round(float(Game.iface_speed(i)) * float(i.storm_limit) / 1000.0)))
+
 static func _reset_storm_counters() -> void:
 	for d in Game.all_devices():
 		for i: Net.Iface in d.ifaces:
@@ -2097,7 +2107,10 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	if _rx_instance_blocked(dev, in_if, frame):
 		return  # spanning tree: discarding state for this frame's instance
 	var vlan: int
-	if in_if.mode == "access":
+	var transparent := not bool(dev.services.get("vlan_filtering", true))  # RouterOS vlan-filtering=no: one flat bridge, tags untouched
+	if transparent:
+		vlan = 1
+	elif in_if.mode == "access":
 		if frame["vlan"] != 0:
 			return  # tagged frame on access port: drop
 		vlan = in_if.untagged_vlan
@@ -2132,12 +2145,17 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 				return
 	if not dev.mac_table.has(vlan):
 		dev.mac_table[vlan] = {}
-	# storm control: a port may only contribute so much broadcast per operation
-	if frame["dst"] == BCAST and in_if.storm_limit > 0:
-		in_if.storm_count += 1
-		if in_if.storm_count > in_if.storm_limit:
-			Game.device_log(dev, "storm control suppressed broadcast on %s" % in_if.name)
-			return
+	# storm control: a level is a share of the port's bandwidth, and it polices
+	# broadcast, multicast and unknown unicast alike; here one operation is the
+	# interval, so the level buys a number of flooded frames scaled by the speed
+	if in_if.storm_limit > 0:
+		var floods: bool = frame["dst"] == BCAST or String(frame["dst"]).begins_with(MCAST_PREFIX) \
+			or (dev.mac_table.get(vlan, {}).get(frame["dst"]) == null and static_port(dev, vlan, String(frame["dst"])) == null)
+		if floods:
+			in_if.storm_count += 1
+			if in_if.storm_count > storm_allowance(in_if):
+				Game.device_log(dev, "storm control suppressed %s on %s" % ["broadcast" if frame["dst"] == BCAST else ("multicast" if String(frame["dst"]).begins_with(MCAST_PREFIX) else "unknown unicast"), in_if.name])
+				return
 	# 802.1X: nothing passes until the authentication server says who this is
 	if in_if.dot1x and bool(dev.services.get("dot1x_global", true)) and String(frame["src"]) != in_if.dot1x_ok:
 		if not _dot1x_authorise(dev, in_if, String(frame["src"])):
@@ -2254,6 +2272,11 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 				continue  # dead member: another member of this lag will carry it
 			lags_done[o.lag] = true
 		var f := frame.duplicate(true)
+		if transparent:
+			if o.mode == "routed":
+				continue
+			_tx(o, f)  # the tag, or its absence, leaves as it came
+			continue
 		if o.mode == "access":
 			if o.untagged_vlan != vlan:
 				continue
@@ -2301,8 +2324,9 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 				return
 			if frame["dst"] == BCAST:
 				_host_rx(dev, guest, frame)
-	if frame["dst"] != iface.mac and frame["dst"] != BCAST and not _vrrp_mac_ours(dev, iface, String(frame["dst"])):
-		return
+	if frame["dst"] != iface.mac and frame["dst"] != BCAST and not _vrrp_mac_ours(dev, iface, String(frame["dst"])) \
+			and not (frame["type"] == "ndp" and _solicited_for(dev, iface, String(frame["dst"]))):
+		return  # a solicitation for somebody else's address is not ours to answer
 	var p: Dictionary = frame["pl"]
 	if frame["type"] == "dhcp":
 		_dhcp_rx(dev, iface, frame)
@@ -2614,6 +2638,26 @@ static func capture_line(l: String) -> String:
 	if rest.begins_with("Out|") or rest.begins_with("In|"):
 		rest = String(rest.split("|", true, 2)[2])
 	return l.substr(0, 25) + rest
+
+static func _solicited_mac(addr: String) -> String:
+	## 33:33:ff plus the low 24 bits of the target: the group a solicitation is sent to
+	var h := Net.v6_hextets(addr)
+	if h.size() != 8:
+		return BCAST
+	return "33:33:ff:%02x:%02x:%02x" % [int(h[6]) & 0xff, (int(h[7]) >> 8) & 0xff, int(h[7]) & 0xff]
+
+static func _solicited_for(dev: Net.NDevice, iface: Net.Iface, mac: String) -> bool:
+	## does this port own an address whose solicited-node group is that MAC
+	if not mac.begins_with("33:33:ff:"):
+		return false
+	if _solicited_mac(link_local(iface)) == mac:
+		return true
+	for cidr: String in iface.ips:
+		if Net.is_v6(cidr) and _solicited_mac(cidr.split("/")[0]) == mac:
+			return true
+	if not iface.vrrp.is_empty() and Net.is_v6(String(iface.vrrp.get("vip", ""))) and _solicited_mac(String(iface.vrrp["vip"])) == mac:
+		return true
+	return false
 
 static func _solicited_node(addr: String) -> String:
 	## ff02::1:ff plus the low 24 bits of the target
