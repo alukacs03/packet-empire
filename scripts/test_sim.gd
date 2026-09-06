@@ -11983,6 +11983,13 @@ static func run() -> int:
 	Game.parts = t25_parts
 	Game.sites = t25_sites
 	Game.current_site = t25_site
+	check(CLI.topic_for("neighbor 10.0.0.1 remote-as 65001") == "BGP and the internet" and CLI.topic_for("ip helper-address 10.0.0.5") == "Leases across a router" and CLI.topic_for("vrrp 1 ipv4 10.40.0.1") == "VRRP" and CLI.topic_for("iptables -A INPUT -j DROP") == "The host's own firewall",
+		"manual: the LEARN chip sends bgp, relay, vrrp and host-firewall commands to the right chapter")
+	var t26_titles: Array = Pedia.topics().map(func(e): return String(e[0]))
+	check(t26_titles.has("A server that routes") and t26_titles.has("The host's own firewall") and t26_titles.has("Route maps and address families") and t26_titles.has("Keepalived on a pair of servers"), "manual: the four new chapters exist")
+	for t26 in Pedia.topics():
+		if String(t26[0]) == "Trunks":
+			check(Pedia.article_text(t26).contains("The exercise:"), "manual: the teaching sentence survives the dialect examples replacing the Try line")
 	check(Drill._fault_tier("L1: sw1 Ethernet3 was left disabled on sw1") == 0 and Drill._fault_tier("the second copy of the service (x) was readdressed and nobody noticed") == 1, "drill: the two-room faults are graded")
 	print("---- %d failures" % fails)
 	return fails
