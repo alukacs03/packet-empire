@@ -191,7 +191,7 @@ var expand_btn: Button
 var site_btn: Button
 var speed_btns := {}
 var hud_logo: Label
-var hud_nav_row: HBoxContainer
+var hud_nav_row: VBoxContainer
 var hud_status_row: HBoxContainer
 var hud_alert_btn: Button
 var hud_learn_btn: Button
@@ -201,6 +201,7 @@ var hud_shortcut_hint: Label
 var hud_find_btn: Button
 var sell_btn: Button
 var settings_overlay: Control
+var service_overlay: Control
 var hud_compact := false
 var hud_msg: Label
 var hud_msg_tween: Tween
@@ -404,57 +405,44 @@ func _customer_cash_feedback(customer: String, state: String, amount: int) -> vo
 	_refresh_open()
 
 func _refresh_attention() -> void:
-	if contracts_btn == null:
-		return
-	var n := Game.offers.size()
-	var urgent := ""
-	for deal in Game.deals:
-		if not deal["healthy"]:
-			n += 1
-			if urgent == "":
-				urgent = "%s is down" % deal["customer"]
-	for cid in Game.sla_status:
-		if not Game.sla_status[cid] and not Contracts.retired(cid):
-			n += 1
-			urgent = "SLA breach: %s" % cid
-	n += Game.unread_events
-	if n > 0:
-		contracts_btn.text = ("Co. · %d" if hud_compact else "Company · %d") % n
-		contracts_btn.modulate = Color(1.15, 0.95, 0.7)
-	else:
-		contracts_btn.text = "Co." if hud_compact else "Company"
-		contracts_btn.modulate = Color.WHITE
+	if contracts_btn == null: return
+	var outages := 0
+	for deal: Dictionary in Game.deals:
+		if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)): outages += 1
+	if Game.guided_outage_active(): outages = maxi(1, outages)
+	contracts_btn.text = "Customers"
+	contracts_btn.modulate = Color.WHITE
 	if hud_alert_btn:
-		hud_alert_btn.visible = n > 0
-		if n > 0:
-			if urgent != "":
-				hud_alert_btn.text = "! " + urgent
-			elif Game.unread_events > 0:
-				hud_alert_btn.text = "! %d new event%s" % [Game.unread_events,
-					"" if Game.unread_events == 1 else "s"]
-			elif Game.offers.size() > 0:
-				hud_alert_btn.text = "! %d offer%s waiting" % [Game.offers.size(),
-					"" if Game.offers.size() == 1 else "s"]
-			else:
-				hud_alert_btn.text = "! %d item%s need attention" % [n, "" if n == 1 else "s"]
-			hud_alert_btn.tooltip_text = "Open Company to act on the highest-priority item."
+		hud_alert_btn.visible = outages > 0 or not Game.offers.is_empty() or Game.unread_events > 0
+		if outages > 0:
+			hud_alert_btn.text = "%d service%s need you" % [outages, "" if outages == 1 else "s"]
+			UIW.style_button(hud_alert_btn, "danger")
+			hud_alert_btn.tooltip_text = "Service interrupted. Open incident communication and evidence."
+		elif not Game.offers.is_empty():
+			hud_alert_btn.text = "%d opportunities" % Game.offers.size()
+			UIW.style_button(hud_alert_btn, "quiet")
+			hud_alert_btn.tooltip_text = "Optional new business. Your live services take priority."
+		else:
+			hud_alert_btn.text = "%d updates" % Game.unread_events
+			UIW.style_button(hud_alert_btn, "quiet")
+			hud_alert_btn.tooltip_text = "Read your company activity."
 
 func _refresh_hud_layout(width_override := -1.0) -> void:
 	if hud_nav_row == null:
 		return
 	var width: float = width_override if width_override >= 0.0 \
 		else get_viewport().get_visible_rect().size.x
-	hud_compact = width < 1180.0
-	hud_logo.visible = not hud_compact
-	hud_learn_btn.text = "?" if hud_compact else "LEARN"
+	hud_compact = width < 1400.0
+	hud_logo.visible = true
+	hud_learn_btn.text = "Field manual"
 	if hud_find_btn:
-		hud_find_btn.text = "F" if hud_compact else "FIND"
-	mode_btns[0].text = "Q" if hud_compact else "CURSOR"
+		hud_find_btn.text = "Find anything"
+	mode_btns[0].text = "Floor"
 	mode_btns[0].tooltip_text = "Select mode (Q)"
-	mode_btns[1].text = "R" if hud_compact else "＋ BUILD"
+	mode_btns[1].text = "Build a rack"
 	mode_btns[1].tooltip_text = "Place a rack (R)"
 	objective_lbl.custom_minimum_size.x = 150 if hud_compact else 260
-	clock_lbl.visible = not hud_compact
+	clock_lbl.visible = width >= 1450
 	site_btn.custom_minimum_size.x = 80 if hud_compact else 120
 	hud_shortcut_hint.visible = not hud_compact
 	_refresh_attention()
@@ -600,7 +588,7 @@ func _process(_dt: float) -> void:
 	# The live brief belongs to the floor, not on top of focused workspaces.
 	# Remember whether we hid it so it can return after the overlay closes.
 	if tutorial_panel:
-		if is_open():
+		if is_open() and (get_viewport().get_visible_rect().size.x < 1480 or map_overlay.visible or welcome_overlay.visible or demo_overlay.visible or menu_overlay.visible):
 			if tutorial_panel.visible:
 				tutorial_suppressed_by_overlay = true
 				tutorial_panel.visible = false
@@ -620,7 +608,7 @@ func close_everything() -> void:
 	## next one from opening anything.
 	for panel in [rack_overlay, dev_overlay, if_overlay, contracts_overlay, welcome_overlay,
 			map_overlay, menu_overlay, pedia_overlay, help_overlay, ops_overlay,
-			search_overlay, demo_overlay, settings_overlay]:
+			search_overlay, demo_overlay, settings_overlay, service_overlay]:
 		if panel != null and is_instance_valid(panel):
 			panel.visible = false
 	cur_dev = null
@@ -631,7 +619,8 @@ func is_open() -> bool:
 		or contracts_overlay.visible or welcome_overlay.visible or map_overlay.visible \
 		or menu_overlay.visible or pedia_overlay.visible or help_overlay.visible \
 		or ops_overlay.visible or search_overlay.visible or demo_overlay.visible \
-		or (settings_overlay != null and is_instance_valid(settings_overlay) and settings_overlay.visible)
+		or (settings_overlay != null and is_instance_valid(settings_overlay) and settings_overlay.visible) \
+		or (service_overlay != null and is_instance_valid(service_overlay) and service_overlay.visible)
 
 # ---------- theme / widget helpers ----------
 
@@ -703,12 +692,13 @@ func _mono_edit(width := 200.0) -> LineEdit:
 func _overlay() -> Control:
 	var o := Control.new()
 	o.set_anchors_preset(Control.PRESET_FULL_RECT)
-	o.mouse_filter = Control.MOUSE_FILTER_STOP
+	o.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	o.visible = false
 	o.theme = theme_res
 	var bg := ColorRect.new()
 	bg.color = DIM
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	o.add_child(bg)
 	add_child(o)
 	return o
@@ -733,10 +723,14 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	var hang := MarginContainer.new()
 	hang.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hang.add_theme_constant_override("margin_top", int(card_top()))
+	hang.add_theme_constant_override("margin_left", 184)
+	hang.add_theme_constant_override("margin_right", 24)
+	hang.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hangs.append(hang)
 	parent.add_child(hang)
 	var center := HBoxContainer.new()
-	center.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.alignment = BoxContainer.ALIGNMENT_BEGIN
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hang.add_child(center)
 	var panel := UIW.CommandPanel.new().setup("overlay", "accent", UIW.space("lg"))
 	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -753,7 +747,7 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	content_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(content_margin)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", UIW.space("lg"))
+	v.add_theme_constant_override("separation", UIW.space("md"))
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content_margin.add_child(v)
 	return v
@@ -808,7 +802,7 @@ func _fit_cards() -> void:
 		# laid out and take whichever is larger.
 		need_y = maxf(need_y, _laid_out_height(content))
 		scroll.custom_minimum_size = Vector2(
-			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 160.0),
+			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 280.0),
 			minf(need_y, vp.y - card_top() - 60.0))
 
 func _laid_out_height(content: Control) -> float:
@@ -832,11 +826,11 @@ func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 10)
 	box.add_child(h)
-	var title := _label("", 20, Color.WHITE)
+	var title := _label("", 24, UIW.colour("text_strong"))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(title)
 	var back := Button.new()
-	back.text = "ESC  CLOSE"
+	back.text = "Close  ·  Esc"
 	UIW.style_button(back, "quiet")
 	back.pressed.connect(on_back)
 	h.add_child(back)
@@ -945,143 +939,7 @@ func _menu(at: Control, items: Array, on_pick: Callable) -> void:
 var hud_bar: PanelContainer
 
 func _build_toolbar() -> void:
-	var bar := PanelContainer.new()
-	hud_bar = bar
-	bar.resized.connect(_refit_hangs)
-	bar.theme = theme_res
-	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	var sb := UIW.panel_box("hud", "sm")
-	sb.border_color = Color(0.25, 0.5, 0.6, 0.5)
-	sb.border_width_bottom = 1
-	sb.content_margin_left = 20
-	sb.content_margin_right = 20
-	bar.add_theme_stylebox_override("panel", sb)
-	add_child(bar)
-	var hud_stack := VBoxContainer.new()
-	hud_stack.add_theme_constant_override("separation", UIW.space("xs"))
-	bar.add_child(hud_stack)
-	hud_nav_row = HBoxContainer.new()
-	hud_nav_row.add_theme_constant_override("separation", UIW.space("sm"))
-	hud_stack.add_child(hud_nav_row)
-	var h := hud_nav_row
-	hud_logo = _label("PE  /  CONTROL ROOM", 15, ACCENT)
-	hud_logo.add_theme_font_override("font", mono)
-	h.add_child(hud_logo)
-	h.add_child(VSeparator.new())
-	for m in [["CURSOR", 0], ["＋ BUILD", 1]]:
-		var b := Button.new()
-		b.text = m[0]
-		b.toggle_mode = true
-		b.pressed.connect(func() -> void: get_parent().mode = m[1])
-		h.add_child(b)
-		mode_btns[m[1]] = b
-	hud_learn_btn = Button.new()
-	hud_learn_btn.text = "LEARN"
-	hud_learn_btn.tooltip_text = "Field manual: every concept the game teaches"
-	hud_learn_btn.pressed.connect(open_pedia)
-	h.add_child(hud_learn_btn)
-	site_btn = Button.new()
-	site_btn.tooltip_text = "Switch between the floors you operate"
-	site_btn.custom_minimum_size = Vector2(120, 0)
-	site_btn.pressed.connect(func() -> void:
-		var names: Array = []
-		for i in Game.site_count():
-			names.append("%s%s  (%dx%d, %d racks)" % ["▸ " if i == Game.current_site else "   ",
-				Game.site_name(i), Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size()])
-		_menu(site_btn, names, func(id: int) -> void:
-			Game.switch_site(id)
-			_refresh_money()))
-	h.add_child(site_btn)
-	hud_ops_btn = Button.new()
-	hud_ops_btn.text = "OPS"
-	hud_ops_btn.tooltip_text = "Operations dashboard (O)"
-	hud_ops_btn.pressed.connect(toggle_ops)
-	h.add_child(hud_ops_btn)
-	hud_map_btn = Button.new()
-	hud_map_btn.text = "MAP"
-	hud_map_btn.tooltip_text = "Logical topology (M)"
-	hud_map_btn.pressed.connect(toggle_map)
-	h.add_child(hud_map_btn)
-	hud_find_btn = Button.new()
-	hud_find_btn.text = "FIND"
-	hud_find_btn.tooltip_text = "Find a device, address, VLAN or customer (F)"
-	hud_find_btn.pressed.connect(toggle_search)
-	h.add_child(hud_find_btn)
-	contracts_btn = Button.new()
-	contracts_btn.text = "Company"
-	contracts_btn.tooltip_text = "Jobs, business, market and log"
-	_accent(contracts_btn)
-	contracts_btn.pressed.connect(open_contracts)
-	h.add_child(contracts_btn)
-	expand_btn = Button.new()
-	expand_btn.pressed.connect(func() -> void:
-		if Game.expand():
-			_refresh_money())
-	h.add_child(expand_btn)
-	var nav_spacer := Control.new()
-	nav_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(nav_spacer)
-	var save_btn := Button.new()
-	save_btn.text = "💾"
-	save_btn.tooltip_text = "Save the game"
-	save_btn.pressed.connect(func() -> void: _save_with_feedback())
-	h.add_child(save_btn)
-	hud_status_row = HBoxContainer.new()
-	hud_status_row.add_theme_constant_override("separation", UIW.space("sm"))
-	hud_stack.add_child(hud_status_row)
-	h = hud_status_row
-	objective_lbl = _label("", 12, Color(0.65, 0.8, 0.9))
-	objective_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
-	objective_lbl.tooltip_text = "Click to show the brief"
-	objective_lbl.gui_input.connect(func(e: InputEvent) -> void:
-		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-			if not Game.hazards.is_empty():
-				ops_tab = "Facility"  # a live hazard: the place to act is the facility tab
-				if not ops_overlay.visible:
-					toggle_ops()
-				else:
-					_refresh_ops()
-				return
-			tutorial_hidden = false
-			_refresh_tutorial())
-	objective_lbl.custom_minimum_size = Vector2(260, 0)
-	objective_lbl.clip_text = true
-	objective_lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	# the sentence gets everything between the alert chip and the clock,
-	# instead of a fixed 260 px that cut every suggestion in half
-	objective_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(objective_lbl)
-	hud_alert_btn = Button.new()
-	hud_alert_btn.visible = false
-	UIW.style_button(hud_alert_btn, "danger")
-	hud_alert_btn.pressed.connect(open_contracts)
-	h.add_child(hud_alert_btn)
-	clock_lbl = _label("", 11, Color(0.55, 0.65, 0.78))
-	clock_lbl.custom_minimum_size = Vector2(330, 0)
-	clock_lbl.clip_text = true
-	h.add_child(clock_lbl)
-	for spec in [["⏸", 0, "Pause (Space)"], ["▶", 1, "Normal speed (1)"],
-			["▶▶", 2, "Fast (2)"], ["▶▶▶", 3, "Faster (3)"]]:
-		var spd_btn := Button.new()
-		spd_btn.text = spec[0]
-		spd_btn.tooltip_text = spec[2]
-		spd_btn.toggle_mode = true
-		spd_btn.pressed.connect(func() -> void: Game.set_speed(spec[1]))
-		h.add_child(spd_btn)
-		speed_btns[spec[1]] = spd_btn
-	cycle_lbl = _label("", 13, Color(0.5, 0.58, 0.7))
-	cycle_lbl.add_theme_font_override("font", mono)
-	cycle_lbl.tooltip_text = "Time to the next revenue cycle: fees, bills, SLA checks"
-	h.add_child(cycle_lbl)
-	money_lbl = _label("", 15, UIW.colour("success"))
-	money_lbl.add_theme_font_override("font", mono)
-	h.add_child(money_lbl)
-	update_mode(0)
-	hud_shortcut_hint = _label("Space pause  ·  Q select  ·  R place rack  ·  F find  ·  O ops  ·  M map  ·  F1 keys and controls  ·  Esc menu  ·  right-drag pan  ·  scroll zoom", 12, Color(0.45, 0.5, 0.62))
-	hud_shortcut_hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	hud_shortcut_hint.position = Vector2(20, -30)
-	hud_shortcut_hint.theme = theme_res
-	add_child(hud_shortcut_hint)
+	WorkspaceShell.build(self)
 
 func update_mode(m: int) -> void:
 	for k in mode_btns:
@@ -1110,7 +968,9 @@ func _build_rack_overlay() -> void:
 	v.add_child(info_row)
 	var info := _label("Click hardware to inspect, or an empty U to install something there. Grab any free jack and pull it to another device.", 13, MUTED)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info_row.add_child(info)
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.custom_minimum_size.x = 540
+	v.add_child(info)
 	rack_note_btn = Button.new()
 	rack_note_btn.text = "✎ LEAVE NOTE"
 	rack_note_btn.tooltip_text = "Leave short context for yourself on this cabinet"
@@ -1134,6 +994,11 @@ func _build_rack_overlay() -> void:
 				hud_toast(err2 if err2 != "" else "Rack built from the blueprint.", err2 == "")
 			_refresh_slots()))
 	info_row.add_child(bp_btn)
+	var service_btn := Button.new()
+	service_btn.text = "Service standards"
+	service_btn.tooltip_text = "Capture a working local LAN, or deploy it with fresh addresses and a customer VLAN."
+	service_btn.pressed.connect(_open_service_standards)
+	info_row.add_child(service_btn)
 	var sell := Button.new()
 	sell_btn = sell
 	sell.text = "Sell rack ($%d)" % (Game.RACK_PRICE / 2)
@@ -1156,6 +1021,57 @@ func _build_rack_overlay() -> void:
 	cabinet.add_child(slot_box)
 	rack_cable_layer = UIW.CablePull.new().setup()
 	rack_overlay.add_child(rack_cable_layer)
+
+func _open_service_standards() -> void:
+	var target := cur_rack
+	if target == null: return
+	if service_overlay != null and is_instance_valid(service_overlay): service_overlay.queue_free()
+	service_overlay = _overlay()
+	var box := _card(service_overlay, 660)
+	_header(box, func() -> void: service_overlay.visible = false).text = "Service standards"
+	box.add_child(_wrap("Build it once. Prove it. Give the next customer the same care, with fresh addresses.", 17, UIW.colour("text"), 600))
+	box.add_child(_wrap("The first standard is a local LAN: one SW5 or S8 and two to four R110 servers, in one VLAN. Routes and application services stay manual.", 14, UIW.colour("muted"), 600))
+	var save := WorkspaceShell.button("Save this cabinet's working LAN", func() -> void:
+		var err := ServiceDesign.capture(target, target.name + " customer LAN")
+		hud_toast(err if err != "" else "Working service saved with its cabling.", err == "")
+		if err == "": _open_service_standards())
+	box.add_child(save)
+	var designs: Array = Game.blueprints.filter(func(b): return b.has("service"))
+	if designs.is_empty():
+		box.add_child(UIW.make_empty_state("No service standards yet. Connect and address a small LAN, verify a ping, then save it here."))
+	else:
+		box.add_child(_section("Deploy into " + target.name))
+		var choose := OptionButton.new()
+		for design: Dictionary in designs: choose.add_item(String(design["name"]))
+		box.add_child(choose)
+		var address := LineEdit.new()
+		address.text = "10.80.0"
+		address.placeholder_text = "Fresh /24 prefix, e.g. 10.80.0"
+		box.add_child(_label("Network prefix · three octets"))
+		box.add_child(address)
+		var vlan := SpinBox.new()
+		vlan.min_value = 1
+		vlan.max_value = 4094
+		vlan.value = 100
+		box.add_child(_label("Customer VLAN"))
+		box.add_child(vlan)
+		var preview := _wrap("", 15, UIW.colour("text"), 600)
+		box.add_child(preview)
+		var deploy := WorkspaceShell.button("Deploy and verify connectivity", func() -> void:
+			var err := ServiceDesign.deploy(target, designs[choose.selected], address.text, int(vlan.value))
+			hud_toast(err if err != "" else "Service deployed. Every server passed its connectivity check.", err == "")
+			_refresh_slots()
+			_open_service_standards(), true)
+		box.add_child(deploy)
+		var refresh := func() -> void:
+			var result := ServiceDesign.preview(target, designs[choose.selected], address.text, int(vlan.value))
+			preview.text = String(result["why"])
+			deploy.disabled = not bool(result["ok"])
+		choose.item_selected.connect(func(_i: int) -> void: refresh.call())
+		address.text_changed.connect(func(_s: String) -> void: refresh.call())
+		vlan.value_changed.connect(func(_v: float) -> void: refresh.call())
+		refresh.call()
+	_show_overlay(service_overlay)
 
 func _rack_metric(caption: String, key: String, semantic: String) -> PanelContainer:
 	var panel := UIW.style_panel(PanelContainer.new(), "console", "sm")
@@ -4155,12 +4071,36 @@ func _show_drill_banner() -> void:
 
 func _build_map() -> void:
 	map_overlay = _overlay()
-	map_overlay.add_child(UIW.TopoMap.new().setup(func(dev: Net.NDevice) -> void:
+	var map := UIW.TopoMap.new().setup(func(dev: Net.NDevice) -> void:
 		map_overlay.visible = false
 		cur_rack = Game.rack_of(dev)
 		open_dev(dev),
 		func(a: Net.NDevice, b: Net.NDevice) -> String:
-			return Game.link_devices(a, b)))
+			return Game.link_devices(a, b))
+	map_overlay.add_child(map)
+	map.offset_left = 184
+	map.offset_top = 112
+	map.offset_right = -24
+	map.offset_bottom = -48
+	var customers := OptionButton.new()
+	customers.position = Vector2(420, 24)
+	customers.custom_minimum_size = Vector2(230, 36)
+	customers.tooltip_text = "Highlight the live dependencies of one customer."
+	map.add_child(customers)
+	var refresh_customers := func() -> void:
+		customers.clear()
+		customers.add_item("All services")
+		customers.set_item_metadata(0, "")
+		for deal: Dictionary in Game.deals:
+			customers.add_item(String(deal["customer"]))
+			var idx := customers.item_count - 1
+			customers.set_item_metadata(idx, String(deal["id"]))
+			if String(deal["id"]) == map.focus_customer_id: customers.select(idx)
+	customers.item_selected.connect(func(idx: int) -> void:
+		map.focus_customer_id = String(customers.get_item_metadata(idx))
+		map.refresh_focus())
+	map.visibility_changed.connect(refresh_customers)
+	Game.topology_changed.connect(refresh_customers)
 
 func toggle_map() -> void:
 	if not _feature_available("map"):
@@ -4182,12 +4122,25 @@ func _build_tutorial() -> void:
 	tutorial_panel.position = Vector2(-380, 112)
 	tutorial_panel.custom_minimum_size = Vector2(356, 0)
 	add_child(tutorial_panel)
+	var brief_scroll := ScrollContainer.new()
+	brief_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	brief_scroll.custom_minimum_size = Vector2(308, 390)
+	tutorial_panel.add_child(brief_scroll)
 	tutorial_box = VBoxContainer.new()
+	tutorial_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_box.add_theme_constant_override("separation", UIW.space("sm"))
-	tutorial_panel.add_child(tutorial_box)
+	brief_scroll.add_child(tutorial_box)
 	_refresh_tutorial()
 
 var tutorial_hidden := false
+
+func focus_customer(deal: Dictionary) -> void:
+	close_everything()
+	for child in map_overlay.get_children():
+		if child is UIW.TopoMap:
+			child.focus_customer_id = String(deal.get("id", ""))
+			child.refresh_focus()
+	_show_overlay(map_overlay)
 
 func _next_job() -> Dictionary:
 	for c in Contracts.all():
@@ -4325,12 +4278,19 @@ func _render_guided_outage() -> void:
 			var done: bool = String(step[0]) in evidence
 			tutorial_box.add_child(_label("%s  %-10s %s" % ["●" if done else "○", step[1], step[2]],
 				11, Color(0.48, 0.9, 0.62) if done else UIW.colour("muted")))
-		if state not in ["diagnosed", "repairing"]:
-			var next_layer := String(ladder[evidence.size()][0])
-			tutorial_box.add_child(_incident_button("Gather next evidence", func() -> void:
-				var err := Game.guided_outage_probe(next_layer)
+		for step: Array in ladder:
+			if String(step[0]) in evidence: continue
+			tutorial_box.add_child(_incident_button(String(step[2]), func() -> void:
+				var err := Game.guided_outage_probe(String(step[0]))
 				if err != "": _toast(err)
-				_refresh_tutorial(), true))
+				_refresh_tutorial()))
+		if state not in ["diagnosed", "repairing"]:
+			tutorial_box.add_child(_incident_button("Inspect the service network", func() -> void:
+				focus_customer(Game.guided_customer_deal()), true))
+			tutorial_box.add_child(_incident_button("Restore with help", func() -> void:
+				var err := Game.give_up_guided_outage()
+				if err != "": _toast(err)
+				_refresh_tutorial()))
 			return
 		tutorial_box.add_child(_wrap("ROOT CAUSE  /  %s %s is administratively disabled. The cable and addressing remain intact; routing and policy are not implicated."
 			% [incident.get("device", "device"), incident.get("iface", "port")],
@@ -4382,6 +4342,8 @@ var _brief_hidden_for := ""  # what was on the brief when it was closed
 func _brief_key() -> String:
 	if Game.guided_outage_active():
 		return "outage"
+	if FirstCustomer.active():
+		return "sale:" + String(FirstCustomer.state().get("phase", ""))
 	var job := _next_job()
 	return String(job.get("id", "")) if not job.is_empty() else ""
 
@@ -4395,6 +4357,9 @@ func _refresh_tutorial() -> void:
 		return
 	if Game.guided_outage_active():
 		_render_guided_outage()
+		return
+	if FirstCustomer.active():
+		CustomerBrief.render(self)
 		return
 	if "rackup" in Game.contracts_done:
 		var guided := Game.guided_customer_deal()
@@ -4481,13 +4446,14 @@ func _refresh_tutorial() -> void:
 func _tutorial_head(text: String) -> Control:
 	var shell := VBoxContainer.new()
 	shell.add_theme_constant_override("separation", 5)
-	var eyebrow := _label("LIVE BRIEF  /  NEXT OBJECTIVE", 10, UIW.colour("warm"))
+	var eyebrow := _label("YOUR NEXT MOVE", 12, UIW.colour("accent"))
 	eyebrow.add_theme_font_override("font", mono)
 	shell.add_child(eyebrow)
 	var h := HBoxContainer.new()
 	shell.add_child(h)
 	var sec := _section(text)
-	sec.add_theme_font_size_override("font_size", 14)
+	sec.add_theme_font_size_override("font_size", 18)
+	sec.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sec.add_theme_color_override("font_color", UIW.colour("text_strong"))
 	sec.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(sec)
@@ -4691,7 +4657,7 @@ func _build_contracts_overlay() -> void:
 	contracts_overlay = _overlay()
 	var v := _card(contracts_overlay, 660)
 	var t := _header(v, close_contracts)
-	t.text = "Your company"
+	t.text = "Customers & company"
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 6)
 	v.add_child(tabs)

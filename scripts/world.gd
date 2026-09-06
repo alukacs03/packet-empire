@@ -17,6 +17,11 @@ var ui: UILayer
 var title: TitleScreen
 
 func _ready() -> void:
+	if OS.get_environment("PACKET_TEST") == "design":
+		DesignTests.run()
+		print("---- %d design failures" % SimTests.fails)
+		get_tree().quit(1 if SimTests.fails > 0 else 0)
+		return
 	if OS.get_environment("PACKET_TEST") == "replay":
 		SimTests.replay(OS.get_environment("PACKET_REPLAY"))  # tools/lab: one script, one device
 		get_tree().quit(0)
@@ -31,7 +36,7 @@ func _ready() -> void:
 			fails = SimTests.ui_smoke(self)
 		get_tree().quit(1 if fails > 0 else 0)
 		return
-	if OS.get_environment("PACKET_SHOT") == "" and not Film.active():
+	if OS.get_environment("PACKET_SHOT") == "" and OS.get_environment("PACKET_REVIEW") == "" and not Film.active():
 		_undo_stray_override()
 	ui = UILayer.new()
 	add_child(ui)
@@ -42,6 +47,9 @@ func _ready() -> void:
 	Sfx.muted = not Prefs.sound
 	get_tree().root.content_scale_factor = Prefs.ui_scale
 	Game.topology_changed.connect(queue_redraw)
+	if OS.get_environment("PACKET_REVIEW") != "":
+		DesignReview.run.call_deferred(self)
+		return
 	if OS.get_environment("PACKET_SHOT") != "":
 		_shoot_all.call_deferred()
 		return

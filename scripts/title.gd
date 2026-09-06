@@ -33,14 +33,14 @@ func _ready() -> void:
 
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 64)
-	margin.add_theme_constant_override("margin_right", 64)
-	margin.add_theme_constant_override("margin_top", 48)
-	margin.add_theme_constant_override("margin_bottom", 40)
+	margin.add_theme_constant_override("margin_left", 56)
+	margin.add_theme_constant_override("margin_right", 56)
+	margin.add_theme_constant_override("margin_top", 32)
+	margin.add_theme_constant_override("margin_bottom", 28)
 	root.add_child(margin)
 
 	var cols := HBoxContainer.new()
-	cols.add_theme_constant_override("separation", 48)
+	cols.add_theme_constant_override("separation", 40)
 	margin.add_child(cols)
 
 	var left := VBoxContainer.new()
@@ -52,18 +52,21 @@ func _ready() -> void:
 	var spacer_top := Control.new()
 	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(spacer_top)
+	left.add_child(UIW.make_chip("INDEPENDENT NETWORK COMPANY", "accent"))
 	left.add_child(_wordmark())
 	eyebrow_lbl = _lbl(Loc.t("title.eyebrow"), 12, UIW.colour("warm"))
 	eyebrow_lbl.add_theme_font_override("font", _mono)
 	left.add_child(eyebrow_lbl)
 	tagline_lbl = _lbl(Loc.t("title.tagline"), 18, UIW.colour("text"))
+	tagline_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tagline_lbl.custom_minimum_size.x = 410
 	left.add_child(tagline_lbl)
 	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(0, 26)
+	gap.custom_minimum_size = Vector2(0, 12)
 	left.add_child(gap)
 
 	menu_box = VBoxContainer.new()
-	menu_box.add_theme_constant_override("separation", 12)
+	menu_box.add_theme_constant_override("separation", 6)
 	menu_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	left.add_child(menu_box)
 	var spacer_bot := Control.new()
@@ -73,7 +76,7 @@ func _ready() -> void:
 	left.add_child(footer_lbl)
 
 	var right := UIW.CommandPanel.new().setup("overlay", "warm", 28)
-	right.custom_minimum_size = Vector2(390, 520)
+	right.custom_minimum_size = Vector2(420, 420)
 	right.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	cols.add_child(right)
 	var rv := VBoxContainer.new()
@@ -100,12 +103,12 @@ func _ready() -> void:
 	show_intro()
 
 func _wordmark() -> Control:
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 0)
-	var a := _lbl("PACKET ", 58, UIW.colour("text_strong"))
+	var h := VBoxContainer.new()
+	h.add_theme_constant_override("separation", -18)
+	var a := _lbl("PACKET", 66, UIW.colour("text_strong"))
 	a.add_theme_font_override("font", UIW.sans_font())
 	h.add_child(a)
-	var b := _lbl("EMPIRE", 58, UIW.colour("warm"))
+	var b := _lbl("EMPIRE", 66, UIW.colour("accent"))
 	b.add_theme_font_override("font", UIW.sans_font())
 	h.add_child(b)
 	return h
@@ -224,21 +227,13 @@ func show_error(msg: String) -> void:
 
 func show_intro() -> void:
 	_clear_pane()
-	pane_title.text = Loc.t("title.intro.title")
-	for para in [
-		Loc.t("title.intro.p1"),
-		Loc.t("title.intro.p2"),
-		Loc.t("title.intro.p3"),
-	]:
-		panel_box.add_child(_para(para))
-	var tips := VBoxContainer.new()
-	tips.add_theme_constant_override("separation", 4)
-	panel_box.add_child(tips)
-	tips.add_child(_lbl(Loc.t("title.intro.tips"), 14, ACCENT))
-	for tip in [Loc.t("title.intro.tip1"), Loc.t("title.intro.tip2"),
-			Loc.t("title.intro.tip3"),
-			"Nothing you do to a device is permanent until you save its configuration."]:
-		tips.add_child(_lbl("  •  " + tip, 13, MUTED))
+	pane_title.text = Loc.t("opening.title")
+	panel_box.add_child(UIW.make_chip(Loc.t("opening.duration"), "warm"))
+	panel_box.add_child(_para(Loc.t("opening.promise")))
+	for beat in ["build", "care", "prove"]:
+		panel_box.add_child(_lbl(Loc.t("opening." + beat + ".title"), 18, ACCENT))
+		panel_box.add_child(_para(Loc.t("opening." + beat + ".body")))
+	panel_box.add_child(_para(Loc.t("opening.pause")))
 
 func _para(text: String) -> Control:
 	var l := _lbl(text, 14, Color(0.78, 0.83, 0.9))
