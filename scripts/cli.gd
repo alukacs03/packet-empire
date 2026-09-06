@@ -3413,7 +3413,7 @@ class EOS extends Session:
 			var had := _find_nb(String(r[0]))
 			if not had.is_empty():
 				if int(had["remote_as"]) != int(r[2]):
-					return "% BGP neighbor %s already configured with AS %d\n" % [r[0], int(had["remote_as"])]
+					return "%% BGP neighbor %s already configured with AS %d\n" % [r[0], int(had["remote_as"])]
 				return ""  # the same line again: a no-op, as when a config block is pasted
 			dev.bgp["neighbors"].append({"ip": r[0], "remote_as": int(r[2]),
 				"local_pref": 100, "prepend": 0, "prefix_in": [], "prefix_out": []})

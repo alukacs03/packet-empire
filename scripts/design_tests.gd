@@ -32,6 +32,10 @@ static func fixture() -> Dictionary:
 
 static func run() -> void:
 	var before := Game.snapshot()
+	var translated := Loc.pseudo("Cycle %d: %s, $%.2f, %02d, %% {customer}")
+	SimTests.check(translated.contains("%s") and translated.contains("{customer}") and
+		(translated % [3, "healthy", 1.25, 4]).contains("healthy"),
+		"localisation: pseudo text preserves formatting directives and named placeholders")
 	var f := fixture()
 	FirstCustomer.tick()
 	SimTests.check(String(FirstCustomer.state()["phase"]) == "planning", "opening: a recovered customer invites the player to plan a sale")

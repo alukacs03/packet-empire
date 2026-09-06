@@ -2695,7 +2695,15 @@ static func pseudo(text: String) -> String:
 	const MAP := {"a": "à", "e": "ë", "i": "í", "o": "ö", "u": "ü", "A": "Á", "E": "É",
 		"O": "Ö", "s": "š", "n": "ñ"}
 	var out := ""
-	for c in text:
+	var tokens := RegEx.new()
+	tokens.compile("%[-+0-9.*]*[sdfoxXc%]|\\{[^{}]+\\}")
+	var cursor := 0
+	for token: RegExMatch in tokens.search_all(text):
+		for c in text.substr(cursor, token.get_start() - cursor):
+			out += String(MAP.get(c, c))
+		out += token.get_string()
+		cursor = token.get_end()
+	for c in text.substr(cursor):
 		out += String(MAP.get(c, c))
 	var padding := int(max(1.0, float(text.length()) * 0.3))
 	return "[%s%s]" % [out, "·".repeat(padding)]
