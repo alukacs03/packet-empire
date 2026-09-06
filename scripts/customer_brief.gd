@@ -1,9 +1,10 @@
 class_name CustomerBrief
 
 static func paragraph(box: VBoxContainer, text: String, semantic := "text") -> void:
-	var label := UIW.make_text(text, "body", semantic)
+	var label := UIW.make_text(text, "small", semantic)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size.x = 290
+	label.custom_minimum_size.y = UIW.sans_font().get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, 290, UIW.type_size("small")).y + 4
 	box.add_child(label)
 
 static func render(ui) -> void:
@@ -14,28 +15,24 @@ static func render(ui) -> void:
 	var box: VBoxContainer = ui.tutorial_box
 	var arc := FirstCustomer.state()
 	var phase := String(arc.get("phase", "planning"))
-	box.add_child(ui._tutorial_head("Kiskacsa's big night"))
-	box.add_child(UIW.make_chip("CUSTOMER STORY  /  01", "accent"))
+	box.add_child(ui._tutorial_head(Loc.t("brief.title")))
 	var deal := Game.guided_customer_deal()
-	if not deal.is_empty():
-		var eye := Game.customer_eye(deal)
-		paragraph(box, String(eye["activity"]), "muted")
 	var f := FirstCustomer.forecast()
 	if phase in ["planning", "countdown"]:
-		paragraph(box, Loc.t("brief.packed_stock"))
-		box.add_child(UIW.make_text("%d Mbps available" % int(f["headroom"]), "title", "accent"))
-		paragraph(box, Loc.t("brief.forecast_note"), "muted")
-		paragraph(box, String(f["bottleneck"]), "muted")
+		if phase == "planning": paragraph(box, Loc.t("brief.invitation"))
+		var available := UIW.make_text(Loc.t("brief.available") % int(f["headroom"]), "heading", "accent")
+		available.tooltip_text = Loc.t("brief.forecast_note") + "\n" + String(f["bottleneck"])
+		box.add_child(available)
 	if phase == "planning":
 		for key: String in FirstCustomer.PLANS:
 			var plan: Dictionary = FirstCustomer.PLANS[key]
-			paragraph(box, Loc.t(String(plan["detail"])))
 			var b := WorkspaceShell.button("%s · %d Mbps" % [Loc.t(String(plan["name"])), plan["demand"][1]], func() -> void:
 				var err := FirstCustomer.choose(key)
 				if err != "": ui.hud_toast(err)
 				ui._refresh_tutorial(), key == "stagger")
-			b.tooltip_text = "$%d reservation. $%d bonus if all three waves run at full service." % [plan["fee"], plan["bonus"]]
+			b.tooltip_text = Loc.t(String(plan["detail"]))
 			box.add_child(b)
+			paragraph(box, Loc.t("brief.plan_terms") % [plan["fee"], plan["bonus"]], "muted")
 	elif phase in ["countdown", "live"]:
 		var plan: Dictionary = FirstCustomer.PLANS[String(arc["plan"])]
 		var left := int(arc["starts"]) - Game.cycle
@@ -45,7 +42,7 @@ static func render(ui) -> void:
 		paragraph(box, Loc.t("brief.move_traffic"), "muted")
 	elif phase == "debrief":
 		var successes := int(arc["successes"])
-		box.add_child(UIW.make_text("%d / 3 waves carried" % successes, "title", "accent" if successes == 3 else "warning"))
+		box.add_child(UIW.make_text(Loc.t("brief.carried") % successes, "heading", "accent" if successes == 3 else "warning"))
 		paragraph(box, Loc.t("brief.all_night") if successes == 3 else Loc.t("brief.got_through"))
 		for sample: Dictionary in arc["samples"]:
 			paragraph(box, Loc.t("brief.cycle_reason") % [sample["cycle"], sample["reason"]], "success" if sample["served"] else "warning")

@@ -86,7 +86,7 @@ static func build(ui) -> void:
 	nav.add_child(ui.mode_btns[0])
 	ui.contracts_btn = button("Customers", func() -> void:
 		ui.close_everything()
-		ui.open_contracts(), true)
+		ui.open_contracts())
 	nav.add_child(ui.contracts_btn)
 	ui.hud_map_btn = button("Network", func() -> void:
 		ui.close_everything()
@@ -132,3 +132,17 @@ static func build(ui) -> void:
 	ui.hud_shortcut_hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	ui.hud_shortcut_hint.position = Vector2(184, -32)
 	ui.add_child(ui.hud_shortcut_hint)
+
+static func refresh_navigation(ui) -> void:
+	# Selection describes the visible workspace, not the last floor tool used.
+	var sections := {ui.contracts_btn: ui.contracts_overlay, ui.hud_map_btn: ui.map_overlay,
+		ui.hud_ops_btn: ui.ops_overlay, ui.hud_find_btn: ui.search_overlay,
+		ui.hud_learn_btn: ui.pedia_overlay}
+	for b: Button in sections:
+		var panel: Control = sections[b]
+		var selected := panel != null and panel.visible
+		if not b.has_meta("selected") or b.get_meta("selected") != selected:
+			b.set_meta("selected", selected)
+			UIW.style_button(b, "primary" if selected else "quiet")
+	for key in ui.mode_btns:
+		ui.mode_btns[key].set_pressed_no_signal(not ui.is_open() and key == ui.get_parent().mode)

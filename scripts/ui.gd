@@ -594,10 +594,15 @@ func _process(_dt: float) -> void:
 			cycle_lbl.text = "⏸ paused"
 		elif t:
 			cycle_lbl.text = "⏱ %ds" % int(ceil(t.time_left))
+	WorkspaceShell.refresh_navigation(self)
 	# The live brief belongs to the floor, not on top of focused workspaces.
 	# Remember whether we hid it so it can return after the overlay closes.
 	if tutorial_panel:
-		if is_open() and (get_viewport().get_visible_rect().size.x < 1480 or map_overlay.visible or welcome_overlay.visible or demo_overlay.visible or menu_overlay.visible):
+		var crowded := get_viewport().get_visible_rect().size.x < 1480 or map_overlay.visible or welcome_overlay.visible or demo_overlay.visible or menu_overlay.visible
+		for scroll in _card_scrolls:
+			if is_instance_valid(scroll) and scroll.is_visible_in_tree() and not scroll.has_meta("customer_brief"):
+				crowded = crowded or scroll.get_parent().get_global_rect().end.x > tutorial_panel.get_global_rect().position.x - 16
+		if is_open() and crowded:
 			if tutorial_panel.visible:
 				tutorial_suppressed_by_overlay = true
 				tutorial_panel.visible = false
@@ -691,6 +696,13 @@ func _section(text: String) -> Label:
 
 func _show_overlay(o: Control) -> void:
 	Sfx.play("open")
+	# Ordinary workspaces leave the persistent rail and clock reachable.
+	# The rest of the scrim still consumes clicks, including bare floor.
+	if o not in [welcome_overlay, demo_overlay, menu_overlay, settings_overlay]:
+		var scrim := o.get_child(0) as ColorRect
+		if scrim != null:
+			scrim.offset_left = 176
+			scrim.offset_top = card_top()
 	o.modulate.a = 0.0
 	o.visible = true
 	_fit_cards.call_deferred()
@@ -754,6 +766,7 @@ func _card(parent: Control, min_w: float) -> VBoxContainer:
 	center.add_child(panel)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(min_w, 0)
+	scroll.set_meta("preferred_width", min_w)
 	scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("md"))
 	panel.add_child(scroll)
 	panel.add_child(_more_hint(scroll))
@@ -789,7 +802,7 @@ func _more_hint(scroll: ScrollContainer) -> Label:
 func _scroll_to_bottom() -> void:
 	_fit_cards()
 	for scroll: ScrollContainer in _card_scrolls:
-		if scroll.is_visible_in_tree():
+		if scroll.is_visible_in_tree() and not scroll.has_meta("customer_brief"):
 			scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 
 func _fit_cards() -> void:
@@ -818,9 +831,12 @@ func _fit_cards() -> void:
 		# bottom of the panel out of reach entirely. Measure what was actually
 		# laid out and take whichever is larger.
 		need_y = maxf(need_y, _laid_out_height(content))
-		scroll.custom_minimum_size = Vector2(
-			minf(maxf(need.x, scroll.custom_minimum_size.x), vp.x - 280.0),
-			minf(need_y, vp.y - card_top() - 60.0))
+		if scroll.has_meta("customer_brief"):
+			scroll.custom_minimum_size = Vector2(308, minf(need.y, vp.y - 200.0))
+		else:
+			scroll.custom_minimum_size = Vector2(
+				minf(maxf(need.x, float(scroll.get_meta("preferred_width", 640))), vp.x - 280.0),
+				minf(need_y, vp.y - card_top() - 60.0))
 
 func _laid_out_height(content: Control) -> float:
 	## The real height of what is in a card, after layout, including text that
@@ -1332,8 +1348,9 @@ func _build_dev_overlay() -> void:
 	v.add_child(name_row)
 	# the actions sit under the hostname, above the faceplate and the port
 	# list, so a long port list or a handover note never pushes them out of view
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 8)
+	var btn_row := HFlowContainer.new()
+	btn_row.add_theme_constant_override("h_separation", 8)
+	btn_row.add_theme_constant_override("v_separation", 8)
 	v.add_child(btn_row)
 	name_row.add_child(_label(Loc.t("dev.hostname") + ":  ", 14, MUTED))
 	name_edit = _mono_edit(220)
@@ -4253,6 +4270,7 @@ func _build_tutorial() -> void:
 	tutorial_panel.custom_minimum_size = Vector2(356, 0)
 	add_child(tutorial_panel)
 	var brief_scroll := ScrollContainer.new()
+	brief_scroll.set_meta("customer_brief", true)
 	brief_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	brief_scroll.custom_minimum_size = Vector2(308, clampf(get_viewport().get_visible_rect().size.y - 260.0, 300.0, 560.0))  # the plan buttons stay above the fold at 1280x720
 	tutorial_panel.add_child(brief_scroll)
@@ -6881,7 +6899,9 @@ func _unhandled_input(e: InputEvent) -> void:
 	if not visible:
 		return  # the title screen is up; the game is not listening
 	if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
-		if if_overlay.visible:
+		if service_overlay != null and is_instance_valid(service_overlay) and service_overlay.visible:
+			service_overlay.visible = false
+		elif if_overlay.visible:
 			close_iface()
 		elif dev_overlay.visible:
 			if cli_box.visible:
