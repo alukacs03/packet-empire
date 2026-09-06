@@ -299,7 +299,7 @@ func _build_unlock_intro() -> void:
 	unlock_intro_action.pressed.connect(_follow_unlock_intro)
 	actions.add_child(unlock_intro_action)
 	var dismiss := Button.new()
-	dismiss.text = "Got it"
+	dismiss.text = Loc.t("btn.got_it")
 	dismiss.pressed.connect(_dismiss_unlock_intro)
 	actions.add_child(dismiss)
 
@@ -411,7 +411,7 @@ func _refresh_attention() -> void:
 	for deal: Dictionary in Game.deals:
 		if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)): outages += 1
 	if Game.guided_outage_active(): outages = maxi(1, outages)
-	contracts_btn.text = "Customers"
+	contracts_btn.text = Loc.t("btn.customers")
 	contracts_btn.modulate = Color.WHITE
 	if hud_alert_btn:
 		hud_alert_btn.visible = outages > 0 or not Game.offers.is_empty() or Game.unread_events > 0
@@ -442,12 +442,12 @@ func _refresh_hud_layout(width_override := -1.0) -> void:
 		else get_viewport().get_visible_rect().size.x
 	hud_compact = width < 1200.0  # 1280x720 is a target size: it keeps the full bar and the shortcut list
 	hud_logo.visible = true
-	hud_learn_btn.text = "Field manual"
+	hud_learn_btn.text = Loc.t("btn.field_manual")
 	if hud_find_btn:
-		hud_find_btn.text = "Find anything"
-	mode_btns[0].text = "Floor"
+		hud_find_btn.text = Loc.t("btn.find_anything")
+	mode_btns[0].text = Loc.t("btn.floor")
 	mode_btns[0].tooltip_text = "Select mode (Q)"
-	mode_btns[1].text = "Build a rack"
+	mode_btns[1].text = Loc.t("btn.build_rack")
 	mode_btns[1].tooltip_text = "Place a rack (R)"
 	objective_lbl.custom_minimum_size.x = 150 if hud_compact else 260
 	clock_lbl.visible = width >= 1450
@@ -847,7 +847,7 @@ func _header(box: VBoxContainer, on_back: Callable) -> Label:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(title)
 	var back := Button.new()
-	back.text = "Close  ·  Esc"
+	back.text = Loc.t("btn.close_esc")
 	UIW.style_button(back, "quiet")
 	back.pressed.connect(on_back)
 	h.add_child(back)
@@ -1108,7 +1108,7 @@ func _rack_metric(caption: String, key: String, semantic: String) -> PanelContai
 func open_rack(r: Net.Rack) -> void:
 	cur_rack = r
 	dev_overlay.visible = false
-	rack_title.text = "Rack %s" % r.name
+	rack_title.text = Loc.t("btn.rack_named") % r.name
 	_refresh_note_card(rack_note_ui, r, rack_note_btn)
 	_refresh_slots()
 	_show_overlay(rack_overlay)
@@ -1422,7 +1422,7 @@ func _build_dev_overlay() -> void:
 				return)
 	btn_row.add_child(cli_learn_btn)
 	cap_toggle = Button.new()
-	cap_toggle.text = "Packets ⇅"
+	cap_toggle.text = Loc.t("btn.packets")
 	cap_toggle.tooltip_text = Loc.t("dev.capture.tip")
 	cap_toggle.pressed.connect(func() -> void:
 		cap_box.visible = not cap_box.visible
@@ -1453,7 +1453,7 @@ func _build_dev_overlay() -> void:
 			_refresh_ports()))
 	btn_row.add_child(template_btn)
 	save_cfg_btn = Button.new()
-	save_cfg_btn.text = "Save config"
+	save_cfg_btn.text = Loc.t("btn.save_config")
 	save_cfg_btn.tooltip_text = "write memory: survive a reboot"
 	save_cfg_btn.pressed.connect(func() -> void:
 		var was_dirty := Game.config_dirty(cur_dev)
@@ -1464,7 +1464,7 @@ func _build_dev_overlay() -> void:
 			Sfx.play("good"))
 	btn_row.add_child(save_cfg_btn)
 	var confirm_btn := Button.new()
-	confirm_btn.text = "Arm confirmed commit"
+	confirm_btn.text = Loc.t("btn.arm_confirmed_commit")
 	confirm_btn.tooltip_text = "The change reverts in three cycles unless you come back and confirm it. This is what saves you when you cut your own path."
 	confirm_btn.pressed.connect(func() -> void:
 		var err: String = Game.arm_confirm(cur_dev) if not Game.confirm_commits.has(cur_dev.name) \
@@ -1478,7 +1478,7 @@ func _build_dev_overlay() -> void:
 	btn_row.add_child(confirm_btn)
 	if Game.site_count() > 1:
 		var move_btn := Button.new()
-		move_btn.text = "Send to another floor…"
+		move_btn.text = Loc.t("btn.send_other_floor")
 		move_btn.tooltip_text = "It leaves the rack now and arrives on the other dock as a crate. Its configuration stays behind."
 		move_btn.pressed.connect(func() -> void:
 			var move_targets: Array = []
@@ -1498,7 +1498,7 @@ func _build_dev_overlay() -> void:
 					get_parent().rebuild_racks()))
 		btn_row.add_child(move_btn)
 	var uninstall := Button.new()
-	uninstall.text = "Decommission…"
+	uninstall.text = Loc.t("btn.decommission")
 	uninstall.tooltip_text = "Pulling it is the fast half. What you skip is what an auditor asks about later."
 	uninstall.pressed.connect(func() -> void:
 		_menu(uninstall, [
@@ -1527,7 +1527,7 @@ func _build_dev_overlay() -> void:
 				_show_overlay(rack_overlay)))
 	btn_row.add_child(uninstall)
 	var hands := Button.new()
-	hands.text = "Remote hands…"
+	hands.text = Loc.t("btn.remote_hands")
 	hands.tooltip_text = "Somebody else's hands, doing exactly what you wrote. Labels are what make that safe."
 	hands.pressed.connect(func() -> void:
 		var dev := cur_dev
@@ -1686,7 +1686,7 @@ func _refresh_ports() -> void:
 	svc_lbl.text = ("  ⚙ " + "   ".join(PackedStringArray(svc_bits))) if not svc_bits.is_empty() else ""
 	var dirty := Game.config_dirty(cur_dev)
 	save_cfg_btn.visible = cur_dev.type not in ["server", "uplink", "cooling"]
-	save_cfg_btn.text = "⚠ Save config" if dirty else "Save config"
+	save_cfg_btn.text = "⚠ Save config" if dirty else Loc.t("btn.save_config")
 	save_cfg_btn.modulate = Color(1.3, 1.0, 0.6) if dirty else Color.WHITE
 	if dirty:
 		svc_lbl.text += "      ⚠ unsaved configuration: a reboot would lose it"
@@ -1762,7 +1762,7 @@ func _build_if_overlay() -> void:
 	cable_btns.add_theme_constant_override("separation", 8)
 	v.add_child(cable_btns)
 	var repair_btn := Button.new()
-	repair_btn.text = "Physical work…"
+	repair_btn.text = Loc.t("btn.physical_work")
 	repair_btn.tooltip_text = "Reseat it, swap the optic, swap the lead. The wrong one costs the part and fixes nothing."
 	repair_btn.pressed.connect(func() -> void:
 		_menu(repair_btn, Game.GREY_REPAIRS, func(id: int) -> void:
@@ -1778,7 +1778,7 @@ func _build_if_overlay() -> void:
 	if_note_btn.pressed.connect(func() -> void: _open_note_card(if_note_ui))
 	cable_btns.add_child(if_note_btn)
 	if_peer_btn = Button.new()
-	if_peer_btn.text = "Go to other end ⇄"
+	if_peer_btn.text = Loc.t("btn.go_other_end")
 	if_peer_btn.pressed.connect(func() -> void:
 		var l := Game.link_at(cur_if)
 		if l:
@@ -1855,7 +1855,7 @@ func _refresh_iface() -> void:
 	var peer := Game.peer_label(cur_if)
 	if peer == "":
 		if_cable_lbl.text = Loc.t("iface.cable.none")
-		if_cable_btn.text = "Run cable…"
+		if_cable_btn.text = Loc.t("btn.run_cable")
 		if_cable_btn.tooltip_text = "Pick the free port on the far end, in this rack or another; dragging between port squares in the rack view works too."
 		if_peer_btn.visible = false
 	else:
@@ -1955,7 +1955,7 @@ func _build_pedia() -> void:
 	pedia_overlay = _overlay()
 	var v := _card(pedia_overlay, 980)
 	var t := _header(v, func() -> void: pedia_overlay.visible = false)
-	t.text = "Field manual"
+	t.text = Loc.t("btn.field_manual")
 	var eyebrow := _section("FIELD MANUAL  /  REFERENCE")
 	eyebrow.add_theme_color_override("font_color", UIW.colour("accent"))
 	v.add_child(eyebrow)
@@ -2285,7 +2285,7 @@ func _refresh_ops() -> void:
 	for d: Net.NDevice in devs:
 		if not _device_alerts(d).is_empty():
 			alerting += 1
-	ops_title.text = "Network operations"
+	ops_title.text = Loc.t("btn.network_operations")
 	# the scope line says THIS FLOOR, so the card must not quietly sum every site
 	var watts := int(Game.capacity(Game.current_site)["watts"])
 	(ops_metric_values["devices"] as Label).text = "%02d ONLINE" % devs.size()
@@ -2362,7 +2362,7 @@ func _refresh_ops() -> void:
 			% [who, when, tk["cares"],
 				int(Game.tour_score(kind) * 100.0)], 13, Color(1.0, 0.82, 0.5), 780))
 		var cram_btn := Button.new()
-		cram_btn.text = "Bring in a crew at short notice ($600)"
+		cram_btn.text = Loc.t("btn.crew_short_notice")
 		cram_btn.tooltip_text = "It helps a little. It cannot fake months of neglect."
 		cram_btn.pressed.connect(func() -> void:
 			var err: String = Game.cram_for_tour()
@@ -2395,7 +2395,7 @@ func _refresh_ops() -> void:
 		var walk_btn := Button.new()
 		var rack_lock := Game.rack_of(d_lock2)
 		var far := rack_lock != null and int(rack_lock.site) != 0
-		walk_btn.text = "Site visit ($350)" if far else "Walk to the rack"
+		walk_btn.text = Loc.t("btn.site_visit") if far else Loc.t("btn.walk_to_rack")
 		walk_btn.pressed.connect(func() -> void:
 			var err: String = Game.walk_to_device(d_lock2)
 			if err != "":
@@ -2412,7 +2412,7 @@ func _refresh_ops() -> void:
 		cl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		crow2.add_child(cl2)
 		var conf := Button.new()
-		conf.text = "Confirm"
+		conf.text = Loc.t("btn.confirm")
 		conf.pressed.connect(func() -> void:
 			for d_conf: Net.NDevice in Game.all_devices():
 				if d_conf.name == name_c:
@@ -2438,7 +2438,7 @@ func _refresh_ops() -> void:
 		drl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		dr_row.add_child(drl)
 		var walk := Button.new()
-		walk.text = "Walk it and write it up ($30)"
+		walk.text = Loc.t("btn.walk_and_write")
 		walk.pressed.connect(func() -> void:
 			var err: String = Game.reconcile_rack(r_doc)
 			if err != "":
@@ -2464,7 +2464,7 @@ func _refresh_ops() -> void:
 			orow.add_child(ol)
 			if known < 2:
 				var dig := Button.new()
-				dig.text = "Investigate ($50)"
+				dig.text = Loc.t("btn.investigate")
 				dig.tooltip_text = "Counters, logs and asking somebody. Twice and you will know."
 				dig.pressed.connect(func() -> void:
 					var err: String = Game.investigate_orphan(orphan)
@@ -2474,7 +2474,7 @@ func _refresh_ops() -> void:
 					_refresh_money())
 				orow.add_child(dig)
 			var kill := Button.new()
-			kill.text = "Turn it off"
+			kill.text = Loc.t("btn.turn_off")
 			kill.tooltip_text = "Reclaims power, space and addresses. Assuming nothing needed it."
 			kill.pressed.connect(func() -> void:
 				var err: String = Game.retire_orphan(orphan)
@@ -2491,7 +2491,7 @@ func _refresh_ops() -> void:
 		12, Color(0.72, 0.8, 0.88)))
 	for tier_i in [1, 2]:
 		var buy_tier := Button.new()
-		buy_tier.text = "Buy %s ($%d)" % [Game.SUPPORT_TIERS[tier_i]["label"],
+		buy_tier.text = Loc.t("btn.buy_model") % [Game.SUPPORT_TIERS[tier_i]["label"],
 			int(Game.SUPPORT_TIERS[tier_i]["cost"])]
 		buy_tier.tooltip_text = "Response in %d cycle(s), escalation in %d." % [
 			int(Game.SUPPORT_TIERS[tier_i]["wait"]), int(Game.SUPPORT_TIERS[tier_i]["escalate"])]
@@ -2506,7 +2506,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("  %s is flapping a port with nothing in its configuration to explain it. No amount of your work will fix that one." % name_bug,
 			12, Color(1.0, 0.72, 0.45), 780))
 		var open_case := Button.new()
-		open_case.text = "Open a case against %s" % name_bug
+		open_case.text = Loc.t("btn.open_case_against") % name_bug
 		open_case.pressed.connect(func() -> void:
 			for d_case: Net.NDevice in Game.all_devices():
 				if d_case.name == name_bug:
@@ -2533,7 +2533,7 @@ func _refresh_ops() -> void:
 				if kind in c["evidence"]:
 					continue
 				var ev := Button.new()
-				ev.text = "Send %s" % kind
+				ev.text = Loc.t("btn.send_to") % kind
 				ev.pressed.connect(func() -> void:
 					var err: String = Game.attach_evidence(c, kind)
 					if err != "":
@@ -2542,7 +2542,7 @@ func _refresh_ops() -> void:
 				crow.add_child(ev)
 				break
 			var bundle_btn := Button.new()
-			bundle_btn.text = "Attach a tech-support bundle"
+			bundle_btn.text = Loc.t("btn.attach_bundle")
 			bundle_btn.tooltip_text = "'show tech-support' collects everything they asked for in one go"
 			bundle_btn.pressed.connect(func() -> void:
 				var err: String = Game.attach_bundle(c)
@@ -2551,7 +2551,7 @@ func _refresh_ops() -> void:
 				_refresh_ops())
 			crow.add_child(bundle_btn)
 			var hand := Button.new()
-			hand.text = "Hand it to the team" if not bool(c.get("delegated", false)) else "Take it back"
+			hand.text = Loc.t("btn.hand_to_team") if not bool(c.get("delegated", false)) else Loc.t("btn.take_back")
 			hand.tooltip_text = "They will work it, slowly, and they will not push back"
 			hand.pressed.connect(func() -> void:
 				c["delegated"] = not bool(c.get("delegated", false))
@@ -2559,7 +2559,7 @@ func _refresh_ops() -> void:
 			crow.add_child(hand)
 		elif String(c["stage"]) == "queued":
 			var esc := Button.new()
-			esc.text = "Escalate ($200)"
+			esc.text = Loc.t("btn.escalate")
 			esc.pressed.connect(func() -> void:
 				var err: String = Game.escalate_case(c)
 				if err != "":
@@ -2569,7 +2569,7 @@ func _refresh_ops() -> void:
 			crow.add_child(esc)
 		elif String(c["stage"]) == "fix_ready":
 			var load_btn := Button.new()
-			load_btn.text = "Load the fixed image"
+			load_btn.text = Loc.t("btn.load_fixed_image")
 			load_btn.tooltip_text = "A reload. Inside a change window it is routine; outside one it is a decision."
 			load_btn.pressed.connect(func() -> void:
 				var err: String = Game.apply_firmware(c)
@@ -2597,7 +2597,7 @@ func _refresh_ops() -> void:
 			rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			rrow.add_child(rl)
 			var pay := Button.new()
-			pay.text = "Renew"
+			pay.text = Loc.t("btn.renew")
 			pay.pressed.connect(func() -> void:
 				var err: String = Game.renew_item(String(item["id"]))
 				if err != "":
@@ -2608,7 +2608,7 @@ func _refresh_ops() -> void:
 			var auto_r := Button.new()
 			auto_r.toggle_mode = true
 			auto_r.button_pressed = bool(item["auto"])
-			auto_r.text = "Auto" if auto_r.button_pressed else "Manual"
+			auto_r.text = Loc.t("btn.auto") if auto_r.button_pressed else Loc.t("btn.manual")
 			auto_r.tooltip_text = "Auto-renew takes the money when it takes it, whatever else is happening"
 			auto_r.toggled.connect(func(on: bool) -> void:
 				item["auto"] = on
@@ -2623,7 +2623,7 @@ func _refresh_ops() -> void:
 		for cmp_line: String in Game.compare_to_best(Game.finale.get("record", {})):
 			ops_box.add_child(_label("  %s" % cmp_line, 12, Color(0.72, 0.84, 0.8)))
 		var fin_copy := Button.new()
-		fin_copy.text = "Copy the report"
+		fin_copy.text = Loc.t("btn.copy_report")
 		fin_copy.pressed.connect(func() -> void:
 			DisplayServer.clipboard_set("\n".join(PackedStringArray(Game.finale_report())))
 			hud_toast(Loc.t("toast.report_clipboard"), true))
@@ -2632,7 +2632,7 @@ func _refresh_ops() -> void:
 		# to score: the honest next move is a second company, one notch harder
 		var next_diff := mini(Game.difficulty + 1, Game.DIFFICULTIES.size() - 1)
 		var again := Button.new()
-		again.text = "Start the second company  (%s)" % Game.DIFFICULTIES[next_diff]["name"]
+		again.text = Loc.t("btn.second_company") % Game.DIFFICULTIES[next_diff]["name"]
 		again.tooltip_text = "A new run in this save slot, one difficulty up, with what this company leaves behind on offer."
 		_accent(again)
 		again.pressed.connect(func() -> void:
@@ -2642,7 +2642,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(again)
 	elif Game.rank() == Game.RANKS[Game.RANKS.size() - 1][0]:
 		var retire := Button.new()
-		retire.text = "Retire at the top"
+		retire.text = Loc.t("btn.retire")
 		retire.tooltip_text = "Freeze the run and read the report. Your save is not touched."
 		retire.pressed.connect(func() -> void:
 			var err: String = Game.end_run("retired")
@@ -2664,7 +2664,7 @@ func _refresh_ops() -> void:
 			rl.add_theme_font_override("font", mono)
 			ops_box.add_child(rl)
 		var forget := Button.new()
-		forget.text = "Clear the history"
+		forget.text = Loc.t("btn.clear_history")
 		forget.tooltip_text = "History is not a save: clearing it costs you nothing but the table."
 		forget.pressed.connect(func() -> void:
 			Game.forget_all_runs()
@@ -2689,7 +2689,7 @@ func _refresh_ops() -> void:
 				il2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				irow2.add_child(il2)
 				var ib := Button.new()
-				ib.text = "Be this"
+				ib.text = Loc.t("btn.be_this")
 				ib.pressed.connect(func() -> void:
 					Game.choose_identity(ident_id)
 					_refresh_ops()
@@ -2703,7 +2703,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("  %s. %s  (%s)" % [mine["label"], mine["blurb"], mine["trade"]],
 			12, Color(0.72, 0.84, 0.8), 780))
 		var reb := Button.new()
-		reb.text = "Rebrand ($5000 and some standing)…"
+		reb.text = Loc.t("btn.rebrand")
 		reb.pressed.connect(func() -> void:
 			var ids: Array = Game.IDENTITIES.keys()
 			var opts_i: Array = []
@@ -2740,7 +2740,7 @@ func _refresh_ops() -> void:
 		acc_row.add_child(polb)
 	if not Game.cameras:
 		var cam := Button.new()
-		cam.text = "Put cameras in ($1200)"
+		cam.text = Loc.t("btn.cameras")
 		cam.tooltip_text = "They prevent nothing and explain everything."
 		cam.pressed.connect(func() -> void:
 			var err: String = Game.buy_cameras()
@@ -2803,7 +2803,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("      %s Fitting protection during the event does not help this one." % what_stops, 12, MUTED, 600))
 		if not Staff.anyone_on_shift() and not Game.staff.is_empty():
 			var haz_call := Button.new()
-			haz_call.text = "Get somebody in ($%d)" % Game.CALLOUT_FEE
+			haz_call.text = Loc.t("btn.get_somebody") % Game.CALLOUT_FEE
 			haz_call.tooltip_text = "The call-out: somebody comes in now and the crew can act on it this cycle"
 			haz_call.pressed.connect(func() -> void:
 				var err := Game.call_someone_out()
@@ -2821,7 +2821,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("  Booked for cycle %d. The upstream on this floor goes away for %d cycle(s); everything that is meant to survive it should."
 			% [int(Game.dr_test["booked"]), Game.DR_LENGTH], 13, UIW.colour("text_strong"), 780))
 		var dr_cancel := Button.new()
-		dr_cancel.text = "Cancel it"
+		dr_cancel.text = Loc.t("btn.cancel_it")
 		dr_cancel.pressed.connect(func() -> void:
 			var err := Game.cancel_dr_test()
 			if err != "":
@@ -2832,7 +2832,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("  Prove the redundancy on a day you chose, rather than on the day it is taken from you.",
 			13, UIW.colour("muted"), 780))
 		var dr_book := Button.new()
-		dr_book.text = "Book a failover test"
+		dr_book.text = Loc.t("btn.book_failover")
 		dr_book.tooltip_text = "Announced %d cycles ahead. The upstream goes away for %d cycles and the test is judged on whether customers stayed served." % [Game.DR_NOTICE, Game.DR_LENGTH]
 		_accent(dr_book)
 		dr_book.pressed.connect(func() -> void:
@@ -2859,7 +2859,7 @@ func _refresh_ops() -> void:
 		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		frow.add_child(fl)
 		var do_btn := Button.new()
-		do_btn.text = "Do it ($%d)" % int(task["cost"])
+		do_btn.text = Loc.t("btn.do_it_cost") % int(task["cost"])
 		do_btn.pressed.connect(func() -> void:
 			var err: String = Game.service_facility(task_id)
 			if err != "":
@@ -2870,7 +2870,7 @@ func _refresh_ops() -> void:
 		var auto_btn := Button.new()
 		auto_btn.toggle_mode = true
 		auto_btn.button_pressed = bool(Game.facility_auto.get(task_id, false))
-		auto_btn.text = "On schedule" if auto_btn.button_pressed else "Delegate"
+		auto_btn.text = Loc.t("btn.on_schedule") if auto_btn.button_pressed else Loc.t("btn.delegate")
 		auto_btn.tooltip_text = "Let the crew keep this one on schedule and bill you for it"
 		auto_btn.toggled.connect(func(on: bool) -> void:
 			Game.facility_auto[task_id] = on
@@ -2906,7 +2906,7 @@ func _refresh_ops() -> void:
 			tl.add_theme_font_override("font", mono)
 			ops_box.add_child(tl)
 		var clear_btn := Button.new()
-		clear_btn.text = "Reset the counters"
+		clear_btn.text = Loc.t("btn.reset_counters")
 		clear_btn.pressed.connect(func() -> void:
 			Game.clear_talkers()
 			_refresh_ops())
@@ -2943,7 +2943,7 @@ func _refresh_ops() -> void:
 				12, Color(0.8, 0.75, 0.6), 780))
 	if Game.stage >= 1 and not Game.has_ups(Game.current_site):
 		var ups_btn := Button.new()
-		ups_btn.text = "Install a UPS on this floor  ($%d)" % Game.UPS_PRICE
+		ups_btn.text = Loc.t("btn.install_ups") % Game.UPS_PRICE
 		ups_btn.tooltip_text = "Holds a dead feed up for %d cycles while the utility sorts itself out" % Game.UPS_CYCLES
 		ups_btn.pressed.connect(func() -> void:
 			var err := Game.buy_ups()
@@ -3043,7 +3043,7 @@ func _refresh_ops() -> void:
 					Prefs.bad_colour() if String(f_i["grade"]) == "major finding"
 					else Color(1.0, 0.82, 0.5)))
 			var vb := Button.new()
-			vb.text = "Ask them to re-verify"
+			vb.text = Loc.t("btn.reverify")
 			vb.pressed.connect(func() -> void:
 				var err: String = Game.verify_audit()
 				if err != "":
@@ -3070,7 +3070,7 @@ func _refresh_ops() -> void:
 		dl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		drow.add_child(dl)
 		var assign := Button.new()
-		assign.text = "Assign…" if holder == "" else "Take it back"
+		assign.text = Loc.t("btn.assign") if holder == "" else Loc.t("btn.take_back")
 		assign.pressed.connect(func() -> void:
 			if holder != "":
 				Game.assign_duty(duty_id, "")
@@ -3108,7 +3108,7 @@ func _refresh_ops() -> void:
 	drawer_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parts_row.add_child(drawer_lbl)
 	var buy_parts_btn := Button.new()
-	buy_parts_btn.text = "Stock up…"
+	buy_parts_btn.text = Loc.t("btn.stock_up")
 	buy_parts_btn.pressed.connect(func() -> void:
 		var kinds: Array = Game.PART_LABELS.keys()
 		var opts_p: Array = []
@@ -3125,7 +3125,7 @@ func _refresh_ops() -> void:
 	var auto_parts := Button.new()
 	auto_parts.toggle_mode = true
 	auto_parts.button_pressed = Game.parts_auto
-	auto_parts.text = "Standing order" if Game.parts_auto else "Order by hand"
+	auto_parts.text = Loc.t("btn.standing_order") if Game.parts_auto else Loc.t("btn.order_by_hand")
 	auto_parts.tooltip_text = "Keep the drawer topped up automatically, while there is money to do it"
 	auto_parts.toggled.connect(func(on: bool) -> void:
 		Game.parts_auto = on
@@ -3140,7 +3140,7 @@ func _refresh_ops() -> void:
 	var cabling_btn := Button.new()
 	cabling_btn.toggle_mode = true
 	cabling_btn.button_pressed = Game.cabling_documented
-	cabling_btn.text = "Cabling: documented" if Game.cabling_documented else "Cabling: expedient"
+	cabling_btn.text = Loc.t("btn.cabling_documented") if Game.cabling_documented else Loc.t("btn.cabling_expedient")
 	cabling_btn.tooltip_text = "Documented runs label both ends and write themselves up as they go."
 	cabling_btn.toggled.connect(func(on: bool) -> void:
 		Game.cabling_documented = on
@@ -3154,7 +3154,7 @@ func _refresh_ops() -> void:
 			Color(0.68, 0.74, 0.82)))
 	if Game.cable_debt > 0:
 		var redo := Button.new()
-		redo.text = "Redo the improvised leads (%d)" % Game.cable_debt
+		redo.text = Loc.t("btn.redo_leads") % Game.cable_debt
 		redo.tooltip_text = "Proper lengths, out of the drawer. It shows on a tour."
 		redo.pressed.connect(func() -> void:
 			var err: String = Game.redo_cable_debt()
@@ -3165,7 +3165,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(redo)
 	ops_box.add_child(_section("RECEIVING"))
 	var order_btn := Button.new()
-	order_btn.text = "Order hardware…"
+	order_btn.text = Loc.t("btn.order_hardware")
 	order_btn.tooltip_text = "Vendor tier decides the price and the wait. What turns up is a crate."
 	order_btn.pressed.connect(func() -> void:
 		var order_models: Array = []
@@ -3213,7 +3213,7 @@ func _refresh_ops() -> void:
 		if int(crate["arrived"]) >= 0:
 			if not bool(crate["checked"]):
 				var chk := Button.new()
-				chk.text = "Check against the order"
+				chk.text = Loc.t("btn.check_order")
 				chk.tooltip_text = "Damage and wrong items go back free. Discovered later, they do not."
 				chk.pressed.connect(func() -> void:
 					var err: String = Game.check_crate(crate)
@@ -3223,7 +3223,7 @@ func _refresh_ops() -> void:
 					_refresh_money())
 				krow.add_child(chk)
 			var unp := Button.new()
-			unp.text = "Unpack"
+			unp.text = Loc.t("btn.unpack")
 			unp.pressed.connect(func() -> void:
 				var err: String = Game.unpack_crate(crate)
 				if err != "":
@@ -3237,7 +3237,7 @@ func _refresh_ops() -> void:
 		prow.add_child(_label("  %d pile(s) of cardboard and wrap in the aisle" % Game.packaging,
 			12, Color(1.0, 0.82, 0.5)))
 		var clear_btn := Button.new()
-		clear_btn.text = "Take it out"
+		clear_btn.text = Loc.t("btn.take_out")
 		clear_btn.pressed.connect(func() -> void:
 			Game.clear_packaging()
 			_refresh_ops())
@@ -3274,7 +3274,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("  Nobody can sell you: %s" % ", ".join(PackedStringArray(back_order)),
 			13, UIW.colour("warning"), 780))
 	var spare_btn := Button.new()
-	spare_btn.text = "Buy a spare…"
+	spare_btn.text = Loc.t("btn.buy_spare")
 	spare_btn.pressed.connect(func() -> void:
 		var models: Array = []
 		var opts: Array = []
@@ -3305,7 +3305,7 @@ func _refresh_ops() -> void:
 		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		frow.add_child(fl)
 		var swap := Button.new()
-		swap.text = "Swap from spares"
+		swap.text = Loc.t("btn.swap_spares")
 		swap.pressed.connect(func() -> void:
 			var err: String = Game.swap_from_spares(d)
 			_refresh_ops()
@@ -3313,7 +3313,7 @@ func _refresh_ops() -> void:
 				_toast(err))
 		frow.add_child(swap)
 		var rma_btn := Button.new()
-		rma_btn.text = "Send it back (RMA)"
+		rma_btn.text = Loc.t("btn.rma")
 		rma_btn.tooltip_text = "Ship the dead unit to the vendor. With support cover the replacement comes first."
 		rma_btn.pressed.connect(func() -> void:
 			var err: String = Game.send_rma(d)
@@ -3324,7 +3324,7 @@ func _refresh_ops() -> void:
 		frow.add_child(rma_btn)
 	ops_box.add_child(_section("RUNBOOKS AND AUTOMATION"))
 	var rb_new := Button.new()
-	rb_new.text = "New runbook…"
+	rb_new.text = Loc.t("btn.new_runbook")
 	rb_new.tooltip_text = "A bounded action, a selector, and a blast radius. Nothing else."
 	rb_new.pressed.connect(func() -> void:
 		var actions: Array = Game.RUNBOOK_ACTIONS.keys()
@@ -3349,7 +3349,7 @@ func _refresh_ops() -> void:
 		rbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		rbrow.add_child(rbl)
 		var rb_dry := Button.new()
-		rb_dry.text = "Dry run"
+		rb_dry.text = Loc.t("btn.dry_run")
 		rb_dry.pressed.connect(func() -> void:
 			var out: Dictionary = Game.run_runbook(rb_i, true)
 			for line: String in out["log"]:
@@ -3359,7 +3359,7 @@ func _refresh_ops() -> void:
 			_refresh_ops())
 		rbrow.add_child(rb_dry)
 		var rb_go := Button.new()
-		rb_go.text = "Run it"
+		rb_go.text = Loc.t("btn.run_it")
 		rb_go.pressed.connect(func() -> void:
 			var out: Dictionary = Game.run_runbook(rb_i, false, true)
 			hud_toast(String(out["refused"]) if String(out["refused"]) != ""
@@ -3368,7 +3368,7 @@ func _refresh_ops() -> void:
 			_refresh_ops())
 		rbrow.add_child(rb_go)
 		var rb_bind := Button.new()
-		rb_bind.text = "Bind to an alert…"
+		rb_bind.text = Loc.t("btn.bind_alert")
 		rb_bind.pressed.connect(func() -> void:
 			var mon_opts: Array = []
 			for m_b: Dictionary in Game.monitors:
@@ -3398,7 +3398,7 @@ func _refresh_ops() -> void:
 		runrow.add_child(run_lbl)
 		if not run_i.get("applied", []).is_empty() and run_i.has("before"):
 			var rb_back := Button.new()
-			rb_back.text = "Roll back"
+			rb_back.text = Loc.t("btn.roll_back")
 			rb_back.tooltip_text = "Put every device it touched back to the configuration it had before"
 			rb_back.pressed.connect(func() -> void:
 				var back_err: String = Game.rollback_runbook(run_i)
@@ -3429,7 +3429,7 @@ func _refresh_ops() -> void:
 		pl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		prow.add_child(pl)
 		var run_btn := Button.new()
-		run_btn.text = "Run on…"
+		run_btn.text = Loc.t("btn.run_on")
 		run_btn.pressed.connect(func() -> void:
 			var opts: Array = []
 			var filters: Array = []
@@ -3447,7 +3447,7 @@ func _refresh_ops() -> void:
 				_refresh_ops()))
 		prow.add_child(run_btn)
 		var del_btn := Button.new()
-		del_btn.text = "Delete"
+		del_btn.text = Loc.t("btn.delete")
 		del_btn.pressed.connect(func() -> void:
 			Game.delete_playbook(String(pb["name"]))
 			_refresh_ops())
@@ -3464,7 +3464,7 @@ func _refresh_ops() -> void:
 	ops_box.add_child(pb_row)
 	pb_row.add_child(pb_name)
 	var pb_save := Button.new()
-	pb_save.text = "Save playbook"
+	pb_save.text = Loc.t("btn.save_playbook")
 	pb_save.pressed.connect(func() -> void:
 		var err := Game.save_playbook(pb_name.text, Array(pb_body.text.split("\n")))
 		if err != "":
@@ -3492,7 +3492,7 @@ func _refresh_ops() -> void:
 			crow.add_child(cl2)
 			if not bool(c_row["auto"]):
 				var renew := Button.new()
-				renew.text = "Renew"
+				renew.text = Loc.t("btn.renew")
 				renew.pressed.connect(func() -> void:
 					Game.issue_cert(c_row["dev"], String(c_row["name"]))
 					_refresh_ops())
@@ -3510,13 +3510,13 @@ func _refresh_ops() -> void:
 		ml.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mrow.add_child(ml)
 		var del := Button.new()
-		del.text = "Remove"
+		del.text = Loc.t("btn.remove")
 		del.pressed.connect(func() -> void:
 			Game.remove_monitor(m)
 			_refresh_ops())
 		mrow.add_child(del)
 	var add_mon := Button.new()
-	add_mon.text = "Add a check…"
+	add_mon.text = Loc.t("btn.add_check")
 	add_mon.pressed.connect(func() -> void:
 		var opts: Array = []
 		var specs: Array = []
@@ -3680,7 +3680,7 @@ func _build_menu() -> void:
 	menu_overlay = _overlay()
 	var v := _card(menu_overlay, 340)
 	var t := _header(v, func() -> void: menu_overlay.visible = false)
-	t.text = "Packet Empire"
+	t.text = Loc.t("btn.packet_empire")
 	var resume := Button.new()
 	resume.text = Loc.t("menu.resume")
 	_accent(resume)
@@ -3802,7 +3802,7 @@ func _build_menu() -> void:
 	v.add_child(diff_btn)
 	v.add_child(_section(Loc.t("menu.section.share")))
 	var puzzle_btn := Button.new()
-	puzzle_btn.text = "Hand somebody this fault…"
+	puzzle_btn.text = Loc.t("btn.hand_fault")
 	puzzle_btn.tooltip_text = "Copy the live topology, configs and symptom to the clipboard, or open one somebody sent you"
 	puzzle_btn.pressed.connect(func() -> void:
 		_menu(puzzle_btn, [
@@ -3837,7 +3837,7 @@ func _build_menu() -> void:
 				hud_toast(Loc.t("toast.back_home"), true)))
 	v.add_child(puzzle_btn)
 	var drill_btn := Button.new()
-	drill_btn.text = "Incident drill  (+$%d)" % Drill.REWARD
+	drill_btn.text = Loc.t("btn.incident_drill") % Drill.REWARD
 	drill_btn.pressed.connect(func() -> void:
 		if Game.drill_active:
 			return
@@ -3847,12 +3847,12 @@ func _build_menu() -> void:
 		_show_drill_banner())
 	v.add_child(drill_btn)
 	var workshop := Button.new()
-	workshop.text = "Content workshop  (%d pack(s))" % Pack.loaded.size()
+	workshop.text = Loc.t("btn.content_workshop") % Pack.loaded.size()
 	workshop.tooltip_text = "Packs are JSON files: what is on the floor, what has to become true, and what happens then."
 	workshop.pressed.connect(func() -> void: _workshop_menu(workshop))
 	v.add_child(workshop)
 	var diagram := Button.new()
-	diagram.text = "Export the topology"
+	diagram.text = Loc.t("btn.export_topology")
 	diagram.tooltip_text = "Mermaid for a picture, plain text for a report. Copied to the clipboard as well."
 	diagram.pressed.connect(func() -> void:
 		var body: String = Game.export_topology()
@@ -3864,7 +3864,7 @@ func _build_menu() -> void:
 		hud_toast(Loc.t("toast.topology_exported"), true))
 	v.add_child(diagram)
 	var clab := Button.new()
-	clab.text = "Export to containerlab"
+	clab.text = Loc.t("btn.export_clab")
 	clab.tooltip_text = "Writes a .clab.yml plus a startup configuration per device into the game's user folder: RouterOS for PacketTik gear, cEOS for the rest, Linux for servers."
 	clab.pressed.connect(func() -> void:
 		var yaml: String = Game.export_containerlab()
@@ -3876,7 +3876,7 @@ func _build_menu() -> void:
 		hud_toast(Loc.t("toast.lab_written") % ProjectSettings.globalize_path("user://clab"), true))
 	v.add_child(clab)
 	var chal_btn := Button.new()
-	chal_btn.text = "Challenge code"
+	chal_btn.text = Loc.t("btn.challenge_code")
 	chal_btn.tooltip_text = "A drill anybody can reproduce from a short code"
 	chal_btn.pressed.connect(func() -> void:
 		_menu(chal_btn, [
@@ -3957,7 +3957,7 @@ func _show_scenario_banner() -> void:
 		sc_hint.custom_minimum_size = Vector2(520, 0)
 		sc_hint.visible = false
 		var sc_hint_btn := Button.new()
-		sc_hint_btn.text = "Stuck? Show me the approach"
+		sc_hint_btn.text = Loc.t("btn.show_approach")
 		sc_hint_btn.pressed.connect(func() -> void:
 			Challenge.note_hint()
 			sc_hint.text = String(sc["hint"])
@@ -3973,7 +3973,7 @@ func _show_scenario_banner() -> void:
 	row.add_theme_constant_override("separation", 8)
 	scenario_box.add_child(row)
 	var check_btn := Button.new()
-	check_btn.text = "Check"
+	check_btn.text = Loc.t("btn.check")
 	_accent(check_btn)
 	check_btn.pressed.connect(func() -> void:
 		if Scenarios.solved():
@@ -3986,7 +3986,7 @@ func _show_scenario_banner() -> void:
 			_show_scenario_banner())
 	row.add_child(check_btn)
 	var leave_btn := Button.new()
-	leave_btn.text = "Leave scenario"
+	leave_btn.text = Loc.t("btn.leave_scenario")
 	leave_btn.pressed.connect(func() -> void:
 		Scenarios.finish(false)
 		get_parent().rebuild_racks()
@@ -4052,7 +4052,7 @@ func _show_drill_banner() -> void:
 	row.add_theme_constant_override("separation", 8)
 	drill_box.add_child(row)
 	var chk := Button.new()
-	chk.text = "Check"
+	chk.text = Loc.t("btn.check")
 	_accent(chk)
 	chk.pressed.connect(func() -> void:
 		if Drill.solved():
@@ -4071,7 +4071,7 @@ func _show_drill_banner() -> void:
 			drill_box.add_child(_label("   ...still broken. ping/lldp/show run are your friends.", 12, Color(0.9, 0.6, 0.5))))
 	row.add_child(chk)
 	var give := Button.new()
-	give.text = "Abandon (reveal faults)"
+	give.text = Loc.t("btn.abandon_reveal")
 	give.pressed.connect(func() -> void:
 		Challenge.active = {}  # giving up is not a scored run
 		var revealed: Array = Drill.finish(false)
@@ -4232,7 +4232,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 				% [int(invoice["amount"]), due_in, "" if due_in == 1 else "s"],
 				11, UIW.colour("warm"), 290))
 		var books_btn := Button.new()
-		books_btn.text = "Open the business ledger"
+		books_btn.text = Loc.t("btn.open_ledger")
 		books_btn.pressed.connect(_open_business_desk)
 		tutorial_box.add_child(books_btn)
 		return
@@ -4242,7 +4242,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 			"First cash collected without removing the topology"]:
 		tutorial_box.add_child(_label("●  " + line, 12, Color(0.48, 0.9, 0.62)))
 	var continue_btn := Button.new()
-	continue_btn.text = "Keep operating this customer"
+	continue_btn.text = Loc.t("btn.keep_operating_customer")
 	continue_btn.pressed.connect(func() -> void:
 		Game.stats["guided_delivery_acknowledged"] = 1
 		_refresh_tutorial())
@@ -4272,7 +4272,7 @@ func _render_guided_outage() -> void:
 	if state == "alert":
 		tutorial_box.add_child(_wrap("MONITOR ALERT  /  The service at %s stopped answering. Pause, take ownership, then communicate before changing anything."
 			% incident.get("target_ip", "the customer address"), 12, Prefs.bad_colour(), 290))
-		tutorial_box.add_child(_incident_button("Acknowledge incident", func() -> void:
+		tutorial_box.add_child(_incident_button(Loc.t("btn.ack_incident"), func() -> void:
 			Game.acknowledge_guided_outage(), true))
 		return
 	if state == "acknowledged":
@@ -4281,7 +4281,7 @@ func _render_guided_outage() -> void:
 			12, UIW.colour("text"), 290))
 		tutorial_box.add_child(_wrap(Loc.t("tutorial.post_now"),
 			11, UIW.colour("warm"), 290))
-		tutorial_box.add_child(_incident_button("Open status page", func() -> void:
+		tutorial_box.add_child(_incident_button(Loc.t("btn.open_status_page"), func() -> void:
 			contracts_tab = "Log"
 			_refresh_contracts()
 			_show_overlay(contracts_overlay), true))
@@ -4306,9 +4306,9 @@ func _render_guided_outage() -> void:
 				if err != "": _toast(err)
 				_refresh_tutorial()))
 		if state not in ["diagnosed", "repairing"]:
-			tutorial_box.add_child(_incident_button("Inspect the service network", func() -> void:
+			tutorial_box.add_child(_incident_button(Loc.t("btn.inspect_service_network"), func() -> void:
 				focus_customer(Game.guided_customer_deal()), true))
-			tutorial_box.add_child(_incident_button("Restore with help", func() -> void:
+			tutorial_box.add_child(_incident_button(Loc.t("btn.restore_with_help"), func() -> void:
 				var err := Game.give_up_guided_outage()
 				if err != "": _toast(err)
 				_refresh_tutorial()))
@@ -4323,12 +4323,12 @@ func _render_guided_outage() -> void:
 				"interface %s  →  no shutdown" % affected.name
 			tutorial_box.add_child(_wrap("REPAIR IN CONSOLE  /  %s" % command, 11,
 				UIW.colour("text_strong"), 290))
-			tutorial_box.add_child(_incident_button("Open affected port", func() -> void:
+			tutorial_box.add_child(_incident_button(Loc.t("btn.open_affected_port"), func() -> void:
 				_goto_device(affected.dev)
 				open_iface(affected), true))
 		tutorial_box.add_child(_label("○  Run one cycle after repair to verify recovery",
 			11, UIW.colour("muted")))
-		var give_up := _incident_button("Use teaching restore point", func() -> void:
+		var give_up := _incident_button(Loc.t("btn.teaching_restore"), func() -> void:
 			var err := Game.give_up_guided_outage()
 			if err != "": _toast(err)
 			_refresh_tutorial())
@@ -4341,7 +4341,7 @@ func _render_guided_outage() -> void:
 		tutorial_box.add_child(_section("INCIDENT TIMELINE"))
 		for note: String in incident.get("timeline", []):
 			tutorial_box.add_child(_wrap("•  " + note, 10, UIW.colour("muted"), 290))
-		tutorial_box.add_child(_incident_button("Review and harden", func() -> void:
+		tutorial_box.add_child(_incident_button(Loc.t("btn.review_harden"), func() -> void:
 			Game.debrief_guided_outage(), true))
 		return
 	if state == "choice":
@@ -4594,7 +4594,7 @@ func show_welcome() -> void:
 			head.text = Loc.t("demo.first_night")
 		var body := welcome_overlay.get_meta("body_label") as Label
 		if body != null:
-			body.text = "Six contracts. One tired colo cage. About half an hour to prove you can turn cheap hardware into a network people trust."
+			body.text = Loc.t("finale.intro")
 	_show_overlay(welcome_overlay)
 
 # ---------- demo ----------
@@ -4771,7 +4771,7 @@ func _build_business_tab() -> void:
 		row.add_child(il)
 		if due_in <= 0 and not bool(inv["chased"]):
 			var chase := Button.new()
-			chase.text = "Chase"
+			chase.text = Loc.t("btn.chase")
 			chase.tooltip_text = "They pay on the next cycle, and think slightly less of you for it"
 			chase.pressed.connect(func() -> void:
 				var err := Game.chase_invoice(inv)
@@ -4792,7 +4792,7 @@ func _build_business_tab() -> void:
 		e_row.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(e_row)
 		var tariff_btn := Button.new()
-		tariff_btn.text = "Switch to a spot tariff" if Game.fixed_tariff \
+		tariff_btn.text = Loc.t("btn.spot_tariff") if Game.fixed_tariff \
 			else "Switch to a fixed tariff"
 		tariff_btn.tooltip_text = "Fixed costs about %d%% over the spot average and does not care what time it is, or what the spot market is doing." % int(round((Game.FIXED_PREMIUM - 1.02) * 100.0))
 		tariff_btn.pressed.connect(func() -> void:
@@ -4800,7 +4800,7 @@ func _build_business_tab() -> void:
 			_refresh_contracts())
 		e_row.add_child(tariff_btn)
 		var eff_btn := Button.new()
-		eff_btn.text = "Efficiency retrofit  ($%d)" % (Game.EFFICIENCY_PRICE + Game.efficiency * 800)
+		eff_btn.text = Loc.t("btn.efficiency_retrofit") % (Game.EFFICIENCY_PRICE + Game.efficiency * 800)
 		var eff_price := Game.EFFICIENCY_PRICE + Game.efficiency * 800
 		var eff_save := Game.efficiency_saving()
 		eff_btn.tooltip_text = "Removes %d%% of your draw, permanently: about $%d per cycle at today's draw and rate, so it pays back in %s." % [
@@ -4819,7 +4819,7 @@ func _build_business_tab() -> void:
 		% [Game.quarter_profit, Game.quarter_depreciation, Game.tax_due()],
 		13, Color(0.75, 0.82, 0.9), 560))
 	var acc_btn := Button.new()
-	acc_btn.text = "Dismiss the accountant" if Game.accountant \
+	acc_btn.text = Loc.t("btn.dismiss_accountant") if Game.accountant \
 		else "Put an accountant on retainer  ($%d/cycle)" % Game.ACCOUNTANT_FEE
 	acc_btn.tooltip_text = "Without one, only half your depreciation allowance is ever claimed."
 	acc_btn.pressed.connect(func() -> void:
@@ -4832,7 +4832,7 @@ func _build_business_tab() -> void:
 		% [Game.ipv4_total(), Game.ipv4_used()], 13,
 		Prefs.bad_colour() if Game.ipv4_free() <= 0 else Color(0.75, 0.82, 0.9), 560))
 	var ip_btn := Button.new()
-	ip_btn.text = "Buy another /29  ($%d)" % Game.ipv4_price()
+	ip_btn.text = Loc.t("btn.buy_slash29") % Game.ipv4_price()
 	ip_btn.tooltip_text = "Eight more addresses. The price goes up every time, because it does."
 	ip_btn.pressed.connect(func() -> void:
 		var err := Game.buy_ipv4_block()
@@ -4850,7 +4850,7 @@ func _build_business_tab() -> void:
 			% [int(Game.ixp.get("peers", 0)), int(Game.peering_share() * 100.0), Game.IXP_PORT_FEE],
 			13, Color(0.65, 0.88, 0.72)))
 		var peer_btn := Button.new()
-		peer_btn.text = "Approach another network to peer with"
+		peer_btn.text = Loc.t("btn.approach_peer")
 		peer_btn.pressed.connect(func() -> void:
 			var err := Game.add_peering()
 			if err != "":
@@ -4859,7 +4859,7 @@ func _build_business_tab() -> void:
 		contracts_box.add_child(peer_btn)
 	else:
 		var ixp_btn := Button.new()
-		ixp_btn.text = "Take a port at the internet exchange  ($%d, then $%d/cycle)" % [
+		ixp_btn.text = Loc.t("btn.ix_port") % [
 			Game.IXP_SETUP, Game.IXP_PORT_FEE]
 		ixp_btn.tooltip_text = "Settlement-free peering. It only pays for itself past a certain volume, which is the decision."
 		ixp_btn.pressed.connect(func() -> void:
@@ -4874,7 +4874,7 @@ func _build_business_tab() -> void:
 	bank.add_child(_label("BANK   debt $%d   (%d%%/cycle interest)" % [Game.debt, int(Game.LOAN_RATE * 100)],
 		13, Color(0.7, 0.75, 0.85) if Game.debt == 0 else Color(0.95, 0.75, 0.5)))
 	var borrow := Button.new()
-	borrow.text = "Borrow $%d" % Game.LOAN_TRANCHE
+	borrow.text = Loc.t("btn.borrow") % Game.LOAN_TRANCHE
 	borrow.disabled = Game.debt + Game.LOAN_TRANCHE > Game.LOAN_MAX
 	borrow.pressed.connect(func() -> void:
 		Game.borrow()
@@ -4882,7 +4882,7 @@ func _build_business_tab() -> void:
 	bank.add_child(borrow)
 	if Game.debt > 0:
 		var repay := Button.new()
-		repay.text = "Repay $%d" % mini(Game.LOAN_TRANCHE, Game.debt)
+		repay.text = Loc.t("btn.repay") % mini(Game.LOAN_TRANCHE, Game.debt)
 		repay.disabled = Game.money < mini(Game.LOAN_TRANCHE, Game.debt)
 		repay.pressed.connect(func() -> void:
 			Game.repay()
@@ -4931,14 +4931,14 @@ func _build_business_tab() -> void:
 		int(round((0.7 + 0.06 * float(Game.marketing) / float(Game.MARKETING_STEP)) * 100.0))],
 		13, Color(0.8, 0.85, 0.7) if Game.marketing > 0 else Color(0.75, 0.75, 0.8)))
 	var mk_up := Button.new()
-	mk_up.text = "Spend more"
+	mk_up.text = Loc.t("btn.spend_more")
 	mk_up.pressed.connect(func() -> void:
 		Game.marketing += Game.MARKETING_STEP
 		_refresh_contracts())
 	mk_row.add_child(mk_up)
 	if Game.marketing > 0:
 		var mk_down := Button.new()
-		mk_down.text = "Cut back"
+		mk_down.text = Loc.t("btn.cut_back")
 		mk_down.pressed.connect(func() -> void:
 			Game.marketing = maxi(0, Game.marketing - Game.MARKETING_STEP)
 			_refresh_contracts())
@@ -4949,7 +4949,7 @@ func _build_business_tab() -> void:
 		"ON" if Game.insured else "off", Game.insurance_fee(), Game.estate_value()], 13,
 		Color(0.7, 0.9, 0.7) if Game.insured else Color(0.75, 0.75, 0.8)))
 	var ins_btn := Button.new()
-	ins_btn.text = "Cancel" if Game.insured else "Take cover"
+	ins_btn.text = Loc.t("btn.cancel") if Game.insured else Loc.t("btn.take_cover")
 	ins_btn.pressed.connect(func() -> void:
 		Game.insured = not Game.insured
 		_refresh_contracts())
@@ -4963,7 +4963,7 @@ func _build_business_tab() -> void:
 		Game.maintenance_used], 13,
 		Color(0.7, 0.9, 0.7) if Game.in_maintenance() else Color(0.75, 0.75, 0.8)))
 	var maint_btn := Button.new()
-	maint_btn.text = "Declare a window"
+	maint_btn.text = Loc.t("btn.declare_window")
 	maint_btn.tooltip_text = "Planned downtime in a window is excused by your customers"
 	maint_btn.pressed.connect(func() -> void:
 		var err: String = Game.declare_maintenance()
@@ -4983,7 +4983,7 @@ func _build_business_tab() -> void:
 		crow.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(crow)
 		var finish_btn := Button.new()
-		finish_btn.text = "Close it out"
+		finish_btn.text = Loc.t("btn.close_out")
 		finish_btn.pressed.connect(func() -> void:
 			var err: String = Game.complete_change()
 			if err != "":
@@ -4991,7 +4991,7 @@ func _build_business_tab() -> void:
 			_refresh_contracts())
 		crow.add_child(finish_btn)
 		var abort_btn := Button.new()
-		abort_btn.text = "Abort and revert"
+		abort_btn.text = Loc.t("btn.abort_revert")
 		abort_btn.tooltip_text = "Back to what was running when the window opened. A wasted night, and nothing worse."
 		abort_btn.pressed.connect(func() -> void:
 			Game.abort_change()
@@ -4999,7 +4999,7 @@ func _build_business_tab() -> void:
 		crow.add_child(abort_btn)
 		if not bool(cw["pushed"]):
 			var push_btn := Button.new()
-			push_btn.text = "Push on past the rollback point"
+			push_btn.text = Loc.t("btn.push_past_rollback")
 			push_btn.tooltip_text = "From here it has to work: there is no going back inside the window."
 			_accent(push_btn)
 			push_btn.pressed.connect(func() -> void:
@@ -5008,7 +5008,7 @@ func _build_business_tab() -> void:
 			crow.add_child(push_btn)
 	else:
 		var plan_btn := Button.new()
-		plan_btn.text = "Submit a change plan…"
+		plan_btn.text = Loc.t("btn.submit_change_plan")
 		plan_btn.tooltip_text = "What you are touching, how long you need, and whether there is a backout plan"
 		if frozen != "":
 			contracts_box.add_child(_label("  Change freeze: %s. Overriding it is remembered." % frozen,
@@ -5043,7 +5043,7 @@ func _build_business_tab() -> void:
 		"ON" if Game.scrubbing else "off", Game.SCRUB_FEE], 13,
 		Color(0.6, 0.9, 0.7) if Game.scrubbing else Color(0.75, 0.75, 0.8)))
 	var scrub_btn := Button.new()
-	scrub_btn.text = "Disable" if Game.scrubbing else "Enable"
+	scrub_btn.text = Loc.t("btn.disable") if Game.scrubbing else Loc.t("btn.enable")
 	scrub_btn.pressed.connect(func() -> void:
 		Game.scrubbing = not Game.scrubbing
 		Game.log_event("SCRUBBING: %s." % ("enabled" if Game.scrubbing else "cancelled"))
@@ -5092,7 +5092,7 @@ func _build_business_tab() -> void:
 		if Game.callout_ready():
 			# the thing you actually do at three in the morning
 			var callout := Button.new()
-			callout.text = "Call somebody out ($%d)" % Game.CALLOUT_FEE
+			callout.text = Loc.t("btn.call_somebody_out") % Game.CALLOUT_FEE
 			callout.tooltip_text = "Phone the best-rested member of the crew and get them in for a cycle. It costs the fee and it costs their morale."
 			_accent(callout)
 			callout.pressed.connect(func() -> void:
@@ -5148,14 +5148,14 @@ func _build_business_tab() -> void:
 			_refresh_contracts())
 		srow.add_child(shift_btn)
 		var raise_btn := Button.new()
-		raise_btn.text = "Raise"
+		raise_btn.text = Loc.t("btn.raise")
 		raise_btn.tooltip_text = "Ten percent. Cheaper than replacing them."
 		raise_btn.pressed.connect(func() -> void:
 			Staff.give_raise(m, maxi(20, int(m["salary"]) / 10))
 			_refresh_contracts())
 		srow.add_child(raise_btn)
 		var train_btn := Button.new()
-		train_btn.text = "Train…"
+		train_btn.text = Loc.t("btn.train")
 		train_btn.disabled = busy > 0
 		train_btn.pressed.connect(func() -> void:
 			var opts: Array = []
@@ -5175,7 +5175,7 @@ func _build_business_tab() -> void:
 				_refresh_contracts()))
 		srow.add_child(train_btn)
 		var fire_btn := Button.new()
-		fire_btn.text = "Let go"
+		fire_btn.text = Loc.t("btn.let_go")
 		fire_btn.pressed.connect(func() -> void:
 			Game.fire(m)
 			_refresh_contracts())
@@ -5183,7 +5183,7 @@ func _build_business_tab() -> void:
 	Game.refresh_candidates()
 	var hire_btn := Button.new()
 	var income_now := Game.recurring_income()
-	hire_btn.text = "Hire someone…   (payroll $%d/cycle against $%d/cycle coming in)" % [Staff.payroll(), income_now]
+	hire_btn.text = Loc.t("btn.hire_someone") % [Staff.payroll(), income_now]
 	hire_btn.tooltip_text = "A junior asks $230 to $580 a cycle. The floor bills $%d a cycle right now%s" % [income_now,
 		": it cannot carry anybody yet" if income_now < 230 else ""]
 	hire_btn.pressed.connect(func() -> void:
@@ -5218,7 +5218,7 @@ func _build_business_tab() -> void:
 			Game.site_city(i), Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size(),
 			"   $%d/cycle rent" % rent if rent > 0 else ""], 13, Color(0.75, 0.8, 0.85)))
 	var lease := Button.new()
-	lease.text = "Lease another site…"
+	lease.text = Loc.t("btn.lease_site")
 	lease.pressed.connect(func() -> void:
 		var opts: Array = []
 		for o: Dictionary in Game.SITE_OFFERS:
@@ -5244,7 +5244,7 @@ func _build_business_tab() -> void:
 			cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			crow.add_child(cl)
 			var cancel := Button.new()
-			cancel.text = "Cancel"
+			cancel.text = Loc.t("btn.cancel")
 			cancel.tooltip_text = "Ends the circuit and any cables riding it"
 			cancel.pressed.connect(func() -> void:
 				Game.cancel_circuit(c)
@@ -5267,7 +5267,7 @@ func _build_business_tab() -> void:
 						"  %s ⇄ %s is carrier diverse." % [Game.site_name(i2), Game.site_name(j2)],
 						12, Color(0.6, 0.88, 0.7)))
 		var order := Button.new()
-		order.text = "Order a circuit…"
+		order.text = Loc.t("btn.order_circuit")
 		order.pressed.connect(func() -> void:
 			var pairs: Array = []
 			var combos: Array = []
@@ -5323,7 +5323,7 @@ func _build_market_tab() -> void:
 		bo_row.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(bo_row)
 		var take := Button.new()
-		take.text = "Sell the company"
+		take.text = Loc.t("btn.sell_company")
 		take.tooltip_text = "It ends here, with the money and the score you have earned."
 		take.pressed.connect(func() -> void:
 			_menu(take, ["Yes. Take the money and walk."], func(_id: int) -> void:
@@ -5331,7 +5331,7 @@ func _build_market_tab() -> void:
 				_refresh_contracts()))
 		bo_row.add_child(take)
 		var refuse := Button.new()
-		refuse.text = "Turn them down"
+		refuse.text = Loc.t("btn.turn_down")
 		refuse.tooltip_text = "They will compete harder for everything after this."
 		refuse.pressed.connect(func() -> void:
 			Game.decline_buyout()
@@ -5363,7 +5363,7 @@ func _build_market_tab() -> void:
 				% lead["heard"], 13, Color(0.75, 0.8, 0.85)))
 			lv.add_child(_label(Loc.t("market.expires") % int(lead["ttl"]), 12, MUTED))
 			var qbtn := Button.new()
-			qbtn.text = "Go and see them  ($%d)" % Market.LEAD_QUALIFY_COST
+			qbtn.text = Loc.t("btn.go_see_them") % Market.LEAD_QUALIFY_COST
 			qbtn.tooltip_text = "Some of them turn out to have no budget. That is what qualifying is for."
 			_accent(qbtn)
 			qbtn.pressed.connect(func() -> void:
@@ -5409,7 +5409,7 @@ func _build_market_tab() -> void:
 		sla_opt.tooltip_text = "They asked for %s. Commit to less and the proposal is thrown out; commit to more and the fee rises with the penalty, judged from the day the service first goes live." % Market.tier(int(lead["sla"]))["label"]
 		prow.add_child(sla_opt)
 		var sbtn := Button.new()
-		sbtn.text = "Submit the proposal"
+		sbtn.text = Loc.t("btn.submit_proposal")
 		_accent(sbtn)
 		sbtn.pressed.connect(func() -> void:
 			var txt := pprice.text.strip_edges()
@@ -5475,7 +5475,7 @@ func _build_market_tab() -> void:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(l)
 		var buy := Button.new()
-		buy.text = "Acquire"
+		buy.text = Loc.t("btn.acquire")
 		buy.disabled = Game.money < price
 		buy.pressed.connect(func() -> void:
 			var err: String = Game.buy_rival(r)
@@ -5500,7 +5500,7 @@ func _build_log_tab() -> void:
 			contracts_box.add_child(_label("  read", 12, UIW.colour("success")))
 		else:
 			var ho_btn := Button.new()
-			ho_btn.text = "Read it"
+			ho_btn.text = Loc.t("btn.read_it")
 			ho_btn.tooltip_text = "Notes nobody reads stop being true, and the next shift finds out the hard way."
 			ho_btn.pressed.connect(func() -> void:
 				Game.read_handover()
@@ -5516,7 +5516,7 @@ func _build_log_tab() -> void:
 		urow.add_theme_constant_override("separation", 8)
 		contracts_box.add_child(urow)
 		var case_btn := Button.new()
-		case_btn.text = "Chase the case" if bool(Game.upstream.get("opened", false)) else "Open a case"
+		case_btn.text = Loc.t("btn.chase_case") if bool(Game.upstream.get("opened", false)) else Loc.t("btn.open_case")
 		_accent(case_btn)
 		case_btn.pressed.connect(func() -> void:
 			var err: String = Game.chase_upstream() if bool(Game.upstream.get("opened", false)) \
@@ -5545,7 +5545,7 @@ func _build_log_tab() -> void:
 			trow.add_child(tl)
 			if String(t_i2["state"]) == "open":
 				var tri := Button.new()
-				tri.text = "Triage…"
+				tri.text = Loc.t("btn.triage")
 				tri.tooltip_text = "Pick where to look. Looking in the wrong place costs an afternoon."
 				tri.pressed.connect(func() -> void:
 					_menu(tri, Game.TICKET_AREAS, func(id: int) -> void:
@@ -5556,7 +5556,7 @@ func _build_log_tab() -> void:
 						_refresh_money()))
 				trow.add_child(tri)
 			var cbtn := Button.new()
-			cbtn.text = "Close it"
+			cbtn.text = Loc.t("btn.close_it")
 			cbtn.tooltip_text = "Closing something that is still broken brings it back angrier."
 			cbtn.pressed.connect(func() -> void:
 				Game.close_ticket(t_i2)
@@ -5572,7 +5572,7 @@ func _build_log_tab() -> void:
 	post_in.placeholder_text = "what is happening, in plain language"
 	post_row.add_child(post_in)
 	var post_btn := Button.new()
-	post_btn.text = "Post update"
+	post_btn.text = Loc.t("btn.post_update")
 	post_btn.pressed.connect(func() -> void:
 		var err: String = Game.post_status(post_in.text)
 		if err != "":
@@ -5602,14 +5602,14 @@ func _build_log_tab() -> void:
 			il.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			irow.add_child(il)
 			var replay_btn := Button.new()
-			replay_btn.text = "Replay"
+			replay_btn.text = Loc.t("btn.replay")
 			replay_btn.tooltip_text = "What the estate looked like either side of it"
 			replay_btn.pressed.connect(func() -> void:
 				replay_for = int(inc["cycle"]) if replay_for != int(inc["cycle"]) else -1
 				_refresh_contracts())
 			irow.add_child(replay_btn)
 			var rbtn := Button.new()
-			rbtn.text = "Write it up"
+			rbtn.text = Loc.t("btn.write_up")
 			rbtn.pressed.connect(func() -> void:
 				_menu(rbtn, Game.REVIEW_CAUSES, func(id: int) -> void:
 					Game.review_incident(inc, id)
@@ -5692,7 +5692,7 @@ func _build_log_tab() -> void:
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		drow.add_child(l)
 		var open_btn := Button.new()
-		open_btn.text = "Hide" if expanded_digest == at else "Read it"
+		open_btn.text = "Hide" if expanded_digest == at else Loc.t("btn.read_it")
 		open_btn.pressed.connect(func() -> void:
 			expanded_digest = -1 if expanded_digest == at else at
 			_refresh_contracts())
@@ -5766,7 +5766,7 @@ func _build_jobs_tab() -> void:
 		nb.add_child(nrow)
 		var in_btn := Button.new()
 		var oncall_now := Staff.by_name(Game.oncall)
-		in_btn.text = "Get somebody in ($%d)" % (Game.CALLOUT_FEE / 2 if not oncall_now.is_empty()
+		in_btn.text = Loc.t("btn.get_somebody") % (Game.CALLOUT_FEE / 2 if not oncall_now.is_empty()
 			else Game.CALLOUT_FEE)
 		in_btn.tooltip_text = "The person carrying the phone if there is one, otherwise whoever is best rested. They will be tired tomorrow."
 		_accent(in_btn)
@@ -5778,7 +5778,7 @@ func _build_jobs_tab() -> void:
 			_refresh_money())
 		nrow.add_child(in_btn)
 		var wait_btn := Button.new()
-		wait_btn.text = "It waits until morning"
+		wait_btn.text = Loc.t("btn.waits_morning")
 		wait_btn.tooltip_text = "Costs nothing. Whatever it does overnight, it does."
 		wait_btn.pressed.connect(func() -> void:
 			Game.answer_night_call(false)
@@ -5858,14 +5858,14 @@ func _build_jobs_tab() -> void:
 			var row := HBoxContainer.new()
 			cv.add_child(row)
 			var acc := Button.new()
-			acc.text = "Accept $%d/cycle" % int(offer["budget"])
+			acc.text = Loc.t("btn.accept_per_cycle") % int(offer["budget"])
 			_accent(acc)
 			acc.pressed.connect(func() -> void:
 				Game.accept_counter(offer)
 				_refresh_contracts())
 			row.add_child(acc)
 			var wa := Button.new()
-			wa.text = "Walk away"
+			wa.text = Loc.t("btn.walk_away")
 			wa.pressed.connect(func() -> void:
 				Game.dismiss_offer(offer)
 				_refresh_contracts())
@@ -5880,7 +5880,7 @@ func _build_jobs_tab() -> void:
 			row.add_child(quote)
 			row.add_child(_label("/cycle  ", 14, MUTED))
 			var send := Button.new()
-			send.text = "Send quote"
+			send.text = Loc.t("btn.send_quote")
 			_accent(send)
 			quote.text_submitted.connect(func(_t: String) -> void: send.pressed.emit())
 			send.pressed.connect(func() -> void:
@@ -5897,7 +5897,7 @@ func _build_jobs_tab() -> void:
 					_toast("%s signed at $%s/cycle. Now deliver it!" % [offer["customer"], quote.text.strip_edges()]))
 			row.add_child(send)
 			var dis := Button.new()
-			dis.text = "Decline"
+			dis.text = Loc.t("btn.decline")
 			dis.pressed.connect(func() -> void:
 				Game.dismiss_offer(offer)
 				_refresh_contracts())
@@ -5967,7 +5967,7 @@ func _build_jobs_tab() -> void:
 			note_edit.text = String(deal.get("note", {}).get("text", ""))
 			note_row.add_child(note_edit)
 			var note_save := Button.new()
-			note_save.text = "Keep"
+			note_save.text = Loc.t("btn.keep")
 			note_save.pressed.connect(func() -> void:
 				Game.set_deal_note(deal, note_edit.text)
 				_refresh_contracts())
@@ -5987,21 +5987,21 @@ func _build_jobs_tab() -> void:
 				drow.add_child(dis_lbl)
 				if not bool(dis.get("warned", false)):
 					var write_btn := Button.new()
-					write_btn.text = "Put it in writing"
+					write_btn.text = Loc.t("btn.put_in_writing")
 					write_btn.tooltip_text = "It does not stop the outage. It decides who wears it."
 					write_btn.pressed.connect(func() -> void:
 						Game.warn_customer(deal)
 						_refresh_contracts())
 					drow.add_child(write_btn)
 				var give_btn := Button.new()
-				give_btn.text = "Do it their way"
+				give_btn.text = Loc.t("btn.their_way")
 				give_btn.tooltip_text = "Keep the customer happy now."
 				give_btn.pressed.connect(func() -> void:
 					Game.concede_dispute(deal)
 					_refresh_contracts())
 				drow.add_child(give_btn)
 				var firm_btn := Button.new()
-				firm_btn.text = "Hold firm"
+				firm_btn.text = Loc.t("btn.hold_firm")
 				firm_btn.tooltip_text = "Refuse. They may walk, and they may have been right."
 				_accent(firm_btn)
 				firm_btn.pressed.connect(func() -> void:
@@ -6016,7 +6016,7 @@ func _build_jobs_tab() -> void:
 				urow.add_child(_label("      they have grown: +%d Mbps for +$%d/cycle" % [
 					int(up["load"]), int(up["fee"])], 13, Color(0.6, 0.9, 0.75)))
 				var up_yes := Button.new()
-				up_yes.text = "Take it"
+				up_yes.text = Loc.t("btn.take_it")
 				up_yes.tooltip_text = "More money, and more traffic on the same links tonight."
 				_accent(up_yes)
 				up_yes.pressed.connect(func() -> void:
@@ -6024,7 +6024,7 @@ func _build_jobs_tab() -> void:
 					_refresh_contracts())
 				urow.add_child(up_yes)
 				var up_no := Button.new()
-				up_no.text = "Decline"
+				up_no.text = Loc.t("btn.decline")
 				up_no.tooltip_text = "They will remember it at renewal."
 				up_no.pressed.connect(func() -> void:
 					Game.decline_upsell(deal)
@@ -6038,14 +6038,14 @@ func _build_jobs_tab() -> void:
 				rrow.add_child(_label("      up for renewal at $%d/cycle (%d%% uptime, %s)" % [
 					int(rn["fee"]), int(rn["uptime"]), rn["mood"]], 13, Color(1.0, 0.85, 0.5)))
 				var acc_btn := Button.new()
-				acc_btn.text = "Renew"
+				acc_btn.text = Loc.t("btn.renew")
 				_accent(acc_btn)
 				acc_btn.pressed.connect(func() -> void:
 					Game.accept_renewal(deal)
 					_refresh_contracts())
 				rrow.add_child(acc_btn)
 				var end_btn := Button.new()
-				end_btn.text = "Let it end"
+				end_btn.text = Loc.t("btn.let_end")
 				end_btn.pressed.connect(func() -> void:
 					Game.decline_renewal(deal)
 					_refresh_contracts())
@@ -6097,7 +6097,7 @@ func _build_jobs_tab() -> void:
 				txt += "   (%s)" % req["detail"]
 			cv.add_child(_label(txt, 13, UIW.colour("success") if ok else Color(0.7, 0.65, 0.6)))
 		var btn := Button.new()
-		btn.text = "Check integration & collect $1500"
+		btn.text = Loc.t("btn.check_integration")
 		_accent(btn)
 		btn.pressed.connect(func() -> void:
 			Game.try_complete_integration(a)
@@ -6310,14 +6310,14 @@ func _build_contract_debrief(debrief: Dictionary) -> void:
 	mastery_row.add_child(mastery_copy)
 	if not mastered:
 		var mastery_btn := Button.new()
-		mastery_btn.text = "Check mastery"
+		mastery_btn.text = Loc.t("btn.check_mastery")
 		mastery_btn.pressed.connect(func() -> void:
 			var err := Game.check_contract_mastery(String(debrief["id"]))
 			if err != "": _toast(err)
 			_refresh_contracts())
 		mastery_row.add_child(mastery_btn)
 	var continue_btn := Button.new()
-	continue_btn.text = "Continue operating"
+	continue_btn.text = Loc.t("btn.continue_operating")
 	_accent(continue_btn)
 	continue_btn.pressed.connect(func() -> void:
 		Game.dismiss_contract_debrief()
@@ -6410,7 +6410,7 @@ func _refresh_contracts() -> void:
 			hint_lbl.custom_minimum_size = Vector2(560, 0)
 			hint_lbl.visible = false
 			var hint_btn := Button.new()
-			hint_btn.text = "Stuck? Show me the commands"
+			hint_btn.text = Loc.t("btn.show_commands")
 			var hint_id := String(c.get("id", ""))
 			if _revealed_hints.has(hint_id):
 				hint_lbl.text = contract_hint
@@ -6432,7 +6432,7 @@ func _refresh_contracts() -> void:
 				all_met = false
 				if first_unmet == "":
 					first_unmet = String(r["d"])
-		btn.text = "Collect $%d" % int(c["reward"]) if all_met else "Check requirements & collect"
+		btn.text = Loc.t("btn.collect") % int(c["reward"]) if all_met else Loc.t("btn.check_requirements")
 		_accent(btn)
 		btn.pressed.connect(func() -> void:
 			if not Game.try_complete_contract(c):
