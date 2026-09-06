@@ -1279,6 +1279,14 @@ func _ip_route_show(family: int) -> String:
 				rows.append([String(netw["prefix"]), "%s/%d dev %s proto kernel scope link src %s%s\n" % [netw["prefix"], int(netw["plen"]), i.name, String(cidr).split("/")[0], down]])
 		if v6 and _up(i) and not i.name.begins_with("wg"):
 			rows.append(["fe80::", "fe80::/64 dev %s proto kernel metric 256 pref medium\n" % i.name])
+	# what zebra installed from FRR: the daemons' routes wear their protocol and the kernel's metric for it
+	for e in Sim.fib(dev, "", v6):
+		if e["src"] not in ["O", "B"] or e["iface"] == null:
+			continue
+		var dst := "default" if int(e["plen"]) == 0 else "%s/%d" % [e["prefix"], int(e["plen"])]
+		var proto := "ospf" if e["src"] == "O" else "bgp"
+		rows.append([("~" if v6 else "") + ("" if int(e["plen"]) == 0 else String(e["prefix"])),
+			"%s via %s dev %s proto %s metric 20%s\n" % [dst, e["next_hop"], e["iface"].name, proto, " pref medium" if v6 else ""]])
 	rows.sort_custom(func(a, b): return String(a[0]) < String(b[0]))
 	var out := ""
 	for row in rows:
