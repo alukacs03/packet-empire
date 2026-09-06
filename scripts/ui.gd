@@ -1982,7 +1982,7 @@ func _build_pedia() -> void:
 		var n := needle.strip_edges().to_lower()
 		for bi in pedia_topic_buttons.size():
 			var btn: Button = pedia_topic_buttons[bi]
-			btn.visible = n == "" or n in String(Pedia.topics()[bi][0]).to_lower() or n in String(Pedia.topics()[bi][1]).to_lower())
+			btn.visible = n == "" or n in Loc.t(String(Pedia.topics()[bi][0])).to_lower() or n in Loc.t(String(Pedia.topics()[bi][1])).to_lower())
 	nav.add_child(pedia_search)
 	nav.add_child(topic_scroll)
 	var topic_gutter := MarginContainer.new()
@@ -2008,7 +2008,7 @@ func _build_pedia() -> void:
 	for topic_i in Pedia.topics().size():
 		var entry = Pedia.topics()[topic_i]
 		var b := Button.new()
-		b.text = "%02d   %s" % [topic_i + 1, entry[0]]
+		b.text = "%02d   %s" % [topic_i + 1, Loc.t(String(entry[0]))]
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.toggle_mode = true
 		b.custom_minimum_size = Vector2(0, 38)
@@ -2040,10 +2040,10 @@ func _show_pedia_entry(topic_i: int) -> void:
 	for button_i in pedia_topic_buttons.size():
 		(pedia_topic_buttons[button_i] as Button).button_pressed = button_i == topic_i
 	pedia_body.clear()
-	pedia_body.append_text("[color=#39d9d0]FIELD MANUAL  /  CHAPTER %02d[/color]\n\n" % (topic_i + 1))
-	pedia_body.append_text("[font_size=24][b]%s[/b][/font_size]\n\n" % entry[0])
+	pedia_body.append_text(("[color=#39d9d0]" + Loc.t("FIELD MANUAL  /  CHAPTER %02d") + "[/color]\n\n") % (topic_i + 1))
+	pedia_body.append_text("[font_size=24][b]%s[/b][/font_size]\n\n" % Loc.t(String(entry[0])))
 	pedia_body.append_text("%s\n\n" % Pedia.article_text(entry))
-	pedia_body.append_text("[color=#8da7ba]Use the exact commands above in a device console. The simulation will respond to the configuration, not a scripted answer.[/color]")
+	pedia_body.append_text("[color=#8da7ba]" + Loc.t("Use the exact commands above in a device console. The simulation will respond to the configuration, not a scripted answer.") + "[/color]")
 
 func open_pedia() -> void:
 	_show_overlay(pedia_overlay)

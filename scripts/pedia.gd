@@ -38,21 +38,23 @@ static func _example_block(label: String, commands: Array) -> String:
 
 static func article_text(entry: Array) -> String:
 	var title := String(entry[0])
-	var body := String(entry[1])
+	var body := Loc.t(String(entry[1]))
 	if not DIALECT_EXAMPLES.has(title) and title == Loc.t("pedia.vlans.title"):
 		title = "VLANs"  # the one translated title: the examples are keyed on the English one
 	if not DIALECT_EXAMPLES.has(title):
 		return body
 	var marker := body.find("\n\nTry:")
+	if marker < 0:
+		marker = body.find("\n\nPróbáld ki:")
 	if marker >= 0:
 		body = body.left(marker)  # the Try line quotes one dialect's commands: the blocks below replace it with the installed one's
 	var cfg: Dictionary = DIALECT_EXAMPLES[title]
 	var blocks: Array[String] = []
 	for dialect in Contracts.dialects_for(String(cfg["device_type"])):
 		if dialect == "ros":
-			blocks.append(_example_block("Try on PacketTik RouterOS", cfg["ros"]))
+			blocks.append(_example_block(Loc.t("Try on PacketTik RouterOS"), cfg["ros"]))
 		elif dialect == "eos":
-			blocks.append(_example_block("Try on OpenRack / Arivista / Junivista EOS", cfg["eos"]))
+			blocks.append(_example_block(Loc.t("Try on OpenRack / Arivista / Junivista EOS"), cfg["eos"]))
 	return body + "\n\n" + "\n\n".join(blocks)
 
 static func topics() -> Array:
