@@ -11432,5 +11432,53 @@ static func run() -> int:
 	check(t12_l.exec("systemctl stop keepalived") == "" and t12_s.ifaces[0].vrrp.is_empty(), "keepalived: stopping it drops the VIP")
 	t12_s.services.erase("keepalived")
 	check(t12_l.exec("systemctl start keepalived").begins_with("Job for keepalived.service failed"), "keepalived: no conf, no daemon")
+	# --- the four jobs for protocols the campaign never asked for ---
+	var t13_ids := {}
+	for c13 in Contracts.all():
+		t13_ids[String(c13["id"])] = true
+	check(t13_ids.has("one_stream") and t13_ids.has("leases_across") and t13_ids.has("big_packets") and t13_ids.has("whose_port"), "campaign: multicast, relay, jumbo and port-security jobs exist")
+	var t13_rack := Game.add_rack(Vector2i(9, 13))
+	var t13_sw := Game.new_device("sw-8")
+	var t13_src := Game.new_device("srv-1")
+	var t13_a := Game.new_device("srv-1")
+	var t13_b := Game.new_device("srv-1")
+	var t13_idle := Game.new_device("srv-1")
+	t13_rack.slots[0] = t13_sw
+	t13_rack.slots[1] = t13_src
+	t13_rack.slots[2] = t13_a
+	t13_rack.slots[3] = t13_b
+	t13_rack.slots[4] = t13_idle
+	for k in 4:
+		var h: Net.NDevice = [t13_src, t13_a, t13_b, t13_idle][k]
+		Game.connect_ifaces(h.ifaces[0], t13_sw.ifaces[k])
+		Game.add_ip(h.ifaces[0], "10.60.0.%d/24" % (5 + k))
+	t13_sw.igmp_snooping = true
+	Sim.igmp_join(t13_a, "239.10.0.1")
+	Sim.igmp_join(t13_b, "239.10.0.1")
+	check(Contracts._listeners("239.10.0.1", "10.60.0.0/24").size() == 2 and Contracts._bystander("239.10.0.1", "10.60.0.0/24", "10.60.0.5") == t13_idle, "campaign: the listeners and the bystander are told apart")
+	check(Contracts._stream_reaches_listeners("10.60.0.5", "239.10.0.1", "10.60.0.0/24"), "campaign: the stream reaches exactly the listeners")
+	t13_sw.igmp_snooping = false
+	Sim.flush_learned_state()
+	check(not Contracts._stream_reaches_listeners("10.60.0.5", "239.10.0.1", "10.60.0.0/24"), "campaign: without snooping the bystander gets the stream too")
+	t13_src.ifaces[0].mtu = 9000
+	check(Contracts._jumbo_host("10.60.0.5") and not Contracts._jumbo_host("10.60.0.6"), "campaign: a jumbo host is one whose port carries 9000")
+	check(Contracts._big_ping("10.60.0.6", "10.60.0.7", 1000) and not Contracts._big_ping("10.60.0.6", "10.60.0.7", 9000), "campaign: a big ping fails where the path is 1500")
+	t13_sw.ifaces[3].port_security = true
+	t13_sw.ifaces[3].secure_mac = t13_idle.ifaces[0].mac
+	check(Contracts._secured_port_of("10.60.0.8") == t13_sw.ifaces[3] and Contracts._secured_port_of("10.60.0.7") == null, "campaign: a secured port is one locked to that host's MAC")
+	var t13_stash := {}  # earlier fixtures left helper addresses behind; park them for a moment
+	for d13 in Game.all_devices():
+		for i13: Net.Iface in d13.ifaces:
+			if i13.helper != "":
+				t13_stash[i13] = i13.helper
+				i13.helper = ""
+	t13_src.ifaces[0].helper = "10.60.0.9"
+	check(Contracts._relay_router() == null, "campaign: a helper on a host that does not forward is no relay")
+	t13_src.ip_forwarding = true
+	check(Contracts._relay_router() == t13_src, "campaign: a forwarding box with a helper address relays")
+	t13_src.ip_forwarding = false
+	t13_src.ifaces[0].helper = ""
+	for i13s in t13_stash:
+		i13s.helper = t13_stash[i13s]
 	print("---- %d failures" % fails)
 	return fails
