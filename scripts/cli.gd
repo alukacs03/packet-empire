@@ -1055,13 +1055,7 @@ class EOS extends Session:
 		# resolve with per-token prefix matching (Cisco-style abbreviation).
 		# A global configuration command typed inside a sub-mode (interface,
 		# router) is accepted and switches mode, exactly as IOS does.
-		var modes: Array = [mode]
-		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"]:
-			modes.append("config")
-		if mode == "af":
-			modes.append("router")  # the address family inherits the BGP commands
-		if mode != "exec":
-			modes.append("priv")  # EOS runs exec-level commands from any configuration mode
+		var modes: Array = _modes()
 		var full: Array = []
 		for c in _cmds:
 			if toks.size() < c["p"].size() or not modes.any(func(m): return m in c["m"]):
@@ -1149,13 +1143,26 @@ class EOS extends Session:
 			_mlag_resolve()  # the peer may only now have its address
 		return result
 
+	func _modes() -> Array:
+		## the modes whose commands this prompt accepts: its own, then config
+		## from any sub-mode, then exec-level from any configuration mode
+		var modes: Array = [mode]
+		if mode in ["if", "vlan", "router", "ospf", "dhcp", "acl", "dhcpsrv", "dhcpsub", "mlag", "vxlan", "mst", "rmap", "af"]:
+			modes.append("config")
+		if mode == "af":
+			modes.append("router")  # the address family inherits the BGP commands
+		if mode != "exec":
+			modes.append("priv")  # EOS runs exec-level commands from any configuration mode
+		return modes
+
 	func complete(line: String) -> Array:
 		var ends_space := line.ends_with(" ")
 		var toks := Array(line.strip_edges().split(" ", false))
 		var cur: String = "" if ends_space or toks.is_empty() else toks.pop_back()
 		var cands := {}
+		var modes := _modes()
 		for c in _cmds:
-			if mode not in c["m"] or bool(c.get("hidden", false)):
+			if not modes.any(func(m): return m in c["m"]) or bool(c.get("hidden", false)):
 				continue
 			var okc := true
 			for k in mini(toks.size(), c["p"].size()):
@@ -1711,15 +1718,55 @@ class EOS extends Session:
 	func _show_session_diffs(_r: Array) -> String:
 		if session_name == "":
 			return "% No configuration session in progress\n"
-		var before: Array = session_base_text.split("\n")
-		var after: Array = _show_run([]).split("\n")
+		var before := _blocks(session_base_text)
+		var after := _blocks(_show_run([]))
 		var out := "--- system:/running-config\n+++ session:/%s-session-config\n" % session_name
-		for line in before:
-			if String(line) != "" and line not in after:
+		var headers: Array = before.keys()
+		for h in after:
+			if h not in headers:
+				headers.append(h)
+		for h in headers:
+			var old_lines: Array = before.get(h, [])
+			var new_lines: Array = after.get(h, [])
+			if not before.has(h) or not after.has(h):
+				# a whole block came or went: header and lines together
+				var sign := "+" if after.has(h) else "-"
+				out += "%s%s\n" % [sign, h]
+				for line in (new_lines if after.has(h) else old_lines):
+					out += "%s%s\n" % [sign, line]
+				continue
+			if old_lines == new_lines:
+				continue
+			var gone: Array = old_lines.duplicate()
+			var added: Array = []
+			for line in new_lines:
+				if line in gone:
+					gone.erase(line)  # one match per occurrence, so a repeated line still counts
+				else:
+					added.append(line)
+			if String(h) != "":
+				out += " %s\n" % h  # the block header as context
+			for line in gone:
 				out += "-%s\n" % line
-		for line in after:
-			if String(line) != "" and line not in before:
+			for line in added:
 				out += "+%s\n" % line
+		return out
+
+	func _blocks(text: String) -> Dictionary:
+		## running-config text as header -> indented lines, in order
+		var out := {}
+		var head := ""
+		for line in text.split("\n"):
+			if String(line) == "" or String(line) == "!":
+				continue
+			if not String(line).begins_with(" "):
+				head = String(line)
+				if not out.has(head):
+					out[head] = []
+				continue
+			if not out.has(head):
+				out[head] = []
+			out[head].append(String(line))
 		return out
 
 	func _show_sessions(_r: Array) -> String:
@@ -1823,15 +1870,7 @@ class EOS extends Session:
 		var vrf := String(r[0])
 		if vrf not in dev.vrfs:
 			return "% Invalid input\n"
-		var out := _show_ip_route([]).split("\n")[0].replace("VRF: default", "VRF: %s" % vrf) + "\n"
-		out += ROUTE_CODES + "\nGateway of last resort is not set\n\n"
-		for e in Sim.fib(dev, vrf):
-			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
-			if e["src"] == "C":
-				out += " %-8s %s is directly connected, %s\n" % [e["src"], pfx, e["iface"].name]
-			else:
-				out += " %-8s %s [%d/%d] via %s, %s\n" % ["B E" if e["src"] == "B" else String(e["src"]), pfx, int(e["ad"]), 0, e["next_hop"], e["iface"].name]
-		return out
+		return _show_ip_route(r.slice(1), vrf)  # the default table's renderer, on this VRF's FIB
 
 	func _show_run_interfaces(r: Array) -> String:
 		if r.is_empty():
@@ -2328,6 +2367,27 @@ class EOS extends Session:
 			Game.topology_changed.emit()
 			return "")
 
+	static func vlan_ranges(vids: Array) -> String:
+		## 10,20-25: the compressed spelling EOS prints; All and none for the two sentinels
+		if vids.is_empty():
+			return "All"
+		if vids.size() == 1 and int(vids[0]) == 4095:
+			return "none"
+		var sorted := vids.duplicate()
+		sorted.sort()
+		var out: Array = []
+		var start := int(sorted[0])
+		var prev := start
+		for k in range(1, sorted.size() + 1):
+			var v := int(sorted[k]) if k < sorted.size() else -1
+			if v == prev + 1:
+				prev = v
+				continue
+			out.append(str(start) if start == prev else "%d-%d" % [start, prev])
+			start = v
+			prev = v
+		return ",".join(PackedStringArray(out))
+
 	static func parse_vlan_list(text: String) -> Array:
 		## 10,20,30-35 -> [10, 20, 30, 31, 32, 33, 34, 35]; [] when malformed
 		var vids: Array = []
@@ -2381,14 +2441,12 @@ class EOS extends Session:
 						i.tagged_vlans.sort()
 				"remove":
 					if i.tagged_vlans.is_empty():
-						var everything: Array = dev.vlans.keys()
-						everything.sort()
-						i.tagged_vlans = everything
+						i.tagged_vlans = range(1, 4095)  # All minus these: a VLAN made tomorrow is still trunked
 					for v in change:
 						i.tagged_vlans.erase(v)
 				"except":
 					var keep: Array = []
-					for v in dev.vlans.keys():
+					for v in range(1, 4095):
 						if int(v) not in change:
 							keep.append(int(v))
 					keep.sort()
@@ -2494,10 +2552,11 @@ class EOS extends Session:
 				ctx_if.vrrp["priority"] = int(r[2])
 				Game.topology_changed.emit()
 				return ""
-		if r.size() == 2 and String(r[0]).is_valid_int() and "preempt".begins_with(r[1]):
+		if r.size() in [2, 3] and String(r[0]).is_valid_int() and "preempt".begins_with(r[1]) \
+				and (r.size() == 2 or "disabled".begins_with(r[2])):
 			if ctx_if.vrrp.is_empty():
 				return "% set the virtual IP first: vrrp <group> ipv4 <vip>\n"
-			ctx_if.vrrp["preempt"] = true
+			ctx_if.vrrp["preempt"] = r.size() == 2
 			Game.topology_changed.emit()
 			return ""
 		return "% Invalid input\n"
@@ -3689,8 +3748,7 @@ class EOS extends Session:
 			out += "%-11s %-8s %-14s %d\n" % [EOS._short(i.name), "on", status, i.untagged_vlan]
 		out += "\n%-11s %s\n" % ["Port", "Vlans allowed"]
 		for i: Net.Iface in trunks:
-			out += "%-11s %s\n" % [EOS._short(i.name), "1-4094" if i.tagged_vlans.is_empty()
-				else ",".join(i.tagged_vlans.map(func(v): return str(v)))]
+			out += "%-11s %s\n" % [EOS._short(i.name), EOS.vlan_ranges(i.tagged_vlans)]
 		var vids := dev.vlans.keys()
 		vids.sort()
 		out += "\n%-11s %s\n" % ["Port", "Vlans allowed and active in management domain"]
@@ -4241,22 +4299,22 @@ class EOS extends Session:
 
 	const ROUTE_CODES := "Codes: C - connected, S - static, K - kernel,\n       O - OSPF, IA - OSPF inter area, E1 - OSPF external type 1,\n       E2 - OSPF external type 2, N1 - OSPF NSSA external type 1,\n       N2 - OSPF NSSA external type2, B - Other BGP Routes,\n       B I - iBGP, B E - eBGP, R - RIP, I L1 - IS-IS level 1,\n       I L2 - IS-IS level 2, O3 - OSPFv3, A B - BGP Aggregate,\n       A O - OSPF Summary, NG - Nexthop Group Static Route,\n       V - VXLAN Control Service, M - Martian,\n       DH - DHCP client installed default route,\n       DP - Dynamic Policy Route, L - VRF Leaked,\n       G  - gRIBI, RC - Route Cache Route,\n       CL - CBF Leaked Route\n"
 
-	func _show_ip_route(r: Array) -> String:
+	func _show_ip_route(r: Array, vrf := "") -> String:
 		## Only installed routes: one winner per prefix (or several of equal
 		## cost), chosen by longest prefix then administrative distance.
 		## With an address after it, only the entry that address would use.
 		var want := String(r[0]) if r.size() == 1 and String(r[0]).is_valid_ip_address() else ""
 		var chosen := {}
 		if want != "":
-			for e in Sim.fib(dev):
+			for e in Sim.fib(dev, vrf):
 				if Net.same_net(want, String(e["prefix"]), int(e["plen"])) \
 						and (chosen.is_empty() or int(e["plen"]) > int(chosen["plen"])):
 					chosen = e
-		var out := "VRF: default\n" + ROUTE_CODES + "\n"
+		var out := "VRF: %s\n" % (vrf if vrf != "" else "default") + ROUTE_CODES + "\n"
 		var any := false
 		var default_rows := ""
 		var rows := ""
-		for e in Sim.fib(dev):  # a VRF's table is 'show ip route vrf <name>', the v6 one 'show ipv6 route'
+		for e in Sim.fib(dev, vrf):  # the v6 table is 'show ipv6 route'
 			if want != "" and e != chosen:
 				continue
 			any = true
@@ -4580,11 +4638,11 @@ class EOS extends Session:
 		## reload would produce (ponytail: a snapshot renderer would avoid the swap)
 		if dev.startup.is_empty():
 			return "! Command: show startup-config\n! No startup-config was found.\n"
-		var live := Game.device_config(dev)
-		Game.apply_device_config(dev, dev.startup)
-		var text := _show_run([]).replace("! Command: show running-config", "! Command: show startup-config")
-		Game.apply_device_config(dev, live)
-		return text
+		var scratch := Net.NDevice.new(dev.type, dev.name)  # never installed: nothing on the live box or in the world is touched
+		scratch.model = dev.model
+		Game.apply_device_config(scratch, dev.startup, true)
+		var renderer := EOS.new(scratch)
+		return renderer._show_run([]).replace("! Command: show running-config", "! Command: show startup-config")
 
 	const IF_ORDER := ["Port-Channel", "Ethernet", "Loopback", "Management", "Tunnel", "Vlan", "Vxlan", "wg"]
 
@@ -4735,7 +4793,7 @@ class EOS extends Session:
 				if i.untagged_vlan != 1:
 					out += "   switchport trunk native vlan %d\n" % i.untagged_vlan
 				if not i.tagged_vlans.is_empty():
-					out += "   switchport trunk allowed vlan %s\n" % ",".join(i.tagged_vlans.map(func(v): return str(v)))
+					out += "   switchport trunk allowed vlan %s\n" % EOS.vlan_ranges(i.tagged_vlans)
 				out += "   switchport mode trunk\n"
 			elif i.mode == "access" and i.untagged_vlan != 1:
 				out += "   switchport access vlan %d\n" % i.untagged_vlan
@@ -4802,7 +4860,7 @@ class EOS extends Session:
 					out += "   vrrp %d priority-level %d\n" % [int(i.vrrp["group"]), int(i.vrrp["priority"])]
 				out += "   vrrp %d ipv4 %s\n" % [int(i.vrrp["group"]), i.vrrp["vip"]]
 				if not bool(i.vrrp.get("preempt", true)):
-					out += "   no vrrp %d preempt\n" % int(i.vrrp["group"])
+					out += "   vrrp %d preempt disabled\n" % int(i.vrrp["group"])
 			if i.portfast:
 				out += "   spanning-tree portfast\n"
 			if i.bpduguard:
@@ -5039,8 +5097,9 @@ class EOS extends Session:
 		var typed_complete := false
 		if not line.ends_with(" ") and not toks.is_empty():
 			toks.pop_back()
+		var modes := _modes()
 		for c in _cmds:
-			if mode not in c["m"] or toks.size() < c["p"].size():
+			if not modes.any(func(m): return m in c["m"]) or toks.size() < c["p"].size():
 				continue
 			var okc := true
 			for k in c["p"].size():

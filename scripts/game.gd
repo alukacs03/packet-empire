@@ -10558,7 +10558,7 @@ func config_diff(old_cfg: Dictionary, new_cfg: Dictionary) -> Array:
 			out.append("- interface %s" % name)
 	return out
 
-func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
+func apply_device_config(d: Net.NDevice, cfg: Dictionary, quiet := false) -> void:
 	## restore a saved configuration onto a live device (reload)
 	if cfg.is_empty():
 		# nothing was ever written: the box comes up as a fresh one of its model, every knob at default
@@ -10668,7 +10668,8 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.tunnel_dst = si.get("tunnel_dst", "")
 		target.wg_key = si.get("wg_key", "")
 		target.wg_peers = si.get("wg_peers", []).duplicate(true)
-	topology_changed.emit()
+	if not quiet:
+		topology_changed.emit()
 
 func _ser_device(d: Net.NDevice) -> Dictionary:
 	var ifs: Array = []
