@@ -39,6 +39,8 @@ static func _example_block(label: String, commands: Array) -> String:
 static func article_text(entry: Array) -> String:
 	var title := String(entry[0])
 	var body := String(entry[1])
+	if not DIALECT_EXAMPLES.has(title) and title == Loc.t("pedia.vlans.title"):
+		title = "VLANs"  # the one translated title: the examples are keyed on the English one
 	if not DIALECT_EXAMPLES.has(title):
 		return body
 	var marker := body.find("\n\nTry:")

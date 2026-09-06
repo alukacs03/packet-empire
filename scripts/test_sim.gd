@@ -12031,6 +12031,9 @@ static func run() -> int:
 			check(Pedia.article_text(t26).contains("The exercise:"), "manual: the teaching sentence survives the dialect examples replacing the Try line")
 	check(Loc.tidy_plurals("1 cycle(s) left, 3 device(s) down") == "1 cycle left, 3 devices down", "text: the (s) plurals resolve on the way to the screen")
 	Loc.language = "hu"
+	for t30 in Pedia.topics():
+		if String(t30[0]) == Loc.t("pedia.vlans.title"):
+			check(Pedia.article_text(t30).contains("Try on") or Pedia.article_text(t30).contains("PacketTik"), "manual: the VLAN chapter keeps its dialect examples in Hungarian")
 	check(Loc.t("help.h5").begins_with("eszköz") and Loc.t("help.title") == "Billentyűk és vezérlés", "text: the keys card is in the catalogue with Hungarian")
 	Loc.language = "en"
 	check(Loc.t("rack.blank.fitted").contains("Blanking") and Loc.t("settings.motion.tip") != "settings.motion.tip", "text: the rack and settings tooltips come from the catalogue")
