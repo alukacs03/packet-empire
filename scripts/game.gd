@@ -505,8 +505,8 @@ func quarter_goal_progress(g: Dictionary) -> Dictionary:
 			for h in window:
 				up += int(h.get("up", 0))
 				dc += int(h.get("deals", 0))
-			var pct := int(100.0 * float(up) / maxf(1.0, float(dc))) if dc > 0 else 100
-			return {"met": pct >= int(g["target"]), "text": "%d%% so far" % pct}
+			var pct := int(100.0 * float(up) / maxf(1.0, float(dc))) if dc > 0 else 0
+			return {"met": dc > 0 and pct >= int(g["target"]), "text": "%d%% so far" % pct if dc > 0 else "no customers served yet"}
 		"new_customers":
 			var n := int(stats.get("deals", 0)) - int(g["base"])
 			return {"met": n >= int(g["target"]), "text": "%d of %d" % [n, int(g["target"])]}
@@ -1287,6 +1287,8 @@ func set_oncall(name: String) -> String:
 		return ""
 	if Staff.by_name(name).is_empty():
 		return "nobody by that name works here"
+	if int(Staff.by_name(name).get("training_left", 0)) > 0:
+		return "they are away on a course and cannot carry the phone"
 	oncall = name
 	oncall_since = cycle
 	log_event(Loc.t("log.rota_on_call") % [name, Staff.ONCALL_RETAINER])
@@ -1304,10 +1306,16 @@ func call_someone_out() -> String:
 	# whoever is carrying the phone expects it; anybody else is being imposed on
 	var picked: Dictionary = Staff.by_name(oncall)
 	var expected := not picked.is_empty()
-	if not expected:
+	if not expected or int(picked.get("training_left", 0)) > 0:
+		picked = {}
+		expected = false
 		for m in staff:
+			if int(m.get("training_left", 0)) > 0:
+				continue  # away on a course: the phone rings in an empty room
 			if picked.is_empty() or int(m.get("morale", 70)) > int(picked.get("morale", 70)):
 				picked = m
+	if picked.is_empty():
+		return "everybody is away on a course"
 	var fee := CALLOUT_FEE / 2 if expected else CALLOUT_FEE
 	if not spend_on("call-out", fee):
 		return "a call-out costs $%d and the account will not carry it" % fee
@@ -3283,11 +3291,11 @@ func hazard_tick() -> void:
 	if guided_outage_active():
 		return  # the teaching incident owns the floor while it is running
 	if hazards.is_empty() and stage >= 1:
-		for r: Net.Rack in racks_on(current_site):
+		for r: Net.Rack in racks:  # every floor, not only the one on screen
 			var risk := hazard_risk(r)
 			if risk < 0.5 or biz_roll() > 0.02 * risk * fault_scale():
 				continue
-			var kind := "water" if facility_overdue("aircon") > 40 else "smoke"
+			var kind := "water" if facility_overdue("aircon", int(r.site)) > 40 else "smoke"
 			start_hazard(r, kind)
 			break
 	for haz in hazards.duplicate():
@@ -3460,17 +3468,18 @@ func decide(id: String, option: int) -> String:
 			live = d
 	if live.is_empty():
 		return "that decision is not open"
-	decisions.erase(live)
 	var effect := String(spec["options"][clampi(option, 0, spec["options"].size() - 1)]["effect"])
-	_apply_decision(effect)
+	if not _apply_decision(effect):
+		return "that option costs more than the account holds; the decision stays open"
+	decisions.erase(live)
 	return ""
 
-func _apply_decision(effect: String) -> void:
+func _apply_decision(effect: String) -> bool:
 	match effect:
 		"swap_now":
 			if not spend_on("decisions", 900):
 				log_event(Loc.t("log.decision_no_900_swap"))
-				return
+				return false
 			latent_defects["sw-8"] = int(latent_defects.get("sw-8", 0)) + 1
 			schedule_consequence(10, "note", "the discounted units carry the fault the vendor admitted to")
 		"swap_wait":
@@ -3489,7 +3498,7 @@ func _apply_decision(effect: String) -> void:
 		"root_cause":
 			if not spend_on("decisions", 300):
 				log_event(Loc.t("log.decision_no_300_root"))
-				return
+				return false
 			reputation = mini(100, reputation + 2)
 		"carrier_sign":
 			schedule_consequence(14, "money", "the fixed carrier price is now below the market", {"amount": 1200})
@@ -3506,6 +3515,9 @@ func _apply_decision(effect: String) -> void:
 			rng.seed = cycle
 			var hire := Staff.make_candidate(rng)
 			hire["skill"] = 5
+			hire["role"] = "engineer"  # the card says engineer; the random role table does not get a say
+			hire["ask"] = int(Staff.ROLES["engineer"]["base"]) * 5 / 4
+			hire["salary"] = int(hire["ask"])
 			hire["name"] = "Szabo Marta"
 			staff.append(hire)
 			for r in rivals:
@@ -3519,13 +3531,13 @@ func _apply_decision(effect: String) -> void:
 		"optics_yes":
 			if not spend_on("spares", 300):
 				log_event(Loc.t("log.decision_no_300_optics"))
-				return
+				return false
 			parts["optic"] = parts_of("optic") + 20
 			schedule_consequence(9, "grey", "cheap optics are where dirty-optic faults come from")
 		"optics_no":
 			if not spend_on("spares", 900):
 				log_event(Loc.t("log.decision_no_900_optics"))
-				return
+				return false
 			parts["optic"] = parts_of("optic") + 20
 		"overtime_yes":
 			earn_on("decisions", 800)
@@ -3554,9 +3566,10 @@ func _apply_decision(effect: String) -> void:
 			var junior := Staff.make_candidate(rng2)
 			junior["skill"] = 1
 			junior["salary"] = 120
+			junior["ask"] = 120  # priced by the card, so the market drift leaves them alone
 			junior["name"] = "Kis Andras"
 			staff.append(junior)
-			schedule_consequence(15, "skill", "the junior you took on has been watching you work")
+			schedule_consequence(15, "skill", "the junior you took on has been watching you work", {"name": "Kis Andras"})
 		"intern_no":
 			pass
 		"green_yes":
@@ -3565,6 +3578,7 @@ func _apply_decision(effect: String) -> void:
 			schedule_consequence(12, "reputation", "customers who asked about the tariff signed", {"amount": 3})
 		"green_no":
 			pass
+	return true
 
 func consequence_tick() -> void:
 	for c in consequences.duplicate():
@@ -3597,17 +3611,22 @@ func consequence_tick() -> void:
 				for d: Net.NDevice in all_devices():
 					if d.status == "active" and d.type != "cooling":
 						d.status = "offline"
-						record_incident("hardware", "%s failed, uninsured" % d.name)
+						if insured:  # cover taken since the broker was turned down still pays
+							earn_on("insurance", int(MODELS[d.model]["price"]))
+							record_incident("hardware", "%s failed; the insurance paid for it" % d.name)
+						else:
+							record_incident("hardware", "%s failed, uninsured" % d.name)
 						break
 			"risk":
 				if randf() < 0.4:
 					record_incident("decision", "the unplanned work came back as an incident")
 					reputation = maxi(0, reputation - 2)
 			"skill":
-				for m2 in staff:
-					if int(m2.get("skill", 1)) <= 2:
-						m2["skill"] = int(m2["skill"]) + 1
-						break
+				var named := Staff.by_name(String(c.get("data", {}).get("name", "")))
+				if named.is_empty():
+					log_event(Loc.t("log.consequence") % "the junior who was learning has already left")
+				else:
+					named["skill"] = int(named.get("skill", 1)) + 1
 			"note":
 				pass
 		log_event(Loc.t("log.consequence") % c["note"])
@@ -3864,6 +3883,9 @@ func audit_tick() -> void:
 			reputation = maxi(0, reputation - 5)
 			log_event(Loc.t("log.audit_closed")
 				% majors)
+		else:
+			reputation = mini(100, reputation + 2)
+			log_event(Loc.t("log.audit_closed_clean"))
 		audit = {}
 
 const TOUR_KINDS := {
@@ -4048,13 +4070,13 @@ func cooling_capacity(site := -1) -> int:
 		c = int(round(float(c) * 0.9))  # the outside air is against you this week
 	return maxi(BASE_COOLING / 4, c)
 
-func service_facility(task: String) -> String:
+func service_facility(task: String, site := -1) -> String:
 	if not FACILITY_TASKS.has(task):
 		return "there is no such job"
 	var cost := int(FACILITY_TASKS[task]["cost"])
 	if not spend_on("facility", cost):
 		return "that costs $%d and you do not have it" % cost
-	facility[facility_key(task)] = cycle
+	facility[facility_key(task, site)] = cycle
 	if task == "generator":
 		facility["generator_tests"] = int(facility.get("generator_tests", 0)) + 1
 		# a real transfer to backup power, with the risk that goes with it
@@ -4075,34 +4097,35 @@ func service_facility(task: String) -> String:
 		log_event(Loc.t("log.facility_done") % [Loc.t(String(FACILITY_TASKS[task]["label"])), cost])
 	return ""
 
-func generator_ready() -> bool:
+func generator_ready(site := -1) -> bool:
 	## An untested generator is a generator you are hoping about.
-	return facility_overdue("generator") < 30
+	return facility_overdue("generator", site) < 30
 
 func facility_tick() -> void:
 	## Seasonal pressure, delegated schedules, and the slow costs of neglect.
 	if not heat_wave() and biz_roll() < 0.01:
 		heat_wave_until = cycle + 5
 		log_event(Loc.t("log.heat_wave"))
-	for task: String in FACILITY_TASKS:
-		if not bool(facility_auto.get(task, false)) or facility_due_in(task) > 0:
-			continue
-		if Game.staff.is_empty() or money < int(FACILITY_TASKS[task]["cost"]):
-			continue
-		service_facility(task)
-	if facility_overdue("aircon") > 40 and randf() < 0.02:
-		for d in all_devices():
-			if d.type == "cooling" and d.status == "active":
-				d.status = "offline"
-				log_event(Loc.t("log.facility_cooling_failed")
-					% [d.name, cycle - int(facility.get("aircon", 0))])
-				record_incident("facility", "an unserviced cooling unit failed")
-				topology_changed.emit()
-				break
-	if facility_overdue("ups") > 30 and int(ups.get(current_site, 0)) > 0 and randf() < 0.03:
-		ups[current_site] = 0
-		log_event(Loc.t("log.facility_ups_flat")
-			% site_name(current_site))
+	for site in range(site_count()):
+		for task: String in FACILITY_TASKS:
+			if not bool(facility_auto.get(task, false)) or facility_due_in(task, site) > 0:
+				continue
+			if Game.staff.is_empty() or money < int(FACILITY_TASKS[task]["cost"]):
+				continue
+			service_facility(task, site)
+		if facility_overdue("aircon", site) > 40 and randf() < 0.02:
+			for d in all_devices():
+				if d.type == "cooling" and d.status == "active" and site_of_device(d) == site:
+					d.status = "offline"
+					log_event(Loc.t("log.facility_cooling_failed")
+						% [d.name, cycle - int(facility.get(facility_key("aircon", site), 0))])
+					record_incident("facility", "an unserviced cooling unit failed")
+					topology_changed.emit()
+					break
+		if facility_overdue("ups", site) > 30 and int(ups.get(site, 0)) > 0 and randf() < 0.03:
+			ups[site] = 0
+			log_event(Loc.t("log.facility_ups_flat")
+				% site_name(site))
 
 func overheating(site := -1) -> bool:
 	return stage >= 1 and power_draw(site) > cooling_capacity(site)
@@ -4936,7 +4959,7 @@ func feed_live(site: int, which: String) -> bool:
 	## generator somebody has actually tested
 	if bool(site_feeds(site).get(which, true)) or int(ups.get(site, 0)) > 0:
 		return true
-	return stage >= 1 and int(facility.get("generator_tests", 0)) > 0 and generator_ready()
+	return stage >= 1 and facility.has(facility_key("generator", site)) and generator_ready(site)
 
 func device_powered(d: Net.NDevice) -> bool:
 	var site := site_of_device(d)
@@ -5270,11 +5293,12 @@ const FINALE_ENDINGS := {
 func finale_snapshot(ending: String) -> Dictionary:
 	## Frozen at the moment it ends, so the report can be recomputed exactly
 	## without the live world having to stand still.
-	var up := 0
-	var deal_cycles := 0
-	for h: Dictionary in history:
-		up += int(h.get("up", 0))
-		deal_cycles += int(h.get("deals", 0))
+	var up := int(stats.get("up_cycles", 0))
+	var deal_cycles := int(stats.get("deal_cycles", 0))
+	if deal_cycles == 0:  # an older save without the running totals: the window is what there is
+		for h: Dictionary in history:
+			up += int(h.get("up", 0))
+			deal_cycles += int(h.get("deals", 0))
 	var techs := {}
 	for d: Net.NDevice in all_devices():
 		if not d.bgp.get("neighbors", []).is_empty():
@@ -9540,6 +9564,8 @@ func sla_tick() -> void:
 		"slots_used": int(cap_now["slots_used"]), "watts": int(cap_now["watts"])})
 	if history.size() > 120:
 		history.pop_front()
+	stats["up_cycles"] = int(stats.get("up_cycles", 0)) + int(history[history.size() - 1].get("up", 0))
+	stats["deal_cycles"] = int(stats.get("deal_cycles", 0)) + int(history[history.size() - 1].get("deals", 0))
 	quarter_profit += last_cycle_delta
 	quarter_depreciation += depreciation_this_cycle()
 	maybe_upsell()

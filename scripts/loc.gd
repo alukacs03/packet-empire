@@ -2548,6 +2548,7 @@ const CATALOG := {
 	"Also %s (%d time%s)": {"en": "Also %s (%d time%s)", "hu": "Emellett %s (%d alkalommal%s)"},
 	"s": {"en": "s", "hu": ""},
 	"Nothing demonstrated yet. The profile fills in from work, not from time served.": {"en": "Nothing demonstrated yet. The profile fills in from work, not from time served.", "hu": "Még semmi sem bizonyított. A profil munkából töltődik fel, nem ledolgozott időből."},
+	"log.audit_closed_clean": {"en": "AUDIT: the auditor closed the file with only minor findings on it. That is a pass.", "hu": "AUDIT: az auditor csak kisebb megállapításokkal zárta az aktát. Ez megfelelt."},
 }
 
 static func languages() -> Array:

@@ -5206,8 +5206,8 @@ func _build_business_tab() -> void:
 			return
 		_menu(hire_btn, opts, func(id: int) -> void:
 			var cand: Dictionary = Game.candidates[id]
-			# offer nine tenths of what they asked for and see what happens
-			var offered := int(float(int(cand["ask"])) * 0.9)
+			# offer nine tenths of what they asked for and see what happens; a counter on the table is paid
+			var offered := int(cand["counter"]) if cand.has("counter") else int(float(int(cand["ask"])) * 0.9)
 			var res := Game.offer_job(cand, offered)
 			_refresh_contracts()
 			if res == "counter":
@@ -6334,6 +6334,7 @@ func _build_contract_debrief(debrief: Dictionary) -> void:
 	box.add_child(continue_btn)
 
 func _refresh_contracts() -> void:
+	_refresh_money()  # reputation moved by a panel action shows in the header at once
 	for c in contracts_box.get_children():
 		c.queue_free()
 	if not _feature_available(contracts_tab.to_lower()):

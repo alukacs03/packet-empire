@@ -103,14 +103,16 @@ static func start_course(member: Dictionary, course: String) -> String:
 	member["training"] = course
 	member["morale"] = mini(100, int(member.get("morale", 70)) + 10)  # being invested in helps
 	Game.log_event("TRAINING: %s starts %s. Off the floor for %d cycles."
-		% [member["name"], Loc.t(String(c["label"])), int(c["cycles"])])
+		% [member["name"], Loc.t(String(c["label"])), int(member["training_left"])])
 	return ""
 
 static func give_raise(member: Dictionary, amount: int) -> String:
 	if amount <= 0:
 		return "that is not a raise"
 	member["salary"] = int(member["salary"]) + amount
-	member["morale"] = mini(100, int(member.get("morale", 70)) + 12)
+	if Game.cycle - int(member.get("last_raise", -100)) >= 12:
+		member["morale"] = mini(100, int(member.get("morale", 70)) + 12)  # the first raise in a quarter is felt; the next is expected
+	member["last_raise"] = Game.cycle
 	Game.log_event("PAY: %s now earns $%d/cycle." % [member["name"], int(member["salary"])])
 	return ""
 

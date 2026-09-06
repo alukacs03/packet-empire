@@ -11924,6 +11924,21 @@ static func run() -> int:
 		"linux: iptables refuses a bad address, resolves service names and lists like iptables-save")
 	t17_l.exec("iptables -F INPUT")
 	check(t17_l.exec("vtysh -c \"show ip route\"").contains("Codes: K - kernel route") and t17_l.exec("vtysh -c \"show ip route\"").contains("C>* "), "linux: vtysh prints zebra's route table, not Arista's")
+	# the tycoon layer: decisions, courses, raises, targets
+	var t37_money := Game.money
+	Game.money = 10
+	Game.decisions.append({"id": "workaround_vs_root", "raised": Game.cycle})
+	var t37_res := Game.decide("workaround_vs_root", 1)
+	check(t37_res.contains("stays open") and Game.decisions.any(func(d): return String(d["id"]) == "workaround_vs_root"), "decision: an option you cannot pay for leaves the decision open")
+	Game.decisions = Game.decisions.filter(func(d): return String(d["id"]) != "workaround_vs_root")
+	Game.money = t37_money
+	var t37_m := {"name": "Teszt Elek", "role": "noc", "skill": 2, "salary": 300, "ask": 300, "morale": 40, "training_left": 3}
+	Game.staff.append(t37_m)
+	check(Game.set_oncall("Teszt Elek").contains("course"), "staff: somebody on a course cannot carry the phone")
+	t37_m["training_left"] = 0
+	check(Staff.give_raise(t37_m, 30) == "" and int(t37_m["morale"]) == 52 and Staff.give_raise(t37_m, 30) == "" and int(t37_m["morale"]) == 52, "staff: the second raise in a quarter buys no morale")
+	Game.staff.erase(t37_m)
+	check(not bool(Game.quarter_goal_progress({"id": "uptime", "target": 95})["met"]) or int(Game.stats.get("deal_cycles", 0)) > 0 or not Game.deals.is_empty(), "board: an uptime target with nobody served is not met")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")
