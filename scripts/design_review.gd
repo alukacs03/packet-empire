@@ -104,9 +104,17 @@ static func run(world) -> void:
 	world.ui._unhandled_input(escape)
 	check(not world.ui.service_overlay.visible and world.ui.rack_overlay.visible, "Escape closes service standards before their parent rack")
 	world.ui.close_everything()
-	for _i in 6:
+	for _i in 4:
 		Game.sla_tick()
-		Game.cycle += 0  # the review never writes a player save: see autosave_due
+	var host: Net.NDevice = f["a"]
+	host.ifaces[0].enabled = false
+	host.ifaces[0].admin_down = true
+	Game.sla_tick()
+	world.ui._refresh_tutorial()
+	await capture(world, "11-live-mixed-results")
+	host.ifaces[0].enabled = true
+	host.ifaces[0].admin_down = false
+	Game.sla_tick()
 
 	world.ui._refresh_tutorial()
 	await capture(world, "11-sale-result")

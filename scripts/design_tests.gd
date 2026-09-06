@@ -32,6 +32,18 @@ static func fixture() -> Dictionary:
 
 static func run() -> void:
 	var before := Game.snapshot()
+	SimTests.check(CustomerBrief.margin_text(1000, 650) == Loc.t("brief.forecast_spare") % 350 and
+		CustomerBrief.margin_text(650, 650) == Loc.t("brief.forecast_exact") and
+		CustomerBrief.margin_text(500, 950) == Loc.t("brief.forecast_short") % 450,
+		"sale feedback: forecast distinguishes spare, exact capacity and shortfall")
+	var observations := [{"served": false}, {"served": true}]
+	var chart := CustomerBrief.DemandChart.new().setup([500, 950, 750], 1000, 1, observations)
+	observations[0]["served"] = true
+	chart.capacity = 0
+	SimTests.check(chart.wave_status(0)["semantic"] == "warning" and chart.wave_status(1)["semantic"] == "success" and
+		not chart.wave_status(2)["observed"] and chart.wave_status(2)["semantic"] == "warning",
+		"sale feedback: historical outcomes are immutable while future waves reflect current capacity")
+	chart.free()
 	var translated := Loc.pseudo("Cycle %d: %s, $%.2f, %02d, %% {customer}")
 	SimTests.check(translated.contains("%s") and translated.contains("{customer}") and
 		(translated % [3, "healthy", 1.25, 4]).contains("healthy"),

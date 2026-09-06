@@ -82,7 +82,7 @@ config/custom_user_dir_name="Packet Empire Design Review"
 ```
 
 Run the engine with `PACKET_REVIEW=/absolute/output/directory` to capture
-eleven real game screens and run layout/input assertions. Set
+twelve real game screens, including a mid-sale outage, and run layout/input assertions. Set
 `PACKET_REVIEW_SIZE=1280` with `--resolution 1280x720` to test a genuinely
 smaller logical viewport, not just a scaled 1600×900 image. Set
 `PACKET_REVIEW_LANGUAGE=hu` to check Hungarian. Otherwise the review uses
