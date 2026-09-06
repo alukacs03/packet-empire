@@ -156,6 +156,29 @@ static func tier(idx: int) -> Dictionary:
 
 static var _next_id := 0
 
+static func subject_of(params: Dictionary) -> String:
+	## the one value a brief talks about: the address, VIP, VNI, SSID, VLAN or subnet
+	for k in ["ip", "vip", "vni", "ssid", "vid", "subnet"]:
+		if params.has(k):
+			return str(params[k])
+	return ""
+
+static func brief_for(x: Dictionary) -> String:
+	## the brief rendered now, in the language on screen, from the kind and its
+	## parameters; an offer or deal without a kind in the table keeps its text
+	var spec: Dictionary = KINDS.get(String(x.get("kind", "")), {})
+	if spec.is_empty():
+		return String(x.get("brief", ""))
+	var tpl := Loc.t(String(spec["brief"]))
+	var subject := subject_of(x.get("params", {}))
+	return tpl % [subject] if subject != "" and "%s" in tpl else tpl
+
+static func costs_for(x: Dictionary) -> String:
+	var spec: Dictionary = KINDS.get(String(x.get("kind", "")), {})
+	if spec.is_empty():
+		return String(x.get("costs", ""))
+	return Loc.t(String(spec["costs"])) + Loc.t("  Expected load ~%d Mbps.") % int(spec.get("load", 200))
+
 static func gen_offer() -> Dictionary:
 	var kinds: Array = KINDS.keys()
 	if not _has_uplink():

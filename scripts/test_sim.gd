@@ -11966,6 +11966,13 @@ static func run() -> int:
 	Game.staff.erase(t39_a)
 	Game.staff.erase(t39_b)
 	Game.money = t39_money
+	# an offer's brief is rendered from its kind and parameters, in the language on screen
+	var t40_offer := {"kind": "hosting", "params": {"ip": "10.40.4.10"}, "brief": "stale text"}
+	check(Market.brief_for(t40_offer).contains("10.40.4.10/24") and not Market.brief_for(t40_offer).contains("stale"), "market: the brief is rendered from the kind and the address")
+	Loc.language = "hu"
+	check(Market.brief_for(t40_offer).contains("10.40.4.10/24") and Market.brief_for(t40_offer).contains("alkalmazásszerver") and Market.costs_for(t40_offer).contains("Mbps"), "market: and in Hungarian when that is the language")
+	Loc.language = "en"
+	check(Market.brief_for({"brief": "Inherited from X: keep it up"}) == "Inherited from X: keep it up", "market: a deal without a kind keeps its own text")
 	# a save keeps the dot1x home vlan and the sale happens once
 	t17_s.ifaces[0].dot1x_home = 30
 	check(int(Game._ser_device(t17_s)["ifaces"][0]["dot1x_home"]) == 30 and not Game.config_dirty(t17_s), "save: the dot1x home vlan is kept and is not configuration")

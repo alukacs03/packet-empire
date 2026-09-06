@@ -4198,7 +4198,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 	var collected := deal.has("first_cash_cycle")
 	if not ever_live:
 		tutorial_box.add_child(_tutorial_head(Loc.t("brief.deliver", {"customer": String(deal["customer"]).to_upper()})))
-		tutorial_box.add_child(_wrap(Loc.t("tutorial.promise_sold") % String(deal["brief"]), 13,
+		tutorial_box.add_child(_wrap(Loc.t("tutorial.promise_sold") % Market.brief_for(deal), 13,
 			UIW.colour("text"), 290))
 		for check: Dictionary in Market.delivery_checks(deal):
 			var check_ok := bool(check["ok"])
@@ -4395,7 +4395,7 @@ func _refresh_tutorial() -> void:
 			for old in tutorial_box.get_children():
 				old.queue_free()
 			tutorial_box.add_child(_tutorial_head(Loc.t("brief.deliver", {"customer": String(waiting["customer"]).to_upper()})))
-			var promise := _wrap(Loc.t("body.promise_sold_todo") % String(waiting["brief"]), 13,
+			var promise := _wrap(Loc.t("body.promise_sold_todo") % Market.brief_for(waiting), 13,
 				UIW.colour("text"), 290)
 			tutorial_box.add_child(promise)
 			tutorial_box.add_child(_label(Loc.t("body.prove_live"),
@@ -5839,7 +5839,7 @@ func _build_jobs_tab() -> void:
 		var ask_tag := _section("CLIENT ASK")
 		ask_tag.add_theme_color_override("font_color", UIW.colour("accent"))
 		ask_box.add_child(ask_tag)
-		ask_box.add_child(_wrap(offer["brief"], 14, UIW.colour("text_strong"), 620))
+		ask_box.add_child(_wrap(Market.brief_for(offer), 14, UIW.colour("text_strong"), 620))
 
 		var otier := Market.tier(int(offer.get("sla", 0)))
 		var facts := HBoxContainer.new()
@@ -5850,7 +5850,7 @@ func _build_jobs_tab() -> void:
 				float(otier["penalty"])], "warning"))
 		else:
 			facts.add_child(_offer_fact("SERVICE LEVEL", Loc.t("fact.best_effort"), "success"))
-		facts.add_child(_offer_fact("DELIVERY", String(offer["costs"]), "info"))
+		facts.add_child(_offer_fact("DELIVERY", Market.costs_for(offer), "info"))
 		var est: Array = Game.market_estimate(offer)
 		var market_copy := Loc.t("body.no_rival_bidder")
 		if not Rivals.best_bidder(offer).is_empty():
@@ -6061,7 +6061,7 @@ func _build_jobs_tab() -> void:
 					Game.decline_renewal(deal)
 					_refresh_contracts())
 				rrow.add_child(end_btn)
-			var detail := String(deal.get("brief", ""))
+			var detail := Market.brief_for(deal)
 			var spec_bits: Array = []
 			for k in deal["params"]:
 				spec_bits.append("%s: %s" % [k, str(deal["params"][k])])
