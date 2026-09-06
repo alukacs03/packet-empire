@@ -11588,6 +11588,95 @@ static func run() -> int:
 	t21_ls.exec("ip addr add 10.81.30.3/24 dev eth0.30")
 	Sim.flush_learned_state()
 	check(Sim.ping(t21_h1, "10.81.30.3")["ok"], "tag: with a VLAN 30 interface the same frame is answered")
+	# --- an SVI hears its whole VLAN: two L3 switches share a virtual gateway and elect one master ---
+	var t22_rack := Game.add_rack(Vector2i(9, 20))
+	var t22_a := Game.new_device("sw-24")
+	var t22_b := Game.new_device("sw-24")
+	var t22_h := Game.new_device("srv-1")
+	t22_rack.slots[0] = t22_a
+	t22_rack.slots[1] = t22_b
+	t22_rack.slots[2] = t22_h
+	Game.connect_ifaces(t22_a.ifaces[0], t22_b.ifaces[0])
+	Game.connect_ifaces(t22_h.ifaces[0], t22_a.ifaces[1])
+	for t22_sw in [t22_a, t22_b]:
+		var t22_s := CLI.new_session(t22_sw)
+		t22_s.exec("en")
+		t22_s.exec("conf t")
+		t22_s.exec("ip routing")
+		t22_s.exec("vlan 10")
+		t22_s.exec("interface Ethernet1")
+		t22_s.exec("switchport mode trunk")
+		t22_s.exec("interface Ethernet2")
+		t22_s.exec("switchport access vlan 10")
+		t22_s.exec("interface Vlan10")
+		t22_s.exec("ip address 10.82.0.%d/24" % (2 if t22_sw == t22_a else 3))
+		t22_s.exec("vrrp 1 ipv4 10.82.0.1")
+		if t22_sw == t22_a:
+			t22_s.exec("vrrp 1 priority-level 120")
+		t22_s.exec("end")
+	Game.add_ip(t22_h.ifaces[0], "10.82.0.10/24")
+	Game.add_static_route(t22_h, "0.0.0.0", 0, "10.82.0.1")
+	Sim.flush_learned_state()
+	var t22_svi_a: Net.Iface = t22_a.ifaces.filter(func(i): return i.name == "Vlan10")[0]
+	var t22_svi_b: Net.Iface = t22_b.ifaces.filter(func(i): return i.name == "Vlan10")[0]
+	check(Sim.segment_ifaces(t22_svi_a).has(t22_svi_b), "svi: the segment walk from an SVI crosses the trunk to the other SVI")
+	check(Sim.vrrp_master("10.82.0.1", 1, t22_svi_a) == t22_a and Sim.vrrp_master("10.82.0.1", 1, t22_svi_b) == t22_a, "svi: both L3 switches agree on one master")
+	check(Sim.ping(t22_h, "10.82.0.1")["ok"], "svi: the host pings the shared gateway")
+	# --- LACP suspends the odd member; MLAG without its peer link leaves one side standing ---
+	var t23_rack := Game.add_rack(Vector2i(9, 21))
+	var t23_a := Game.new_device("sw-24")
+	var t23_b := Game.new_device("sw-24")
+	var t23_srv := Game.new_device("srv-2")
+	var t23_cli := Game.new_device("srv-1")
+	t23_rack.slots[0] = t23_a
+	t23_rack.slots[1] = t23_b
+	t23_rack.slots[2] = t23_srv
+	t23_rack.slots[3] = t23_cli
+	Game.connect_ifaces(t23_a.ifaces[7], t23_b.ifaces[7])  # the peer link
+	Game.connect_ifaces(t23_srv.ifaces[0], t23_a.ifaces[0])
+	Game.connect_ifaces(t23_srv.ifaces[1], t23_b.ifaces[0])
+	Game.connect_ifaces(t23_cli.ifaces[0], t23_a.ifaces[1])
+	for pair23 in [[t23_a, "10.83.255.1"], [t23_b, "10.83.255.2"]]:
+		var s23 := CLI.new_session(pair23[0])
+		s23.exec("en")
+		s23.exec("conf t")
+		s23.exec("vlan 4094")
+		s23.exec("interface Vlan4094")
+		s23.exec("ip address %s/30" % pair23[1])
+		s23.exec("interface Ethernet8")
+		s23.exec("switchport mode trunk")
+		s23.exec("exit")
+		s23.exec("mlag configuration")
+		s23.exec("domain-id DC1")
+		s23.exec("local-interface Vlan4094")
+		s23.exec("peer-address %s" % ("10.83.255.2" if pair23[0] == t23_a else "10.83.255.1"))
+		s23.exec("peer-link Ethernet8")
+		s23.exec("exit")
+		s23.exec("interface Ethernet1")
+		s23.exec("channel-group 1 mode active")
+		s23.exec("mlag 1")
+		s23.exec("end")
+	var t23_ls := CLI.new_session(t23_srv)
+	t23_ls.exec("bond eth0 eth1")
+	Game.add_ip(t23_srv.ifaces[0], "10.83.0.10/24")
+	Game.add_ip(t23_cli.ifaces[0], "10.83.0.20/24")
+	Sim.flush_learned_state()
+	check(Sim.mlag_peer_of(t23_a) == t23_b and Sim.ping(t23_cli, "10.83.0.10")["ok"], "mlag: the pair is up over the peer link and the client reaches the bonded server")
+	t23_a.ifaces[7].enabled = false
+	t23_b.ifaces[7].enabled = false
+	Sim.flush_learned_state()
+	check(Sim.mlag_peer_of(t23_a) == null, "mlag: with the peer link down the two are strangers")
+	check(Sim._mlag_isolated_secondary(t23_b) and not Sim._mlag_isolated_secondary(t23_a), "mlag: the secondary steps aside, the primary does not")
+	check(Sim.ping(t23_cli, "10.83.0.10")["ok"], "mlag: the client still reaches the server through the primary alone")
+	t23_a.ifaces[7].enabled = true
+	t23_b.ifaces[7].enabled = true
+	Sim.flush_learned_state()
+	t23_a.ifaces[2].lag = 1
+	t23_a.ifaces[2].lag_mode = "active"
+	t23_a.ifaces[2].mode = "trunk"  # a second member with different switchport settings
+	check(not Sim._lag_member_matches(t23_a.ifaces[2]), "lacp: a member whose switchport settings differ from the channel is suspended")
+	t23_a.ifaces[2].lag = 0
+	t23_a.ifaces[2].mode = "access"
 	check(t12_l.exec("echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { 10.78.0.1/24 } }' > /etc/keepalived/keepalived.conf") == "", "keepalived: the conf is written by hand")
 	check(t12_l.exec("systemctl start keepalived") == "" and int(t12_s.ifaces[0].vrrp.get("group", 0)) == 51 and String(t12_s.ifaces[0].vrrp.get("vip", "")) == "10.78.0.1" and int(t12_s.ifaces[0].vrrp.get("priority", 0)) == 150, "keepalived: starting it is the VRRP the routers speak")
 	check(Sim.vrrp_master("10.78.0.1", 51) == t12_s, "keepalived: the server is master of its VIP")

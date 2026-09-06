@@ -10006,6 +10006,12 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 func disconnect_iface(i: Net.Iface) -> void:
 	var l := link_at(i)
 	if l:
+		for end in [l.a, l.b]:
+			if end.dot1x_ok != "":
+				end.dot1x_ok = ""  # link down ends the 802.1X session, and the port goes back to its own VLAN
+				if end.dot1x_home > 0:
+					end.untagged_vlan = end.dot1x_home
+					end.dot1x_home = 0
 		links.erase(l)
 		Sim.topology_change()
 	topology_changed.emit()

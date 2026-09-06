@@ -2714,6 +2714,7 @@ func _bond(t: Array) -> String:
 	for idx in legs.size():
 		var leg: Net.Iface = legs[idx]
 		leg.lag = gid
+		leg.lag_mode = "active"  # the shorthand is the 802.3ad bond its own help names
 		if idx > 0:
 			leg.mac = legs[0].mac  # a bond presents one address
 	Game.topology_changed.emit()

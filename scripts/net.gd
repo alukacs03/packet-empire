@@ -23,7 +23,8 @@ class Iface:
 	var vrf := ""  # routing table this interface belongs to ("" = global)
 	var qos := false  # when congested, serve traffic in service-level order
 	var dot1x := false  # port-based authentication before any traffic passes
-	var dot1x_ok := ""  # the MAC currently authorised on this port
+	var dot1x_ok := ""
+	var dot1x_home := 0  # the VLAN the port had before RADIUS moved it; restored when the session ends  # the MAC currently authorised on this port
 	var pvlan := ""  # "" | "isolated" | "promiscuous": private VLAN role
 	var storm_limit := 0  # broadcast frames allowed per operation, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation

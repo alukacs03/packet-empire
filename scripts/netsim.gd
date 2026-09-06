@@ -215,6 +215,12 @@ static func _dhcp_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		# DHCP relay: forward the broadcast as unicast IP with giaddr
 		_send_ip(dev, iface.helper, 64, {"proto": "dhcp-relay", "op": "discover",
 			"mac": p["mac"], "giaddr": _first_ip(iface)})
+		for cidr: String in iface.ips:
+			var extra := String(cidr).split("/")[0]
+			if Net.is_v6(extra) or extra == _first_ip(iface):
+				continue
+			_send_ip(dev, iface.helper, 64, {"proto": "dhcp-relay", "op": "discover",
+				"mac": p["mac"], "giaddr": extra})  # a secondary address is a second scope
 		return
 	if p["op"] == "discover":
 		var svc: Dictionary = dev.services.get("dhcp", {})
@@ -963,10 +969,29 @@ static func mlag_peer_of(dev: Net.NDevice) -> Net.NDevice:
 	## the switch this one shares bundles with, if it is up
 	if dev.mlag_peer == "":
 		return null
+	var pl := mlag_peerlink(dev)
+	if pl == null or not leg_usable(pl):
+		return null  # the peer link carries the sync; without it the two are strangers
 	for d in Game.all_devices():
 		if d.name == dev.mlag_peer and d.type == "switch" and d.status == "active":
 			return d
 	return null
+
+static func _mlag_configured_peer(dev: Net.NDevice) -> Net.NDevice:
+	for d in Game.all_devices():
+		if d.name == dev.mlag_peer and d.type == "switch" and d.status == "active":
+			return d
+	return null
+
+static func _mlag_isolated_secondary(dev: Net.NDevice) -> bool:
+	## peer link down while the configured peer is still alive: the secondary
+	## (the higher name, the way a lower priority loses) err-disables its MLAG
+	## ports so the primary carries the bundles alone; without that both would
+	## be active and the host's bond would see two masters
+	if dev.mlag_peer == "" or mlag_peer_of(dev) != null:
+		return false
+	var peer := _mlag_configured_peer(dev)
+	return peer != null and dev.name > peer.name
 
 static func mlag_port(dev: Net.NDevice, id: int) -> Net.Iface:
 	for i: Net.Iface in dev.ifaces:
@@ -1007,9 +1032,26 @@ static func lag_bundled(port: Net.Iface) -> bool:
 	if l == null:
 		return false
 	var far: Net.Iface = l.other(port)
-	return far.lag > 0 and lag_compatible(port, far) and leg_usable(port)
+	return far.lag > 0 and lag_compatible(port, far) and leg_usable(port) and _lag_member_matches(port)
+
+static func _lag_member_matches(port: Net.Iface) -> bool:
+	## LACP suspends a member whose speed or switchport settings differ from
+	## the channel's: the first member configured sets the terms
+	for first: Net.Iface in port.dev.ifaces:
+		if first.lag != port.lag:
+			continue
+		if first == port:
+			return true
+		var same := Game.iface_speed(first) == Game.iface_speed(port) and first.mode == port.mode \
+			and first.untagged_vlan == port.untagged_vlan and first.tagged_vlans == port.tagged_vlans
+		if not same:
+			_ospf_once(port.dev, "%%ETH-4-LAG_MEMBER_SUSPENDED: %s suspended: speed or switchport settings differ from Port-Channel%d" % [port.name, port.lag])
+		return same
+	return true
 
 static func _mlag_live(port: Net.Iface) -> bool:
+	if port.mlag > 0 and _mlag_isolated_secondary(port.dev):
+		return false  # the peer link is down and the primary is alive: the secondary shuts its bundle ports
 	return leg_usable(port) and not stp_blocked(port)
 
 static func _mlag_peer_covers(dev: Net.NDevice, id: int) -> bool:
@@ -1076,6 +1118,8 @@ static func flush_learned_state() -> void:
 	_stp_dirty = true
 	for d in Game.all_devices():
 		d.mac_table.clear()
+		d.remote_macs.clear()  # overlay learning ages with the table
+		d.mcast_ports.clear()  # membership is re-reported, not remembered forever
 		d.arp.clear()
 		d.nat_flows.clear()
 		d.nat_xlate.clear()
@@ -2030,6 +2074,8 @@ static func _dot1x_authorise(sw: Net.NDevice, port: Net.Iface, mac: String) -> b
 	port.dot1x_ok = mac
 	var vid := int(users[mac])
 	if vid > 0 and sw.vlans.has(vid):
+		if port.dot1x_home == 0:
+			port.dot1x_home = port.untagged_vlan  # remembered: the port goes back when the session ends
 		port.untagged_vlan = vid  # the server decides where you belong
 	Game.device_log(sw, "802.1X authorised %s on %s%s" % [mac, port.name,
 		" into VLAN %d" % vid if vid > 0 else ""])
@@ -2089,6 +2135,8 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	if in_if.dot1x and bool(dev.services.get("dot1x_global", true)) and String(frame["src"]) != in_if.dot1x_ok:
 		if not _dot1x_authorise(dev, in_if, String(frame["src"])):
 			return
+		if in_if.mode == "access":
+			vlan = in_if.untagged_vlan  # authorised first, classified after: the assigned VLAN carries this frame too
 	if in_if.port_security:
 		var known: Array = in_if.secure_macs
 		if in_if.secure_mac != "" and in_if.secure_mac not in known:
@@ -2124,18 +2172,26 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 			if mcast_mac(String(grp2)) == String(frame["dst"]):
 				for port in dev.mcast_ports[grp2]:
 					wanted[port] = true
+		if not dev.mac_table.has(vlan):
+			dev.mac_table[vlan] = {}
 		dev.mac_table[vlan][frame["src"]] = in_if
-		for o2: Net.Iface in wanted:
-			if o2 == in_if or stp_blocked_for(o2, vlan) or not o2.enabled:
-				continue
-			if o2.mode == "access" and o2.untagged_vlan != vlan:
-				continue
-			var mf := frame.duplicate(true)
-			mf["vlan"] = 0 if o2.mode == "access" or vlan == o2.untagged_vlan else vlan
-			_tx(o2, mf)
-		return
+		if not wanted.is_empty():  # unregistered multicast floods the VLAN like any switch's default
+			for o2: Net.Iface in wanted:
+				if o2 == in_if or stp_blocked_for(o2, vlan) or not o2.enabled:
+					continue
+				if o2.mode == "access" and o2.untagged_vlan != vlan:
+					continue
+				var mf := frame.duplicate(true)
+				mf["vlan"] = 0 if o2.mode == "access" or vlan == o2.untagged_vlan else vlan
+				_tx(o2, mf)
+			return
+	if not dev.mac_table.has(vlan):
+		dev.mac_table[vlan] = {}
 	var was_local: Net.Iface = dev.mac_table[vlan].get(frame["src"])
 	dev.mac_table[vlan][frame["src"]] = in_if
+	if String(frame.get("vxlan_from", "")) == "" and dev.remote_macs.get(vlan, {}).has(String(frame["src"])):
+		dev.remote_macs[vlan].erase(String(frame["src"]))  # it moved here: the overlay entry is stale
+		was_local = null
 	if was_local != in_if and String(frame.get("vxlan_from", "")) == "":
 		# newly learned behind a local port: tell the other VTEPs about it
 		evpn_advertise(dev, vlan, String(frame["src"]))
@@ -2618,7 +2674,21 @@ static func segment_ifaces(start: Net.Iface) -> Array:
 		return _seg_cache[start]
 	var out: Array = []
 	var seen := {start: true}
-	var queue: Array = [[start, 0]]  # [port, tag on the wire; 0 = untagged]
+	var queue: Array = []  # [port, tag on the wire; 0 = untagged]
+	if start.name.begins_with("Vlan") and start.dev.type == "switch":
+		# an SVI has no wire: its segment is every port carrying the VLAN
+		var vid := int(start.name.trim_prefix("Vlan"))
+		for o: Net.Iface in start.dev.ifaces:
+			if o.mode == "access" and o.untagged_vlan == vid:
+				queue.append([o, 0])
+			elif o.mode == "trunk" and (o.untagged_vlan == vid or o.tagged_vlans.is_empty() or vid in o.tagged_vlans):
+				queue.append([o, 0 if o.untagged_vlan == vid else vid])
+	elif start.parent != "":
+		var phys := Game._find_iface(start.dev, start.parent)  # a subinterface rides its parent, tagged
+		if phys != null:
+			queue.append([phys, start.dot1q])
+	else:
+		queue.append([start, 0])
 	while not queue.is_empty():
 		var cur: Array = queue.pop_front()
 		var port: Net.Iface = cur[0]
@@ -2644,6 +2714,10 @@ static func segment_ifaces(start: Net.Iface) -> Array:
 		var vid := tag if tag != 0 else far.untagged_vlan
 		if stp_blocked_for(far, vid):
 			continue
+		for svi: Net.Iface in far.dev.ifaces:
+			if svi.name == "Vlan%d" % vid and svi.enabled and not seen.has(svi):
+				seen[svi] = true
+				out.append(svi)  # the switch's own interface in this VLAN hears the segment too
 		for o: Net.Iface in far.dev.ifaces:
 			if o == far or seen.has(o) or o.mode == "routed" or o.parent != "" or stp_blocked_for(o, vid):
 				continue
@@ -2982,11 +3056,27 @@ static func _vxlan_rx(dev: Net.NDevice, from_ip: String, l4: Dictionary) -> void
 	dev.remote_macs[vlan][String(inner["src"])] = from_ip
 	inner["vxlan_from"] = from_ip
 	inner["vlan"] = vlan
-	for out_if: Net.Iface in dev.ifaces:
-		if out_if.mode == "access" and out_if.untagged_vlan == vlan and out_if.enabled:
-			var copy := inner.duplicate(true)
+	# into the bridge domain by its own forwarding table: the learned port for
+	# known unicast, every port carrying the VLAN otherwise, trunks tagged
+	var known: Net.Iface = static_port(dev, vlan, String(inner["dst"]))
+	if known == null:
+		known = dev.mac_table.get(vlan, {}).get(inner["dst"])
+	var flood: bool = inner["dst"] == BCAST or String(inner["dst"]).begins_with(MCAST_PREFIX) or known == null
+	for out_if: Net.Iface in (dev.ifaces if flood else [known]):
+		if out_if.name.begins_with("Vlan") or out_if.name == "lo" or not out_if.enabled or stp_blocked_for(out_if, vlan):
+			continue
+		var copy := inner.duplicate(true)
+		if out_if.mode == "access":
+			if out_if.untagged_vlan != vlan:
+				continue
 			copy["vlan"] = 0
-			_tx(out_if, copy)
+		elif out_if.mode == "trunk":
+			if not out_if.tagged_vlans.is_empty() and vlan not in out_if.tagged_vlans and out_if.untagged_vlan != vlan:
+				continue
+			copy["vlan"] = 0 if vlan == out_if.untagged_vlan else vlan
+		else:
+			continue
+		_tx(out_if, copy)
 	for svi: Net.Iface in dev.ifaces:
 		if svi.name == "Vlan%d" % vlan and svi.enabled:
 			_host_rx(dev, svi, inner)
