@@ -342,7 +342,8 @@ const MENU_DESC := {
 	"traceroute": "Trace route to a host", "monitor-traffic": "Monitor interface traffic", "list": "Interface lists",
 	"member": "Interface list members", "peers": "WireGuard peers", "port": "Bridge ports", "host": "Bridge hosts",
 	"settings": "Bridge settings", "instance": "OSPF instances", "area": "OSPF areas", "interface-template": "OSPF interface templates",
-	"connection": "BGP connections", "session": "BGP sessions", "cache": "DNS cache", "lease": "DHCP leases",
+	"connection": "BGP connections", "session": "BGP sessions", "vrf": "Virtual routing and forwarding",
+	"dhcp-relay": "DHCP relay", "vxlan": "VXLAN interfaces", "vteps": "VXLAN tunnel endpoints", "cache": "DNS cache", "lease": "DHCP leases",
 	"network": "DHCP networks", "community": "SNMP communities", "traffic-flow": "Traffic flow settings",
 	"discovery-settings": "Neighbor discovery settings", "configuration": "BFD configuration", "sup-output": "Support output",
 	"nd": "Neighbor discovery", "advertisements": "BGP advertisements", "print": "Print values of item properties",
@@ -729,6 +730,168 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			if svc.is_empty():
 				return out
 			return out + "0   dhcp1  %-10s pool1         1d\n" % String(svc.get("iface", ""))
+		"ip vrf add":
+			if not dev.ip_forwarding:
+				return "failure: vrf needs a router\n"
+			if not p.has("name"):
+				return "value of name must be specified\n"
+			if String(p["name"]) in dev.vrfs:
+				return "failure: already have vrf with such name\n"
+			var members: Array = []
+			for ifn in String(p.get("interfaces", "")).split(",", false):
+				var mi := _iface(ifn)
+				if mi == null:
+					return "input does not match any value of interfaces\n"
+				members.append(mi)
+			Game.add_vrf(dev, String(p["name"]))
+			for mi: Net.Iface in members:
+				Game.set_iface_vrf(mi, String(p["name"]))
+			return ""
+		"ip vrf remove":
+			var vname := String(p.get("name", args[0] if not args.is_empty() else ""))
+			if vname not in dev.vrfs:
+				return "no such item\n"
+			for i: Net.Iface in dev.ifaces:
+				if i.vrf == vname:
+					Game.set_iface_vrf(i, "")
+			dev.vrfs.erase(vname)
+			Game.topology_changed.emit()
+			return ""
+		"ip vrf print":
+			var out := "Flags: X - disabled, * - builtin\nColumns: NAME, INTERFACES\n#   NAME  INTERFACES\n"
+			out += "0 * main\n"
+			var n := 1
+			for vname in dev.vrfs:
+				var members: Array = []
+				for i: Net.Iface in dev.ifaces:
+					if i.vrf == vname:
+						members.append(_dname(i))
+				out += "%-3d %-5s %s\n" % [n, vname, ",".join(PackedStringArray(members))]
+				n += 1
+			return out
+		"ip dhcp-relay add":
+			if not dev.ip_forwarding:
+				return "failure: dhcp-relay needs a router\n"
+			var on := _iface(String(p.get("interface", "")))
+			if on == null:
+				return "input does not match any value of interface\n"
+			if not String(p.get("dhcp-server", "")).is_valid_ip_address():
+				return "invalid value for argument dhcp-server\n"
+			on.helper = String(p["dhcp-server"])
+			var relays: Dictionary = dev.services.get("ros_relay", {})
+			relays[on.name] = String(p.get("name", "relay%d" % (relays.size() + 1)))
+			dev.services["ros_relay"] = relays
+			Game.topology_changed.emit()
+			return ""
+		"ip dhcp-relay remove":
+			var relays: Dictionary = dev.services.get("ros_relay", {})
+			var want := String(p.get("name", args[0] if not args.is_empty() else ""))
+			for ifn in relays.keys():
+				if String(relays[ifn]) == want:
+					relays.erase(ifn)
+					var ri := _iface(ifn)
+					if ri != null:
+						ri.helper = ""
+					Game.topology_changed.emit()
+					return ""
+			return "no such item\n"
+		"ip dhcp-relay print":
+			var out := "Flags: X - disabled, I - invalid\nColumns: NAME, INTERFACE, DHCP-SERVER, LOCAL-ADDRESS\n#   NAME    INTERFACE  DHCP-SERVER  LOCAL-ADDRESS\n"
+			var n := 0
+			var relays: Dictionary = dev.services.get("ros_relay", {})
+			for i: Net.Iface in dev.ifaces:
+				if i.helper == "":
+					continue
+				var local := String(i.ips[0]).split("/")[0] if not i.ips.is_empty() else "0.0.0.0"
+				out += "%-3d %-7s %-10s %-12s %s\n" % [n, relays.get(i.name, "relay%d" % (n + 1)), _dname(i), i.helper, local]
+				n += 1
+			return out
+		"interface vxlan add":
+			if dev.type != "switch":
+				return "failure: no bridge on this device\n"
+			if not p.has("name") or not p.has("vni"):
+				return "value of %s must be specified\n" % ("name" if not p.has("name") else "vni")
+			if not String(p["vni"]).is_valid_int() or int(p["vni"]) < 1 or int(p["vni"]) > 16777215:
+				return "invalid value for argument vni\n"
+			var vx: Dictionary = dev.services.get("ros_vxlan", {})
+			vx[String(p["name"])] = {"vni": int(p["vni"]), "port": int(p.get("port", "4789")) if String(p.get("port", "4789")).is_valid_int() else 4789}
+			dev.services["ros_vxlan"] = vx
+			if dev.vtep.is_empty():
+				dev.vtep = {"src": "", "peers": [], "map": {}, "evpn": false}
+			if p.has("local-address"):
+				if not String(p["local-address"]).is_valid_ip_address():
+					return "invalid value for argument local-address\n"
+				dev.vtep["src"] = String(p["local-address"])
+			elif String(dev.vtep.get("src", "")) == "":
+				dev.vtep["src"] = _first_ip()
+			Game.topology_changed.emit()
+			return ""
+		"interface vxlan remove":
+			var vx: Dictionary = dev.services.get("ros_vxlan", {})
+			var vname := String(p.get("name", args[0] if not args.is_empty() else ""))
+			if not vx.has(vname):
+				return "no such item\n"
+			var vni := int(vx[vname]["vni"])
+			vx.erase(vname)
+			if not dev.vtep.is_empty():
+				for vid in dev.vtep["map"].keys():
+					if int(dev.vtep["map"][vid]) == vni:
+						dev.vtep["map"].erase(vid)
+			Game.topology_changed.emit()
+			return ""
+		"interface vxlan print":
+			var out := "Flags: X - disabled, R - running\nColumns: NAME, MTU, MAC-ADDRESS, ARP, VNI, PORT, LOCAL-ADDRESS\n#   NAME    MTU   MAC-ADDRESS        ARP      VNI    PORT  LOCAL-ADDRESS\n"
+			var n := 0
+			var vx: Dictionary = dev.services.get("ros_vxlan", {})
+			for vname in vx:
+				out += "%-3d %-7s 1450  %s  enabled  %-6d %-5d %s\n" % [n, vname, dev.ifaces[0].mac, int(vx[vname]["vni"]), int(vx[vname]["port"]), String(dev.vtep.get("src", ""))]
+				n += 1
+			return out
+		"interface vxlan vteps add":
+			var vx: Dictionary = dev.services.get("ros_vxlan", {})
+			if not vx.has(String(p.get("interface", ""))):
+				return "input does not match any value of interface\n"
+			if not String(p.get("remote-ip", "")).is_valid_ip_address():
+				return "invalid value for argument remote-ip\n"
+			var peers: Array = dev.vtep["peers"]
+			if String(p["remote-ip"]) not in peers:
+				peers.append(String(p["remote-ip"]))
+			Game.topology_changed.emit()
+			return ""
+		"interface vxlan vteps remove":
+			if dev.vtep.is_empty():
+				return "no such item\n"
+			var want := String(p.get("remote-ip", ""))
+			var peers: Array = dev.vtep["peers"]
+			if not args.is_empty() and String(args[0]).is_valid_int() and int(args[0]) < peers.size():
+				want = String(peers[int(args[0])])
+			if want not in peers:
+				return "no such item\n"
+			peers.erase(want)
+			Game.topology_changed.emit()
+			return ""
+		"interface vxlan vteps print":
+			var out := "Columns: INTERFACE, REMOTE-IP, PORT\n#   INTERFACE  REMOTE-IP     PORT\n"
+			var vx: Dictionary = dev.services.get("ros_vxlan", {})
+			var n := 0
+			for vname in vx:
+				for peer in dev.vtep.get("peers", []):
+					out += "%-3d %-10s %-13s %d\n" % [n, vname, peer, int(vx[vname]["port"])]
+					n += 1
+			return out
+		"routing ospf interface print":
+			if dev.ospf.is_empty():
+				return ""
+			var out := "Flags: D - dynamic, P - passive\nColumns: INTERFACES, AREA, COST, PRIORITY, NETWORK-TYPE, STATE\n#     INTERFACES  AREA      COST  PRIORITY  NETWORK-TYPE  STATE\n"
+			var n := 0
+			var passive: Array = dev.ospf.get("passive", [])
+			for i: Net.Iface in Sim.ospf_covered_ifaces(dev):
+				var flag := "P" if i.name in passive else "D"
+				var state := "Down" if not Sim.iface_up(i) else ("PointToPoint" if Sim.ospf_is_p2p(i) else "DesignatedRouter")
+				out += "%-2d %s  %-11s %-9s %-5d %-9d %-13s %s\n" % [n, flag, _dname(i), _area_name(), Sim.ospf_cost(i), Sim.ospf_priority(i),
+					"ptp" if Sim.ospf_is_p2p(i) else "broadcast", state]
+				n += 1
+			return out
 		"ip pool add":
 			if not p.has("name") or not p.has("ranges"):
 				return "value of %s must be specified\n" % ("name" if not p.has("name") else "ranges")
@@ -1463,6 +1626,16 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"interface bridge port add", "interface bridge port set":
 			if dev.type != "switch":
 				return "failure: no bridge on this device\n"
+			var vx: Dictionary = dev.services.get("ros_vxlan", {})
+			if vx.has(String(p.get("interface", ""))):
+				# the vxlan interface as a bridge port: its pvid is the VLAN the VNI carries
+				if not p.has("pvid") or not String(p["pvid"]).is_valid_int():
+					return "value of pvid must be specified\n"
+				if not dev.vlans.has(int(p["pvid"])):
+					Game.add_vlan(dev, int(p["pvid"]), "")
+				dev.vtep["map"][int(p["pvid"])] = int(vx[String(p["interface"])]["vni"])
+				Game.topology_changed.emit()
+				return ""
 			var i := _target(args, p)
 			if i == null:
 				return "input does not match any value of interface\n" if path.ends_with("add") else "no such item\n"
@@ -2277,6 +2450,9 @@ const PATHS := ["help", "export", "ping", "tool traceroute", "tool torch", "tool
 	"interface monitor-traffic", "system ntp client set", "system ntp client print", "system logging print",
 	"routing route print", "interface bridge settings print", "ip neighbor print", "ip neighbor discovery-settings print",
 	"system ssh", "quit",
+	"ip vrf add", "ip vrf remove", "ip vrf print", "ip dhcp-relay add", "ip dhcp-relay remove", "ip dhcp-relay print",
+	"interface vxlan add", "interface vxlan remove", "interface vxlan print",
+	"interface vxlan vteps add", "interface vxlan vteps remove", "interface vxlan vteps print", "routing ospf interface print",
 	"system backup save", "system backup load", "system reboot", "file print",
 	"system identity set", "system identity print", "system resource print", "system clock print",
 	"system package print", "system tech-support", "system sup-output", "log print", "user print",
@@ -2357,6 +2533,14 @@ const PARAMS := {
 	"interface bridge vlan add": ["bridge", "vlan-ids", "tagged", "untagged", "comment", "disabled"],
 	"interface bridge vlan set": ["bridge", "vlan-ids", "tagged", "untagged", "comment", "disabled"],
 	"interface bridge vlan remove": ["vlan-ids", "bridge"],
+	"ip vrf add": ["name", "interfaces", "comment", "disabled"],
+	"ip vrf remove": ["name"],
+	"ip dhcp-relay add": ["name", "interface", "dhcp-server", "local-address", "comment", "disabled"],
+	"ip dhcp-relay remove": ["name"],
+	"interface vxlan add": ["name", "vni", "port", "local-address", "mtu", "comment", "disabled"],
+	"interface vxlan remove": ["name"],
+	"interface vxlan vteps add": ["interface", "remote-ip", "port", "comment"],
+	"interface vxlan vteps remove": ["interface", "remote-ip"],
 	"interface bridge port add": ["bridge", "interface", "pvid", "frame-types", "ingress-filtering", "edge", "path-cost", "internal-path-cost", "priority", "horizon", "comment", "disabled", "hw"],
 	"interface bridge port set": ["bridge", "interface", "pvid", "frame-types", "ingress-filtering", "edge", "path-cost", "internal-path-cost", "priority", "horizon", "comment", "disabled", "hw"],
 	"interface bridge port monitor": ["interface"],
@@ -2451,6 +2635,32 @@ func _export() -> String:
 			if int(i.vrrp["group"]) != 1:
 				vrrp_line += " vrid=%d" % int(i.vrrp["group"])
 			add.call("/interface vrrp", vrrp_line)
+	var vx: Dictionary = dev.services.get("ros_vxlan", {})
+	for vname in vx:
+		var vx_line := "add name=%s" % vname
+		if int(vx[vname]["port"]) != 4789:
+			vx_line += " port=%d" % int(vx[vname]["port"])
+		if String(dev.vtep.get("src", "")) != "":
+			vx_line = "add local-address=%s name=%s" % [dev.vtep["src"], vname] + (" port=%d" % int(vx[vname]["port"]) if int(vx[vname]["port"]) != 4789 else "")
+		add.call("/interface vxlan", vx_line + " vni=%d" % int(vx[vname]["vni"]))
+		for peer in dev.vtep.get("peers", []):
+			add.call("/interface vxlan vteps", "add interface=%s remote-ip=%s" % [vname, peer])
+		for vid in dev.vtep.get("map", {}):
+			if int(dev.vtep["map"][vid]) == int(vx[vname]["vni"]):
+				add.call("/interface bridge port", "add bridge=%s interface=%s pvid=%d" % [BRIDGE, vname, int(vid)])
+	for vname in dev.vrfs:
+		var members: Array = []
+		for i: Net.Iface in dev.ifaces:
+			if i.vrf == vname:
+				members.append(_dname(i))
+		add.call("/ip vrf", "add interfaces=%s name=%s" % [",".join(PackedStringArray(members)), vname])
+	var relays: Dictionary = dev.services.get("ros_relay", {})
+	var relay_n := 0
+	for i: Net.Iface in dev.ifaces:
+		if i.helper == "":
+			continue
+		relay_n += 1
+		add.call("/ip dhcp-relay", "add dhcp-server=%s disabled=no interface=%s name=%s" % [i.helper, _dname(i), relays.get(i.name, "relay%d" % relay_n)])
 	for i: Net.Iface in dev.ifaces:
 		if i.parent != "" or i.name.begins_with("wg"):
 			continue
@@ -2565,7 +2775,8 @@ func _export() -> String:
 	var out := "# %s by RouterOS %s\n# software id = PKTK-T1K1\n#\n# model = CHR\n# serial number = %08X\n" % [
 		Time.get_datetime_string_from_system(false, true).replace("T", " "), VERSION, dev.name.hash() % 0xFFFFFFFF]
 	# the product prints menus in its own fixed order, not in the order they were built
-	var order := ["/interface bridge", "/interface ethernet", "/interface bonding", "/interface vlan", "/interface wireguard", "/interface vrrp",
+	var order := ["/interface bridge", "/interface ethernet", "/interface bonding", "/interface vlan", "/interface vxlan", "/interface wireguard", "/interface vrrp",
+		"/interface vxlan vteps", "/ip vrf", "/ip dhcp-relay",
 		"/interface list", "/ip pool", "/ip dhcp-server", "/routing bgp template", "/routing ospf instance", "/routing ospf area",
 		"/interface bridge port", "/interface bridge vlan", "/interface list member", "/interface wireguard peers",
 		"/ip address", "/ip dhcp-client", "/ip dhcp-server network", "/ip dns", "/ip firewall address-list", "/ip firewall filter", "/ip firewall nat",

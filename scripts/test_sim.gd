@@ -11374,5 +11374,35 @@ static func run() -> int:
 	Game.lockout_tick()
 	check(not cs_sw.vlans.has(57) and not Game.confirm_commits.has(cs_sw.name), "session: an unconfirmed timer reverts the session by itself")
 	Game.cycle -= 8
+	# --- RouterOS parity: vrf, dhcp-relay, vxlan, ospf interface print ---
+	var t11_rp_rack := Game.add_rack(Vector2i(9, 11))
+	var t11_rp_r := Game.new_device("rtr-lite")
+	var t11_rp_sw := Game.new_device("sw-lite")
+	t11_rp_rack.slots[0] = t11_rp_r
+	t11_rp_rack.slots[1] = t11_rp_sw
+	var t11_rps := CLI.new_session(t11_rp_r)
+	check(t11_rps.exec("/ip vrf add name=red interfaces=ether2") == "" and "red" in t11_rp_r.vrfs and t11_rp_r.ifaces[1].vrf == "red", "ros: /ip vrf add makes the table and moves the interfaces in")
+	check(t11_rps.exec("/ip vrf print").contains("red") and t11_rps.exec("/ip vrf print").contains("ether2"), "ros: /ip vrf print lists the table and its members")
+	check(t11_rps.exec("/ip dhcp-relay add name=relay1 interface=ether1 dhcp-server=10.0.0.5") == "" and t11_rp_r.ifaces[0].helper == "10.0.0.5", "ros: /ip dhcp-relay add is the helper address")
+	check(t11_rps.exec("/ip dhcp-relay print").contains("10.0.0.5"), "ros: /ip dhcp-relay print shows the server")
+	var t11_rpx := t11_rps.exec("/export")
+	check(t11_rpx.contains("/ip vrf\nadd interfaces=ether2 name=red") and t11_rpx.contains("/ip dhcp-relay\nadd dhcp-server=10.0.0.5 disabled=no interface=ether1 name=relay1"), "ros: export prints the vrf and the relay under their menus")
+	Game.connect_ifaces(t11_rp_r.ifaces[2], t11_rp_sw.ifaces[2])  # covered means up, and up means cabled
+	t11_rps.exec("/ip address add address=10.77.0.1/30 interface=ether3")
+	t11_rps.exec("/routing ospf instance add name=default router-id=10.77.0.1")
+	t11_rps.exec("/routing ospf area add name=backbone area-id=0.0.0.0 instance=default")
+	t11_rps.exec("/routing ospf interface-template add area=backbone networks=10.77.0.0/30")
+	var t11_rp_oi := t11_rps.exec("/routing ospf interface print")
+	check(t11_rp_oi.contains("ether3") and t11_rp_oi.contains("ptp"), "ros: /routing ospf interface print lists the covered interface and its network type")
+	check(t11_rps.exec("/ip vrf remove name=red") == "" and "red" not in t11_rp_r.vrfs and t11_rp_r.ifaces[1].vrf == "", "ros: /ip vrf remove puts the interfaces back in main")
+	var t11_rss := CLI.new_session(t11_rp_sw)
+	Game.add_vlan(t11_rp_sw, 10, "")
+	check(t11_rss.exec("/interface vxlan add name=vxlan1 vni=10010 local-address=10.0.0.9") == "" and String(t11_rp_sw.vtep.get("src", "")) == "10.0.0.9", "ros: /interface vxlan add makes the VTEP with its local address")
+	check(t11_rss.exec("/interface vxlan vteps add interface=vxlan1 remote-ip=10.0.0.10") == "" and "10.0.0.10" in t11_rp_sw.vtep["peers"], "ros: vteps add is a flood-list peer")
+	check(t11_rss.exec("/interface bridge port add bridge=bridge1 interface=vxlan1 pvid=10") == "" and int(t11_rp_sw.vtep["map"].get(10, -1)) == 10010, "ros: the vxlan interface as a bridge port with a pvid is the VLAN to VNI map")
+	check(t11_rss.exec("/interface vxlan print").contains("10010") and t11_rss.exec("/interface vxlan vteps print").contains("10.0.0.10"), "ros: the vxlan prints show the VNI and the peer")
+	var t11_rsx := t11_rss.exec("/export")
+	check(t11_rsx.contains("add local-address=10.0.0.9 name=vxlan1 vni=10010") and t11_rsx.contains("add interface=vxlan1 remote-ip=10.0.0.10") and t11_rsx.contains("add bridge=bridge1 interface=vxlan1 pvid=10"), "ros: export prints the vxlan interface, its vteps and its bridge port")
+	check(t11_rss.exec("/interface vxlan remove name=vxlan1") == "" and t11_rp_sw.vtep["map"].is_empty(), "ros: removing the vxlan interface drops its map")
 	print("---- %d failures" % fails)
 	return fails
