@@ -54,7 +54,7 @@
       "customer": "Beta Bt",
       "reward": 900,
       "brief": "Put two customers on one switch and keep them apart: VLAN 10 and VLAN 20, one connected access port each, and no path between them.",
-      "hint": "'vlan 10' then 'switchport access vlan 10' on the port (EOS), or '/interface bridge vlan add vlan-ids=10' on PacketTik.",
+      "hint": "'vlan 10' then 'switchport access vlan 10' on the port (EOS), or '/interface bridge port set [find interface=ether2] pvid=10' plus '/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether2' on PacketTik.",
       "requirements": [
         {
           "kind": "all",
@@ -187,7 +187,7 @@
       "title": "Same switch, no path (authored)",
       "customer": "Epsilon Legal",
       "reward": 800,
-      "brief": "Two tenants share one switch. Tenant A at 10.94.10.10 and 10.94.10.11 must reach each other; tenant B at 10.94.20.10 must reach neither of them, and the proof is the failed ping, not a promise.",
+      "brief": "Two tenants share one switch. Tenant A at 10.94.10.10 and 10.94.10.11 must reach each other; tenant B at 10.94.10.20 (the same subnet on purpose) must reach neither of them, and the proof is the failed ping, not a promise.",
       "hint": "VLAN 10 for the two A ports, VLAN 20 for B's port. Same switch, separate broadcast domains.",
       "requirements": [
         {
@@ -205,12 +205,12 @@
         },
         {
           "kind": "not_reachable",
-          "from": "10.94.20.10",
+          "from": "10.94.10.20",
           "to": "10.94.10.10"
         },
         {
           "kind": "not_reachable",
-          "from": "10.94.20.10",
+          "from": "10.94.10.20",
           "to": "10.94.10.11"
         }
       ]

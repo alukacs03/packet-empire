@@ -406,7 +406,10 @@ static func to_contract(pack: Dictionary, scenario: Dictionary) -> Dictionary:
 	## of the game, including the live checks.
 	var reqs: Array = []
 	for pred in scenario.get("requirements", []):
-		reqs.append({"d": describe(pred), "t": func() -> bool: return bool(evaluate(pred)["ok"])})
+		var req := {"d": describe(pred), "t": func() -> bool: return bool(evaluate(pred)["ok"])}
+		if String(pred.get("kind", "")) in ["survives_link_loss", "survives_device_loss"]:
+			req["once"] = true  # a proof that pulls a plug is made once, at completion, not every night
+		reqs.append(req)
 	return {"id": "%s.%s" % [pack["id"], scenario["id"]], "title": scenario["title"],
 		"customer": scenario.get("customer", pack.get("name", "an author")),
 		"reward": int(scenario.get("reward", 500)), "brief": scenario["brief"],

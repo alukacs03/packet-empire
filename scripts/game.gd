@@ -9145,6 +9145,8 @@ func sla_tick() -> void:
 			continue
 		var ok := true
 		for r in c["reqs"]:
+			if bool(r.get("once", false)):
+				continue  # proved at completion; the standing check is the rest of the list
 			if not r["t"].call():
 				ok = false
 				break

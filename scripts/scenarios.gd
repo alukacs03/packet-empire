@@ -28,7 +28,7 @@ static func all() -> Array:
 			"goals": [
 				{"d": "Three SSIDs on the access point", "t": func() -> bool: return _ap_ssid_count() >= 3},
 				{"d": "Staff can reach the staff server at 10.61.10.10", "t": func() -> bool: return _ping("10.61.10.20", "10.61.10.10")},
-				{"d": "Guests cannot reach the staff server", "t": func() -> bool: return not _ping("10.61.30.20", "10.61.10.10")},
+				{"d": "Guests cannot reach the staff server", "t": func() -> bool: return not _ping("10.61.10.30", "10.61.10.10")},
 			],
 		},
 		{
@@ -142,7 +142,7 @@ static func _fw_denies(prefix: String, plen: int) -> bool:
 	for d in Game.all_devices():
 		if d.type != "firewall":
 			continue
-		for rule in d.acls:
+		for rule in Sim.active_acls(d):  # bound lists only: an unapplied list is the auditor's favourite finding
 			if rule["action"] == "deny" and int(rule["dplen"]) >= plen \
 					and Net.same_net(String(rule["dst"]), prefix, plen):
 				return true
@@ -332,7 +332,7 @@ static func _build_campus() -> void:
 	Game.connect_ifaces(staff_srv.ifaces[0], sw.ifaces[1])
 	Game.add_ip(staff_srv.ifaces[0], "10.61.10.10/24")
 	Game.add_ip(staff_pc.ifaces[0], "10.61.10.20/24")
-	Game.add_ip(guest_pc.ifaces[0], "10.61.30.20/24")
+	Game.add_ip(guest_pc.ifaces[0], "10.61.10.30/24")  # the staff subnet on purpose: only the VLAN keeps guests out
 	sw.ifaces[0].mode = "trunk"
 
 static func _build_v6() -> void:

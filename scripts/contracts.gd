@@ -778,7 +778,7 @@ static func _campaign() -> Array:
 			"title": "Join the Internet",
 			"customer": "Zeta Hosting",
 			"reward": 3000,
-			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4 (RouterOS 7): '/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/ip firewall address-list add list=bgp-nets address=<your-server-subnet>/24' (the address list named in output.network is what gets announced; Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp print' or 'show ip bgp summary'.",
+			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4 (RouterOS 7): '/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/ip firewall address-list add list=bgp-nets address=<your-server-subnet>/24' (the address list named in output.network is what gets announced; Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp session print' or 'show ip bgp summary'.",
 			"reqs": [
 				{"d": "ISP handoff cabled to a router", "t": func() -> bool: return _uplink_cabled()},
 				{"d": "eBGP session Established", "t": func() -> bool: return _bgp_up() != null},
@@ -838,7 +838,7 @@ static func _campaign() -> Array:
 			"title": "Double the pipe",
 			"customer": "Alfa Ltd (still growing)",
 			"reward": 1600,
-			"brief": "Your redundant inter-switch link bothers Alfa's consultants: 'one link idle because of spanning tree? Bundle them!' Port-channels aggregate parallel links into one logical pipe: full capacity AND redundancy, no blocked spare. On BOTH switches put both inter-switch ports in the same group: Cisco-style 'channel-group 1' under each interface in config mode, PacketTik '/interface bonding add slaves=ether4,ether5'. 'show port-channel' should list the members and 'show spanning-tree' should show nothing discarding between that pair.",
+			"brief": "Your redundant inter-switch link bothers Alfa's consultants: 'one link idle because of spanning tree? Bundle them!' Port-channels aggregate parallel links into one logical pipe: full capacity AND redundancy, no blocked spare. On BOTH switches put both inter-switch ports in the same group: EOS 'channel-group 1 mode active' under each interface in config mode, PacketTik '/interface bonding add slaves=ether4,ether5'. 'show port-channel' should list the members and 'show spanning-tree' should show nothing discarding between that pair.",
 			"reqs": [
 				{"d": "A 2+ member bundle between two switches", "t": func() -> bool: return _bundle_exists()},
 				{"d": "No STP-blocked port inside the bundle", "t": func() -> bool: return _bundle_unblocked()},
@@ -891,7 +891,7 @@ static func _campaign() -> Array:
 			"reqs": [
 				{"d": "Two switches paired as MLAG peers", "t": func() -> bool: return _mlag_pair() != null},
 				{"d": "A server bonded across both switches", "t": func() -> bool: return _mlag_server() != null},
-				{"d": "It stays reachable with either leg down", "t": func() -> bool: return _mlag_survives()},
+				{"d": "It stays reachable with either leg down", "t": func() -> bool: return _mlag_survives(), "once": true},
 			],
 		},
 		{
@@ -904,7 +904,7 @@ static func _campaign() -> Array:
 			"reqs": [
 				{"d": "A BFD session up between two routers", "t": func() -> bool: return _bfd_link() != null},
 				{"d": "A static route rides that next hop", "t": func() -> bool: return _bfd_guarded_route() != {}},
-				{"d": "The route is withdrawn when the far end dies", "t": func() -> bool: return _bfd_withdraws()},
+				{"d": "The route is withdrawn when the far end dies", "t": func() -> bool: return _bfd_withdraws(), "once": true},
 			],
 		},
 		{
@@ -988,11 +988,11 @@ static func _campaign() -> Array:
 			"title": "Guests and staff",
 			"customer": "Balaton Hotel",
 			"reward": 2600,
-			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and on its console, in config mode ('enable', 'configure terminal'), map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.31.10/24, and prove the guest cannot reach the staff machine.",
+			"brief": "The hotel wants wireless for guests and for staff, on the same access points, with guests unable to touch anything of the staff's. Install an AirTurul AP3, trunk its uplink to a switch, and on its console, in config mode ('enable', 'configure terminal'), map two SSIDs to two VLANs: 'ssid guest-wifi vlan 30' and 'ssid staff-wifi vlan 31'. Put a host on each network ('wifi join guest-wifi'): a guest at 10.110.30.10/24 and a staff machine at 10.110.30.11/24 (the same subnet on purpose: only the VLAN keeps them apart), and prove the guest cannot reach the staff machine.",
 			"reqs": [
 				{"d": "An access point broadcasting two SSIDs", "t": func() -> bool: return _ap_ssids() >= 2},
 				{"d": "A host associated on each network", "t": func() -> bool: return _wifi_clients() >= 2},
-				{"d": "Guests cannot reach the staff network", "t": func() -> bool: return _owner("10.110.30.10") != null and _ping("10.110.30.10", "10.110.31.10", false)},
+				{"d": "Guests cannot reach the staff network", "t": func() -> bool: return _owner("10.110.30.10") != null and _owner("10.110.30.11") != null and _ping("10.110.30.10", "10.110.30.11", false)},
 			],
 		},
 		{
@@ -1386,7 +1386,7 @@ static func _vlan_with_server(vid: int) -> bool:
 static func _fw_deny_covering(prefix: String, plen: int) -> bool:
 	for d in Game.all_devices():
 		if d.type == "firewall":
-			for rule in d.acls:
+			for rule in Sim.active_acls(d):  # a list that is not bound to a port filters nothing
 				if rule["action"] == "deny" and int(rule["dplen"]) >= plen \
 						and Net.same_subnet(rule["dst"], prefix, plen):
 					return true
@@ -2044,7 +2044,7 @@ static func _stp_blocking() -> bool:
 static func _fw_with_deny() -> Net.NDevice:
 	for d in Game.all_devices():
 		if d.type == "firewall":
-			for rule in d.acls:
+			for rule in Sim.active_acls(d):
 				if rule["action"] == "deny":
 					return d
 	return null

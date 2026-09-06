@@ -3611,7 +3611,7 @@ static func run() -> int:
 	Game.add_vlan(wifi_sw, 30, "guest")
 	Game.add_vlan(wifi_sw, 31, "staff")
 	wifi_sw.ifaces[1].untagged_vlan = 31
-	Game.add_ip(wifi_gw.ifaces[0], "10.110.31.1/24")
+	Game.add_ip(wifi_gw.ifaces[0], "10.110.30.1/24")  # one subnet for guests and staff: only the VLAN keeps them apart
 	var ap_cli := CLI.new_session(ap)
 	ap_cli.exec("en")
 	ap_cli.exec("conf t")
@@ -3626,10 +3626,10 @@ static func run() -> int:
 	var staff_cli := CLI.new_session(staff_pc)
 	staff_cli.exec("wifi join staff-wifi")
 	Game.add_ip(guest.ifaces[0], "10.110.30.10/24")
-	Game.add_ip(staff_pc.ifaces[0], "10.110.31.10/24")
-	check(Sim.ping(staff_pc, "10.110.31.1")["ok"],
+	Game.add_ip(staff_pc.ifaces[0], "10.110.30.11/24")
+	check(Sim.ping(staff_pc, "10.110.30.1")["ok"],
 		"wifi: the staff network reaches its gateway through the trunk")
-	check(not Sim.ping(guest, "10.110.31.10")["ok"],
+	check(not Sim.ping(guest, "10.110.30.11")["ok"],
 		"wifi: the guest SSID lands in another VLAN and cannot reach staff")
 	check(guest_cli.exec("wifi status").contains("guest-wifi"), "wifi: status is reported")
 	guest_cli.exec("wifi leave")
