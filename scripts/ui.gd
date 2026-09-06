@@ -775,7 +775,7 @@ func _more_hint(scroll: ScrollContainer) -> Label:
 	## Add the label as a sibling drawn after the scroll.
 	var bar := scroll.get_v_scroll_bar()
 	bar.custom_minimum_size.x = 10
-	var more := _label("▾  more below", 11, UIW.colour("accent"))
+	var more := _label(Loc.t("body.more_below"), 11, UIW.colour("accent"))
 	more.size_flags_vertical = Control.SIZE_SHRINK_END
 	more.size_flags_horizontal = Control.SIZE_SHRINK_END
 	more.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -869,7 +869,7 @@ func _note_card(box: VBoxContainer, on_save: Callable) -> Dictionary:
 	words.add_theme_constant_override("separation", UIW.space("xs"))
 	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(words)
-	var cap := _label("HANDOVER NOTE  /  PAST YOU WROTE", 10, Color("51462d"))
+	var cap := _label(Loc.t("body.handover_note"), 10, Color("51462d"))
 	cap.add_theme_font_override("font", mono)
 	words.add_child(cap)
 	var edit := LineEdit.new()
@@ -1335,7 +1335,7 @@ func _build_dev_overlay() -> void:
 		if cur_dev != null and name_edit.text.strip_edges() != cur_dev.name:
 			name_edit.text = cur_dev.name)  # Enter applies, as the placeholder says; leaving reverts
 	name_row.add_child(name_edit)
-	name_row.add_child(_label("   Status:  ", 14, MUTED))
+	name_row.add_child(_label(Loc.t("body.status_prefix"), 14, MUTED))
 	status_opt = OptionButton.new()
 	status_opt.add_item("active")
 	status_opt.add_item("offline")
@@ -1343,7 +1343,7 @@ func _build_dev_overlay() -> void:
 		cur_dev.status = "active" if idx == 0 else "offline"
 		Game.topology_changed.emit())
 	name_row.add_child(status_opt)
-	name_row.add_child(_label("   Power:  ", 14, MUTED))
+	name_row.add_child(_label(Loc.t("body.power_prefix"), 14, MUTED))
 	psu_opt = OptionButton.new()
 	for feed in ["A", "B", "AB"]:
 		psu_opt.add_item("feed " + feed if feed != "AB" else "both feeds")
@@ -1657,7 +1657,7 @@ func _refresh_ports() -> void:
 			conn_list.add_child(_label("  %s  ⇄  %s%s" % [i.name, Game.peer_label(i), extra],
 				14, Color(0.55, 0.85, 0.65)))
 	if conn_list.get_child_count() == 0:
-		conn_list.add_child(_label("  no cables connected", 14, Color(0.45, 0.5, 0.6)))
+		conn_list.add_child(_label(Loc.t("body.no_cables"), 14, Color(0.45, 0.5, 0.6)))
 	for i: Net.Iface in cur_dev.ifaces:
 		if i.name.begins_with("Vlan") or i.name.begins_with("Tunnel") \
 				or i.name.begins_with("wg") or i.parent != "":
@@ -2133,9 +2133,9 @@ func _refresh_search() -> void:
 			hits += 1
 			search_box.add_child(_label("  " + Loc.t("find.customer", {"name": deal["customer"], "kind": Market.label_for(deal["kind"]), "fee": int(deal["fee"])}), 13, Color(0.7, 0.85, 0.75)))
 	if hits == 0:
-		search_box.add_child(_label("  Nothing matches that.", 13, Color(0.8, 0.6, 0.5)))
+		search_box.add_child(_label(Loc.t("body.nothing_matches"), 13, Color(0.8, 0.6, 0.5)))
 	elif hits > 12:
-		search_box.add_child(_label("  ...and %d more matches." % (hits - 12), 12, MUTED))
+		search_box.add_child(_label(Loc.t("body.more_matches") % (hits - 12), 12, MUTED))
 
 # ---------- ops dashboard ----------
 
@@ -2320,7 +2320,7 @@ func _refresh_ops() -> void:
 				Game.capacity_runway("watts", int(cap["watts"]), maxi(1, int(cap["cooling"]))),
 				"W"))
 		elif si == 0:
-			ops_box.add_child(_label("    Power draw %dW; the colo includes cooling."
+			ops_box.add_child(_label(Loc.t("body.power_draw_colo")
 				% int(cap["watts"]), 12, MUTED))
 	var advice := _capacity_advice()
 	if advice != "":
@@ -2339,7 +2339,7 @@ func _refresh_ops() -> void:
 		Game.roll_quarter_goals()  # an older save, or a company that has not seen a quarter close yet
 	if not Game.quarter_goals.is_empty():
 		ops_box.add_child(_section("THIS QUARTER'S TARGETS"))
-		ops_box.add_child(_wrap("  The board asks for three things a quarter and pays for the ones it gets. %d cycle(s) left in this one." % (12 - Game.cycle % 12),
+		ops_box.add_child(_wrap(Loc.t("body.board_asks") % (12 - Game.cycle % 12),
 			12, MUTED, 780))
 		for qg: Dictionary in Game.quarter_goals:
 			var qp: Dictionary = Game.quarter_goal_progress(qg)
@@ -2358,7 +2358,7 @@ func _refresh_ops() -> void:
 			"is walking the floor now" if due_in == 0 else "was due %d cycle(s) ago" % -due_in)
 		var who := String(tk["label"])
 		who = who.substr(0, 1).to_upper() + who.substr(1)  # a sentence starts with a capital
-		ops_box.add_child(_wrap("  %s %s. They care about %s. On what they would see right now, you score %d%%."
+		ops_box.add_child(_wrap(Loc.t("body.visitor_score")
 			% [who, when, tk["cares"],
 				int(Game.tour_score(kind) * 100.0)], 13, Color(1.0, 0.82, 0.5), 780))
 		var cram_btn := Button.new()
@@ -2388,7 +2388,7 @@ func _refresh_ops() -> void:
 		var lrow := HBoxContainer.new()
 		lrow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(lrow)
-		var ll := _label("  %s is running and cannot be reached" % d_lock2.name, 12,
+		var ll := _label(Loc.t("body.unreachable") % d_lock2.name, 12,
 			Prefs.bad_colour())
 		ll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		lrow.add_child(ll)
@@ -2407,7 +2407,7 @@ func _refresh_ops() -> void:
 		var crow2 := HBoxContainer.new()
 		crow2.add_theme_constant_override("separation", 8)
 		ops_box.add_child(crow2)
-		var cl2 := _label("  %s: change reverts at cycle %d unless confirmed" % [name_c,
+		var cl2 := _label(Loc.t("body.reverts_unless") % [name_c,
 			int(Game.confirm_commits[name_c]["due"])], 12, Color(1.0, 0.82, 0.5))
 		cl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		crow2.add_child(cl2)
@@ -2422,7 +2422,7 @@ func _refresh_ops() -> void:
 			_refresh_ops())
 		crow2.add_child(conf)
 	ops_box.add_child(_section("DOCUMENTATION"))
-	ops_box.add_child(_wrap("  %d fact(s) on this floor no longer match what is written down. Documentation that is wrong is slower than none, because people believe it."
+	ops_box.add_child(_wrap(Loc.t("body.facts_adrift_intro")
 		% Game.site_drift(), 12,
 		Color(1.0, 0.82, 0.5) if Game.drift_factor() > 0.3 else Color(0.72, 0.8, 0.88), 780))
 	for r_doc: Net.Rack in Game.racks_on(Game.current_site):
@@ -2432,7 +2432,7 @@ func _refresh_ops() -> void:
 		var dr_row := HBoxContainer.new()
 		dr_row.add_theme_constant_override("separation", 8)
 		ops_box.add_child(dr_row)
-		var drl := _label("  %-10s %d fact(s) adrift" % [r_doc.name, drift_here], 12,
+		var drl := _label(Loc.t("body.facts_adrift") % [r_doc.name, drift_here], 12,
 			Color(0.78, 0.84, 0.9))
 		drl.add_theme_font_override("font", mono)
 		drl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2487,7 +2487,7 @@ func _refresh_ops() -> void:
 	var tier_row := HBoxContainer.new()
 	tier_row.add_theme_constant_override("separation", 8)
 	ops_box.add_child(tier_row)
-	tier_row.add_child(_label("  Cover: %s" % Game.SUPPORT_TIERS[Game.support_tier()]["label"],
+	tier_row.add_child(_label(Loc.t("body.cover") % Game.SUPPORT_TIERS[Game.support_tier()]["label"],
 		12, Color(0.72, 0.8, 0.88)))
 	for tier_i in [1, 2]:
 		var buy_tier := Button.new()
@@ -2503,7 +2503,7 @@ func _refresh_ops() -> void:
 			_refresh_money())
 		tier_row.add_child(buy_tier)
 	for name_bug: String in Game.firmware_bugs:
-		ops_box.add_child(_wrap("  %s is flapping a port with nothing in its configuration to explain it. No amount of your work will fix that one." % name_bug,
+		ops_box.add_child(_wrap(Loc.t("body.flapping") % name_bug,
 			12, Color(1.0, 0.72, 0.45), 780))
 		var open_case := Button.new()
 		open_case.text = Loc.t("btn.open_case_against") % name_bug
@@ -2521,7 +2521,7 @@ func _refresh_ops() -> void:
 		var crow := HBoxContainer.new()
 		crow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(crow)
-		var cl := _label("  %s  %s  severity %d  stage %s  (sent: %s)" % [c["id"], c["device"],
+		var cl := _label(Loc.t("body.case_row") % [c["id"], c["device"],
 			int(c["severity"]), c["stage"],
 			", ".join(PackedStringArray(c["evidence"])) if not c["evidence"].is_empty() else "nothing"],
 			12, Color(0.78, 0.84, 0.9))
@@ -2658,7 +2658,7 @@ func _refresh_ops() -> void:
 		head_row.add_theme_font_override("font", mono)
 		ops_box.add_child(head_row)
 		for row: Dictionary in past_runs.slice(0, 6):
-			var rl := _label("  %-18s %-14s %-10s %-11s cycle %-5d score %d" % [row.get("company", ""),
+			var rl := _label(Loc.t("body.history_row") % [row.get("company", ""),
 				row.get("identity", ""), row.get("difficulty", ""), Game.FINALE_ENDING_LABELS.get(String(row.get("ending", "")), row.get("ending", "")), int(row.get("cycle", 0)),
 				int(row.get("total", 0))], 12, Color(0.78, 0.84, 0.9))
 			rl.add_theme_font_override("font", mono)
@@ -2677,7 +2677,7 @@ func _refresh_ops() -> void:
 	ops_box.add_child(_section("WHAT KIND OF COMPANY THIS IS"))
 	if Game.identity == "":
 		if Game.identity_offered():
-			ops_box.add_child(_wrap("  You know the job now. Decide what sort of operation this is: each one changes the work that arrives, what it costs to run, and how the competition treats you.",
+			ops_box.add_child(_wrap(Loc.t("body.choose_operation"),
 				13, Color(1.0, 0.85, 0.5), 780))
 			for ident_id: String in Game.IDENTITIES:
 				var ident: Dictionary = Game.IDENTITIES[ident_id]
@@ -2696,7 +2696,7 @@ func _refresh_ops() -> void:
 					_refresh_money())
 				irow2.add_child(ib)
 		else:
-			ops_box.add_child(_label("  Finish the opening jobs first: the choice only means something once you know the loop.",
+			ops_box.add_child(_label(Loc.t("body.finish_opening_first"),
 				12, MUTED))
 	else:
 		var mine: Dictionary = Game.IDENTITIES[Game.identity]
@@ -2750,14 +2750,14 @@ func _refresh_ops() -> void:
 			_refresh_money())
 		ops_box.add_child(cam)
 	for vis: Dictionary in Game.visitors:
-		ops_box.add_child(_label("  visitor: %s (%s)%s" % [vis["name"], vis["reason"],
+		ops_box.add_child(_label(Loc.t("body.visitor_row") % [vis["name"], vis["reason"],
 			", escorted" if bool(vis["escorted"]) else ""], 12, Color(1.0, 0.82, 0.5)))
 	var acc_lines: Array = Game.access_investigation()
 	if acc_lines.is_empty():
-		ops_box.add_child(_label("  Nothing on record. On an open floor there is nothing to have on record.",
+		ops_box.add_child(_label(Loc.t("body.nothing_on_record"),
 			12, MUTED))
 	else:
-		var acc_cap := _label("  SIGN-IN LOG", 11, MUTED)
+		var acc_cap := _label(Loc.t("body.sign_in_log"), 11, MUTED)
 		acc_cap.add_theme_font_override("font", mono)
 		ops_box.add_child(acc_cap)
 	for acc_line: String in acc_lines.slice(0, 6):
@@ -2792,15 +2792,15 @@ func _refresh_ops() -> void:
 		var risk_here: float = Game.hazard_risk(r_risk)
 		if risk_here < 0.35:
 			continue
-		ops_box.add_child(_label("  %s is at %d%% hazard risk (heat, age, power, unserviced cooling)"
+		ops_box.add_child(_label(Loc.t("body.hazard_risk")
 			% [r_risk.name, int(risk_here * 100.0)], 12, Color(1.0, 0.82, 0.5)))
 	for haz_i: Dictionary in Game.hazards:
-		ops_box.add_child(_label("  LIVE: %s in %s, severity %d%s" % [
+		ops_box.add_child(_label(Loc.t("body.live_hazard") % [
 			Game.HAZARD_KINDS[haz_i["kind"]]["label"], haz_i["rack"], int(haz_i["severity"]),
 			"" if bool(haz_i["detected"]) else ", undetected"], 12, Prefs.bad_colour()))
 		var what_stops := "Fitted suppression discharges on its own; a crew on shift has a chance each cycle to deal with it by hand." if String(haz_i["kind"]) in ["smoke", "fire"] \
 			else "Fitted drainage takes the water away; a crew on shift has a chance each cycle to deal with it by hand."
-		ops_box.add_child(_wrap("      %s Fitting protection during the event does not help this one." % what_stops, 12, MUTED, 600))
+		ops_box.add_child(_wrap(Loc.t("body.fitting_during") % what_stops, 12, MUTED, 600))
 		if not Staff.anyone_on_shift() and not Game.staff.is_empty():
 			var haz_call := Button.new()
 			haz_call.text = Loc.t("btn.get_somebody") % Game.CALLOUT_FEE
@@ -2812,13 +2812,13 @@ func _refresh_ops() -> void:
 			ops_box.add_child(haz_call)
 	ops_box.add_child(_section("FAILOVER TEST"))
 	if Game.dr_running():
-		ops_box.add_child(_wrap("  Running: %s is out of service on purpose until cycle %d. %s"
+		ops_box.add_child(_wrap(Loc.t("body.failover_running")
 			% [", ".join(PackedStringArray(Game.dr_test["taken"])), int(Game.dr_test["ends"]),
 				"Nothing has dropped so far." if Game.dr_test["failed"].is_empty()
 				else "Already down: %s." % ", ".join(PackedStringArray(Game.dr_test["failed"]))],
 			13, UIW.colour("warning"), 780))
 	elif not Game.dr_test.is_empty():
-		ops_box.add_child(_wrap("  Booked for cycle %d. The upstream on this floor goes away for %d cycle(s); everything that is meant to survive it should."
+		ops_box.add_child(_wrap(Loc.t("body.failover_booked")
 			% [int(Game.dr_test["booked"]), Game.DR_LENGTH], 13, UIW.colour("text_strong"), 780))
 		var dr_cancel := Button.new()
 		dr_cancel.text = Loc.t("btn.cancel_it")
@@ -2829,7 +2829,7 @@ func _refresh_ops() -> void:
 			_refresh_ops())
 		ops_box.add_child(dr_cancel)
 	else:
-		ops_box.add_child(_wrap("  Prove the redundancy on a day you chose, rather than on the day it is taken from you.",
+		ops_box.add_child(_wrap(Loc.t("body.failover_why"),
 			13, UIW.colour("muted"), 780))
 		var dr_book := Button.new()
 		dr_book.text = Loc.t("btn.book_failover")
@@ -2843,7 +2843,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(dr_book)
 	ops_box.add_child(_section("FACILITY SCHEDULE"))
 	if Game.heat_wave():
-		ops_box.add_child(_wrap("  HEAT WAVE  /  Cooling headroom is down a tenth while it lasts.",
+		ops_box.add_child(_wrap(Loc.t("body.heat_wave"),
 			13, Color(1.0, 0.72, 0.45), 780))
 	for task_id: String in Game.FACILITY_TASKS:
 		var task: Dictionary = Game.FACILITY_TASKS[task_id]
@@ -2877,7 +2877,7 @@ func _refresh_ops() -> void:
 			_refresh_ops())
 		frow.add_child(auto_btn)
 	if not Game.generator_ready():
-		ops_box.add_child(_wrap("  The generator has not been load tested recently. If both feeds go and the battery runs out, you are hoping.",
+		ops_box.add_child(_wrap(Loc.t("body.generator_untested"),
 			12, Color(1.0, 0.72, 0.45), 780))
 	if Game.stage >= 1:
 		ops_box.add_child(_section("AIRFLOW"))
@@ -2889,7 +2889,7 @@ func _refresh_ops() -> void:
 				continue
 			var hot := heat > cool
 			any_hot = any_hot or hot
-			var al := _label("  %-10s %5dW produced   %5dW removed   %s" % [r_air.name, heat, cool,
+			var al := _label(Loc.t("body.cooling_row") % [r_air.name, heat, cool,
 				"HOT" if hot else "ok"], 12,
 				Prefs.bad_colour() if hot else Color(0.7, 0.78, 0.85))
 			al.add_theme_font_override("font", mono)
@@ -2901,7 +2901,7 @@ func _refresh_ops() -> void:
 	if not talkers.is_empty():
 		ops_box.add_child(_section("TOP TALKERS"))
 		for row: Dictionary in talkers:
-			var tl := _label("  %-40s %8d packets" % [row["pair"], int(row["packets"])],
+			var tl := _label(Loc.t("body.packets_row") % [row["pair"], int(row["packets"])],
 				12, Color(0.72, 0.78, 0.86))
 			tl.add_theme_font_override("font", mono)
 			ops_box.add_child(tl)
@@ -2914,7 +2914,7 @@ func _refresh_ops() -> void:
 	ops_box.add_child(_section("POWER"))
 	for si2 in Game.site_count():
 		if si2 == 0 and Game.stage < 1:
-			ops_box.add_child(_label("  The colo provides power and cooling. Your own room will not.",
+			ops_box.add_child(_label(Loc.t("body.colo_provides"),
 				12, MUTED))
 			continue
 		var f: Dictionary = Game.site_feeds(si2)
@@ -2937,7 +2937,7 @@ func _refresh_ops() -> void:
 			else:
 				on_b.append(d3.name)
 		if not exposed.is_empty():
-			ops_box.add_child(_wrap("    Single-supply gear: feed A carries %s; feed B carries %s. Losing one feed takes exactly those down."
+			ops_box.add_child(_wrap(Loc.t("body.single_supply")
 				% [", ".join(PackedStringArray(on_a)) if not on_a.is_empty() else "nothing",
 				", ".join(PackedStringArray(on_b)) if not on_b.is_empty() else "nothing"],
 				12, Color(0.8, 0.75, 0.6), 780))
@@ -2975,14 +2975,14 @@ func _refresh_ops() -> void:
 					_refresh_money())
 				decrow.add_child(ob)
 	if not Game.consequences.is_empty():
-		ops_box.add_child(_label("  Waiting to land: %d decision(s) you have already made."
+		ops_box.add_child(_label(Loc.t("body.waiting_to_land")
 			% Game.consequences.size(), 12, MUTED))
 	ops_box.add_child(_section("AUDIT READINESS"))
-	ops_box.add_child(_wrap("  A teaching abstraction, not any real certification scheme: eight controls the simulation can actually prove.%s"
+	ops_box.add_child(_wrap(Loc.t("body.cert_abstraction")
 		% ("   Trust marker: earned." if Game.trust_marker else ""), 12, MUTED, 780))
 	if not Game.destruction_certs.is_empty() or not Game.data_risks.is_empty():
 		# the paperwork an auditor asks for first: what left the building, and whether it was wiped
-		var cert_line := _label("  Certificates of destruction on file: %d%s" % [Game.destruction_certs.size(),
+		var cert_line := _label(Loc.t("body.cert_destruction") % [Game.destruction_certs.size(),
 			"   (%d unit(s) left without one)" % Game.data_risks.size() if not Game.data_risks.is_empty() else ""],
 			12, Prefs.bad_colour() if not Game.data_risks.is_empty() else Color(0.6, 0.85, 0.7))
 		cert_line.add_theme_font_override("font", mono)
@@ -3019,7 +3019,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(cl3_row)
 	if not Game.audit.is_empty():
 		var aud: Dictionary = Game.audit
-		ops_box.add_child(_wrap("  %s: a review of %s, worth $%d, sampled at cycle %d. The scope does not change once it starts."
+		ops_box.add_child(_wrap(Loc.t("body.audit_review")
 			% [aud["customer"], ", ".join(PackedStringArray(aud["scope"])), int(aud["reward"]),
 				int(aud["deadline"])], 13, Color(1.0, 0.85, 0.5), 780))
 		var arow := HBoxContainer.new()
@@ -3053,7 +3053,7 @@ func _refresh_ops() -> void:
 			arow.add_child(vb)
 	ops_box.add_child(_section("STANDING DUTIES"))
 	if Game.staff.is_empty():
-		ops_box.add_child(_label("  Nobody on the payroll: every chore here is yours by hand.",
+		ops_box.add_child(_label(Loc.t("body.no_payroll_chores"),
 			12, Color(0.72, 0.8, 0.88)))
 	for duty_id: String in Game.DUTIES:
 		var duty: Dictionary = Game.DUTIES[duty_id]
@@ -3092,7 +3092,7 @@ func _refresh_ops() -> void:
 				_refresh_ops()))
 		drow.add_child(assign)
 	if not Game.last_digest.is_empty():
-		ops_box.add_child(_label("  Last cycle: %s" % "; ".join(PackedStringArray(Game.last_digest)),
+		ops_box.add_child(_label(Loc.t("body.last_cycle") % "; ".join(PackedStringArray(Game.last_digest)),
 			12, Color(0.68, 0.74, 0.82)))
 	ops_box.add_child(_section("THE PARTS DRAWER"))
 	var parts_row := HBoxContainer.new()
@@ -3134,7 +3134,7 @@ func _refresh_ops() -> void:
 	var cabling_row := HBoxContainer.new()
 	cabling_row.add_theme_constant_override("separation", 8)
 	ops_box.add_child(cabling_row)
-	cabling_row.add_child(_wrap("  Cable debt: %d traceable item(s). Cabling properly costs $25 and two labels a run; doing it fast costs nothing now."
+	cabling_row.add_child(_wrap(Loc.t("body.cable_debt")
 		% Game.cable_debt_score(), 12,
 		Color(1.0, 0.82, 0.5) if Game.cable_debt_score() > 4 else Color(0.72, 0.8, 0.88), 520))
 	var cabling_btn := Button.new()
@@ -3148,7 +3148,7 @@ func _refresh_ops() -> void:
 	cabling_row.add_child(cabling_btn)
 	var debt_items: Array = Game.cable_debt_items()
 	if debt_items.size() > 5:
-		ops_box.add_child(_label("  showing 5 of %d; the rest are the same three kinds" % debt_items.size(), 11, MUTED))
+		ops_box.add_child(_label(Loc.t("body.showing_five") % debt_items.size(), 11, MUTED))
 	for debt_item: Dictionary in debt_items.slice(0, 5):
 		ops_box.add_child(_label("      · %s  (%s)" % [debt_item["label"], debt_item["fix"]], 12,
 			Color(0.68, 0.74, 0.82)))
@@ -3191,10 +3191,10 @@ func _refresh_ops() -> void:
 				_refresh_money())))
 	ops_box.add_child(order_btn)
 	if Game.aisle_blocked():
-		ops_box.add_child(_wrap("  The receiving area is full and the aisle is not clear. Everything takes longer, and it is the first thing a visitor sees.",
+		ops_box.add_child(_wrap(Loc.t("body.receiving_full"),
 			12, Color(1.0, 0.72, 0.45), 780))
 	for r_rma: Dictionary in Game.rmas:
-		ops_box.add_child(_label("  RMA: %s away with the vendor, replacement due in %d cycle(s)%s"
+		ops_box.add_child(_label(Loc.t("body.rma_row")
 			% [Game.MODELS[r_rma["model"]]["label"], int(r_rma["due"]) - Game.cycle,
 				" (advance replacement)" if bool(r_rma["advance"]) else ""], 12,
 			Color(0.72, 0.8, 0.88)))
@@ -3205,7 +3205,7 @@ func _refresh_ops() -> void:
 		var state := "in transit, due in %d" % (int(crate["due"]) - Game.cycle)
 		if int(crate["arrived"]) >= 0:
 			state = "on the dock%s" % ("" if bool(crate["checked"]) else ", unchecked")
-		var kl := _label("  crate: %-22s %s" % [Game.MODELS[crate["model"]]["label"], state], 12,
+		var kl := _label(Loc.t("body.crate_row") % [Game.MODELS[crate["model"]]["label"], state], 12,
 			Color(0.78, 0.84, 0.9))
 		kl.add_theme_font_override("font", mono)
 		kl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3234,7 +3234,7 @@ func _refresh_ops() -> void:
 		var prow := HBoxContainer.new()
 		prow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(prow)
-		prow.add_child(_label("  %d pile(s) of cardboard and wrap in the aisle" % Game.packaging,
+		prow.add_child(_label(Loc.t("body.cardboard") % Game.packaging,
 			12, Color(1.0, 0.82, 0.5)))
 		var clear_btn := Button.new()
 		clear_btn.text = Loc.t("btn.take_out")
@@ -3247,7 +3247,7 @@ func _refresh_ops() -> void:
 	for m in Game.spares:
 		if int(Game.spares[m]) > 0:
 			shelf.append("%s x%d" % [Game.MODELS[m]["label"], int(Game.spares[m])])
-	ops_box.add_child(_label("  On the shelf: %s" % (", ".join(PackedStringArray(shelf))
+	ops_box.add_child(_label(Loc.t("body.on_shelf") % (", ".join(PackedStringArray(shelf))
 		if not shelf.is_empty() else "nothing"), 13, Color(0.75, 0.8, 0.85)))
 	# what is on the shelf is half the answer; the rest is what is coming
 	var in_transit: Array = []
@@ -3263,7 +3263,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_wrap("  On the way: %s" % ", ".join(PackedStringArray(in_transit)),
 			13, Color(0.7, 0.8, 0.9), 780))
 	if on_dock > 0:
-		ops_box.add_child(_label("  On this dock, not yet unpacked: %d crate(s)" % on_dock,
+		ops_box.add_child(_label(Loc.t("body.on_dock") % on_dock,
 			13, UIW.colour("warning")))
 	var back_order: Array = []
 	for m_id: String in Game.stockouts:
@@ -3271,7 +3271,7 @@ func _refresh_ops() -> void:
 			back_order.append("%s until cycle %d" % [Game.MODELS[m_id]["label"],
 				int(Game.stockouts[m_id])])
 	if not back_order.is_empty():
-		ops_box.add_child(_wrap("  Nobody can sell you: %s" % ", ".join(PackedStringArray(back_order)),
+		ops_box.add_child(_wrap(Loc.t("body.nobody_sells") % ", ".join(PackedStringArray(back_order)),
 			13, UIW.colour("warning"), 780))
 	var spare_btn := Button.new()
 	spare_btn.text = Loc.t("btn.buy_spare")
@@ -3300,7 +3300,7 @@ func _refresh_ops() -> void:
 			continue
 		var frow := HBoxContainer.new()
 		ops_box.add_child(frow)
-		var fl := _label("  %s (%s) is down, %s old" % [d.name,
+		var fl := _label(Loc.t("body.spare_down") % [d.name,
 			Game.MODELS[d.model]["label"], Loc.cycles(int(Game.device_age(d)))], 13, Prefs.bad_colour())
 		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		frow.add_child(fl)
@@ -3342,7 +3342,7 @@ func _refresh_ops() -> void:
 		var rbrow := HBoxContainer.new()
 		rbrow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(rbrow)
-		var rbl := _label("  %-38s targets %d, may touch %d" % [rb_i["name"],
+		var rbl := _label(Loc.t("body.playbook_targets") % [rb_i["name"],
 			Game.runbook_targets(rb_i).size(), int(rb_i["max_devices"])], 12,
 			Color(0.78, 0.84, 0.9))
 		rbl.add_theme_font_override("font", mono)
@@ -3383,13 +3383,13 @@ func _refresh_ops() -> void:
 	# what automation actually did, newest first, and the way back
 	var real_runs: Array = Game.runbook_runs.filter(func(rr): return not bool(rr.get("dry_run", true)))
 	if not real_runs.is_empty():
-		ops_box.add_child(_label("  RECENT RUNS", 11, UIW.colour("muted")))
+		ops_box.add_child(_label(Loc.t("body.recent_runs"), 11, UIW.colour("muted")))
 	real_runs.reverse()
 	for run_i: Dictionary in real_runs.slice(0, 5):
 		var runrow := HBoxContainer.new()
 		runrow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(runrow)
-		var run_lbl := _label("  cycle %d  %-28s %s" % [int(run_i.get("cycle", 0)), String(run_i.get("runbook", "")),
+		var run_lbl := _label(Loc.t("body.run_row") % [int(run_i.get("cycle", 0)), String(run_i.get("runbook", "")),
 			String(run_i["refused"]) if String(run_i.get("refused", "")) != ""
 			else "%d applied, %d skipped" % [run_i.get("applied", []).size(), run_i.get("skipped", []).size()]],
 			12, Color(0.72, 0.78, 0.86))
@@ -3416,13 +3416,13 @@ func _refresh_ops() -> void:
 			ops_box.add_child(_label("      %s" % line_t, 11, Color(0.68, 0.74, 0.82)))
 	ops_box.add_child(_section("PLAYBOOKS"))
 	if Game.playbooks.is_empty():
-		ops_box.add_child(_wrap("  Nothing saved yet. A playbook is a list of console commands you can run on many devices at once: the same thing you would type, typed for you.",
+		ops_box.add_child(_wrap(Loc.t("body.no_playbooks"),
 			12, MUTED, 780))
 	for pb: Dictionary in Game.playbooks:
 		var prow := HBoxContainer.new()
 		prow.add_theme_constant_override("separation", 8)
 		ops_box.add_child(prow)
-		var pl := _label("  %-22s %d command(s)" % [pb["name"], pb["lines"].size()], 12,
+		var pl := _label(Loc.t("body.playbook_row") % [pb["name"], pb["lines"].size()], 12,
 			Color(0.75, 0.82, 0.9))
 		pl.add_theme_font_override("font", mono)
 		pl.tooltip_text = "\n".join(PackedStringArray(pb["lines"]))
@@ -3499,7 +3499,7 @@ func _refresh_ops() -> void:
 				crow.add_child(renew)
 	ops_box.add_child(_section("MONITORS"))
 	if Game.monitors.is_empty():
-		ops_box.add_child(_label("  No checks defined: add one so you hear about failures.",
+		ops_box.add_child(_label(Loc.t("body.no_checks"),
 			13, Color(0.6, 0.62, 0.7)))
 	for m: Dictionary in Game.monitors.duplicate():
 		var mrow := HBoxContainer.new()
@@ -3540,7 +3540,7 @@ func _refresh_ops() -> void:
 	ops_box.add_child(add_mon)
 	ops_box.add_child(_section("DEVICES"))
 	if devs.is_empty():
-		ops_box.add_child(_label("  Nothing installed yet.", 14, MUTED))
+		ops_box.add_child(_label(Loc.t("body.nothing_installed"), 14, MUTED))
 		return
 	var multi := Game.site_count() > 1
 	var head := _label("  %-9s %-14s %-20s %-9s %-7s %-18s %s" % ["DEVICE",
@@ -3946,7 +3946,7 @@ func _show_scenario_banner() -> void:
 	if sc.is_empty():
 		scenario_panel.visible = false
 		return
-	scenario_box.add_child(_label("SCENARIO: %s" % sc["name"], 16, Color(0.7, 0.9, 1.0)))
+	scenario_box.add_child(_label(Loc.t("body.scenario") % sc["name"], 16, Color(0.7, 0.9, 1.0)))
 	var blurb := _label(sc["blurb"], 13, Color(0.78, 0.82, 0.88))
 	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	blurb.custom_minimum_size = Vector2(520, 0)
@@ -4014,7 +4014,7 @@ func _show_drill_banner() -> void:
 		drill_panel.add_child(drill_box)
 	for c in drill_box.get_children():
 		c.queue_free()
-	drill_box.add_child(_label("🚨 INCIDENT DRILL: this is NOT your datacenter", 15, Color(1.0, 0.7, 0.6)))
+	drill_box.add_child(_label(Loc.t("body.drill_banner"), 15, Color(1.0, 0.7, 0.6)))
 	drill_box.add_child(_label(Drill.scenario, 13, Color(0.9, 0.85, 0.8)))
 	if Game.site_count() > 1:
 		# a fault may be in the room they are not standing in, and a player who
@@ -4030,14 +4030,14 @@ func _show_drill_banner() -> void:
 				% [floor_set.size(), ", ".join(PackedStringArray(floor_names))], 12,
 				UIW.colour("warm"), 620))
 	if Drill.outcome.has("survive_ip"):
-		drill_box.add_child(_wrap("%s must still be reachable from %s with either building out of service."
+		drill_box.add_child(_wrap(Loc.t("body.drill_reach_either")
 			% [Drill.outcome["survive_ip"], Drill.outcome["from_ip"]], 13,
 			Color(0.9, 0.88, 0.8), 620))
 	elif not Drill.outcome.is_empty():
 		# a services incident has no pair of static addresses to light up: the
 		# thing to restore is what the customer asked for
 		var client: Net.NDevice = Drill.outcome["client"]
-		drill_box.add_child(_label("%s must get an address by DHCP, resolve %s and reach it."
+		drill_box.add_child(_label(Loc.t("body.drill_dhcp")
 			% [client.name, Drill.outcome["name"]], 13, Color(0.9, 0.88, 0.8)))
 	drill_box.add_child(_label(Loc.t("drill.broken"), 13, Color(0.85, 0.8, 0.78))
 		if not Drill.targets.is_empty() else _label(Loc.t("drill.press_check"),
@@ -4068,7 +4068,7 @@ func _show_drill_banner() -> void:
 			drill_panel.visible = false
 		else:
 			_show_drill_banner()  # re-renders per-pair status marks
-			drill_box.add_child(_label("   ...still broken. ping/lldp/show run are your friends.", 12, Color(0.9, 0.6, 0.5))))
+			drill_box.add_child(_label(Loc.t("body.still_broken"), 12, Color(0.9, 0.6, 0.5))))
 	row.add_child(chk)
 	var give := Button.new()
 	give.text = Loc.t("btn.abandon_reveal")
@@ -4206,7 +4206,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 				Color(0.48, 0.9, 0.62) if check_ok else UIW.colour("muted"), 290))
 		var reserve := int(deal.get("delivery_credit", 0))
 		if reserve > 0:
-			tutorial_box.add_child(_wrap("PROTECTED  /  $%d customer reserve can only fund a server for this promise."
+			tutorial_box.add_child(_wrap(Loc.t("body.protected_reserve")
 				% reserve, 11, UIW.colour("warm"), 290))
 		var delivery_btn := Button.new()
 		delivery_btn.text = Loc.t("brief.open_delivery")
@@ -4217,18 +4217,18 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 		return
 	if not collected or not live:
 		tutorial_box.add_child(_tutorial_head("BILL  /  %s" % String(deal["customer"]).to_upper()))
-		tutorial_box.add_child(_label("%s  Service %s  ·  billing %s" % [
+		tutorial_box.add_child(_label(Loc.t("body.service_billing") % [
 			"●" if live else "!", "live" if live else "down",
 			"active" if live else "SUSPENDED"], 12,
 			Color(0.48, 0.9, 0.62) if live else Prefs.bad_colour()))
-		tutorial_box.add_child(_label("%s  First invoice raised" % ("●" if invoiced else "○"),
+		tutorial_box.add_child(_label(Loc.t("body.first_invoice") % ("●" if invoiced else "○"),
 			12, Color(0.48, 0.9, 0.62) if invoiced else UIW.colour("muted")))
-		tutorial_box.add_child(_label("%s  First cash collected" % ("●" if collected else "○"),
+		tutorial_box.add_child(_label(Loc.t("body.first_cash") % ("●" if collected else "○"),
 			12, Color(0.48, 0.9, 0.62) if collected else UIW.colour("muted")))
 		var invoice := _guided_invoice(deal)
 		if not invoice.is_empty() and not collected:
 			var due_in := maxi(0, int(invoice["due"]) - Game.cycle)
-			tutorial_box.add_child(_wrap("RECEIVABLE  /  $%d due in %d cycle%s. Revenue is earned; cash has not landed yet."
+			tutorial_box.add_child(_wrap(Loc.t("body.receivable")
 				% [int(invoice["amount"]), due_in, "" if due_in == 1 else "s"],
 				11, UIW.colour("warm"), 290))
 		var books_btn := Button.new()
@@ -4270,14 +4270,14 @@ func _render_guided_outage() -> void:
 		headline = "HARDEN  /  KISKACSA"
 	tutorial_box.add_child(_tutorial_head(headline))
 	if state == "alert":
-		tutorial_box.add_child(_wrap("MONITOR ALERT  /  The service at %s stopped answering. Pause, take ownership, then communicate before changing anything."
+		tutorial_box.add_child(_wrap(Loc.t("body.monitor_alert")
 			% incident.get("target_ip", "the customer address"), 12, Prefs.bad_colour(), 290))
 		tutorial_box.add_child(_incident_button(Loc.t("btn.ack_incident"), func() -> void:
 			Game.acknowledge_guided_outage(), true))
 		return
 	if state == "acknowledged":
-		tutorial_box.add_child(_label("●  Alert owned by you", 12, Color(0.48, 0.9, 0.62)))
-		tutorial_box.add_child(_wrap("CUSTOMER COMMS  /  Say what is affected, that you are investigating, and when you will update them again.",
+		tutorial_box.add_child(_label(Loc.t("body.alert_owned"), 12, Color(0.48, 0.9, 0.62)))
+		tutorial_box.add_child(_wrap(Loc.t("body.customer_comms"),
 			12, UIW.colour("text"), 290))
 		tutorial_box.add_child(_wrap(Loc.t("tutorial.post_now"),
 			11, UIW.colour("warm"), 290))
@@ -4287,7 +4287,7 @@ func _render_guided_outage() -> void:
 			_show_overlay(contracts_overlay), true))
 		return
 	if state in ["communicated", "investigating", "diagnosed", "repairing"]:
-		tutorial_box.add_child(_label("●  Customer updated  ·  reputation protected", 12,
+		tutorial_box.add_child(_label(Loc.t("body.customer_updated"), 12,
 			Color(0.48, 0.9, 0.62)))
 		var evidence: Array = incident.get("evidence", [])
 		var ladder := [
@@ -4313,7 +4313,7 @@ func _render_guided_outage() -> void:
 				if err != "": _toast(err)
 				_refresh_tutorial()))
 			return
-		tutorial_box.add_child(_wrap("ROOT CAUSE  /  %s %s is administratively disabled. The cable and addressing remain intact; routing and policy are not implicated."
+		tutorial_box.add_child(_wrap(Loc.t("body.root_cause")
 			% [incident.get("device", "device"), incident.get("iface", "port")],
 			12, UIW.colour("warm"), 290))
 		var affected := Game.guided_outage_iface()
@@ -4321,12 +4321,12 @@ func _render_guided_outage() -> void:
 			var ros: bool = String(Game.MODELS[affected.dev.model].get("os", "")) == "ros"
 			var command := "/interface set %s disabled=no" % affected.name if ros else \
 				"interface %s  →  no shutdown" % affected.name
-			tutorial_box.add_child(_wrap("REPAIR IN CONSOLE  /  %s" % command, 11,
+			tutorial_box.add_child(_wrap(Loc.t("body.repair_console") % command, 11,
 				UIW.colour("text_strong"), 290))
 			tutorial_box.add_child(_incident_button(Loc.t("btn.open_affected_port"), func() -> void:
 				_goto_device(affected.dev)
 				open_iface(affected), true))
-		tutorial_box.add_child(_label("○  Run one cycle after repair to verify recovery",
+		tutorial_box.add_child(_label(Loc.t("body.verify_cycle"),
 			11, UIW.colour("muted")))
 		var give_up := _incident_button(Loc.t("btn.teaching_restore"), func() -> void:
 			var err := Game.give_up_guided_outage()
@@ -4336,7 +4336,7 @@ func _render_guided_outage() -> void:
 		tutorial_box.add_child(give_up)
 		return
 	if state == "recovered":
-		tutorial_box.add_child(_label("●  SERVICE RESTORED  ·  BILLING RESUMED", 12,
+		tutorial_box.add_child(_label(Loc.t("body.service_restored"), 12,
 			Color(0.48, 0.9, 0.62)))
 		tutorial_box.add_child(_section("INCIDENT TIMELINE"))
 		for note: String in incident.get("timeline", []):
@@ -4345,7 +4345,7 @@ func _render_guided_outage() -> void:
 			Game.debrief_guided_outage(), true))
 		return
 	if state == "choice":
-		tutorial_box.add_child(_wrap("WHAT CHANGES AFTER TONIGHT?  Pick one small resilience improvement. The customer and working topology remain yours.",
+		tutorial_box.add_child(_wrap(Loc.t("body.what_changes"),
 			12, UIW.colour("text"), 290))
 		for option: Array in [
 			["spare", "Put matching hardware on the spare shelf"],
@@ -4393,10 +4393,10 @@ func _refresh_tutorial() -> void:
 			for old in tutorial_box.get_children():
 				old.queue_free()
 			tutorial_box.add_child(_tutorial_head(Loc.t("brief.deliver", {"customer": String(waiting["customer"]).to_upper()})))
-			var promise := _wrap("○  Promise sold: %s" % String(waiting["brief"]), 13,
+			var promise := _wrap(Loc.t("body.promise_sold_todo") % String(waiting["brief"]), 13,
 				UIW.colour("text"), 290)
 			tutorial_box.add_child(promise)
-			tutorial_box.add_child(_label("○  Prove the live service, then let one billing cycle run.",
+			tutorial_box.add_child(_label(Loc.t("body.prove_live"),
 				12, UIW.colour("muted")))
 			var desk_btn := Button.new()
 			desk_btn.text = Loc.t("brief.open_delivery")
@@ -4780,7 +4780,7 @@ func _build_business_tab() -> void:
 				_refresh_contracts())
 			row.add_child(chase)
 	if Game.invoices.size() > 8:
-		contracts_box.add_child(_label("  ...and %d more." % (Game.invoices.size() - 8), 12, MUTED))
+		contracts_box.add_child(_label(Loc.t("body.and_more") % (Game.invoices.size() - 8), 12, MUTED))
 	contracts_box.add_child(_section("ENERGY AND THE BOOKS"))
 	if Game.stage >= 1:
 		contracts_box.add_child(_wrap(
@@ -4813,7 +4813,7 @@ func _build_business_tab() -> void:
 			_refresh_contracts())
 		e_row.add_child(eff_btn)
 	else:
-		contracts_box.add_child(_label("  The colo pays for power. Your own room will not.", 12, MUTED))
+		contracts_box.add_child(_label(Loc.t("body.colo_pays_power"), 12, MUTED))
 	contracts_box.add_child(_wrap(
 		"This quarter: profit $%d, depreciation allowance $%d, tax as it stands $%d."
 		% [Game.quarter_profit, Game.quarter_depreciation, Game.tax_due()],
@@ -4846,7 +4846,7 @@ func _build_business_tab() -> void:
 		"Transit is billed on the 95th percentile, not the average: right now %d Mbps at $%.2f per Mbps, which is $%d a cycle. Bursting is free five percent of the time; sustained traffic is not."
 		% [billed, Game.TRANSIT_PER_MBPS, Game.transit_cost()], 13, Color(0.75, 0.82, 0.9), 560))
 	if bool(Game.ixp.get("joined", false)):
-		contracts_box.add_child(_label("  At the exchange: %d peering session(s), %d%% of traffic off transit, $%d/cycle port."
+		contracts_box.add_child(_label(Loc.t("body.at_exchange")
 			% [int(Game.ixp.get("peers", 0)), int(Game.peering_share() * 100.0), Game.IXP_PORT_FEE],
 			13, Color(0.65, 0.88, 0.72)))
 		var peer_btn := Button.new()
@@ -4871,7 +4871,7 @@ func _build_business_tab() -> void:
 	var bank := HBoxContainer.new()
 	bank.add_theme_constant_override("separation", 10)
 	contracts_box.add_child(bank)
-	bank.add_child(_label("BANK   debt $%d   (%d%%/cycle interest)" % [Game.debt, int(Game.LOAN_RATE * 100)],
+	bank.add_child(_label(Loc.t("body.bank_debt") % [Game.debt, int(Game.LOAN_RATE * 100)],
 		13, Color(0.7, 0.75, 0.85) if Game.debt == 0 else Color(0.95, 0.75, 0.5)))
 	var borrow := Button.new()
 	borrow.text = Loc.t("btn.borrow") % Game.LOAN_TRANCHE
@@ -4889,7 +4889,7 @@ func _build_business_tab() -> void:
 			_refresh_contracts())
 		bank.add_child(repay)
 	var delta := Game.last_cycle_delta
-	contracts_box.add_child(_label("last cycle: %s$%d net" % ["+" if delta >= 0 else "-", absi(delta)],
+	contracts_box.add_child(_label(Loc.t("body.last_cycle_net") % ["+" if delta >= 0 else "-", absi(delta)],
 		13, Color(0.55, 0.9, 0.6) if delta >= 0 else Color(0.95, 0.6, 0.45)))
 	if not Game.last_pl.is_empty():
 		var parts: Array = []
@@ -4910,23 +4910,23 @@ func _build_business_tab() -> void:
 		for row in totals.slice(0, 12):
 			total_parts.append("%s %s$%d" % [row[0], "+" if int(row[1]) >= 0 else "-",
 				absi(int(row[1]))])
-		var run_pl := _label("      run to date:   " + "   ·   ".join(PackedStringArray(total_parts)),
+		var run_pl := _label(Loc.t("body.run_to_date") + "   ·   ".join(PackedStringArray(total_parts)),
 			12, Color(0.6, 0.66, 0.78))
 		run_pl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		run_pl.custom_minimum_size = Vector2(560, 0)
 		contracts_box.add_child(run_pl)
 	var nr2 := Game.next_rank()
-	contracts_box.add_child(_label("rank: %s%s" % [Game.rank(),
+	contracts_box.add_child(_label(Loc.t("body.rank") % [Game.rank(),
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
-	contracts_box.add_child(_wrap("%s   ·   cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.identity_label(), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_wrap(Loc.t("body.company_summary") % [Game.identity_label(), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	contracts_box.add_child(_section("CAREER PROFILE"))
 	for line: String in Skills.profile():
 		contracts_box.add_child(_wrap("  %s" % line, 12, Color(0.72, 0.8, 0.88), 640))
 	contracts_box.add_child(_section("MARKETING AND COVER"))
 	var mk_row := HBoxContainer.new()
 	contracts_box.add_child(mk_row)
-	mk_row.add_child(_wrap("  Marketing $%d/cycle   ·   budgets +%d%%, up to %d open offers, %d%% chance of one per cycle" % [Game.marketing,
+	mk_row.add_child(_wrap(Loc.t("body.marketing") % [Game.marketing,
 		int(round((Game.marketing_budget_factor() - 1.0) * 100.0)), 2 + int(Game.marketing / Game.MARKETING_STEP),
 		int(round((0.7 + 0.06 * float(Game.marketing) / float(Game.MARKETING_STEP)) * 100.0))],
 		13, Color(0.8, 0.85, 0.7) if Game.marketing > 0 else Color(0.75, 0.75, 0.8)))
@@ -4945,7 +4945,7 @@ func _build_business_tab() -> void:
 		mk_row.add_child(mk_down)
 	var ins_row := HBoxContainer.new()
 	contracts_box.add_child(ins_row)
-	ins_row.add_child(_wrap("  Hardware insurance: %s   ($%d/cycle, 2%% of the $%d estate per quarter, pays a full replacement)" % [
+	ins_row.add_child(_wrap(Loc.t("body.insurance") % [
 		"ON" if Game.insured else "off", Game.insurance_fee(), Game.estate_value()], 13,
 		Color(0.7, 0.9, 0.7) if Game.insured else Color(0.75, 0.75, 0.8)))
 	var ins_btn := Button.new()
@@ -4957,7 +4957,7 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("CHANGE MANAGEMENT"))
 	var maint_row := HBoxContainer.new()
 	contracts_box.add_child(maint_row)
-	maint_row.add_child(_label("  %s   (%d of 2 windows used this quarter)" % [
+	maint_row.add_child(_label(Loc.t("body.windows_used") % [
 		("Maintenance window open until cycle %d" % Game.maintenance_until) if Game.in_maintenance()
 		else "No window open: downtime counts against your service levels",
 		Game.maintenance_used], 13,
@@ -5011,7 +5011,7 @@ func _build_business_tab() -> void:
 		plan_btn.text = Loc.t("btn.submit_change_plan")
 		plan_btn.tooltip_text = Loc.t("tip.change_plan")
 		if frozen != "":
-			contracts_box.add_child(_label("  Change freeze: %s. Overriding it is remembered." % frozen,
+			contracts_box.add_child(_label(Loc.t("body.change_freeze") % frozen,
 				12, Color(1.0, 0.72, 0.45)))
 		plan_btn.pressed.connect(func() -> void:
 			var targets: Array = []
@@ -5039,7 +5039,7 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("DEFENCE"))
 	var scrub_row := HBoxContainer.new()
 	contracts_box.add_child(scrub_row)
-	scrub_row.add_child(_label("  Upstream scrubbing: %s   ($%d/cycle while enabled)" % [
+	scrub_row.add_child(_label(Loc.t("body.scrubbing") % [
 		"ON" if Game.scrubbing else "off", Game.SCRUB_FEE], 13,
 		Color(0.6, 0.9, 0.7) if Game.scrubbing else Color(0.75, 0.75, 0.8)))
 	var scrub_btn := Button.new()
@@ -5054,13 +5054,13 @@ func _build_business_tab() -> void:
 		var state := "absorbed by scrubbing" if Game.scrubbing else (
 			"blackholed: the flood stops and so does their service" if blackholed
 			else "hitting your network at %d Mbps" % int(a["mbps"]))
-		contracts_box.add_child(_label("  ⚡ %s under attack (%s), %d cycle(s) to go: %s"
+		contracts_box.add_child(_label(Loc.t("body.under_attack")
 			% [a["target"], a["customer"], int(a["cycles_left"]), state], 13,
 			Color(0.95, 0.6, 0.45) if not (Game.scrubbing or blackholed) else Color(0.85, 0.85, 0.6)))
 	if not Game.reports.is_empty():
 		contracts_box.add_child(_section("QUARTERLY REPORTS"))
 		for rep: Dictionary in Game.reports.slice(0, 4):
-			var rl := _label("  Q%-3d cash $%-8d net %s$%-7d %d customers · %d%% delivered · %d staff · %s" % [
+			var rl := _label(Loc.t("body.quarter_row") % [
 				int(rep["quarter"]), int(rep["money"]),
 				"+" if int(rep["net"]) >= 0 else "-", absi(int(rep["net"])),
 				int(rep["deals"]), int(rep["uptime"]), int(rep["staff"]), rep["rank"]],
@@ -5075,7 +5075,7 @@ func _build_business_tab() -> void:
 			12, Prefs.ok_colour() if got else Color(0.55, 0.58, 0.66)))
 	contracts_box.add_child(_section("HISTORY"))
 	if Game.history.size() < 2:
-		contracts_box.add_child(_label("  Charts appear once a few revenue cycles have run.",
+		contracts_box.add_child(_label(Loc.t("body.charts_later"),
 			13, Color(0.6, 0.62, 0.7)))
 	else:
 		for g in [["money", "Cash", UIW.colour("success")],
@@ -5084,10 +5084,10 @@ func _build_business_tab() -> void:
 			contracts_box.add_child(UIW.Graph.new().setup(g[0], g[1], g[2]))
 	contracts_box.add_child(_section("STAFF"))
 	if Game.staff.is_empty():
-		contracts_box.add_child(_label("  Nobody on the payroll: every fault is yours to fix.",
+		contracts_box.add_child(_label(Loc.t("body.no_payroll_faults"),
 			13, Color(0.7, 0.7, 0.75)))
 	if not Game.staff.is_empty() and not Staff.anyone_on_shift():
-		contracts_box.add_child(_wrap("  Nobody is on shift right now (it is %s). Whatever breaks in the next few cycles waits until somebody clocks on."
+		contracts_box.add_child(_wrap(Loc.t("body.nobody_on_shift")
 			% Game.day_name(), 13, Color(1.0, 0.8, 0.5), 560))
 		if Game.callout_ready():
 			# the thing you actually do at three in the morning
@@ -5116,7 +5116,7 @@ func _build_business_tab() -> void:
 			state += ", on call %s" % Loc.cycles(Game.oncall_stint())
 		# the row carries five buttons as well, so the text is kept to the name
 		# and the numbers; the rest moves to the line underneath it
-		var sl := _label("  %-16s  skill %d  $%d/cycle  morale %d" % [m["name"],
+		var sl := _label(Loc.t("body.staff_row") % [m["name"],
 			int(m["skill"]), int(m["salary"]), int(m.get("morale", 70))], 12,
 			Prefs.bad_colour() if int(m.get("morale", 70)) < 30 else Color(0.78, 0.85, 0.8))
 		sl.add_theme_font_override("font", mono)
@@ -5127,7 +5127,7 @@ func _build_business_tab() -> void:
 			else "none"]
 		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(sl)
-		contracts_box.add_child(_wrap("      %s, %s%s  ·  how they work: %s" % [Staff.label(m),
+		contracts_box.add_child(_wrap(Loc.t("body.staff_detail") % [Staff.label(m),
 			state, "  (under market)" if under else "", Staff.habit_read(m)], 12,
 			Color(0.6, 0.68, 0.78), 640))
 		var oncall_btn := Button.new()
@@ -5214,7 +5214,7 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_section("SITES"))
 	for i in Game.site_count():
 		var rent := int(Game.sites[i].get("rent", 0))
-		contracts_box.add_child(_label("  %-24s %-11s %dx%d   %d racks%s" % [Game.site_name(i),
+		contracts_box.add_child(_label(Loc.t("body.site_row") % [Game.site_name(i),
 			Game.site_city(i), Game.grid_size(i).x, Game.grid_size(i).y, Game.racks_on(i).size(),
 			"   $%d/cycle rent" % rent if rent > 0 else ""], 13, Color(0.75, 0.8, 0.85)))
 	var lease := Button.new()
@@ -5237,7 +5237,7 @@ func _build_business_tab() -> void:
 			contracts_box.add_child(crow)
 			var carrier_name := String(c.get("carrier", "?"))
 			var carrier_ok := Game.carrier_up(carrier_name)
-			var cl := _label("  %s: %s ⇄ %s   %s   $%d/cycle%s" % [c["label"],
+			var cl := _label(Loc.t("body.circuit_row") % [c["label"],
 				Game.site_name(int(c["a"])), Game.site_name(int(c["b"])), carrier_name,
 				int(c["fee"]), "" if carrier_ok else "   CARRIER OUTAGE"],
 				13, Color(0.7, 0.85, 0.9) if carrier_ok else Prefs.bad_colour())
@@ -5388,7 +5388,7 @@ func _build_market_tab() -> void:
 			"Budget confidential. Reputation and references let you charge above the cheapest bid.", "warm"))
 		if lead.has("coach"):
 			var coaching := UIW.style_panel(PanelContainer.new(), "warning", "sm")
-			var coaching_text := _wrap("PROPOSAL REVIEW  /  %s. Revise and send it again: this first customer will wait."
+			var coaching_text := _wrap(Loc.t("body.proposal_review")
 				% Game.sentence(String(lead["coach"])), 12, UIW.colour("text_strong"), 600)
 			coaching.add_child(coaching_text)
 			lv.add_child(coaching)
@@ -5401,7 +5401,7 @@ func _build_market_tab() -> void:
 		pprice.placeholder_text = str(int(serve["floor"]) + 18)
 		pprice.tooltip_text = Loc.t("tip.price_start")
 		prow.add_child(pprice)
-		prow.add_child(_label("/cycle   commit to ", 14))
+		prow.add_child(_label(Loc.t("body.per_cycle_commit"), 14))
 		var sla_opt := OptionButton.new()
 		for ti in 3:
 			sla_opt.add_item(Market.tier(ti)["label"])
@@ -5457,7 +5457,7 @@ func _build_market_tab() -> void:
 		contracts_box.add_child(row)
 		var premises: String = ("site %dx%d" % [int(r["site"]["grid"][0]),
 			int(r["site"]["grid"][1])]) if Rivals.has_site(r) else "no premises"
-		var l := _label("  %-16s %-11s %2d cust · %d racks · %-11s · $%d" % [r["name"],
+		var l := _label(Loc.t("body.competitor_row") % [r["name"],
 			strat["label"], int(r["deals"]), Rivals.racks_needed(r), premises, price],
 			13, Color(0.8, 0.78, 0.7))
 		l.tooltip_text = ("%s\n\nBuying %s brings %d rack(s) and %d contract(s). %s" % [
@@ -5491,13 +5491,13 @@ func _build_log_tab() -> void:
 		# what the shift going home left on the desk
 		contracts_box.add_child(_section("HANDOVER  /  FROM THE %s SHIFT"
 			% String(Game.handover["from"]).to_upper()))
-		contracts_box.add_child(_label("  written at cycle %d" % int(Game.handover["cycle"]),
+		contracts_box.add_child(_label(Loc.t("body.written_at") % int(Game.handover["cycle"]),
 			12, UIW.colour("muted")))
 		for line in Game.handover["lines"]:
 			contracts_box.add_child(_wrap("  · %s" % String(line), 13,
 				UIW.colour("text_strong"), 640))
 		if bool(Game.handover.get("read", false)):
-			contracts_box.add_child(_label("  read", 12, UIW.colour("success")))
+			contracts_box.add_child(_label(Loc.t("body.read"), 12, UIW.colour("success")))
 		else:
 			var ho_btn := Button.new()
 			ho_btn.text = Loc.t("btn.read_it")
@@ -5508,7 +5508,7 @@ func _build_log_tab() -> void:
 			contracts_box.add_child(ho_btn)
 	if Game.upstream_active():
 		contracts_box.add_child(_section("SOMEBODY ELSE'S OUTAGE"))
-		contracts_box.add_child(_wrap("  %s is down and you cannot fix it. What is left is everything else: the case, the chasing, and telling your customers before they ask." % Game.upstream["party"],
+		contracts_box.add_child(_wrap(Loc.t("body.upstream_down") % Game.upstream["party"],
 			13, Color(1.0, 0.8, 0.5), 640))
 		for line: String in Game.upstream_evidence():
 			contracts_box.add_child(_wrap("      · %s" % line, 12, Color(0.7, 0.8, 0.85), 640))
@@ -5531,7 +5531,7 @@ func _build_log_tab() -> void:
 			open_tickets.append(t_i)
 	if not open_tickets.is_empty():
 		contracts_box.add_child(_section("TICKETS"))
-		contracts_box.add_child(_wrap("  Customers describe what they see, not what is wrong. Several of these may be one fault.",
+		contracts_box.add_child(_wrap(Loc.t("body.customers_describe"),
 			12, MUTED, 700))
 		for t_i2: Dictionary in open_tickets:
 			var trow := HBoxContainer.new()
@@ -5564,7 +5564,7 @@ func _build_log_tab() -> void:
 			trow.add_child(cbtn)
 	contracts_box.add_child(_section("STATUS PAGE"))
 	if Game.outage_open():
-		contracts_box.add_child(_label("  A customer service is down. Saying so costs you less than being found out.",
+		contracts_box.add_child(_label(Loc.t("body.say_so"),
 			13, Color(1.0, 0.8, 0.5)))
 	var post_row := HBoxContainer.new()
 	contracts_box.add_child(post_row)
@@ -5580,12 +5580,12 @@ func _build_log_tab() -> void:
 		_refresh_contracts())
 	post_row.add_child(post_btn)
 	for p: Dictionary in Game.status_posts.slice(0, 4):
-		contracts_box.add_child(_label("  cycle %d: %s" % [int(p["cycle"]), p["text"]], 12,
+		contracts_box.add_child(_label(Loc.t("body.cycle_note") % [int(p["cycle"]), p["text"]], 12,
 			Color(0.7, 0.8, 0.85)))
 	# what a written-up incident told you to do about it, kept where it happened
 	for done_inc: Dictionary in Game.incidents:
 		if bool(done_inc.get("reviewed", false)) and String(done_inc.get("follow_up", "")) != "":
-			contracts_box.add_child(_wrap("  written up (%s): %s"
+			contracts_box.add_child(_wrap(Loc.t("body.written_up")
 				% [done_inc.get("cause", ""), done_inc["follow_up"]], 12,
 				Color(0.62, 0.82, 0.72), 640))
 	var open_reviews: Array = []
@@ -5597,7 +5597,7 @@ func _build_log_tab() -> void:
 		for inc: Dictionary in open_reviews:
 			var irow := HBoxContainer.new()
 			contracts_box.add_child(irow)
-			var il := _label("  cycle %d: %s" % [int(inc["cycle"]), inc["summary"]], 13,
+			var il := _label(Loc.t("body.cycle_note") % [int(inc["cycle"]), inc["summary"]], 13,
 				Color(0.95, 0.72, 0.55))
 			il.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			irow.add_child(il)
@@ -5619,7 +5619,7 @@ func _build_log_tab() -> void:
 				var brow := HBoxContainer.new()
 				brow.add_theme_constant_override("separation", 8)
 				contracts_box.add_child(brow)
-				brow.add_child(_wrap("      The customer is on the phone. %s caused this."
+				brow.add_child(_wrap(Loc.t("body.phone_caused")
 					% ("You" if String(inc["by"]) == "you" else String(inc["by"])),
 					13, Color(1.0, 0.72, 0.45), 420))
 				for say: Array in Game.BLAME_CHOICES:
@@ -5630,11 +5630,11 @@ func _build_log_tab() -> void:
 						_refresh_contracts())
 					brow.add_child(sbtn)
 			elif inc.has("blame"):
-				contracts_box.add_child(_label("      said: %s" % Game.blame_said(inc), 12, MUTED))
+				contracts_box.add_child(_label(Loc.t("body.said") % Game.blame_said(inc), 12, MUTED))
 			if replay_for == int(inc["cycle"]):
 				var frames := Game.replay_around(int(inc["cycle"]))
 				if frames.is_empty():
-					contracts_box.add_child(_label("      (nothing recorded that far back)", 12, MUTED))
+					contracts_box.add_child(_label(Loc.t("body.nothing_that_far"), 12, MUTED))
 				for frame: Dictionary in frames:
 					var mark := "▸" if int(frame["cycle"]) == int(inc["cycle"]) else " "
 					var rl2 := _label("      %s %s" % [mark, Game.replay_line(frame)], 12,
@@ -5647,7 +5647,7 @@ func _build_log_tab() -> void:
 							Color(0.58, 0.64, 0.72), 620))
 	for inc2: Dictionary in Game.incidents:
 		if bool(inc2.get("reviewed", false)):
-			contracts_box.add_child(_label("  ✓ cycle %d: %s (cause: %s)" % [int(inc2["cycle"]),
+			contracts_box.add_child(_label(Loc.t("body.resolved_row") % [int(inc2["cycle"]),
 				inc2["summary"], inc2.get("cause", "")], 12, Color(0.6, 0.75, 0.65)))
 
 	Game.mark_events_read()
@@ -5669,7 +5669,7 @@ func _build_log_tab() -> void:
 		filter_row.add_child(fb)
 	var rows := Game.events_by_severity(log_filter)
 	if rows.is_empty():
-		contracts_box.add_child(_label("  Nothing at that level. That is good news.", 12, MUTED))
+		contracts_box.add_child(_label(Loc.t("body.nothing_at_level"), 12, MUTED))
 	for row: Dictionary in rows:
 		var ev: String = row["line"]
 		var col := Color(0.72, 0.78, 0.86)
@@ -5756,7 +5756,7 @@ func _build_jobs_tab() -> void:
 		var nb := VBoxContainer.new()
 		nb.add_theme_constant_override("separation", UIW.space("sm"))
 		np.add_child(nb)
-		nb.add_child(_label("THE PHONE  /  RANG %s  /  OUT OF HOURS" % String(Game.DAY_NAMES[
+		nb.add_child(_label(Loc.t("body.phone_out_of_hours") % String(Game.DAY_NAMES[
 			int(Game.night_call.get("cycle", Game.cycle)) % Game.DAY_CYCLES]).to_upper(),
 			12, UIW.colour("warm")))
 		nb.add_child(_wrap("“%s.”" % Game.sentence(String(Game.night_call["reason"])), 14,
@@ -5817,7 +5817,7 @@ func _build_jobs_tab() -> void:
 		offer_head.add_child(UIW.make_chip("%d CYCLES LEFT" % int(offer["ttl"]),
 			"warning" if int(offer["ttl"]) <= 2 else "accent"))
 		if ct2.has("note"):
-			cv.add_child(_wrap("%s  Market intel: %s" % [ct2["note"], offer["hint"]],
+			cv.add_child(_wrap(Loc.t("body.market_intel") % [ct2["note"], offer["hint"]],
 				13, UIW.colour("muted"), 620))
 
 		var ask := UIW.style_panel(PanelContainer.new(), "console", "md")
@@ -5849,11 +5849,11 @@ func _build_jobs_tab() -> void:
 			"success" if Rivals.best_bidder(offer).is_empty() else "warm"))
 		if bool(offer.get("public", false)):
 			var blocked := Game.can_accept_offer(offer)
-			cv.add_child(_wrap("PUBLIC ADDRESS REQUIRED.%s"
+			cv.add_child(_wrap(Loc.t("body.public_address")
 				% ("" if blocked == "" else "  You have none free: buy a /29 or let this one go."),
 				12, Prefs.bad_colour() if blocked != "" else UIW.colour("info"), 620))
 		if offer["state"] == "counter":
-			cv.add_child(_wrap("COUNTEROFFER  /  Best we can do is $%d per cycle." % int(offer["budget"]),
+			cv.add_child(_wrap(Loc.t("body.counteroffer") % int(offer["budget"]),
 				14, UIW.colour("warm")))
 			var row := HBoxContainer.new()
 			cv.add_child(row)
@@ -5878,7 +5878,7 @@ func _build_jobs_tab() -> void:
 			var quote := _mono_edit(90)
 			quote.placeholder_text = "75"
 			row.add_child(quote)
-			row.add_child(_label("/cycle  ", 14, MUTED))
+			row.add_child(_label(Loc.t("body.per_cycle"), 14, MUTED))
 			var send := Button.new()
 			send.text = Loc.t("btn.send_quote")
 			_accent(send)
@@ -5933,7 +5933,7 @@ func _build_jobs_tab() -> void:
 				var call_box := VBoxContainer.new()
 				call_box.add_theme_constant_override("separation", UIW.space("sm"))
 				call_panel.add_child(call_box)
-				call_box.add_child(_label("THE PHONE  /  %s" % String(deal["customer"]).to_upper(),
+				call_box.add_child(_label(Loc.t("body.the_phone") % String(deal["customer"]).to_upper(),
 					12, UIW.colour("warm")))
 				call_box.add_child(_wrap("“%s”" % deal["call"]["words"], 14,
 					UIW.colour("text_strong"), 620))
@@ -5949,10 +5949,10 @@ func _build_jobs_tab() -> void:
 						_refresh_contracts())
 					call_row.add_child(ob2)
 			if deal.has("dr_due") and not bool(deal.get("dr_done", false)):
-				contracts_box.add_child(_label("      they want the failover tested and the result sent, by cycle %d"
+				contracts_box.add_child(_label(Loc.t("body.want_failover")
 					% int(deal["dr_due"]), 12, UIW.colour("warning")))
 			if deal.has("promised_by"):
-				contracts_box.add_child(_label("      you promised them it would be back by cycle %d"
+				contracts_box.add_child(_label(Loc.t("body.promised_back")
 					% int(deal["promised_by"]), 12, Color(1.0, 0.82, 0.5)))
 			var note_row := HBoxContainer.new()
 			note_row.add_theme_constant_override("separation", 8)
@@ -5977,7 +5977,7 @@ func _build_jobs_tab() -> void:
 				var drow := HBoxContainer.new()
 				drow.add_theme_constant_override("separation", 8)
 				contracts_box.add_child(drow)
-				var dis_lbl := _label("      they are arguing: %s" % Game.dispute_kind(
+				var dis_lbl := _label(Loc.t("body.arguing") % Game.dispute_kind(
 					String(dis.get("kind", "")))["demand"], 13, Color(1.0, 0.72, 0.45))
 				# the demand is a sentence: wrap it, or the three buttons after it
 				# walk off the right edge of the card
@@ -6013,7 +6013,7 @@ func _build_jobs_tab() -> void:
 				var urow := HBoxContainer.new()
 				urow.add_theme_constant_override("separation", 8)
 				contracts_box.add_child(urow)
-				urow.add_child(_label("      they have grown: +%d Mbps for +$%d/cycle" % [
+				urow.add_child(_label(Loc.t("body.grown") % [
 					int(up["load"]), int(up["fee"])], 13, Color(0.6, 0.9, 0.75)))
 				var up_yes := Button.new()
 				up_yes.text = Loc.t("btn.take_it")
@@ -6035,7 +6035,7 @@ func _build_jobs_tab() -> void:
 				var rrow := HBoxContainer.new()
 				rrow.add_theme_constant_override("separation", 8)
 				contracts_box.add_child(rrow)
-				rrow.add_child(_label("      up for renewal at $%d/cycle (%d%% uptime, %s)" % [
+				rrow.add_child(_label(Loc.t("body.up_for_renewal") % [
 					int(rn["fee"]), int(rn["uptime"]), rn["mood"]], 13, Color(1.0, 0.85, 0.5)))
 				var acc_btn := Button.new()
 				acc_btn.text = Loc.t("btn.renew")
@@ -6081,7 +6081,7 @@ func _build_jobs_tab() -> void:
 		contracts_box.add_child(card)
 		var cv := VBoxContainer.new()
 		card.add_child(cv)
-		cv.add_child(_label("INTEGRATION: %s" % a["rival"], 16, Color.WHITE))
+		cv.add_child(_label(Loc.t("body.integration") % a["rival"], 16, Color.WHITE))
 		var where: String = ("on their own site '%s' (switch floors in the HUD, and reaching it needs a leased circuit)"
 			% Game.site_name(int(a.get("site", 0)))) if bool(a.get("premises", false)) else "moved into your room"
 		var brief := _label(("Their kit is %s, but it still runs their way: subnet %s.0/24 on VLAN %d, "
@@ -6303,7 +6303,7 @@ func _build_contract_debrief(debrief: Dictionary) -> void:
 	mastery_row.add_theme_constant_override("separation", UIW.space("md"))
 	mastery.add_child(mastery_row)
 	var mastered: bool = String(debrief.get("id", "")) in Game.mastered_contracts
-	var mastery_copy := _wrap("%s  OPTIONAL MASTERY  /  %s" % ["●" if mastered else "◇",
+	var mastery_copy := _wrap(Loc.t("body.optional_mastery") % ["●" if mastered else "◇",
 		debrief.get("mastery", "")], 12,
 		UIW.colour("success") if mastered else UIW.colour("muted"), 570)
 	mastery_copy.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -6373,7 +6373,7 @@ func _refresh_contracts() -> void:
 						12, Color(0.5, 0.8, 0.55) if rq_ok else Color(0.95, 0.6, 0.45)))
 			continue
 		if active_shown >= 3:
-			contracts_box.add_child(_label("🔒  more jobs unlock as you finish these", 13, Color(0.45, 0.5, 0.6)))
+			contracts_box.add_child(_label(Loc.t("body.more_jobs"), 13, Color(0.45, 0.5, 0.6)))
 			break
 		if Contracts.rank_locked(c):
 			rank_shown += 1
@@ -6391,7 +6391,7 @@ func _refresh_contracts() -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 8)
 		card.add_child(cv)
-		cv.add_child(_label("%s: %s      reward $%d" % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
+		cv.add_child(_label(Loc.t("body.job_reward") % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
 		var need_model := Contracts.needs_model(c)
 		if need_model != "" and Game.MODELS.has(need_model):
 			cv.add_child(_label(Loc.t("demo.needs") % [Game.MODELS[need_model]["label"], int(Game.MODELS[need_model]["price"])], 13, Color(0.85, 0.8, 0.6)))
