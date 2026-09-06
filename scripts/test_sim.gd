@@ -2400,6 +2400,7 @@ static func run() -> int:
 	obs.exec("ip ospf dead-interval 20")
 	Game.topology_changed.emit()
 	check(Sim.ospf_neighbors(oa).size() == 1, "ospf: matching timers form again")
+	check(oas.exec("show ip ospf interface Ethernet1").contains("Hello 5, Dead 20"), "ospf: show ip ospf interface prints the configured timers")
 	check(oas.exec("ip ospf network point-to-point") == "" and bool(Sim.ospf_segment_roles(oa, oa.ifaces[0]).get("p2p", false))
 		and oas.exec("show running-config").contains("ip ospf network point-to-point"),
 		"ospf: ip ospf network point-to-point overrides the /30 heuristic and prints in the config")
@@ -11790,6 +11791,61 @@ static func run() -> int:
 	t17_l.exec("iptables -F INPUT")
 	check(not t17_l.exec("ss -tn").contains("LISTEN") and t17_l.exec("ss -tln").contains("LISTEN"), "ss: listeners only with -l or -a")
 	check(t17_l.exec("echo \"nameserver 10.79.0.53\" > /etc/resolv.conf && cat /etc/resolv.conf").contains("nameserver 10.79.0.53"), "shell: a quoted redirect still runs the command after &&")
+	# EOS housekeeping: static MACs, members, ranges, routing on an L3 switch
+	var t35_sw := Game.new_device("sw-24")
+	var t35 := CLI.new_session(t35_sw)
+	t35.exec("enable")
+	t35.exec("configure")
+	t35.exec("vlan 10")
+	t35.exec("exit")
+	check(t35.exec("mac address-table static 0011.2233.4455 vlan 10 interface Ethernet3") == "" and not t35_sw.mac_static.is_empty()
+		and t35.exec("no mac address-table static 0011.2233.4455 vlan 10 interface Ethernet3") == "" and t35_sw.mac_static.is_empty(),
+		"eos: a static MAC typed dotted is removed dotted")
+	check(t35.exec("show version").contains(Net.mac_dotted(t35_sw.ifaces[0].mac)), "eos: show version prints the dotted system MAC")
+	t35.exec("interface Ethernet1-2")
+	t35.exec("channel-group 5 mode active")
+	t35.exec("interface Ethernet2")
+	t35.exec("description to-core-b")
+	t35.exec("interface Ethernet1-2")
+	check(t35.exec("show running-config").contains("description to-core-b") and t35_sw.ifaces[1].lag == 5, "eos: a channel member keeps its own description in the running-config")
+	check(t35.exec("no channel-group") == "" and t35_sw.ifaces[0].lag == 0 and t35_sw.ifaces[1].lag == 0, "eos: no channel-group frees every port in the range")
+	t35.exec("exit")
+	check(t35.exec("ip routing") == "" and t35_sw.ip_forwarding and t35.exec("no ip routing") == "" and not t35_sw.ip_forwarding and t35.exec("ip routing") == "",
+		"eos: ip routing turns routing on for an L3 switch")
+	check(t35.exec("ip route 10.35.0.0/24 10.35.9.1") == "" and t35.exec("ip route 10.35.0.0/24 10.35.9.2") == ""
+		and t35.exec("no ip route 10.35.0.0/24 10.35.9.1") == "" and t35_sw.static_routes.size() == 1 and String(t35_sw.static_routes[0]["via"]) == "10.35.9.2",
+		"eos: no ip route with a next hop removes only that route")
+	t35.exec("no ip route 10.35.0.0/24")
+	t35.exec("spanning-tree mode mstp")
+	t35.exec("spanning-tree mst configuration")
+	check(t35.exec("instance 1 vlan 10-20") == "", "eos: an mst instance takes a vlan range")
+	t35.exec("exit")
+	t35.exec("router bgp 65035")
+	check(t35.exec("neighbor 10.35.9.9 remote-as 65036") == "" and t35.exec("neighbor 10.35.9.9 description upstream") == ""
+		and t35.exec("neighbor 10.35.9.9 remote-as 65036") == "" and t35.exec("show running-config").contains("description upstream")
+		and t35.exec("neighbor 10.35.9.9 remote-as 65037").contains("already configured"),
+		"eos: repeating remote-as keeps the neighbour, a different AS is refused")
+	t35.exec("exit")
+	t35.exec("interface Loopback0")
+	t35.exec("ip address 10.35.255.1/32")
+	t35.exec("exit")
+	t35.exec("interface Ethernet3")
+	t35.exec("description customer-x")
+	t35.exec("exit")
+	t35.exec("write")
+	t35.exec("interface Loopback1")
+	t35.exec("interface Ethernet3")
+	t35.exec("description changed-after-write")
+	t35.exec("exit")
+	Game.apply_device_config(t35_sw, t35_sw.startup)
+	check(t35_sw.ifaces.any(func(x): return x.name == "Loopback0") and not t35_sw.ifaces.any(func(x): return x.name == "Loopback1"),
+		"reload: a loopback the startup never had is gone, the saved one stays")
+	check(String(t35_sw.ifaces[2].note.get("text", "")) == "customer-x", "reload: the description comes back from the startup-config")
+	t35_sw.ifaces[4].err_disabled = true
+	t35_sw.ifaces[4].err_cause = "bpduguard"
+	check(String(Game._ser_device(t35_sw)["ifaces"][4]["err_cause"]) == "bpduguard" and not Game.config_dirty(t35_sw), "save: the errdisable cause is kept and is not configuration")
+	t35_sw.ifaces[4].err_disabled = false
+	t35_sw.ifaces[4].err_cause = ""
 	# the OUTPUT chain: what the box itself sends
 	check(t17_l.exec("iptables -A OUTPUT -d 10.79.0.2 -j DROP") == "" and not Sim.ping(t17_s, "10.79.0.2")["ok"] and t17_l.exec("ping -c 1 10.79.0.2").contains("Operation not permitted"), "fw: an OUTPUT drop stops the box sending, and ping says so the way iputils does")
 	t17_l.exec("iptables -F OUTPUT")

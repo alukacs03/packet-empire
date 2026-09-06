@@ -490,7 +490,19 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["description"], "h": _if_description},
 			{"m": ["if"], "p": ["no", "description"], "h": func(_r): return _each(func(i): Game.set_note(i, ""); return "")},
 			{"m": EP, "p": ["show", "interfaces", "description"], "h": _show_if_description},
-			{"m": ["config"], "p": ["ip", "routing"], "h": func(_r): return "" if dev.ip_forwarding else "% IP routing is not supported on this platform\n"},
+			{"m": ["config"], "p": ["ip", "routing"], "h": func(_r):
+				if dev.ip_forwarding:
+					return ""
+				if not Game.is_l3_switch(dev):
+					return "% IP routing is not supported on this platform\n"
+				dev.ip_forwarding = true
+				Game.topology_changed.emit()
+				return ""},
+			{"m": ["config"], "p": ["no", "ip", "routing"], "h": func(_r):
+				if Game.is_l3_switch(dev):
+					dev.ip_forwarding = false
+					Game.topology_changed.emit()
+				return ""},
 			{"m": EP, "p": ["show", "hostname"], "h": func(_r): return "Hostname: %s\nFQDN:     %s\n" % [dev.name, dev.name]},
 			{"m": ["priv"], "p": ["copy", "running-config", "startup-config"], "h": _write_mem},
 			{"m": ["priv"], "p": ["reload"], "h": _reload},
@@ -978,10 +990,10 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["vrrp"], "h": _if_vrrp},
 			{"m": ["if"], "p": ["channel-group"], "h": _if_lag},
 			{"m": ["if"], "p": ["ip", "helper-address"], "h": _if_helper},
-			{"m": ["if"], "p": ["no", "ip", "helper-address"], "h": func(_r): ctx_if.helper = ""; Game.topology_changed.emit(); return ""},
-			{"m": ["if"], "p": ["no", "channel-group"], "h": func(_r): ctx_if.lag = 0; Game.topology_changed.emit(); return ""},
+			{"m": ["if"], "p": ["no", "ip", "helper-address"], "h": func(_r): return _each(func(i): i.helper = ""; Game.topology_changed.emit(); return "")},
+			{"m": ["if"], "p": ["no", "channel-group"], "h": func(_r): return _each(func(i): i.lag = 0; Game.topology_changed.emit(); return "")},
 			{"m": ["if"], "p": ["no", "vrrp"], "h": _if_no_vrrp},
-			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): ctx_if.nat = ""; Game.topology_changed.emit(); return "", "hidden": true},
+			{"m": ["if"], "p": ["no", "ip", "nat"], "h": func(_r): return _each(func(i): i.nat = ""; Game.topology_changed.emit(); return ""), "hidden": true},
 			{"m": ["if"], "p": ["no", "ip", "address"], "h": _if_no_ip},
 			{"m": ["if"], "p": ["shutdown"], "h": func(_r): return _each(func(i):
 				i.admin_down = true
@@ -3251,7 +3263,7 @@ class EOS extends Session:
 				var bdr = roles.get("bdr")
 				out += "  Designated Router is %s\n  Backup Designated Router is %s\n" % [
 					Sim.ospf_router_id(dr) if dr != null else "0.0.0.0", Sim.ospf_router_id(bdr) if bdr != null else "0.0.0.0"]
-			out += "  Timer intervals configured, Hello 10, Dead 40, Retransmit 5\n  Neighbor Count is %d\n%s" % [nbrs,
+			out += "  Timer intervals configured, Hello %d, Dead %d, Retransmit 5\n  Neighbor Count is %d\n%s" % [Sim.ospf_hello(i), Sim.ospf_dead(i), nbrs,
 				"  Passive interface: no routing updates sent or received\n" if i.name in dev.ospf.get("passive", []) else ""]
 		return out
 
@@ -3328,7 +3340,11 @@ class EOS extends Session:
 	func _bgp_neighbor(r: Array) -> String:
 		if r.size() == 3 and String(r[0]).is_valid_ip_address() \
 				and "remote-as".begins_with(r[1]) and String(r[2]).is_valid_int():
-			_bgp_no_neighbor([r[0]])
+			var had := _find_nb(String(r[0]))
+			if not had.is_empty():
+				if int(had["remote_as"]) != int(r[2]):
+					return "% BGP neighbor %s already configured with AS %d\n" % [r[0], int(had["remote_as"])]
+				return ""  # the same line again: a no-op, as when a config block is pasted
 			dev.bgp["neighbors"].append({"ip": r[0], "remote_as": int(r[2]),
 				"local_pref": 100, "prepend": 0, "prefix_in": [], "prefix_out": []})
 			Game.topology_changed.emit()
@@ -3631,10 +3647,15 @@ class EOS extends Session:
 		return "% Invalid input\n"
 
 	func _cfg_no_ip_route(r: Array) -> String:
+		var vrf := ""
+		if r.size() >= 2 and String(r[0]) == "vrf":
+			vrf = String(r[1])
+			r = r.slice(2)
 		r = CLI.fold_mask(r)
 		if r.size() >= 1 and Net.valid_cidr(r[0]):
 			var parts := String(r[0]).split("/")
-			Game.remove_static_route(dev, parts[0], int(parts[1]))
+			var via := String(r[1]) if r.size() >= 2 else ""  # named: only that route goes
+			Game.remove_static_route(dev, parts[0], int(parts[1]), vrf, via)
 			return ""
 		return "% Invalid input\n"
 
@@ -3642,7 +3663,7 @@ class EOS extends Session:
 
 	func _show_version(_r: Array) -> String:
 		## the Arista block, with this model's name in the first line
-		var mac: String = dev.ifaces[0].mac.to_lower() if not dev.ifaces.is_empty() else "00:00:00:00:00:00"
+		var mac: String = Net.mac_dotted(dev.ifaces[0].mac) if not dev.ifaces.is_empty() else "0000.0000.0000"
 		var secs := Game.cycle * 3600
 		var parts: Array = []
 		if secs >= 86400:
@@ -3863,7 +3884,7 @@ class EOS extends Session:
 			return "% Incomplete command\n"
 		var vid := int(r[2])
 		if dev.mac_static.has(vid):
-			dev.mac_static[vid].erase(String(r[0]).to_upper())
+			dev.mac_static[vid].erase(Net.mac_colon(String(r[0])))  # dotted or colon, as the set-form took it
 			if dev.mac_static[vid].is_empty():
 				dev.mac_static.erase(vid)
 		Game.topology_changed.emit()
@@ -3997,10 +4018,7 @@ class EOS extends Session:
 			return "% Invalid input\n"
 		if r.size() < 4 or r[0] != "instance" or r[2] != "vlan":
 			return "% Incomplete command\n"
-		var vids: Array = []
-		for part in String(r[3]).split(","):
-			if part.is_valid_int():
-				vids.append(int(part))
+		var vids: Array = EOS.parse_vlan_list(String(r[3]))
 		if vids.is_empty():
 			return "% no valid VLAN ids\n"
 		dev.mst_instances[int(r[1])] = vids
@@ -4691,7 +4709,11 @@ class EOS extends Session:
 		for i: Net.Iface in ordered:
 			out += "interface %s\n" % i.name
 			if i.lag > 0:
-				# a member: its switching lives on the channel
+				# a member: its switching lives on the channel; its own description stays
+				var chan_first: Net.Iface = dev.ifaces.filter(func(x): return x.lag == i.lag)[0]
+				var chan_desc := String(chan_first.note.get("text", "")) if chan_first.note is Dictionary else ""
+				if i.note is Dictionary and String(i.note.get("text", "")) != "" and String(i.note["text"]) != chan_desc:
+					out += "   description %s\n" % i.note["text"]
 				if i.admin_down:
 					out += "   shutdown\n"
 				if i.mtu != 1500:

@@ -10165,9 +10165,10 @@ func add_static_route(dev: Net.NDevice, prefix: String, plen: int, via: String, 
 	topology_changed.emit()
 	return true
 
-func remove_static_route(dev: Net.NDevice, prefix: String, plen: int, vrf := "") -> void:
+func remove_static_route(dev: Net.NDevice, prefix: String, plen: int, vrf := "", via := "") -> void:
 	for r in dev.static_routes.duplicate():
-		if r["prefix"] == prefix and int(r["plen"]) == plen and String(r.get("vrf", "")) == vrf:
+		if r["prefix"] == prefix and int(r["plen"]) == plen and String(r.get("vrf", "")) == vrf \
+				and (via == "" or String(r.get("via", "")) == via or String(r.get("dev", "")) == via):
 			dev.static_routes.erase(r)
 	topology_changed.emit()
 
@@ -10380,8 +10381,9 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
 	_strip_runtime(cfg.get("services", {}))
 	for si in cfg.get("ifaces", []):
-		for k in ["err_since", "dot1x_ok", "violations", "rx_frames", "tx_frames", "rx_errors", "rx_crc", "rx_giants", "collisions", "out_drops"]:
+		for k in ["err_disabled", "err_since", "err_cause", "dot1x_ok", "violations", "rx_frames", "tx_frames", "rx_errors", "rx_crc", "rx_giants", "collisions", "out_drops"]:
 			si.erase(k)  # counters and learned state: not configuration either
+	cfg.erase("note")  # the handover note is past-you talking, not configuration
 	cfg.erase("mcast_groups")
 	cfg.erase("logs")
 	cfg.erase("bindings")
@@ -10613,7 +10615,8 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		saved[si["name"]] = si
 	for i: Net.Iface in d.ifaces.duplicate():
 		if not saved.has(i.name):
-			if i.parent != "" or i.name.begins_with("Vlan"):
+			if i.parent != "" or i.name.begins_with("Vlan") or i.name.begins_with("Loopback") \
+					or i.name.begins_with("Tunnel") or i.name.begins_with("wg") or i.name.begins_with("Vxlan"):
 				d.ifaces.erase(i)  # virtual interfaces created after the save
 			continue
 	for si in cfg.get("ifaces", []):
@@ -10653,6 +10656,7 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.secure_macs = si.get("secure_macs", [target.secure_mac] if target.secure_mac != "" else []).duplicate()
 		target.dot1x_ok = ""  # authorisation and violations are learned, not configured: a reload forgets them
 		target.violations = 0
+		target.note = si.get("note", {}).duplicate(true) if si.get("note", {}) is Dictionary else {}
 		target.storm_limit = int(si.get("storm_limit", 0))
 		target.pvlan = si.get("pvlan", "")
 		target.dhcp_trusted = bool(si.get("dhcp_trusted", false))
@@ -10679,7 +10683,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"portfast": i.portfast, "bpduguard": i.bpduguard, "psec_max": i.psec_max, "psec_violation": i.psec_violation,
-			"secure_macs": i.secure_macs, "err_since": i.err_since,
+			"secure_macs": i.secure_macs, "err_since": i.err_since, "err_cause": i.err_cause,
 			"rx_frames": i.rx_frames, "tx_frames": i.tx_frames, "rx_errors": i.rx_errors, "rx_crc": i.rx_crc,
 			"rx_giants": i.rx_giants, "collisions": i.collisions, "out_drops": i.out_drops,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
@@ -10974,6 +10978,7 @@ func _apply(data: Dictionary) -> void:
 			i.secure_mac = si.get("secure_mac", "")
 			i.secure_macs = Array(si.get("secure_macs", [i.secure_mac] if i.secure_mac != "" else []))
 			i.err_since = int(si.get("err_since", 0))
+			i.err_cause = String(si.get("err_cause", ""))
 			i.rx_frames = int(si.get("rx_frames", 0))
 			i.tx_frames = int(si.get("tx_frames", 0))
 			i.rx_errors = int(si.get("rx_errors", 0))
