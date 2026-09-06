@@ -1586,8 +1586,8 @@ static func run() -> int:
 	os2.exec("/routing ospf area add name=backbone area-id=0.0.0.0 instance=default")
 	check(os2.exec("/routing ospf interface-template add networks=10.20.0.0/16 area=backbone") == "",
 		"ospf: interface-template with networks and area is the v7 spelling")
-	check(os1.exec("show ip ospf neighbor").contains("10.20.9.2") and os1.exec("show ip ospf neighbor").contains("FULL/  -"),
-		"ospf: adjacency comes up (EOS side), point-to-point so no DR")
+	check(os1.exec("show ip ospf neighbor").contains("10.20.9.2") and (os1.exec("show ip ospf neighbor").contains("FULL/DR") or os1.exec("show ip ospf neighbor").contains("FULL/BDR")),
+		"ospf: adjacency comes up (EOS side), and a /30 on Ethernet still elects a DR")
 	check(os1.exec("show ip ospf neighbor").contains("Neighbor ID     Instance VRF") and os1.exec("show ip ospf neighbor").contains("Ethernet3"),
 		"ospf: the neighbour table has the Neighbor ID column")
 	os1.exec("conf t")
@@ -11474,7 +11474,7 @@ static func run() -> int:
 	t11_rps.exec("/routing ospf area add name=backbone area-id=0.0.0.0 instance=default")
 	t11_rps.exec("/routing ospf interface-template add area=backbone networks=10.77.0.0/30")
 	var t11_rp_oi := t11_rps.exec("/routing ospf interface print")
-	check(t11_rp_oi.contains("ether3") and t11_rp_oi.contains("ptp"), "ros: /routing ospf interface print lists the covered interface and its network type")
+	check(t11_rp_oi.contains("ether3") and t11_rp_oi.contains("broadcast"), "ros: /routing ospf interface print lists the covered interface and its network type (broadcast on ethernet, whatever the mask)")
 	check(t11_rps.exec("/ip vrf remove name=red") == "" and "red" not in t11_rp_r.vrfs and t11_rp_r.ifaces[1].vrf == "", "ros: /ip vrf remove puts the interfaces back in main")
 	var t11_rss := CLI.new_session(t11_rp_sw)
 	Game.add_vlan(t11_rp_sw, 10, "")
@@ -11877,6 +11877,16 @@ static func run() -> int:
 	var t35_startup := t35.exec("show startup-config")
 	check(t35_startup.contains("customer-x") and not t35_startup.contains("live-desc") and String(t35_sw.ifaces[2].note.get("text", "")) == "live-desc",
 		"eos: show startup-config renders the saved text without touching the live device")
+	t35.exec("exit")
+	# storm control per type
+	t35.exec("configure")
+	t35.exec("interface Ethernet7")
+	check(t35.exec("storm-control multicast level 2") == "" and int(t35_sw.ifaces[6].storm_types.get("multicast", 0)) == 20 and t35_sw.ifaces[6].storm_limit == 0
+		and t35.exec("show running-config").contains("storm-control multicast level 2") and not t35.exec("show running-config").contains("storm-control broadcast"),
+		"eos: a multicast storm limit is its own line, not a broadcast one")
+	check(Sim.storm_allowance(t35_sw.ifaces[6], "multicast") > 1 and Sim.storm_limit_of(t35_sw.ifaces[6], "broadcast") == 0, "sim: the allowance is per type")
+	check(t35.exec("no storm-control multicast") == "" and t35_sw.ifaces[6].storm_types.is_empty(), "eos: no storm-control multicast clears only that type")
+	t35.exec("exit")
 	t35.exec("exit")
 	# the OUTPUT chain: what the box itself sends
 	check(t17_l.exec("iptables -A OUTPUT -d 10.79.0.2 -j DROP") == "" and not Sim.ping(t17_s, "10.79.0.2")["ok"] and t17_l.exec("ping -c 1 10.79.0.2").contains("Operation not permitted"), "fw: an OUTPUT drop stops the box sending, and ping says so the way iputils does")

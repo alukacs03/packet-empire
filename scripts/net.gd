@@ -28,6 +28,8 @@ class Iface:
 	var pvlan := ""  # "" | "isolated" | "promiscuous": private VLAN role
 	var storm_limit := 0  # storm-control level in tenths of a percent of the port's bandwidth, 0 = unlimited
 	var storm_count := 0  # runtime counter within the current operation
+	var storm_types := {}  # multicast / unknown-unicast levels in tenths of a percent; broadcast is storm_limit
+	var storm_counts := {}  # runtime counters per type within the current operation
 	var vm := ""  # a virtual machine's NIC, hosted on this server
 	var ra := false  # router: advertise this interface's v6 prefix to the segment
 	var bfd := false  # watch the far end, and withdraw the route when it dies

@@ -10658,6 +10658,7 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary, quiet := false) -> voi
 		target.violations = 0
 		target.note = si.get("note", {}).duplicate(true) if si.get("note", {}) is Dictionary else {}
 		target.storm_limit = int(si.get("storm_limit", 0))
+		target.storm_types = Dictionary(si.get("storm_types", {})).duplicate()
 		target.pvlan = si.get("pvlan", "")
 		target.dhcp_trusted = bool(si.get("dhcp_trusted", false))
 		target.portfast = bool(si.get("portfast", false))
@@ -10688,7 +10689,7 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"rx_frames": i.rx_frames, "tx_frames": i.tx_frames, "rx_errors": i.rx_errors, "rx_crc": i.rx_crc,
 			"rx_giants": i.rx_giants, "collisions": i.collisions, "out_drops": i.out_drops,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
-			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
+			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "storm_types": i.storm_types, "dot1x": i.dot1x,
 			"dot1x_ok": i.dot1x_ok, "violations": i.violations,
 			"ips": i.ips, "note": i.note})
 	return {"type": d.type, "model": d.model, "name": d.name, "status": d.status, "vlans": d.vlans, "vtep": d.vtep,
@@ -10971,6 +10972,7 @@ func _apply(data: Dictionary) -> void:
 			i.dot1x_ok = String(si.get("dot1x_ok", ""))
 			i.violations = int(si.get("violations", 0))
 			i.storm_limit = int(si.get("storm_limit", 0))
+			i.storm_types = Dictionary(si.get("storm_types", {})).duplicate()
 			i.port_security = si.get("port_security", false)
 			i.portfast = bool(si.get("portfast", false))
 			i.bpduguard = bool(si.get("bpduguard", false))

@@ -535,13 +535,16 @@ static func _bgp_tables() -> Dictionary:
 					continue  # the IPv6 family has to be activated on both ends; the handoff has it on
 				if receiver_asn in best["as_path"]:
 					continue  # loop prevention: the path already went through us
-				var prepend := 1 + int(snb.get("prepend", 0))
+				var ibgp := receiver_asn == int(sender.bgp.get("asn", 0))
+				if ibgp and bool(best.get("ibgp", false)):
+					continue  # an iBGP-learned path is not passed on to another iBGP peer without a reflector
+				var prepend := 0 if ibgp else 1 + int(snb.get("prepend", 0))
 				var new_path: Array = []
 				for k in prepend:
 					new_path.append(int(sender.bgp.get("asn", 0)))
 				new_path += best["as_path"]
 				var cand := {"as_path": new_path, "pref": int(rnb.get("local_pref", 100)), "rid": Net.ip_to_int(bgp_router_id(sender)),
-					"via": via, "origin": best["origin"], "multipath": int(receiver.bgp.get("maximum_paths", 1)) > 1}
+					"via": via, "origin": best["origin"], "multipath": int(receiver.bgp.get("maximum_paths", 1)) > 1, "ibgp": ibgp}
 				var have: Array = tables[receiver].get(pfx, [])
 				var dup := false
 				for h in have:
@@ -576,7 +579,8 @@ static func _bgp_learned(dev: Net.NDevice) -> Array:
 			out.append({"prefix": parts[0], "plen": int(parts[1]), "via": path["via"],
 				"pref": int(path["pref"]), "cost": path["as_path"].size(),
 				"asn": int(path["as_path"][path["as_path"].size() - 1]) if not path["as_path"].is_empty() else int(dev.bgp.get("asn", 0)), "prepend": 0,
-				"as_path": path["as_path"], "rid": int(path["rid"]), "multipath": bool(path.get("multipath", false))})
+				"as_path": path["as_path"], "rid": int(path["rid"]), "multipath": bool(path.get("multipath", false)),
+				"ibgp": bool(path.get("ibgp", false)), "ad": 200 if bool(path.get("ibgp", false)) else 20})
 	return out
 
 static func _neighbor_towards(dev: Net.NDevice, other: Net.NDevice) -> Dictionary:
@@ -717,10 +721,8 @@ static func ospf_is_p2p(iface: Net.Iface) -> bool:
 	var forced := String(iface.dev.ospf.get("net_type", {}).get(iface.name, ""))
 	if forced != "":
 		return forced == "point-to-point"
-	for cidr in iface.ips:
-		if not Net.is_v6(cidr) and int(String(cidr).split("/")[1]) >= 30:
-			return true
-	return false
+	# Ethernet and SVIs are broadcast whatever the mask: a /30 still elects a DR
+	return iface.name.begins_with("Tunnel") or iface.name.begins_with("wg")
 
 static func ospf_neighbors(dev: Net.NDevice) -> Array:
 	## -> [{dev, via_ip, iface}] adjacent OSPF routers: a shared covered
@@ -1515,19 +1517,24 @@ static func _best_of(cands: Array) -> Array:
 			best_ad = mini(best_ad, int(c.get("ad", 1)))
 	# BGP decides on local preference before it looks at path length, which is
 	# the whole reason local-pref exists: it is how you pick your own upstream
-	var best_pref := -(1 << 30)
+	# OSPF ranks intra-area above external before it looks at any metric
+	var best_rank := 1 << 30
 	for c in cands:
 		if int(c["plen"]) == best_len and int(c.get("ad", 1)) == best_ad:
+			best_rank = mini(best_rank, int(c.get("rank", 0)))
+	var best_pref := -(1 << 30)
+	for c in cands:
+		if int(c["plen"]) == best_len and int(c.get("ad", 1)) == best_ad and int(c.get("rank", 0)) == best_rank:
 			best_pref = maxi(best_pref, int(c.get("pref", 100)))
 	var best_cost := 1 << 30
 	for c in cands:
-		if int(c["plen"]) == best_len and int(c.get("ad", 1)) == best_ad \
+		if int(c["plen"]) == best_len and int(c.get("ad", 1)) == best_ad and int(c.get("rank", 0)) == best_rank \
 				and int(c.get("pref", 100)) == best_pref:
 			best_cost = mini(best_cost, int(c.get("cost", 1)))
 	var out: Array = []
 	var seen := {}
 	for cand in cands:
-		if int(cand["plen"]) != best_len or int(cand.get("ad", 1)) != best_ad \
+		if int(cand["plen"]) != best_len or int(cand.get("ad", 1)) != best_ad or int(cand.get("rank", 0)) != best_rank \
 				or int(cand.get("pref", 100)) != best_pref or int(cand.get("cost", 1)) != best_cost:
 			continue
 		var key := "%s|%s" % [str(cand["next_hop"]), str(cand["iface"])]
@@ -1720,7 +1727,8 @@ static func _route_entries_build(dev: Net.NDevice, vrf := "") -> Array:
 				out.append({"src": code, "ad": ad, "iface": via_if, "next_hop": r["via"], "prefix": r["prefix"],
 					"plen": int(r["plen"]), "cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100)),
 					"vrf": vrf, "rid": int(r.get("rid", 0)), "multipath": bool(r.get("multipath", false)),
-					"external": bool(r.get("external", false))})
+					"external": bool(r.get("external", false)), "ibgp": bool(r.get("ibgp", false)),
+					"rank": 1 if bool(r.get("external", false)) else 0})
 	return out
 
 static func rib(dev: Net.NDevice) -> Array:
@@ -2099,16 +2107,21 @@ static func _dot1x_authorise(sw: Net.NDevice, port: Net.Iface, mac: String) -> b
 		" into VLAN %d" % vid if vid > 0 else ""])
 	return true
 
-static func storm_allowance(i: Net.Iface) -> int:
+static func storm_allowance(i: Net.Iface, kind := "broadcast") -> int:
 	## flooded frames one operation may carry at this level: 0.1% of a gigabit
 	## port is one frame, 1% is ten, and a ten-gig port ten times that
 	## ponytail: the interval is the operation, not a second; the ratio is what the lesson needs
-	return maxi(1, int(round(float(Game.iface_speed(i)) * float(i.storm_limit) / 1000.0)))
+	return maxi(1, int(round(float(Game.iface_speed(i)) * float(storm_limit_of(i, kind)) / 1000.0)))
+
+static func storm_limit_of(i: Net.Iface, kind: String) -> int:
+	## broadcast lives in storm_limit; the other two types in storm_types
+	return i.storm_limit if kind == "broadcast" else int(i.storm_types.get(kind, 0))
 
 static func _reset_storm_counters() -> void:
 	for d in Game.all_devices():
 		for i: Net.Iface in d.ifaces:
 			i.storm_count = 0
+			i.storm_counts = {}
 
 static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) -> void:
 	if _rx_instance_blocked(dev, in_if, frame):
@@ -2155,12 +2168,12 @@ static func _switch_rx(dev: Net.NDevice, in_if: Net.Iface, frame: Dictionary) ->
 	# storm control: a level is a share of the port's bandwidth, and it polices
 	# broadcast, multicast and unknown unicast alike; here one operation is the
 	# interval, so the level buys a number of flooded frames scaled by the speed
-	if in_if.storm_limit > 0:
-		var floods: bool = frame["dst"] == BCAST or String(frame["dst"]).begins_with(MCAST_PREFIX) \
-			or (dev.mac_table.get(vlan, {}).get(frame["dst"]) == null and static_port(dev, vlan, String(frame["dst"])) == null)
-		if floods:
-			in_if.storm_count += 1
-			if in_if.storm_count > storm_allowance(in_if):
+	var storm_kind := "broadcast" if frame["dst"] == BCAST else ("multicast" if String(frame["dst"]).begins_with(MCAST_PREFIX) \
+		else ("unknown-unicast" if dev.mac_table.get(vlan, {}).get(frame["dst"]) == null and static_port(dev, vlan, String(frame["dst"])) == null else ""))
+	if storm_kind != "" and storm_limit_of(in_if, storm_kind) > 0:
+		if true:
+			in_if.storm_counts[storm_kind] = int(in_if.storm_counts.get(storm_kind, 0)) + 1
+			if int(in_if.storm_counts[storm_kind]) > storm_allowance(in_if, storm_kind):
 				Game.device_log(dev, "storm control suppressed %s on %s" % ["broadcast" if frame["dst"] == BCAST else ("multicast" if String(frame["dst"]).begins_with(MCAST_PREFIX) else "unknown unicast"), in_if.name])
 				return
 	# 802.1X: nothing passes until the authentication server says who this is

@@ -827,9 +827,11 @@ class EOS extends Session:
 			{"m": ["if"], "p": ["switchport", "protected"], "h": func(_r): return _pvlan("isolated")},
 			{"m": ["if"], "p": ["no", "switchport", "protected"], "h": func(_r): return _pvlan("")},
 			{"m": ["if"], "p": ["storm-control", "broadcast"], "h": _storm},
-			{"m": ["if"], "p": ["storm-control", "multicast"], "h": _storm},
-			{"m": ["if"], "p": ["storm-control", "unknown-unicast"], "h": _storm},
+			{"m": ["if"], "p": ["storm-control", "multicast"], "h": func(r): return _storm(r, "multicast")},
+			{"m": ["if"], "p": ["storm-control", "unknown-unicast"], "h": func(r): return _storm(r, "unknown-unicast")},
 			{"m": ["if"], "p": ["no", "storm-control", "broadcast"], "h": func(_r): return _storm([0])},
+			{"m": ["if"], "p": ["no", "storm-control", "multicast"], "h": func(_r): return _storm([0], "multicast")},
+			{"m": ["if"], "p": ["no", "storm-control", "unknown-unicast"], "h": func(_r): return _storm([0], "unknown-unicast")},
 			{"m": ["if"], "p": ["switchport", "port-security"], "h": _port_sec_cmd},
 			{"m": ["if"], "p": ["no", "switchport", "port-security"], "h": func(_r): return _port_sec(false)},
 			{"m": EP, "p": ["show", "port-security"], "h": _show_port_sec},
@@ -2125,20 +2127,25 @@ class EOS extends Session:
 			i.pvlan = role
 			return "")
 
-	func _storm(r: Array) -> String:
-		## storm-control broadcast level <percent> is the EOS spelling; the bare
+	func _storm(r: Array, kind := "broadcast") -> String:
+		## storm-control <type> level <percent> is the EOS spelling; the bare
 		## number is this world's old shorthand in tenths of a percent
 		if dev.type != "switch":
 			return "% storm control is a switch feature\n"
 		var tenths := -1
-		if r.size() == 2 and String(r[0]) == "level" and String(r[1]).is_valid_float():
+		if r.size() == 2 and str(r[0]) == "level" and str(r[1]).is_valid_float():
 			tenths = int(round(float(r[1]) * 10.0))
-		elif r.size() == 1 and String(r[0]).is_valid_int():
+		elif r.size() == 1 and str(r[0]).is_valid_int():  # the no-form passes a bare 0
 			tenths = int(r[0])
 		if tenths < 0 or tenths > 1000:
 			return "% Incomplete command\n" if r.is_empty() else "% Invalid input\n"
 		return _each(func(i: Net.Iface) -> String:
-			i.storm_limit = tenths
+			if kind == "broadcast":
+				i.storm_limit = tenths
+			elif tenths == 0:
+				i.storm_types.erase(kind)
+			else:
+				i.storm_types[kind] = tenths
 			return "")
 
 	func _port_sec(on: bool) -> String:
@@ -4319,7 +4326,7 @@ class EOS extends Session:
 				continue
 			any = true
 			var pfx := "%s/%d" % [e["prefix"], int(e["plen"])]
-			var code := "B E" if e["src"] == "B" else ("O E2" if e["src"] == "O" and bool(e.get("external", false)) else String(e["src"]))
+			var code := ("B I" if bool(e.get("ibgp", false)) else "B E") if e["src"] == "B" else ("O E2" if e["src"] == "O" and bool(e.get("external", false)) else String(e["src"]))
 			var row := ""
 			if e["src"] == "C":
 				row = " %-8s %s is directly connected, %s\n" % [code, pfx, e["iface"].name]
@@ -4871,6 +4878,10 @@ class EOS extends Session:
 				out += "   dot1x pae authenticator\n   dot1x port-control auto\n"
 			if i.storm_limit > 0:
 				out += "   storm-control broadcast level %s\n" % (str(i.storm_limit / 10) if i.storm_limit % 10 == 0 else "%.1f" % (i.storm_limit / 10.0))
+			for storm_kind in ["multicast", "unknown-unicast"]:
+				var lvl := int(i.storm_types.get(storm_kind, 0))
+				if lvl > 0:
+					out += "   storm-control %s level %s\n" % [storm_kind, str(lvl / 10) if lvl % 10 == 0 else "%.1f" % (lvl / 10.0)]
 			if i.duplex != "auto":
 				out += "   duplex %s\n" % i.duplex
 			out += "!\n"
