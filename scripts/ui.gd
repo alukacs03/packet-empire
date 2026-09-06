@@ -4195,7 +4195,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 	var invoiced := deal.has("first_invoice_cycle")
 	var collected := deal.has("first_cash_cycle")
 	if not ever_live:
-		tutorial_box.add_child(_tutorial_head("DELIVER  /  %s" % String(deal["customer"]).to_upper()))
+		tutorial_box.add_child(_tutorial_head(Loc.t("brief.deliver", {"customer": String(deal["customer"]).to_upper()})))
 		tutorial_box.add_child(_wrap("Promise sold: %s" % String(deal["brief"]), 13,
 			UIW.colour("text"), 290))
 		for check: Dictionary in Market.delivery_checks(deal):
@@ -4209,7 +4209,7 @@ func _render_guided_delivery(deal: Dictionary) -> void:
 			tutorial_box.add_child(_wrap("PROTECTED  /  $%d customer reserve can only fund a server for this promise."
 				% reserve, 11, UIW.colour("warm"), 290))
 		var delivery_btn := Button.new()
-		delivery_btn.text = "Open customer delivery brief"
+		delivery_btn.text = Loc.t("brief.open_delivery")
 		delivery_btn.pressed.connect(func() -> void:
 			contracts_tab = "Jobs"
 			open_contracts())
@@ -4392,14 +4392,14 @@ func _refresh_tutorial() -> void:
 			tutorial_panel.visible = true
 			for old in tutorial_box.get_children():
 				old.queue_free()
-			tutorial_box.add_child(_tutorial_head("DELIVER  /  %s" % String(waiting["customer"]).to_upper()))
+			tutorial_box.add_child(_tutorial_head(Loc.t("brief.deliver", {"customer": String(waiting["customer"]).to_upper()})))
 			var promise := _wrap("○  Promise sold: %s" % String(waiting["brief"]), 13,
 				UIW.colour("text"), 290)
 			tutorial_box.add_child(promise)
 			tutorial_box.add_child(_label("○  Prove the live service, then let one billing cycle run.",
 				12, UIW.colour("muted")))
 			var desk_btn := Button.new()
-			desk_btn.text = "Open customer delivery brief"
+			desk_btn.text = Loc.t("brief.open_delivery")
 			desk_btn.pressed.connect(open_contracts)
 			tutorial_box.add_child(desk_btn)
 			return
@@ -4421,14 +4421,14 @@ func _refresh_tutorial() -> void:
 			rl.custom_minimum_size = Vector2(290, 0)
 			tutorial_box.add_child(rl)
 		var open_btn := Button.new()
-		open_btn.text = "Open the brief"
+		open_btn.text = Loc.t("brief.open")
 		open_btn.pressed.connect(open_contracts)
 		tutorial_box.add_child(open_btn)
 		return
 	tutorial_panel.visible = true
 	for c in tutorial_box.get_children():
 		c.queue_free()
-	tutorial_box.add_child(_tutorial_head("GETTING STARTED"))
+	tutorial_box.add_child(_tutorial_head(Loc.t("brief.getting_started")))
 	var servers := 0
 	var cabled := 0
 	for d in Game.all_devices():
@@ -4444,11 +4444,11 @@ func _refresh_tutorial() -> void:
 		if d.type == "switch":
 			switches += 1
 	var steps := [
-		["Buy a rack: press R, click a floor tile", Game.racks.size() >= 1],
-		["Click the rack, install a switch", switches >= 1],
-		["Install two servers (Dill R110)", servers >= 2],
-		["Cable both servers: click a port, Run cable", cabled >= 2],
-		["Open Company > Jobs, collect 'Rack and stack'", false],
+		[Loc.t("brief.step.rack"), Game.racks.size() >= 1],
+		[Loc.t("brief.step.switch"), switches >= 1],
+		[Loc.t("brief.step.servers"), servers >= 2],
+		[Loc.t("brief.step.cable"), cabled >= 2],
+		[Loc.t("brief.step.collect"), false],
 	]
 	var next_found := false
 	for st in steps:
@@ -4467,7 +4467,7 @@ func _refresh_tutorial() -> void:
 func _tutorial_head(text: String) -> Control:
 	var shell := VBoxContainer.new()
 	shell.add_theme_constant_override("separation", 5)
-	var eyebrow := _label("YOUR NEXT MOVE", 12, UIW.colour("accent"))
+	var eyebrow := _label(Loc.t("brief.next_move"), 12, UIW.colour("accent"))
 	eyebrow.add_theme_font_override("font", mono)
 	shell.add_child(eyebrow)
 	var h := HBoxContainer.new()
@@ -4591,7 +4591,7 @@ func show_welcome() -> void:
 	if Demo.active():
 		var head := welcome_overlay.get_meta("title_label") as Label
 		if head != null:
-			head.text = "Your first night on the floor"
+			head.text = Loc.t("demo.first_night")
 		var body := welcome_overlay.get_meta("body_label") as Label
 		if body != null:
 			body.text = "Six contracts. One tired colo cage. About half an hour to prove you can turn cheap hardware into a network people trust."
@@ -4605,7 +4605,7 @@ func _build_demo_end() -> void:
 	demo_overlay = _overlay()
 	var v := _card(demo_overlay, 760)
 	var t := _header(v, func() -> void: demo_overlay.visible = false)
-	t.text = "Shift complete"
+	t.text = Loc.t("demo.shift_complete")
 	var status := _section("OPENING ARC  /  NETWORK ONLINE  /  HANDOVER READY")
 	status.add_theme_color_override("font_color", UIW.colour("success"))
 	v.add_child(status)
@@ -4615,12 +4615,9 @@ func _build_demo_end() -> void:
 	var achieved := HBoxContainer.new()
 	achieved.add_theme_constant_override("separation", UIW.space("md"))
 	v.add_child(achieved)
-	achieved.add_child(_welcome_module("✓", "YOU BUILT",
-		"Two switches, isolated tenants, a resilient core and two offices routed together.", "success"))
-	achieved.add_child(_welcome_module("✓", "YOU OPERATED",
-		"Real MAC learning, VLAN tagging, spanning tree and longest-prefix routing.", "accent"))
-	achieved.add_child(_welcome_module("→", "NEXT SHIFT",
-		"Own the room, and everything in it: the power bill, the crew, the customers who remember.", "warm"))
+	achieved.add_child(_welcome_module("✓", Loc.t("demo.built.title"), Loc.t("demo.built.body"), "success"))
+	achieved.add_child(_welcome_module("✓", Loc.t("demo.operated.title"), Loc.t("demo.operated.body"), "accent"))
+	achieved.add_child(_welcome_module("→", Loc.t("demo.next.title"), Loc.t("demo.next.body"), "warm"))
 	demo_overlay.set_meta("run_line", _wrap("", 13, UIW.colour("accent"), 700))
 	v.add_child(demo_overlay.get_meta("run_line"))
 	var beyond := UIW.style_panel(PanelContainer.new(), "console", "md")
@@ -4643,13 +4640,13 @@ func _build_demo_end() -> void:
 	row.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(row)
 	var keep := Button.new()
-	keep.text = "STAY ON THE FLOOR"
+	keep.text = Loc.t("demo.stay")
 	keep.tooltip_text = "The world stays exactly as it is; nothing new unlocks"
 	keep.pressed.connect(func() -> void: demo_overlay.visible = false)
 	_accent(keep)
 	row.add_child(keep)
 	var back := Button.new()
-	back.text = "RETURN TO TITLE"
+	back.text = Loc.t("demo.back")
 	back.pressed.connect(func() -> void:
 		Game.save_game()
 		demo_overlay.visible = false
