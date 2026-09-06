@@ -6388,6 +6388,7 @@ func reset_new(company: String, diff: int, is_demo: bool) -> void:
 	company_name = company if company.strip_edges() != "" else "Packet Empire"
 	demo = is_demo
 	stats["customer_arc_version"] = 1
+	stats["customer_arc_cycle"] = cycle  # the quiet period is measured from here
 	apply_difficulty(diff)
 	rivals = Rivals.spawn()
 	_scale_rival_aggression()
@@ -7411,7 +7412,15 @@ func give_up_guided_outage() -> String:
 		return "there is no guided outage to restore"
 	var iface := guided_outage_iface()
 	if iface == null:
-		return "the guided restore point cannot find its port"
+		# the port at fault is gone (device sold or removed): the incident cannot be
+		# investigated any further, so it closes as assisted and the arc moves on
+		guided_outage["assisted"] = true
+		guided_outage["state"] = "complete"
+		stats["guided_outage_complete"] = 1
+		_guided_outage_note("cycle %d · the original port is no longer installed; incident closed" % cycle)
+		log_event("INCIDENT CLOSED: the port at fault is no longer installed. Re-cable Kiskacsa and the checkout can return.")
+		guided_outage_changed.emit()
+		return ""
 	iface.admin_down = false
 	link_restore(iface)
 	guided_outage["assisted"] = true
@@ -9084,8 +9093,8 @@ func _deal_path_links(deal: Dictionary) -> Array:
 
 func autosave_due() -> void:
 	## a quiet safety net every few cycles, so a crash costs minutes not hours
-	if drill_active or Puzzle.active() or cycle == 0 or cycle % 5 != 0:
-		return
+	if drill_active or Puzzle.active() or cycle == 0 or cycle % 5 != 0 or OS.get_environment("PACKET_REVIEW") != "":
+		return  # a rendered review must never overwrite the player's autosave
 	save_game(SLOTS)
 
 const SLA_WINDOW := 12  # a quarter of cycles: the period a service level is measured over
@@ -10401,6 +10410,8 @@ func save_blueprint(r: Net.Rack, name: String) -> String:
 		return "there is nothing in that rack to copy"
 	for b in blueprints:
 		if b["name"] == name:
+			if b.has("service"):
+				return "'%s' is a saved service standard; pick another name for the hardware blueprint" % name
 			blueprints.erase(b)
 			break
 	blueprints.append({"name": name, "slots": slots})

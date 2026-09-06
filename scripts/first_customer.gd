@@ -23,8 +23,12 @@ static func active() -> bool:
 static func complete() -> bool:
 	return String(state().get("phase", "")) == "complete"
 
+const PROTECTED_CYCLES := 48  # the opening's quiet period ends on its own: a player who never finishes the arc is not muted forever
+
 static func protected_time() -> bool:
 	if not enabled() or Game.sandbox or Game.drill_active:
+		return false
+	if Game.cycle - int(Game.stats.get("customer_arc_cycle", 0)) > PROTECTED_CYCLES:
 		return false
 	return not complete() or Game.cycle <= int(state().get("quiet_until", -1))
 
@@ -32,8 +36,8 @@ static func path(deal: Dictionary) -> Array:
 	if deal.is_empty():
 		return []
 	var routed := Game._deal_path_links(deal)
-	if not routed.is_empty():
-		return routed
+	if not routed.is_empty() or not enabled() or not bool(deal.get("guided", false)):
+		return routed  # the access-lead fallback is the guided deal's; other customers keep the old accounting
 	# Local hosting has no default route. Its access lead still has a finite
 	# capacity, and is a real dependency even while that port is disabled.
 	var host := Contracts._owner(String(deal.get("params", {}).get("ip", "")))
@@ -107,13 +111,19 @@ static func tick() -> void:
 		return
 	arc["phase"] = "live"
 	arc["sampled_cycle"] = Game.cycle
+	while arc["samples"].size() < mini(step, 3):
+		# a save loaded past a wave: the missed waves count as missed, not as never happened
+		arc["samples"].append({"cycle": int(arc["starts"]) + arc["samples"].size(), "served": false,
+			"reason": "Nobody was watching", "headroom": 0, "bottleneck": ""})
+	if arc["samples"].size() >= 3:
+		step = 2  # the window is full: close on this sample
 	var healthy := not deal.is_empty() and bool(deal.get("healthy", false))
 	var good := healthy and not bool(deal.get("degraded", false))
 	var f := forecast()
 	arc["samples"].append({"cycle": Game.cycle, "served": good,
 		"reason": "Orders moving" if good else ("Checkout unavailable" if not healthy else "Shared link congested"),
 		"headroom": f["headroom"], "bottleneck": f["bottleneck"]})
-	if step >= 2:
+	if step >= 2 and arc["samples"].size() >= 3:
 		var successes := 0
 		for sample: Dictionary in arc["samples"]:
 			if bool(sample["served"]): successes += 1

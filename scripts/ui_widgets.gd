@@ -104,8 +104,8 @@ static func _button_palette(variant: String) -> Dictionary:
 			return {"base": Color("6a2932"), "edge": Color(colour("danger"), 0.9),
 				"text": Color(1.0, 0.82, 0.80)}
 		"quiet":
-			return {"base": colour("overlay"), "edge": Color.TRANSPARENT,
-				"text": colour("text")}
+			return {"base": colour("surface_raised"), "edge": Color(colour("border"), 0.6),
+				"text": colour("text")}  # a step lighter than the card it sits on, with an edge: still a control
 	return {"base": colour("surface_raised"), "edge": colour("border"), "text": colour("text")}
 
 static func style_button(button: Button, variant := "default") -> Button:
@@ -377,6 +377,8 @@ class TopoMap extends Control:
 	var focus_name := "All services"
 
 	func refresh_focus() -> void:
+		if not is_visible_in_tree():
+			return  # the walk over every deal and device waits until the map is on screen
 		var deal := Game.deal_by_id(focus_customer_id)
 		focus_links = FirstCustomer.path(deal)
 		focus_devices = FirstCustomer.focus_devices(deal)
@@ -401,6 +403,7 @@ class TopoMap extends Control:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
 		Game.topology_changed.connect(refresh_focus)
 		Game.money_changed.connect(refresh_focus)
+		visibility_changed.connect(refresh_focus)
 		return self
 
 	func _process(_dt: float) -> void:

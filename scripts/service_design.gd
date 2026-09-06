@@ -55,9 +55,9 @@ static func capture(rack: Net.Rack, title: String) -> String:
 	return ""
 
 static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: int) -> Dictionary:
-	var fail := {"ok": false, "why": "Choose a saved service standard."}
 	var spec: Dictionary = design.get("service", {})
-	if int(spec.get("version", 0)) != 1 or not spec.get("nodes", []) is Array or spec.get("nodes", []).is_empty(): return fail
+	if int(spec.get("version", 0)) != 1 or not spec.get("nodes", []) is Array or spec.get("nodes", []).is_empty():
+		return {"ok": false, "why": "Choose a saved service standard; this entry is a plain hardware blueprint or an older format."}
 	if rack == null or rack not in Game.racks: return {"ok": false, "why": "Open an empty target cabinet."}
 	for dev in rack.slots:
 		if dev != null: return {"ok": false, "why": "The target cabinet must be empty."}
@@ -86,13 +86,21 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 		occupied.append(slot)
 		price += int(Game.MODELS[model]["price"])
 		if model == "srv-1": host_count += 1
-	if host_count < 2 or host_count > 4 or spec["nodes"].size() != host_count + 1: return fail
+	if host_count < 2 or host_count > 4 or spec["nodes"].size() != host_count + 1:
+		return {"ok": false, "why": "This standard has %d servers and %d nodes; a service standard is one switch and two to four servers." % [host_count, spec["nodes"].size()]}
+	var extra := 0
+	for node: Dictionary in spec["nodes"]:
+		extra += int(Game.MODELS[String(node["model"])].get("watts", 0))
+	if Game.cooling_capacity(rack.site) > 0 and Game.power_draw(rack.site) + extra > Game.cooling_capacity(rack.site):
+		return {"ok": false, "why": "This floor cannot cool another %d W: %d W drawn against %d W of cooling. Add cooling first." % [extra, Game.power_draw(rack.site), Game.cooling_capacity(rack.site)]}
 	var endpoints: Array = []
-	if spec.get("cables", []).size() != host_count: return fail
+	if spec.get("cables", []).size() != host_count:
+		return {"ok": false, "why": "This standard holds %d cables for %d servers; every server needs exactly one lead to the switch." % [spec.get("cables", []).size(), host_count]}
 	for cable: Dictionary in spec["cables"]:
 		for side in ["a", "b"]:
 			var idx := int(cable.get(side, -1))
-			if idx < 0 or idx >= spec["nodes"].size(): return fail
+			if idx < 0 or idx >= spec["nodes"].size():
+				return {"ok": false, "why": "A cable in this standard points at a device that is not in it."}
 			var model := String(spec["nodes"][idx]["model"])
 			var port := String(cable.get(side + "p", ""))
 			var legal: Array = []
@@ -100,9 +108,13 @@ static func preview(rack: Net.Rack, design: Dictionary, prefix: String, vlan: in
 			else:
 				for n in int(Game.MODELS[model]["ports"]): legal.append(("ether" if model == "sw-lite" else "Ethernet") + str(n + 1))
 			var endpoint := "%d:%s" % [idx, port]
-			if port not in legal or endpoint in endpoints: return fail
+			if port not in legal:
+				return {"ok": false, "why": "Port %s does not exist on a %s." % [port, Game.MODELS[model]["label"]]}
+			if endpoint in endpoints:
+				return {"ok": false, "why": "Port %s is cabled twice in this standard." % port}
 			endpoints.append(endpoint)
-		if String(spec["nodes"][int(cable["a"])]["model"]) == "srv-1" and String(spec["nodes"][int(cable["b"])]["model"]) == "srv-1": return fail
+		if String(spec["nodes"][int(cable["a"])]["model"]) == "srv-1" and String(spec["nodes"][int(cable["b"])]["model"]) == "srv-1":
+			return {"ok": false, "why": "This standard cables two servers directly; every lead must end on the switch."}
 	var leads := int(spec["cables"].size())
 	price += leads * int(Game.PART_PRICES["patch"])
 	if not Game.sandbox and Game.money < price: return {"ok": false, "why": "This service costs $%d including patch leads; cash available $%d." % [price, Game.money]}

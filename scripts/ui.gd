@@ -415,7 +415,14 @@ func _refresh_attention() -> void:
 	if hud_alert_btn:
 		hud_alert_btn.visible = outages > 0 or not Game.offers.is_empty() or Game.unread_events > 0
 		if outages > 0:
-			hud_alert_btn.text = "%d service%s need you" % [outages, "" if outages == 1 else "s"]
+			var first_down := ""
+			for deal: Dictionary in Game.deals:
+				if bool(deal.get("ever_healthy", false)) and not bool(deal.get("healthy", false)):
+					first_down = String(deal.get("customer", ""))
+					break
+			if Game.guided_outage_active() and first_down == "":
+				first_down = "Kiskacsa Kft"
+			hud_alert_btn.text = ("%s is down" % first_down) if outages == 1 and first_down != "" else "%d services need you" % outages
 			UIW.style_button(hud_alert_btn, "danger")
 			hud_alert_btn.tooltip_text = "Service interrupted. Open incident communication and evidence."
 		elif not Game.offers.is_empty():
@@ -432,7 +439,7 @@ func _refresh_hud_layout(width_override := -1.0) -> void:
 		return
 	var width: float = width_override if width_override >= 0.0 \
 		else get_viewport().get_visible_rect().size.x
-	hud_compact = width < 1400.0
+	hud_compact = width < 1200.0  # 1280x720 is a target size: it keeps the full bar and the shortcut list
 	hud_logo.visible = true
 	hud_learn_btn.text = "Field manual"
 	if hud_find_btn:
@@ -698,7 +705,7 @@ func _overlay() -> Control:
 	var bg := ColorRect.new()
 	bg.color = DIM
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.mouse_filter = Control.MOUSE_FILTER_STOP  # the dim swallows clicks; the floor under a card is not clickable
 	o.add_child(bg)
 	add_child(o)
 	return o
@@ -715,6 +722,7 @@ func card_top() -> float:
 	return CARD_TOP
 
 func _refit_hangs() -> void:
+	_hangs = _hangs.filter(func(h): return is_instance_valid(h))  # rebuilt overlays leave dead entries behind
 	for h in _hangs:
 		if is_instance_valid(h):
 			h.add_theme_constant_override("margin_top", int(card_top()))
@@ -4124,8 +4132,10 @@ func _build_tutorial() -> void:
 	add_child(tutorial_panel)
 	var brief_scroll := ScrollContainer.new()
 	brief_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	brief_scroll.custom_minimum_size = Vector2(308, 390)
+	brief_scroll.custom_minimum_size = Vector2(308, clampf(get_viewport().get_visible_rect().size.y - 260.0, 300.0, 560.0))  # the plan buttons stay above the fold at 1280x720
 	tutorial_panel.add_child(brief_scroll)
+	tutorial_panel.add_child(_more_hint(brief_scroll))
+	_card_scrolls.append(brief_scroll)
 	tutorial_box = VBoxContainer.new()
 	tutorial_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	tutorial_box.add_theme_constant_override("separation", UIW.space("sm"))
@@ -4135,6 +4145,9 @@ func _build_tutorial() -> void:
 var tutorial_hidden := false
 
 func focus_customer(deal: Dictionary) -> void:
+	if not _feature_available("map"):
+		hud_toast("The network map unlocks after the first rack is physically delivered.")
+		return
 	close_everything()
 	for child in map_overlay.get_children():
 		if child is UIW.TopoMap:

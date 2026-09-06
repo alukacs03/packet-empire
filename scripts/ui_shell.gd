@@ -52,6 +52,11 @@ static func build(ui) -> void:
 	ui.objective_lbl.mouse_filter = Control.MOUSE_FILTER_STOP
 	ui.objective_lbl.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and e.pressed:
+			if not Game.hazards.is_empty():
+				ui.ops_tab = "Facility"  # a live hazard: one click to where it is dealt with
+				if not ui.ops_overlay.visible:
+					ui.toggle_ops()
+				return
 			ui.tutorial_hidden = false
 			ui._refresh_tutorial())
 	ui.hud_status_row.add_child(ui.objective_lbl)
@@ -123,7 +128,7 @@ static func build(ui) -> void:
 	nav.add_child(ui.expand_btn)
 	for key in ui.mode_btns: ui.mode_btns[key].toggle_mode = true
 	ui.update_mode(0)
-	ui.hud_shortcut_hint = UIW.make_text("Space  Pause     R  Build     M  Network     F  Find     Esc  Back", "small", "muted")
+	ui.hud_shortcut_hint = UIW.make_text("Space  Pause     Q  Select     R  Build     F  Find     O  Ops     M  Network     F1  Keys     Esc  Back", "small", "muted")
 	ui.hud_shortcut_hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	ui.hud_shortcut_hint.position = Vector2(184, -32)
 	ui.add_child(ui.hud_shortcut_hint)

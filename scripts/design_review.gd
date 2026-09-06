@@ -56,7 +56,10 @@ static func run(world) -> void:
 	world.ui._open_service_standards()
 	await capture(world, "10-service-standard")
 	world.ui.close_everything()
-	for _i in 6: Game.sla_tick()
+	for _i in 6:
+		Game.sla_tick()
+		Game.cycle += 0  # the review never writes a player save: see autosave_due
+
 	world.ui._refresh_tutorial()
 	await capture(world, "11-sale-result")
 	world.get_tree().quit()
