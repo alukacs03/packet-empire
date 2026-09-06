@@ -465,6 +465,8 @@ func exec(line: String) -> String:
 	var t := Array(line.strip_edges().split(" ", false))
 	if t.is_empty() or String(t[0]).begins_with("#"):
 		return ""  # a comment line, the way a pasted script carries them
+	if String(t[0]) in ["ip", "iptables", "nft", "echo", "systemctl", "dhclient", "vtysh", "sysctl", "wg", "bond", "dns", "dhcp-quick"] and not (String(t[0]) == "ip" and t.size() > 1 and String(t[1]) in ["a", "addr", "address", "r", "route", "link", "neigh", "n"] and (t.size() == 2 or String(t[2]) in ["show", "list", "ls", "s", "sh", "get"])):
+		Challenge.note_change()
 	if t.size() == 1 and String(t[0]) == "history":
 		var hout := ""
 		for n in history.size():

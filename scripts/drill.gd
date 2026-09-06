@@ -21,6 +21,9 @@ static func start(n_breaks := 3, rng_seed := -1, difficulty := 2) -> void:
 	Game.drill_active = true
 	Game.racks = []
 	Game.links = []
+	Game.current_site = 0  # a two-room drill rewrites the site list; the floor the player stood on may not exist in it
+	Game.parts["patch"] = maxi(int(Game.parts.get("patch", 0)), 100)  # the build cables itself; the snapshot restores the drawer
+	Game.parts["optic"] = maxi(int(Game.parts.get("optic", 0)), 20)
 	outcome = {}
 	var rng := RandomNumberGenerator.new()
 	if rng_seed >= 0:
@@ -53,11 +56,11 @@ static func _build_tenants() -> void:
 	var a := Game.new_device("srv-1")
 	var b := Game.new_device("srv-1")
 	var beta := Game.new_device("srv-1")
-	r1.slots[0] = sw1
-	r1.slots[1] = a
-	r2.slots[0] = sw2
-	r2.slots[1] = b
-	r2.slots[2] = beta
+	_place(r1, 0, sw1)
+	_place(r1, 1, a)
+	_place(r2, 0, sw2)
+	_place(r2, 1, b)
+	_place(r2, 2, beta)
 	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
 	Game.connect_ifaces(b.ifaces[0], sw2.ifaces[0])
 	Game.connect_ifaces(beta.ifaces[0], sw2.ifaces[1])
@@ -86,11 +89,11 @@ static func _build_services() -> void:
 	var svc := Game.new_device("srv-1")
 	var app := Game.new_device("srv-1")
 	var client := Game.new_device("srv-1")
-	r1.slots[0] = sw
-	r1.slots[1] = rtr
-	r1.slots[2] = svc
-	r1.slots[3] = app
-	r1.slots[4] = client
+	_place(r1, 0, sw)
+	_place(r1, 1, rtr)
+	_place(r1, 2, svc)
+	_place(r1, 3, app)
+	_place(r1, 4, client)
 	Game.connect_ifaces(rtr.ifaces[0], sw.ifaces[0])
 	Game.connect_ifaces(svc.ifaces[0], sw.ifaces[1])
 	Game.connect_ifaces(app.ifaces[0], sw.ifaces[2])
@@ -116,7 +119,7 @@ static func _build_two_rooms() -> void:
 	Game.sites = [{"name": "Alpha room", "grid": [4, 4], "kind": "own", "city": "Budapest"}]
 	var other := Game.add_site("Beta room", Vector2i(4, 4), "leased", "Debrecen")
 	Game.carrier_outage = {}
-	Game.buy_circuit(0, other, 1)
+	Game.circuits.append({"a": 0, "b": other, "mbps": 1000, "fee": 0, "label": "drill circuit", "carrier": Game.CARRIERS[0]})  # the drill's own, not bought with the player's money
 	var ra := Game.add_rack(Vector2i(1, 1), 0)
 	var rb := Game.add_rack(Vector2i(1, 1), other)
 	var sw_a := Game.new_device("sw-8")
@@ -124,11 +127,11 @@ static func _build_two_rooms() -> void:
 	var copy_a := Game.new_device("srv-1")
 	var copy_b := Game.new_device("srv-1")
 	var client := Game.new_device("srv-1")
-	ra.slots[0] = sw_a
-	ra.slots[1] = copy_a
-	ra.slots[2] = client
-	rb.slots[0] = sw_b
-	rb.slots[1] = copy_b
+	_place(ra, 0, sw_a)
+	_place(ra, 1, copy_a)
+	_place(ra, 2, client)
+	_place(rb, 0, sw_b)
+	_place(rb, 1, copy_b)
 	Game.buy_parts("optic", 6)
 	Game.connect_ifaces(copy_a.ifaces[0], sw_a.ifaces[0])
 	Game.connect_ifaces(client.ifaces[0], sw_a.ifaces[1])
@@ -152,11 +155,11 @@ static func _build_core() -> void:
 	var sw1 := Game.new_device("sw-8")
 	var a := Game.new_device("srv-1")
 	var b := Game.new_device("srv-1")
-	r1.slots[0] = rt1
-	r1.slots[1] = sw1
-	r1.slots[2] = a
-	r2.slots[0] = rt2
-	r2.slots[1] = b
+	_place(r1, 0, rt1)
+	_place(r1, 1, sw1)
+	_place(r1, 2, a)
+	_place(r2, 0, rt2)
+	_place(r2, 1, b)
 	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
 	Game.connect_ifaces(rt1.ifaces[0], sw1.ifaces[1])
 	Game.connect_ifaces(rt1.ifaces[1], rt2.ifaces[1])
@@ -186,11 +189,11 @@ static func _build_dynamic() -> void:
 	var fw := Game.new_device("fw-1")
 	var a := Game.new_device("srv-1")
 	var b := Game.new_device("srv-1")
-	r1.slots[0] = rt1
-	r1.slots[2] = a
-	r2.slots[0] = rt2
-	r2.slots[2] = fw
-	r2.slots[3] = b
+	_place(r1, 0, rt1)
+	_place(r1, 2, a)
+	_place(r2, 0, rt2)
+	_place(r2, 2, fw)
+	_place(r2, 3, b)
 	Game.connect_ifaces(a.ifaces[0], rt1.ifaces[0])
 	Game.connect_ifaces(rt1.ifaces[1], rt2.ifaces[1])
 	Game.connect_ifaces(rt2.ifaces[0], fw.ifaces[0])
@@ -228,12 +231,12 @@ static func _build() -> void:
 	var a := Game.new_device("srv-1")
 	var b := Game.new_device("srv-1")
 	var c := Game.new_device("srv-1")
-	r1.slots[0] = sw1
-	r1.slots[1] = a
-	r1.slots[2] = rtr
-	r2.slots[0] = sw2
-	r2.slots[1] = b
-	r2.slots[2] = c
+	_place(r1, 0, sw1)
+	_place(r1, 1, a)
+	_place(r1, 2, rtr)
+	_place(r2, 0, sw2)
+	_place(r2, 1, b)
+	_place(r2, 2, c)
 	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
 	Game.connect_ifaces(b.ifaces[0], sw2.ifaces[0])
 	Game.connect_ifaces(sw1.ifaces[3], sw2.ifaces[3])
@@ -254,10 +257,10 @@ static func _build() -> void:
 		"trunk": sw1.ifaces[3], "access_a": sw1.ifaces[0]}
 
 static func _fault_tier(desc: String) -> int:
-	for key in ["was unplugged (disabled)", "was moved to a wrong VLAN"]:
+	for key in ["was unplugged (disabled)", "was moved to a wrong VLAN", "was left disabled on"]:
 		if key in desc:
 			return 0
-	for key in ["lost a route it needs", "the DHCP scope was bound", "the DHCP pool was moved", "the app record was removed", "was readdressed into the wrong subnet"]:
+	for key in ["lost a route it needs", "the DHCP scope was bound", "the DHCP pool was moved", "the app record was removed", "was readdressed into the wrong subnet", "was readdressed and nobody noticed"]:
 		if key in desc:
 			return 1
 	return 2
@@ -276,11 +279,12 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 	for l in Game.links:
 		for ifc in [l.a, l.b]:
 			used.append(ifc)
-	var port: Net.Iface = used[rng.randi() % used.size()]
-	pool.append(["L1: %s %s was unplugged (disabled)" % [port.dev.name, port.name],
-		func() -> void:
-			port.enabled = false
-			_undo.append(func() -> void: port.enabled = true)])
+	if not used.is_empty():
+		var port: Net.Iface = used[rng.randi() % used.size()]
+		pool.append(["L1: %s %s was unplugged (disabled)" % [port.dev.name, port.name],
+			func() -> void:
+				port.enabled = false
+				_undo.append(func() -> void: port.enabled = true)])
 	if _cast.has("sw1") and _cast.has("access_a"):
 		var vict_sw: Net.NDevice = _cast["sw1"]
 		var acc: Net.Iface = _cast["access_a"]
@@ -339,11 +343,13 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 			func() -> void:
 				trunk_if.tagged_vlans = [42]
 				_undo.append(func() -> void: trunk_if.tagged_vlans = [])])
-		pool.append(["L2: one end of the trunk (%s) was given a different native VLAN" % trunk_if.dev.name,
-			func() -> void:
-				var was_native: int = trunk_if.untagged_vlan
-				trunk_if.untagged_vlan = 99
-				_undo.append(func() -> void: trunk_if.untagged_vlan = was_native)])
+		if not _cast.has("access_a") or _cast["access_a"].untagged_vlan == trunk_if.untagged_vlan:
+			# only where the target VLAN rides the trunk untagged does a native mismatch change anything
+			pool.append(["L2: one end of the trunk (%s) was given a different native VLAN" % trunk_if.dev.name,
+				func() -> void:
+					var was_native: int = trunk_if.untagged_vlan
+					trunk_if.untagged_vlan = 99
+					_undo.append(func() -> void: trunk_if.untagged_vlan = was_native)])
 	if _cast.has("ospf_rtr"):
 		var ospf_dev: Net.NDevice = _cast["ospf_rtr"]
 		pool.append(["L3: %s's OSPF network statement no longer covers the transit link" % ospf_dev.name,
@@ -369,6 +375,10 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 	# and VLANs, 1 adds routes, DHCP, DNS and addressing, 2 adds the WAN,
 	# trunks, OSPF and the firewall
 	var tiered: Array = pool.filter(func(f): return _fault_tier(String(f[0])) <= difficulty)
+	var widen := difficulty
+	while tiered.size() < n and widen < 2:
+		widen += 1  # one tier at a time, not straight to the whole pool
+		tiered = pool.filter(func(f): return _fault_tier(String(f[0])) <= widen)
 	if tiered.size() >= n:
 		pool = tiered
 	# apply n distinct faults
@@ -453,3 +463,11 @@ static func finish(success: bool) -> Array:
 	outcome = {}
 	_cast = {}
 	return revealed
+
+static func _place(rack: Net.Rack, idx: int, dev: Net.NDevice) -> void:
+	## through install_device, so tall gear reserves the unit above it; the
+	## next free unit down when that one is already covered
+	for k in range(idx, Net.Rack.SLOTS):
+		if Game.install_device(rack, k, dev):
+			return
+	rack.slots[idx] = dev

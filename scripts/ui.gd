@@ -3794,6 +3794,9 @@ func _build_menu() -> void:
 			opts.append("%s: %s" % [sc["name"], sc["blurb"]])
 		_menu(scen_btn, opts, func(id: int) -> void:
 			menu_overlay.visible = false
+			if Game.drill_active:
+				hud_toast("Finish or abandon the drill first.")
+				return
 			Scenarios.start(Scenarios.all()[id])
 			get_parent().rebuild_racks()
 			_show_scenario_banner()))
@@ -3967,6 +3970,8 @@ func _build_menu() -> void:
 				var lines: Array = Challenge.card(result)
 				for line: String in lines:
 					Game.log_event(line)
+				for fault in result.get("faults", []):
+					Game.log_event("DRILL debrief: " + str(fault))
 				DisplayServer.clipboard_set("\n".join(PackedStringArray(lines)))
 				get_parent().rebuild_racks()
 				hud_toast("Scored %d. The card is on your clipboard." % int(result["total"]),
@@ -4022,6 +4027,7 @@ func _show_scenario_banner() -> void:
 		var sc_hint_btn := Button.new()
 		sc_hint_btn.text = "Stuck? Show me the approach"
 		sc_hint_btn.pressed.connect(func() -> void:
+			Challenge.note_hint()
 			sc_hint.text = String(sc["hint"])
 			sc_hint.visible = true
 			sc_hint_btn.visible = false)
@@ -4081,12 +4087,16 @@ func _show_drill_banner() -> void:
 	if Game.site_count() > 1:
 		# a fault may be in the room they are not standing in, and a player who
 		# has never seen a two-site world will hunt for a switch in another city
+		var floor_set := {}
+		for dr in Game.racks:
+			floor_set[int(dr.site)] = true
 		var floor_names: Array = []
-		for si in Game.site_count():
-			floor_names.append(Game.site_name(si))
-		drill_box.add_child(_wrap("This network is on %d floors: %s. The switcher in the toolbar moves between them."
-			% [Game.site_count(), ", ".join(PackedStringArray(floor_names))], 12,
-			UIW.colour("warm"), 620))
+		for si in floor_set:
+			floor_names.append(Game.site_name(int(si)))
+		if floor_set.size() > 1:
+			drill_box.add_child(_wrap("This network is on %d floors: %s. The switcher in the toolbar moves between them."
+				% [floor_set.size(), ", ".join(PackedStringArray(floor_names))], 12,
+				UIW.colour("warm"), 620))
 	if Drill.outcome.has("survive_ip"):
 		drill_box.add_child(_wrap("%s must still be reachable from %s with either building out of service."
 			% [Drill.outcome["survive_ip"], Drill.outcome["from_ip"]], 13,
@@ -4114,7 +4124,14 @@ func _show_drill_banner() -> void:
 	_accent(chk)
 	chk.pressed.connect(func() -> void:
 		if Drill.solved():
-			Drill.finish(true)
+			if not Challenge.active.is_empty():
+				var result: Dictionary = Challenge.finish()  # scored, faults logged, best kept
+				for line: String in Challenge.card(result):
+					Game.log_event(line)
+				for fault in result.get("faults", []):
+					Game.log_event("DRILL debrief: " + str(fault))
+			else:
+				Drill.finish(true)
 			get_parent().rebuild_racks()
 			drill_panel.visible = false
 		else:
@@ -4124,6 +4141,7 @@ func _show_drill_banner() -> void:
 	var give := Button.new()
 	give.text = "Abandon (reveal faults)"
 	give.pressed.connect(func() -> void:
+		Challenge.active = {}  # giving up is not a scored run
 		var revealed: Array = Drill.finish(false)
 		for f in revealed:
 			Game.log_event("DRILL debrief: " + str(f))

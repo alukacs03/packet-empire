@@ -64,9 +64,14 @@ static func start(code: String) -> String:
 	if Game.drill_active:
 		return "a drill is already running"
 	Drill.start(int(spec["faults"]), int(spec["seed"]), int(spec["difficulty"]))
-	active = {"code": code.strip_edges().to_upper(), "started_cycle": Game.cycle,
+	var down_before: Array = []  # what the drill itself shut: not the player's collateral
+	for l: Net.Link in Game.links:
+		for i: Net.Iface in [l.a, l.b]:
+			if not i.enabled:
+				down_before.append("%s/%s" % [i.dev.name, i.name])
+	active = {"code": code.strip_edges().to_upper(), "started_cycle": Game.cycle, "started_msec": Time.get_ticks_msec(),
 		"changes": 0, "hints": 0, "seed": int(spec["seed"]), "faults": int(spec["faults"]),
-		"difficulty": int(spec["difficulty"])}
+		"difficulty": int(spec["difficulty"]), "down_before": down_before}
 	Game.log_event("CHALLENGE %s: %d fault(s) in a network you have never seen." % [active["code"],
 		int(spec["faults"])])
 	return ""
@@ -84,18 +89,20 @@ static func note_hint() -> void:
 static func collateral() -> int:
 	## Anything left administratively down that the challenge did not break.
 	var count := 0
+	var before: Array = active.get("down_before", [])
 	for l: Net.Link in Game.links:
 		for i: Net.Iface in [l.a, l.b]:
-			if not i.enabled:
-				count += 1
-	return maxi(0, count - int(active.get("faults", 0)))
+			if not i.enabled and "%s/%s" % [i.dev.name, i.name] not in before:
+				count += 1  # shut after the start: the player's doing
+	return count
 
 static func score() -> Dictionary:
 	## Categories are shown separately so a player can see where they lost it.
 	if active.is_empty():
 		return {}
-	var solved := Drill.solved()
-	var elapsed := maxi(0, Game.cycle - int(active["started_cycle"]))
+	var solved := Drill.solved() and Game.drill_active  # an abandoned drill has no targets left to fail
+	# the clock does not tick during a drill, so the wall clock times it: a minute a point of twenty
+	var elapsed := maxi(0, int((Time.get_ticks_msec() - int(active.get("started_msec", Time.get_ticks_msec()))) / 60000))
 	var change_penalty := maxi(0, int(active["changes"]) - int(active["faults"])) * 25
 	var categories := {
 		"recovery": 600 if solved else 0,
@@ -136,7 +143,7 @@ static func finish() -> Dictionary:
 		var f := FileAccess.open(best_path, FileAccess.WRITE)
 		if f:
 			f.store_string(JSON.stringify(data))
-	Drill.finish(bool(result["solved"]))
+	result["faults"] = Drill.finish(bool(result["solved"]))  # the list the score was built on
 	active = {}
 	return result
 

@@ -10010,6 +10010,7 @@ func connect_ifaces(a: Net.Iface, b: Net.Iface) -> bool:
 	return true
 
 func disconnect_iface(i: Net.Iface) -> void:
+	Challenge.note_change()  # cabling counts as a change in a challenge
 	var l := link_at(i)
 	if l:
 		for end in [l.a, l.b]:
@@ -10057,6 +10058,7 @@ func remove_vlan(dev: Net.NDevice, vid: int) -> bool:
 	return true
 
 func set_access_vlan(i: Net.Iface, vid: int) -> bool:
+	Challenge.note_change()
 	if not i.dev.vlans.has(vid):
 		return false
 	i.untagged_vlan = vid

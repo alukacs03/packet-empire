@@ -24,7 +24,7 @@ static func all() -> Array:
 			"id": "campus",
 			"name": "Campus in a summer",
 			"blurb": "A college wants staff, students and guests on the same wireless and the same switches, and each group kept away from the others. Build it before term starts.",
-			"hint": "On the access point's console: 'ssid staff vlan 10', 'ssid students vlan 20', 'ssid guests vlan 30'. Create the three VLANs on the switch and make the AP's uplink a trunk. Attach the two PCs with 'wifi join staff' and 'wifi join guests'; the guest PC shares the staff subnet, so only the VLAN keeps it out.",
+			"hint": "On the access point's console: 'ssid staff vlan 10', 'ssid students vlan 20', 'ssid guests vlan 30'. On the switch create VLANs 10, 20 and 30 (the AP's uplink is already a trunk) and move the staff server's port, Ethernet2, into VLAN 10 with 'switchport access vlan 10'. Then on the two machines: 'wifi join staff' and 'wifi join guests'.",
 			"build": func() -> void: _build_campus(),
 			"goals": [
 				{"d": "Three SSIDs on the access point, each on its own VLAN", "t": func() -> bool: return _ap_ssid_count() >= 3},
@@ -52,6 +52,8 @@ static func all() -> Array:
 			"goals": [
 				{"d": "The v6-only client reaches the web server over IPv6",
 					"t": func() -> bool: return _ping("fd00:6::10", "fd00:6::20")},
+				{"d": "The v6-only client reaches the legacy web server through the translator",
+					"t": func() -> bool: return _ping("fd00:6::10", "64:ff9b::a06:14")},
 				{"d": "web.pkt answers with an IPv6 address the client can reach",
 					"t": func() -> bool: return _resolves6("fd00:6::10", "web.pkt")},
 				{"d": "legacy.pkt is reachable from the v6-only client",
@@ -64,6 +66,7 @@ static func all() -> Array:
 			"blurb": "Two offices, two routers, OSPF between them and a redundant gateway for the near office. The engineer who built it left a network statement short, a router in the wrong area and a backup that thinks it is master. Nothing is cabled wrong. Everything is configured wrong.",
 			"build": func() -> void: _build_fabric(),
 			"goals": [
+				{"d": "Every router agrees on the area", "t": func() -> bool: return _same_area()},
 				{"d": "The two routers are OSPF neighbours", "t": func() -> bool: return _ospf_neighbours("10.63.9.1")},
 				{"d": "10.63.1.10 reaches 10.63.2.10 with no static routes on the routers", "t": func() -> bool: return _ping("10.63.1.10", "10.63.2.10") and _no_statics_on_routers()},
 				{"d": "The preferred router (priority 120) is the VRRP master for 10.63.1.1", "t": func() -> bool: return _vrrp_master_is("10.63.1.1", "10.63.1.2")},
@@ -74,6 +77,7 @@ static func all() -> Array:
 			"name": "The webshop's bad Friday",
 			"blurb": "A webshop behind a load balancer, half its pool dead, and a router that stopped translating the shop's private address on the way out. Sale night starts in an hour. Get the pool back to two live members and the shop back on the internet.",
 			"build": func() -> void: _build_friday(),
+			"hint": "Two things moved on Friday, not one: a member's port was shut, and the translation rule was re-bound. 'show running-config' on the router: the 'ip nat inside source ... interface' line names the leg it translates on; put it back on the uplink leg and take the stale one out.",
 			"goals": [
 				{"d": "The virtual address 10.64.0.100 answers", "t": func() -> bool: return _ping("10.64.0.20", "10.64.0.100")},
 				{"d": "Both pool members are in service", "t": func() -> bool: return _lb_healthy_at("10.64.0.100") >= 2},
@@ -92,7 +96,13 @@ static func start(sc: Dictionary) -> void:
 	Game.links = []
 	Game.sites = []
 	Game.current_site = 0
+	Game.parts["patch"] = maxi(int(Game.parts.get("patch", 0)), 100)  # the build cables itself; the snapshot restores the drawer
+	Game.parts["optic"] = maxi(int(Game.parts.get("optic", 0)), 20)
 	sc["build"].call()
+	# add_site put a 0x0 "Home floor" in front of the scenario's own floor; the racks were placed on site 0
+	if Game.sites.size() > 1 and Game.sites[0].get("grid", []) == [0, 0]:
+		Game.sites.remove_at(0)
+	Game.current_site = 0
 	Game.topology_changed.emit()
 
 static func solved() -> bool:
@@ -120,6 +130,17 @@ static func finish(success: bool) -> void:
 static func _ping(from_ip: String, to_ip: String) -> bool:
 	var src := Sim._ip_owner(from_ip)
 	return src != null and Sim.ping(src, to_ip)["ok"]
+
+static func _same_area() -> bool:
+	var area := ""
+	for d in Game.all_devices():
+		if d.ospf.is_empty() or not d.ip_forwarding:
+			continue
+		if area == "":
+			area = Sim.ospf_area(d)
+		elif Sim.ospf_area(d) != area:
+			return false
+	return area != ""
 
 static func _resolves6(from_ip: String, name: String) -> bool:
 	## The customer's test is not "does DNS answer": it is whether the name
@@ -212,12 +233,12 @@ static func _build_fabric() -> void:
 	var sw1 := Game.new_device("sw-8")
 	var a := Game.new_device("srv-1")
 	var b := Game.new_device("srv-1")
-	rack.slots[0] = r1
-	rack.slots[2] = r1b
-	rack.slots[4] = sw1
-	rack.slots[5] = a
-	rack2.slots[0] = r2
-	rack2.slots[2] = b
+	_place(rack, 0, r1)
+	_place(rack, 2, r1b)
+	_place(rack, 4, sw1)
+	_place(rack, 5, a)
+	_place(rack2, 0, r2)
+	_place(rack2, 2, b)
 	Game.connect_ifaces(a.ifaces[0], sw1.ifaces[0])
 	Game.connect_ifaces(r1.ifaces[0], sw1.ifaces[1])
 	Game.connect_ifaces(r1b.ifaces[0], sw1.ifaces[2])
@@ -257,13 +278,13 @@ static func _build_friday() -> void:
 	var web1 := Game.new_device("srv-1")
 	var web2 := Game.new_device("srv-1")
 	var client := Game.new_device("srv-1")
-	rack.slots[0] = upl
-	rack.slots[1] = rtr
-	rack.slots[3] = sw
-	rack.slots[4] = lb
-	rack2.slots[0] = web1
-	rack2.slots[1] = web2
-	rack2.slots[2] = client
+	_place(rack, 0, upl)
+	_place(rack, 1, rtr)
+	_place(rack, 3, sw)
+	_place(rack, 4, lb)
+	_place(rack2, 0, web1)
+	_place(rack2, 1, web2)
+	_place(rack2, 2, client)
 	Game.connect_ifaces(upl.ifaces[0], rtr.ifaces[0])
 	Game.connect_ifaces(rtr.ifaces[1], sw.ifaces[0])
 	Game.connect_ifaces(lb.ifaces[0], sw.ifaces[1])
@@ -300,11 +321,11 @@ static func _build_broken_isp() -> void:
 	var sw_b := Game.new_device("sw-8")
 	var cust_a := Game.new_device("srv-1")
 	var cust_b := Game.new_device("srv-1")
-	rack.slots[0] = core
-	rack.slots[1] = sw_a
-	rack.slots[2] = cust_a
-	rack2.slots[0] = sw_b
-	rack2.slots[1] = cust_b
+	_place(rack, 0, core)
+	_place(rack, 1, sw_a)
+	_place(rack, 2, cust_a)
+	_place(rack2, 0, sw_b)
+	_place(rack2, 1, cust_b)
 	Game.connect_ifaces(cust_a.ifaces[0], sw_a.ifaces[0])
 	Game.connect_ifaces(cust_b.ifaces[0], sw_b.ifaces[0])
 	Game.connect_ifaces(core.ifaces[0], sw_a.ifaces[1])
@@ -329,11 +350,11 @@ static func _build_campus() -> void:
 	var staff_srv := Game.new_device("srv-1")
 	var staff_pc := Game.new_device("srv-1")
 	var guest_pc := Game.new_device("srv-1")
-	rack.slots[0] = sw
-	rack.slots[1] = ap
-	rack.slots[2] = staff_srv
-	rack.slots[3] = staff_pc
-	rack.slots[4] = guest_pc
+	_place(rack, 0, sw)
+	_place(rack, 1, ap)
+	_place(rack, 2, staff_srv)
+	_place(rack, 3, staff_pc)
+	_place(rack, 4, guest_pc)
 	Game.connect_ifaces(ap.ifaces[0], sw.ifaces[0])
 	Game.connect_ifaces(staff_srv.ifaces[0], sw.ifaces[1])
 	Game.add_ip(staff_srv.ifaces[0], "10.61.10.10/24")
@@ -350,11 +371,11 @@ static func _build_v6() -> void:
 	var web := Game.new_device("srv-1")      # your service, still IPv4 only
 	var legacy := Game.new_device("srv-1")   # the partner nobody will renumber
 	var dns := Game.new_device("srv-1")      # the resolver, which only knows v4
-	rack.slots[0] = sw
-	rack.slots[1] = client
-	rack.slots[2] = web
-	rack.slots[3] = legacy
-	rack.slots[4] = dns
+	_place(rack, 0, sw)
+	_place(rack, 1, client)
+	_place(rack, 2, web)
+	_place(rack, 3, legacy)
+	_place(rack, 4, dns)
 	rack.slots[6] = rtr  # two units, so it sits clear of the rest
 	Game.connect_ifaces(client.ifaces[0], sw.ifaces[0])
 	Game.connect_ifaces(web.ifaces[0], sw.ifaces[1])
@@ -384,19 +405,28 @@ static func _build_audit() -> void:
 	var fw := Game.new_device("fw-1")
 	var client_srv := Game.new_device("srv-1")
 	var ops_srv := Game.new_device("srv-1")
-	rack.slots[0] = sw
-	rack.slots[1] = fw
-	rack.slots[2] = client_srv
-	rack.slots[3] = ops_srv
+	_place(rack, 0, sw)
+	_place(rack, 1, fw)
+	_place(rack, 2, client_srv)
+	_place(rack, 3, ops_srv)
 	Game.connect_ifaces(client_srv.ifaces[0], fw.ifaces[0])
 	Game.connect_ifaces(fw.ifaces[1], sw.ifaces[0])
 	Game.connect_ifaces(ops_srv.ifaces[0], sw.ifaces[1])
 	Game.add_ip(client_srv.ifaces[0], "10.62.9.10/24")
 	Game.add_ip(fw.ifaces[0], "10.62.9.1/24")
 	Game.add_ip(fw.ifaces[1], "10.62.0.1/24")
+	fw.acls = [{"action": "permit", "src": "0.0.0.0", "splen": 0, "dst": "0.0.0.0", "dplen": 0}]  # open until the player closes it: that is the leak
 	Game.add_ip(ops_srv.ifaces[0], "10.62.0.10/24")
 	Game.add_static_route(client_srv, "0.0.0.0", 0, "10.62.9.1")
 	for mgmt: Net.Iface in sw.ifaces:
 		if mgmt.name.begins_with("Management"):
 			Game.connect_ifaces(mgmt, sw.ifaces[6])
 			Game.add_ip(mgmt, "10.62.0.2/24")   # management sitting where customers can see it
+
+static func _place(rack: Net.Rack, idx: int, dev: Net.NDevice) -> void:
+	## through install_device, so tall gear reserves the unit above it; the
+	## next free unit down when that one is already covered
+	for k in range(idx, Net.Rack.SLOTS):
+		if Game.install_device(rack, k, dev):
+			return
+	rack.slots[idx] = dev

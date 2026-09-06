@@ -155,6 +155,8 @@ func exec(line: String) -> String:
 	var raw := line.strip_edges()
 	if raw == "":
 		return ""
+	if " print" not in raw and not raw.trim_prefix("/").begins_with("ping") and not raw.trim_prefix("/").begins_with("tool") and not raw.trim_prefix("/").begins_with("export"):
+		Challenge.note_change()  # a challenge counts what you changed, whichever dialect
 	if raw == "..":
 		var up := Array(cwd.split(" ", false))
 		up.pop_back()

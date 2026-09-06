@@ -11971,5 +11971,18 @@ static func run() -> int:
 	var t16_x := CLI.new_session(t16_a).exec("/export")
 	check(t16_x.contains("add disabled=no name=v3 router-id=3.3.3.3 version=3") and t16_x.contains("add area=bb3 disabled=no interfaces=ether1"), "ros ospf6: export prints the v3 instance and its interface templates")
 	check(CLI.new_session(t16_a).exec("/routing ospf interface print").contains("ether1"), "ros ospf6: interface print lists the v3 interfaces")
+	# --- scenarios and drills build on their own floor with their own cables ---
+	var t25_parts: Dictionary = Game.parts.duplicate()
+	var t25_sites: Array = Game.sites.duplicate(true)
+	var t25_site := Game.current_site
+	Game.parts["patch"] = 0
+	Scenarios.start(Scenarios.all()[0])
+	check(Game.sites.size() == 1 and Game.sites[0].get("grid", []) != [0, 0] and not Game.links.is_empty(), "scenario: the racks are on the floor the scenario made, and it cabled itself with an empty drawer")
+	check(Game.racks.all(func(r): return r.slots.size() > 0), "scenario: racks exist")
+	Scenarios.finish(false)
+	Game.parts = t25_parts
+	Game.sites = t25_sites
+	Game.current_site = t25_site
+	check(Drill._fault_tier("L1: sw1 Ethernet3 was left disabled on sw1") == 0 and Drill._fault_tier("the second copy of the service (x) was readdressed and nobody noticed") == 1, "drill: the two-room faults are graded")
 	print("---- %d failures" % fails)
 	return fails
