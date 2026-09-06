@@ -1767,17 +1767,10 @@ func _cat(args: Array) -> String:
 		"/etc/os-release":
 			return "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n"
 		"/etc/network/interfaces":
+			# only what was written to disk: an address set with ip addr add is not in here, and is gone on reboot
 			var out := "# This file describes the network interfaces available on your system\n# and how to activate them. For more information, see interfaces(5).\n\nsource /etc/network/interfaces.d/*\n\n# The loopback network interface\nauto lo\niface lo inet loopback\n"
-			for i: Net.Iface in dev.ifaces:
-				if i.name.begins_with("wg"):
-					continue
-				var v4: Array = i.ips.filter(func(c): return not Net.is_v6(c))
-				if v4.is_empty():
-					continue
-				out += "\n# The primary network interface\nauto %s\niface %s inet static\n    address %s\n" % [i.name, i.name, v4[0]]
-				for r in dev.static_routes:
-					if int(r["plen"]) == 0 and String(r.get("via", "")) != "" and Sim._connected_iface(dev, String(r["via"])) == i:
-						out += "    gateway %s\n" % r["via"]
+			if dev.services.has("eni"):
+				out += "\n" + String(dev.services["eni"]).strip_edges() + "\n"
 			return out
 		"/proc/sys/net/ipv4/ip_forward":
 			return "1\n" if dev.ip_forwarding else "0\n"
@@ -1824,6 +1817,9 @@ func _redirect(t: Array) -> String:
 		"/proc/sys/net/ipv4/ip_forward":
 			dev.ip_forwarding = text.strip_edges() == "1"
 			Game.topology_changed.emit()
+			return ""
+		"/etc/network/interfaces":
+			dev.services["eni"] = (String(dev.services.get("eni", "")) + "\n" + text) if append else text
 			return ""
 		"/etc/keepalived/keepalived.conf":
 			# vrrp_instance VI_1 { interface eth0  virtual_router_id 51  priority 150  nopreempt  virtual_ipaddress { 10.0.0.1/24 } }

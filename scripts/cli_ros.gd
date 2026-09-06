@@ -1822,7 +1822,9 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 		"ip arp print":
 			var out := "Flags: D - DYNAMIC; C - COMPLETE\nColumns: ADDRESS, MAC-ADDRESS, INTERFACE\n#    ADDRESS         MAC-ADDRESS        INTERFACE\n"
 			var n := 0
-			for ip in dev.arp:
+			var arp_keys: Array = dev.arp.keys()
+			arp_keys.sort_custom(func(a, b): return CLI.arp_sort_key(String(a)) < CLI.arp_sort_key(String(b)))
+			for ip in arp_keys:
 				out += "%d DC %-15s %-18s %s\n" % [n, ip, dev.arp[ip], CLI.arp_iface_name(dev, String(ip))]
 				n += 1
 			return out if n > 0 else _empty("Flags: D - DYNAMIC; C - COMPLETE\n")
@@ -1940,14 +1942,16 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var chosen := {}
 			var n := 0
 			for e in _route_rows():
-				if e["src"] != "S" or Net.is_v6(String(e["prefix"])) != path.begins_with("ipv6"):
+				if Net.is_v6(String(e["prefix"])) != path.begins_with("ipv6"):
 					continue
-				if str(n) in args or (dst2 != "" and dst2 == "%s/%d" % [e["prefix"], int(e["plen"])]):
+				if str(n) in args or (dst2 != "" and e["src"] == "S" and dst2 == "%s/%d" % [e["prefix"], int(e["plen"])]):
 					chosen = e
 					break
 				n += 1
 			if chosen.is_empty():
 				return "no such item\n"
+			if chosen["src"] != "S":
+				return "failure: cannot %s dynamic route\n" % ("remove" if path.ends_with("remove") else "modify")
 			Game.remove_static_route(dev, chosen["prefix"], int(chosen["plen"]))
 			if path.ends_with("set"):
 				var dst3 := String(p.get("dst-address", "%s/%d" % [chosen["prefix"], int(chosen["plen"])]))
@@ -1966,12 +1970,9 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 					continue
 				var flags := ("D" if e["src"] != "S" else " ") + ("A" if bool(e["active"]) else " ") + String(e["src"]).to_lower()
 				var gw: String = e["iface"].name if e["src"] == "C" else String(e["next_hop"])
-				# only what somebody added has a number; dynamic routes cannot be addressed
-				var num := ""
-				if e["src"] == "S":
-					num = str(n)
-					n += 1
-				out += "%-2s %3s %-18s %-16s %8d\n" % [num, flags, "%s/%d" % [e["prefix"], int(e["plen"])], gw, int(e["ad"])]
+				# RouterOS 7 numbers every row it prints; only a static one can be removed by that number
+				out += "%-2s %3s %-18s %-16s %8d\n" % [str(n), flags, "%s/%d" % [e["prefix"], int(e["plen"])], gw, int(e["ad"])]
+				n += 1
 			return out
 		"routing ospf instance add":
 			if not dev.ip_forwarding:
@@ -2194,10 +2195,9 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 			var out := "Flags: E - established\n"
 			var n := 0
 			for nb in dev.bgp["neighbors"]:
-				if not Sim.bgp_established(dev, nb):
-					continue  # a session that never came up is not a session yet
-				out += " %d E name=\"%s-1\" remote.address=%s .as=%d .id=%s .capabilities=mp,rr,gr,as4 .afi=ip .messages=%d .bytes=%d .eor=\"\"\n     local.role=ebgp .address=%s .as=%d .id=%s .capabilities=mp,rr,gr,as4 .messages=%d .bytes=%d .eor=\"\"\n     output.procid=20 .keep-sent-attributes=no\n     input.procid=20 ebgp\n     hold-time=3m keepalive-time=1m uptime=%s\n" % [n,
-					nb.get("name", "peer"), nb["ip"], int(nb["remote_as"]), nb["ip"], Game.cycle + 3, (Game.cycle + 3) * 19,
+				# a session that never came up is listed without its E flag: that is what the player came to see
+				out += " %d %s name=\"%s-1\" remote.address=%s .as=%d .id=%s .capabilities=mp,rr,gr,as4 .afi=ip .messages=%d .bytes=%d .eor=\"\"\n     local.role=ebgp .address=%s .as=%d .id=%s .capabilities=mp,rr,gr,as4 .messages=%d .bytes=%d .eor=\"\"\n     output.procid=20 .keep-sent-attributes=no\n     input.procid=20 ebgp\n     hold-time=3m keepalive-time=1m uptime=%s\n" % [n,
+					"E" if Sim.bgp_established(dev, nb) else " ", nb.get("name", "peer"), nb["ip"], int(nb["remote_as"]), nb["ip"], Game.cycle + 3, (Game.cycle + 3) * 19,
 					_local_addr_toward(String(nb["ip"])), int(dev.bgp["asn"]), dev.bgp.get("router_id", _first_ip()),
 					Game.cycle + 4, (Game.cycle + 4) * 19, _uptime()]
 				n += 1

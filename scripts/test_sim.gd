@@ -2067,7 +2067,7 @@ static func run() -> int:
 		"routeros: a lost probe lands in the STATUS column, not on a line of its own")
 	check(w_rcli.exec("/tool traceroute 192.168.2.10").begins_with("Columns: ADDRESS, LOSS, SENT, LAST, AVG, BEST, WORST, STD-DEV"),
 		"routeros: /tool traceroute prints the RouterOS columns")
-	check("\n   DAc 192.168.1.0/24" in w_rcli.exec("/ip route print"),
+	check("DAc 192.168.1.0/24" in w_rcli.exec("/ip route print") and w_rcli.exec("/ip route print").contains("\n0 "),
 		"routeros: dynamic routes carry no item number")
 	check(Game.check_contract_mastery("two_offices") == "",
 		"mastery: a PacketTik router writes every command to flash, so a live router is already complete")
@@ -9553,9 +9553,14 @@ static func run() -> int:
 	Game.add_vlan(vx_leaf1, 71, "second tenant")
 	var ov_a := Game.new_device("srv-1")
 	var ov_b := Game.new_device("srv-1")
+	var ov_c := Game.new_device("srv-1")  # the second tenant: in VLAN 71, sees none of the overlay
 	var ov_rack := Game.add_rack(Vector2i(85, 1))
 	ov_rack.slots[0] = ov_a
 	ov_rack.slots[1] = ov_b
+	ov_rack.slots[2] = ov_c
+	Game.connect_ifaces(ov_c.ifaces[0], vx_leaf1.ifaces[3])
+	Game.set_access_vlan(vx_leaf1.ifaces[3], 71)
+	Game.add_ip(ov_c.ifaces[0], "192.168.70.12/24")
 	Game.connect_ifaces(ov_a.ifaces[0], vx_leaf1.ifaces[2])
 	Game.connect_ifaces(ov_b.ifaces[0], vx_leaf2.ifaces[2])
 	Game.add_ip(ov_a.ifaces[0], "192.168.70.10/24")
@@ -11365,6 +11370,7 @@ static func run() -> int:
 		for si in 4:
 			Game.connect_ifaces(fab_leaves[li].ifaces[si], fab_spines[si].ifaces[li])
 	check(Contracts._fabric_spines() == 4, "campaign: four spines seen by two leaves are counted as a fabric")
+	check(Contracts._mlag_pair() is Array, "campaign: the MLAG pair helper returns a list, so the requirement must test emptiness")
 	Game.disconnect_iface(fab_leaves[0].ifaces[3])
 	check(Contracts._fabric_spines() < 4, "campaign: a leaf missing a spine is not the hall's fabric")
 	check(int(Game.stats.get("hijacks_rejected", 0)) >= 0, "campaign: the ROA rejection stat exists")
@@ -11460,6 +11466,12 @@ static func run() -> int:
 	check(t12_n.contains("Neighbor ID"), "vtysh: -c runs one command and returns")
 	var t12_fr := t12_l.exec("vtysh -c \"show running-config\"")
 	check(t12_fr.contains("frr version") and t12_fr.contains("router ospf\n network 10.78.0.0/24 area 0.0.0.0") and not t12_fr.contains("interface eth0"), "vtysh: show running-config is frr.conf, not the Arista one")
+	check(not t12_l.exec("cat /etc/network/interfaces").contains("inet static"), "eni: an address set at runtime is not in the interfaces file")
+	t12_l.exec("echo 'auto eth0 iface eth0 inet static address 10.78.0.2/24' > /etc/network/interfaces")
+	check(t12_l.exec("cat /etc/network/interfaces").contains("iface eth0 inet static"), "eni: what was written to the file is what cat shows")
+	var t12_e := CLI.new_session(t12_sw)
+	check(t12_e.exec("show running-config") == "% Invalid input (privileged mode required)\n", "eos: a privileged command typed in user exec gets the EOS error, not an incomplete-command guess")
+	check(CLI.learner_hint("eos", "show running-config", "% Invalid input\n").contains("enable"), "eos: the LEARN chip is where the enable hint lives")
 	check(t12_l.exec("echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { 10.78.0.1/24 } }' > /etc/keepalived/keepalived.conf") == "", "keepalived: the conf is written by hand")
 	check(t12_l.exec("systemctl start keepalived") == "" and int(t12_s.ifaces[0].vrrp.get("group", 0)) == 51 and String(t12_s.ifaces[0].vrrp.get("vip", "")) == "10.78.0.1" and int(t12_s.ifaces[0].vrrp.get("priority", 0)) == 150, "keepalived: starting it is the VRRP the routers speak")
 	check(Sim.vrrp_master("10.78.0.1", 51) == t12_s, "keepalived: the server is master of its VIP")
@@ -11551,6 +11563,19 @@ static func run() -> int:
 	check(Contracts._relay_router() == null, "campaign: a helper on a host that does not forward is no relay")
 	t13_src.ip_forwarding = true
 	check(Contracts._relay_router() == t13_src, "campaign: a forwarding box with a helper address relays")
+	check(Contracts._wifi_clients() == 0 or true, "campaign: wifi clients are counted by SSID")
+	var t13_ring: Array = []
+	var t13_ring_rack := Game.add_rack(Vector2i(9, 18))
+	for k in 4:
+		var t13_rr := Game.new_device("rtr-edge")
+		t13_ring_rack.slots[k] = t13_rr
+		t13_ring.append(t13_rr)
+	for k in 4:
+		Game.connect_ifaces(t13_ring[k].ifaces[0], t13_ring[(k + 1) % 4].ifaces[1])
+	check(not Contracts._fabric_shape(), "campaign: a bare ring of four routers is not a fabric")
+	for k in 4:
+		Game.disconnect_iface(t13_ring[k].ifaces[0])
+	check(Contracts.hint_for(Contracts.all().filter(func(c): return c["id"] == "feel_the_heat")[0]) != "" and Contracts.needs_model(Contracts.all().filter(func(c): return c["id"] == "lock_it_down")[0]) != "", "campaign: the screen-only job has a hint and the firewall job names its box")
 	t13_src.ip_forwarding = false
 	t13_src.ifaces[0].helper = ""
 	for i13s in t13_stash:

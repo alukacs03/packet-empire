@@ -103,6 +103,10 @@ static func unreachable_text(detail: String, mtu := 0) -> String:
 const LEARN_HINTS := {
 	"eos": {
 		"ip address": "a switchport carries no address: 'no switchport' first, or put it on 'interface Vlan<n>'",
+		"configure": "'configure' needs privileged mode: type 'enable' first (the prompt ends in # when you are there)",
+		"show running-config": "'show running-config' needs privileged mode: type 'enable' first",
+		"show run": "'show running-config' needs privileged mode: type 'enable' first",
+		"write": "'write' needs privileged mode: type 'enable' first",
 		"ip route": "a switch forwards between subnets only after 'ip routing'; the next hop must be on a connected subnet",
 		"switchport": "only a switch port has switchport commands; on a router the port is routed",
 		"vlan": "'vlan <n>' is a global config command: 'configure' first, then 'vlan 10'",
@@ -284,7 +288,7 @@ static func fmt_ping_eos(dev: Net.NDevice, target: String, count: int, payload: 
 	var series := Sim.ping_series(dev, ip, count, payload + 8)
 	for r in series:
 		if bool(r["ok"]):
-			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%.3f ms\n" % [payload + 8, r["from"], int(r["seq"]), int(r.get("ttl", 64)), float(r["rtt"])]
+			out += "%d bytes from %s: icmp_seq=%d ttl=%d time=%s ms\n" % [payload + 8, r["from"], int(r["seq"]), int(r.get("ttl", 64)), LinuxCLI._ping_time(float(r["rtt"]))]  # iputils: three significant digits
 			continue
 		var detail := String(r.get("detail", "timeout"))
 		if detail == "no route to host":
@@ -328,6 +332,13 @@ static func fmt_traceroute(dev: Net.NDevice, target: String, numeric := false) -
 				else ("%2d  %s (%s)  %.3f ms%s  %.3f ms%s  %.3f ms%s\n" % [n, name if name != "" else hop, hop, rtt, tag, rtt * 1.03, tag, rtt * 0.98, tag])
 		n += 1
 	return out
+
+static func arp_sort_key(key: String) -> Array:
+	## the table reads by address, ascending; a VRF-scoped key sorts under its table
+	var ip := key.split("|")[-1]
+	if ip.is_valid_ip_address() and not Net.is_v6(ip):
+		return [key.count("|"), Net.ip_to_int(ip)]
+	return [key.count("|") + 2, 0, ip]
 
 static func arp_iface_name(dev: Net.NDevice, ip: String) -> String:
 	var i := Sim.arp_iface(dev, ip)
@@ -1022,16 +1033,7 @@ class EOS extends Session:
 			if okc:
 				full.append(c)
 		if full.is_empty():
-			for c in _cmds:
-				if not modes.any(func(m): return m in c["m"]):
-					continue
-				var okc := true
-				for k in mini(toks.size(), c["p"].size()):
-					if not String(c["p"][k]).begins_with(toks[k]):
-						okc = false
-						break
-				if okc:
-					return "% Incomplete command\n"
+			# a privileged command typed in full from user exec is that, not an incomplete one
 			if mode == "exec":
 				for c in _cmds:
 					if not ("priv" in c["m"] or "config" in c["m"]) or toks.size() < c["p"].size():
@@ -1042,7 +1044,17 @@ class EOS extends Session:
 							okp = false
 							break
 					if okp:
-						return "% Invalid input (privileged mode required)\n"
+						return "% Invalid input (privileged mode required)\n"  # EOS does say so, unlike IOS
+			for c in _cmds:
+				if not modes.any(func(m): return m in c["m"]):
+					continue
+				var okc := true
+				for k in mini(toks.size(), c["p"].size()):
+					if not String(c["p"][k]).begins_with(toks[k]):
+						okc = false
+						break
+				if okc:
+					return "% Incomplete command\n"
 			return "% Invalid input\n"
 		# the sub-mode's own commands win over a global one that happens to
 		# start the same way ("ip address" on an interface, not "ip access-list")
@@ -4050,7 +4062,9 @@ class EOS extends Session:
 		## Address / Age (sec) as h:mm:ss / Hardware Addr / Interface, full
 		## names, the SVI then the physical port for an entry on a VLAN
 		var out := "%-15s %9s  %-15s %s\n" % ["Address", "Age (sec)", "Hardware Addr", "Interface"]
-		for ip in dev.arp:
+		var arp_keys: Array = dev.arp.keys()
+		arp_keys.sort_custom(func(a, b): return CLI.arp_sort_key(String(a)) < CLI.arp_sort_key(String(b)))
+		for ip in arp_keys:
 			var age_cycles := Game.cycle - int(dev.arp_seen.get(ip, Game.cycle))
 			var secs := maxi(0, age_cycles) * 60 + (int(String(ip).hash()) % 50)
 			var ifn := CLI.arp_iface_name(dev, String(ip))
