@@ -12031,6 +12031,25 @@ static func run() -> int:
 			check(Pedia.article_text(t26).contains("The exercise:"), "manual: the teaching sentence survives the dialect examples replacing the Try line")
 	check(Loc.tidy_plurals("1 cycle(s) left, 3 device(s) down") == "1 cycle left, 3 devices down", "text: the (s) plurals resolve on the way to the screen")
 	Loc.language = "hu"
+	check(Loc.tidy("Sell rack ($400) after 1 cycle(s)") == "Sell rack (400 $) after 1 cycle", "text: in Hungarian the money sign follows the number")
+	Loc.language = "en"
+	check(Loc.tidy("$400 · 2 cycle(s)") == "$400 · 2 cycles", "text: in English the money stays as written")
+	# every literal catalogue key the code reads must exist, in both languages: a half-applied
+	# localisation would otherwise show key ids on screen and the suite would never notice
+	var t31_rx := RegEx.new()
+	t31_rx.compile("Loc\\.t\\(\"([a-z0-9_.]+)\"[,)]")  # a key built with + is checked by its own test
+	var t31_missing: Array = []
+	for t31_file in ["res://scripts/ui.gd", "res://scripts/title.gd", "res://scripts/ui_widgets.gd", "res://scripts/ui_shell.gd", "res://scripts/customer_brief.gd", "res://scripts/pedia.gd", "res://scripts/contracts.gd", "res://scripts/game.gd"]:
+		if not FileAccess.file_exists(t31_file):
+			continue
+		for t31_m in t31_rx.search_all(FileAccess.get_file_as_string(t31_file)):
+			var t31_key := t31_m.get_string(1)
+			if not Loc.CATALOG.has(t31_key):
+				t31_missing.append(t31_key)
+			elif not Loc.CATALOG[t31_key].has("hu") or String(Loc.CATALOG[t31_key]["hu"]).strip_edges() == "":
+				t31_missing.append(t31_key + " (no hu)")
+	check(t31_missing.is_empty(), "text: every catalogue key the code reads exists with a Hungarian form (missing: %s)" % ", ".join(PackedStringArray(t31_missing.slice(0, 8))))
+	Loc.language = "hu"
 	for t30 in Pedia.topics():
 		if String(t30[0]) == Loc.t("pedia.vlans.title"):
 			check(Pedia.article_text(t30).contains("Try on") or Pedia.article_text(t30).contains("PacketTik"), "manual: the VLAN chapter keeps its dialect examples in Hungarian")

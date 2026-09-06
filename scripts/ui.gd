@@ -457,7 +457,7 @@ func _refresh_hud_layout(width_override := -1.0) -> void:
 	_refresh_money()
 
 func hud_toast(text: String, good := false) -> void:
-	text = Loc.tidy_plurals(text)
+	text = Loc.tidy(text)
 	## a short message on the HUD, for actions that would otherwise fail silently
 	Sfx.play("good" if good else "bad")
 	if hud_msg == null:
@@ -652,7 +652,7 @@ func _flat_sb(bg: Color, border: Color, radius := 0, margin := 8) -> StyleBoxFla
 	return style
 
 func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 560.0) -> Label:
-	text = Loc.tidy_plurals(text)
+	text = Loc.tidy(text)
 	## a label that wraps instead of pushing its container sideways
 	var l := _label(text, size, color)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -668,7 +668,7 @@ func _wrap(text: String, size := 14, color := Color(0.85, 0.89, 0.95), width := 
 	return l
 
 func _label(text: String, size := 15, color := Color(0.85, 0.89, 0.95)) -> Label:
-	text = Loc.tidy_plurals(text)
+	text = Loc.tidy(text)
 	var l := UIW.make_text(text)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
@@ -1816,22 +1816,22 @@ func _refresh_iface() -> void:
 		("%d Gbit" % (spd / 1000)) if spd >= 1000 else ("%d Mbit" % spd), cur_if.rx_frames, cur_if.tx_frames]
 	for c in if_state_box.get_children():
 		c.queue_free()
-	var link_word := "UP / ENABLED"
+	var link_word := Loc.t("iface.state.up")
 	if cur_if.admin_down:
-		link_word = "ADMINISTRATIVELY DISABLED"
+		link_word = Loc.t("iface.state.admin_down")
 	elif cur_if.err_disabled:
-		link_word = "ERR-DISABLED / PORT SECURITY"
+		link_word = Loc.t("iface.state.errdisabled")
 	elif cur_if.fault != "":
-		link_word = "DOWN / %s" % cur_if.fault.to_upper()
+		link_word = Loc.t("iface.state.down", {"fault": cur_if.fault.to_upper()})
 	elif not cur_if.enabled:
 		link_word = "DOWN"
 	if_state_box.add_child(_iface_state_line("LINK STATE", link_word,
 		"success" if cur_if.enabled else "danger"))
 	if_state_box.add_child(_iface_state_line("FRAME SIZE", "MTU %d" % cur_if.mtu, "info"))
 	if cur_if.dev.type == "switch":
-		var switching := "ACCESS  /  VLAN %d" % cur_if.untagged_vlan if cur_if.mode == "access" else \
-			"TRUNK  /  %s" % ("ALL VLANS" if cur_if.tagged_vlans.is_empty() else
-			", ".join(PackedStringArray(cur_if.tagged_vlans.map(func(v): return str(v)))))
+		var switching := Loc.t("iface.access", {"vlan": cur_if.untagged_vlan}) if cur_if.mode == "access" else \
+			Loc.t("iface.trunk", {"vlans": Loc.t("iface.all_vlans") if cur_if.tagged_vlans.is_empty() else
+			", ".join(PackedStringArray(cur_if.tagged_vlans.map(func(v): return str(v))))})
 		if_state_box.add_child(_iface_state_line("SWITCHING", switching, "accent"))
 	var address_text := "NONE"
 	if not cur_if.ips.is_empty():
@@ -1854,7 +1854,7 @@ func _refresh_iface() -> void:
 			"Master" if master == cur_if.dev else "Backup"]
 	var peer := Game.peer_label(cur_if)
 	if peer == "":
-		if_cable_lbl.text = "Cable: not connected"
+		if_cable_lbl.text = Loc.t("iface.cable.none")
 		if_cable_btn.text = "Run cable…"
 		if_cable_btn.tooltip_text = "Pick the free port on the far end, in this rack or another; dragging between port squares in the rack view works too."
 		if_peer_btn.visible = false
@@ -1864,13 +1864,13 @@ func _refresh_iface() -> void:
 		var local_rack := Game.rack_of(cur_if.dev)
 		var same_rack := local_rack != null and Game.rack_of(far_iface.dev) == local_rack
 		if same_rack:
-			if_cable_lbl.text = "Physical patch: ⇄  " + peer
-			if_cable_btn.text = "Open rack elevation"
-			if_cable_btn.tooltip_text = "Pull the fitted plug from its jack to repatch or unplug it"
+			if_cable_lbl.text = Loc.t("iface.cable.patch") + " ⇄  " + peer
+			if_cable_btn.text = Loc.t("iface.cable.open_rack")
+			if_cable_btn.tooltip_text = Loc.t("iface.cable.open_rack.tip")
 		else:
-			if_cable_lbl.text = "Remote link: ⇄  " + peer
-			if_cable_btn.text = "Disconnect"
-			if_cable_btn.tooltip_text = "Remove this remote or circuit-backed link"
+			if_cable_lbl.text = Loc.t("iface.cable.remote") + " ⇄  " + peer
+			if_cable_btn.text = Loc.t("iface.cable.disconnect")
+			if_cable_btn.tooltip_text = Loc.t("iface.cable.disconnect.tip")
 		if_peer_btn.visible = true
 
 func _iface_state_line(caption: String, value: String, semantic: String) -> HBoxContainer:

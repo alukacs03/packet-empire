@@ -153,6 +153,25 @@ const CATALOG := {
 	"demo.beyond.4": {"en": "THE ROOMS  /  a second building with its own diary, its own fire protection and its own dock, and hardware that gets there on a van", "hu": "A SZOBÁK  /  egy második épület saját naptárral, saját tűzvédelemmel és saját rakodóval, és hardver, ami furgonnal érkezik"},
 	"demo.beyond.5": {"en": "PROVING IT  /  a failover test you book, that takes the upstream away on purpose, and customers who ask for the result in writing", "hu": "BIZONYÍTÁS  /  egy átállási teszt, amit te foglalsz, ami szándékosan elviszi a felmenő kapcsolatot, és ügyfelek, akik írásban kérik az eredményt"},
 	"demo.beyond.6": {"en": "THE RUN  /  it ends: sold, retired, or broke. It is scored, and something survives into the next one.", "hu": "A JÁTÉK  /  véget ér: eladva, nyugdíjba vonulva vagy csődben. Pontozzák, és valami átmegy a következőbe."},
+	"iface.state.up": {"en": "UP / ENABLED", "hu": "ÉL / ENGEDÉLYEZVE"},
+	"iface.state.admin_down": {"en": "ADMINISTRATIVELY DISABLED", "hu": "ADMINISZTRATÍVAN LETILTVA"},
+	"iface.state.errdisabled": {"en": "ERR-DISABLED / PORT SECURITY", "hu": "HIBÁRA LETILTVA / PORTBIZTONSÁG"},
+	"iface.state.down": {"en": "DOWN / {fault}", "hu": "NEM ÉL / {fault}"},
+	"iface.access": {"en": "ACCESS  /  VLAN {vlan}", "hu": "ACCESS  /  VLAN {vlan}"},
+	"iface.trunk": {"en": "TRUNK  /  {vlans}", "hu": "TRUNK  /  {vlans}"},
+	"iface.all_vlans": {"en": "ALL VLANS", "hu": "MINDEN VLAN"},
+	"iface.cable.none": {"en": "Cable: not connected", "hu": "Kábel: nincs bedugva"},
+	"iface.cable.patch": {"en": "Physical patch:", "hu": "Fizikai patch:"},
+	"iface.cable.open_rack": {"en": "Open rack elevation", "hu": "Rack nézet megnyitása"},
+	"iface.cable.open_rack.tip": {"en": "Pull the fitted plug from its jack to repatch or unplug it", "hu": "Húzd ki a bedugott dugót az aljzatból az átkábelezéshez vagy kihúzáshoz"},
+	"iface.cable.remote": {"en": "Remote link:", "hu": "Távoli kapcsolat:"},
+	"iface.cable.disconnect": {"en": "Disconnect", "hu": "Bontás"},
+	"iface.cable.disconnect.tip": {"en": "Remove this remote or circuit-backed link", "hu": "A távoli vagy áramkörre épülő kapcsolat eltávolítása"},
+	"section.link_state": {"en": "LINK STATE", "hu": "KAPCSOLAT ÁLLAPOTA"},
+	"section.frame_size": {"en": "FRAME SIZE", "hu": "KERETMÉRET"},
+	"section.switching": {"en": "SWITCHING", "hu": "KAPCSOLÁS"},
+	"section.ip_addresses": {"en": "IP ADDRESSES", "hu": "IP-CÍMEK"},
+	"section.port_security": {"en": "PORT SECURITY", "hu": "PORTBIZTONSÁG"},
 	"ops.title": {"en": "Network operations", "hu": "Hálózatüzemeltetés"},
 	"ops.metric.devices": {"en": "DEVICES", "hu": "ESZKÖZÖK"},
 	"ops.metric.links": {"en": "CABLE PLANT", "hu": "KÁBELEZÉS"},
@@ -494,6 +513,25 @@ static func slug(text: String) -> String:
 			out += "_"
 			last_us = true
 	return out.trim_suffix("_")
+
+static var _money_rx: RegEx = null
+
+static func tidy_money(text: String) -> String:
+	## "$1,200" is the English layout; Hungarian writes the sign after the
+	## number. Resolved on the way to the screen, like the plurals, so the
+	## two hundred inline formats in the panels follow the language.
+	if language != "hu" or "$" not in text:
+		return text
+	if _money_rx == null:
+		_money_rx = RegEx.new()
+		_money_rx.compile("\\$(-?\\d[\\d,]*)")
+	var out := text
+	for m in _money_rx.search_all(text):
+		out = out.replace(m.get_string(0), "%s $" % m.get_string(1))
+	return out
+
+static func tidy(text: String) -> String:
+	return tidy_money(tidy_plurals(text))
 
 static func tidy_plurals(text: String) -> String:
 	## "1 cycle(s)" -> "1 cycle", "3 cycle(s)" -> "3 cycles": the "(s)" spelling is
