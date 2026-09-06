@@ -26,7 +26,7 @@ when an existing semantic role cannot express the design.
   and `danger`.
 - `UIW.style_panel(panel, variant, padding)` supports `surface`, `overlay`,
   `hud`, `console`, `positive`, `warning`, and `danger`.
-- `UIW.CommandPanel` is the authored chamfered frame for major screens;
+- `UIW.CommandPanel` is the rounded, shadowed frame with a restrained accent edge for major screens;
   `UIW.ActionButton` is the numbered, two-level title/navigation action.
 - `UIW.make_text`, `make_section`, `make_empty_state`, and `make_chip` cover
   the repeated text/status patterns.
@@ -49,6 +49,48 @@ card.add_child(UIW.make_empty_state("No alerts need attention."))
 
 All interactive controls must retain a visible focus state. Semantic colour
 must reinforce text or icons rather than being the only carrier of meaning.
+
+## Workspace layout and customer decisions
+
+The persistent left rail owns navigation; ordinary workspaces leave it and
+the status bar clickable. Their remaining background consumes clicks so that
+working in a panel cannot accidentally place hardware on the floor. Modal
+menus retain the full scrim. Highlight the visible workspace, not the last
+floor tool used.
+
+Cards start after the rail and keep their preferred width. Use wrapping action
+rows (`HFlowContainer`) when device actions would force a card wider. The
+customer brief may share a wide viewport only when actual panel bounds leave
+room for it; on smaller screens it returns when the workspace closes. The
+status bar carries the active customer's deadline while the brief is hidden.
+Hazards and outages still take priority.
+
+Launch choices must display cost, peak demand, and success reward without a
+hover or scroll at 1280×720. Keep story text phase-specific. Measure wrapped
+paragraph height, and keep the brief's scroll position independent from the
+console. Debrief claims use recorded sale evidence, never the current network.
+
+## Rendered regression review
+
+Use an isolated Godot user directory, configured with an ignored `override.cfg`,
+so the review cannot touch a player's preferences or save:
+
+```ini
+[application]
+config/use_custom_user_dir=true
+config/custom_user_dir_name="Packet Empire Design Review"
+```
+
+Run the engine with `PACKET_REVIEW=/absolute/output/directory` to capture
+eleven real game screens and run layout/input assertions. Set
+`PACKET_REVIEW_SIZE=1280` with `--resolution 1280x720` to test a genuinely
+smaller logical viewport, not just a scaled 1600×900 image. Set
+`PACKET_REVIEW_LANGUAGE=hu` to check Hungarian. Otherwise the review uses
+English and the project viewport. A failing assertion exits nonzero.
+
+This fixture-based review checks presentation and interactions, not whether
+the campaign feels fun to a new player. Pair it with the human sessions in
+`docs/PLAYTEST.md`; do not treat automated completion as a playtest result.
 
 ## Environmental progression
 
