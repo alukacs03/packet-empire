@@ -1077,7 +1077,7 @@ func _build_toolbar() -> void:
 	money_lbl.add_theme_font_override("font", mono)
 	h.add_child(money_lbl)
 	update_mode(0)
-	hud_shortcut_hint = _label("Space pause  ·  Q select  ·  R place rack  ·  F find  ·  O ops  ·  M map  ·  F1 keys  ·  Esc menu  ·  right-drag pan  ·  scroll zoom", 12, Color(0.45, 0.5, 0.62))
+	hud_shortcut_hint = _label("Space pause  ·  Q select  ·  R place rack  ·  F find  ·  O ops  ·  M map  ·  F1 keys and controls  ·  Esc menu  ·  right-drag pan  ·  scroll zoom", 12, Color(0.45, 0.5, 0.62))
 	hud_shortcut_hint.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	hud_shortcut_hint.position = Vector2(20, -30)
 	hud_shortcut_hint.theme = theme_res
@@ -1741,7 +1741,7 @@ func _refresh_ports() -> void:
 	var svc_bits: Array = []
 	if cur_dev.services.has("dhcp"):
 		var svc: Dictionary = cur_dev.services["dhcp"]
-		svc_bits.append("dhcpd %s–%s (%d leases)" % [svc["start"], svc["end"], svc["leases"].size()])
+		svc_bits.append("dhcpd %s to %s (%d leases)" % [svc["start"], svc["end"], svc["leases"].size()])
 	if cur_dev.services.has("dns"):
 		svc_bits.append("dns (%d records)" % cur_dev.services["dns"]["records"].size())
 	if cur_dev.resolver != "":
@@ -2727,7 +2727,7 @@ func _refresh_ops() -> void:
 		ops_box.add_child(head_row)
 		for row: Dictionary in past_runs.slice(0, 6):
 			var rl := _label("  %-18s %-14s %-10s %-11s cycle %-5d score %d" % [row.get("company", ""),
-				row.get("identity", ""), row.get("difficulty", ""), row.get("ending", ""), int(row.get("cycle", 0)),
+				row.get("identity", ""), row.get("difficulty", ""), Game.FINALE_ENDING_LABELS.get(String(row.get("ending", "")), row.get("ending", "")), int(row.get("cycle", 0)),
 				int(row.get("total", 0))], 12, Color(0.78, 0.84, 0.9))
 			rl.add_theme_font_override("font", mono)
 			ops_box.add_child(rl)
@@ -2990,7 +2990,7 @@ func _refresh_ops() -> void:
 		for letter in ["A", "B"]:
 			bits.append("feed %s %s" % [letter, "live" if bool(f[letter]) else "DOWN"])
 		if Game.has_ups(si2):
-			bits.append("UPS %d/%d cycles" % [int(Game.ups.get(si2, 0)), Game.UPS_CYCLES])
+			bits.append("UPS %d/%s" % [int(Game.ups.get(si2, 0)), Loc.cycles(Game.UPS_CYCLES)])
 		var pl := _label("  %-22s %s" % [Game.site_name(si2), "   ".join(PackedStringArray(bits))],
 			12, Prefs.bad_colour() if (not bool(f["A"]) or not bool(f["B"]))
 			else Color(0.7, 0.78, 0.85))
@@ -3368,8 +3368,8 @@ func _refresh_ops() -> void:
 			continue
 		var frow := HBoxContainer.new()
 		ops_box.add_child(frow)
-		var fl := _label("  %s (%s) is down, %d cycles old" % [d.name,
-			Game.MODELS[d.model]["label"], Game.device_age(d)], 13, Prefs.bad_colour())
+		var fl := _label("  %s (%s) is down, %s old" % [d.name,
+			Game.MODELS[d.model]["label"], Loc.cycles(int(Game.device_age(d)))], 13, Prefs.bad_colour())
 		fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		frow.add_child(fl)
 		var swap := Button.new()
@@ -4932,14 +4932,14 @@ func _build_business_tab() -> void:
 	contracts_box.add_child(_label("rank: %s%s" % [Game.rank(),
 		"" if nr2.is_empty() else "   ·   %d points to %s" % [int(nr2[1]), nr2[0]]],
 		13, Color(0.85, 0.8, 0.6)))
-	contracts_box.add_child(_label("%s   ·   cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.identity_label(), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
+	contracts_box.add_child(_wrap("%s   ·   cycle %d   ·   lifetime earned $%d   ·   %d contracts, %d deals   ·   %d incidents, %d field faults" % [Game.identity_label(), Game.cycle, Game.stats["earned"], Game.stats["contracts"], Game.stats["deals"], Game.stats["incidents"], Game.stats["faults"]], 12, Color(0.5, 0.56, 0.68)))
 	contracts_box.add_child(_section("CAREER PROFILE"))
 	for line: String in Skills.profile():
 		contracts_box.add_child(_wrap("  %s" % line, 12, Color(0.72, 0.8, 0.88), 640))
 	contracts_box.add_child(_section("MARKETING AND COVER"))
 	var mk_row := HBoxContainer.new()
 	contracts_box.add_child(mk_row)
-	mk_row.add_child(_label("  Marketing $%d/cycle   ·   budgets +%d%%, up to %d open offers, %d%% chance of one per cycle" % [Game.marketing,
+	mk_row.add_child(_wrap("  Marketing $%d/cycle   ·   budgets +%d%%, up to %d open offers, %d%% chance of one per cycle" % [Game.marketing,
 		int(round((Game.marketing_budget_factor() - 1.0) * 100.0)), 2 + int(Game.marketing / Game.MARKETING_STEP),
 		int(round((0.7 + 0.06 * float(Game.marketing) / float(Game.MARKETING_STEP)) * 100.0))],
 		13, Color(0.8, 0.85, 0.7) if Game.marketing > 0 else Color(0.75, 0.75, 0.8)))
@@ -4958,7 +4958,7 @@ func _build_business_tab() -> void:
 		mk_row.add_child(mk_down)
 	var ins_row := HBoxContainer.new()
 	contracts_box.add_child(ins_row)
-	ins_row.add_child(_label("  Hardware insurance: %s   ($%d/cycle, 2%% of the $%d estate per quarter, pays a full replacement)" % [
+	ins_row.add_child(_wrap("  Hardware insurance: %s   ($%d/cycle, 2%% of the $%d estate per quarter, pays a full replacement)" % [
 		"ON" if Game.insured else "off", Game.insurance_fee(), Game.estate_value()], 13,
 		Color(0.7, 0.9, 0.7) if Game.insured else Color(0.75, 0.75, 0.8)))
 	var ins_btn := Button.new()
@@ -5126,7 +5126,7 @@ func _build_business_tab() -> void:
 		if Staff.tired(m):
 			state += ", tired"
 		if Staff.on_call(m) and Game.oncall_stint() >= Game.ONCALL_STINT:
-			state += ", on call %d cycles" % Game.oncall_stint()
+			state += ", on call %s" % Loc.cycles(Game.oncall_stint())
 		# the row carries five buttons as well, so the text is kept to the name
 		# and the numbers; the rest moves to the line underneath it
 		var sl := _label("  %-16s  skill %d  $%d/cycle  morale %d" % [m["name"],
@@ -5856,7 +5856,7 @@ func _build_jobs_tab() -> void:
 		var est: Array = Game.market_estimate(offer)
 		var market_copy := "No rival bidder"
 		if not Rivals.best_bidder(offer).is_empty():
-			market_copy = ("No price signal yet" if est.is_empty() else "$%d–$%d likely" % [
+			market_copy = ("No price signal yet" if est.is_empty() else "$%d to $%d likely" % [
 				int(est[0]), int(est[1])])
 		facts.add_child(_offer_fact("MARKET RANGE", market_copy,
 			"success" if Rivals.best_bidder(offer).is_empty() else "warm"))
@@ -6072,8 +6072,8 @@ func _build_jobs_tab() -> void:
 			var dtier := Market.tier(int(deal.get("sla", 0)))
 			if int(deal.get("cycles", 0)) > 0:
 				var up_pct := 100.0 * float(deal.get("up_cycles", 0)) / float(deal["cycles"])
-				detail += "   [%s, %d%% uptime over %d cycles]" % [dtier["label"], int(up_pct),
-					int(deal["cycles"])]
+				detail += "   [%s, %d%% uptime over %s]" % [dtier["label"], int(up_pct),
+					Loc.cycles(int(deal["cycles"]))]
 			var missed_n: int = int(deal.get("missed", 0))
 			if missed_n >= 3:
 				detail += "   ⚠ undelivered %d cycles: they walk at 5" % missed_n
@@ -6459,9 +6459,9 @@ func _refresh_contracts() -> void:
 			check_demo_end())
 		cv.add_child(btn)
 	if not found_active:
-		contracts_box.add_child(_label("The demo arc is finished. The full game carries on from here."
-			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter:\nOperations, Company tab. The floor, the customers and the rivals carry on.",
-			14, Color(0.7, 0.85, 0.75)))
+		contracts_box.add_child(_wrap("The demo arc is finished. The full game carries on from here."
+			if Demo.active() else "Every campaign job is done. The board still sets three targets a quarter, under Operations in its Company tab. The floor, the customers and the rivals carry on.",
+			14, Color(0.7, 0.85, 0.75), 640))
 
 # ---------- refresh / CLI ----------
 

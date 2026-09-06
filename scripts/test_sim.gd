@@ -864,7 +864,7 @@ static func run() -> int:
 	Game.racks[0].blanked[6] = true
 	Game.set_note(Game.racks[0], "Temporary patch during the migration")
 	Game.set_note(a, "Do not reboot before the handover")
-	Game.set_note(a.ifaces[0], "Customer handoff — do not repatch")
+	Game.set_note(a.ifaces[0], "Customer handoff, do not repatch")
 	Game.inject_grey_fault(sw.ifaces[1], "dirty_optic")
 	Game.save_game()
 	var money_before := Game.money
@@ -916,7 +916,7 @@ static func run() -> int:
 			a_l = d
 	check(a_l != null and a_l.note.get("text", "") == "Do not reboot before the handover",
 		"save: player-authored device notes travel with the device")
-	check(a_l != null and a_l.ifaces[0].note.get("text", "") == "Customer handoff — do not repatch",
+	check(a_l != null and a_l.ifaces[0].note.get("text", "") == "Customer handoff, do not repatch",
 		"save: player-authored port tags travel with the physical interface")
 	check(a_l != null and Sim.ping(a_l, "10.1.0.2")["ok"], "save: reloaded topology still routes end-to-end")
 	var note_cycle := Game.cycle
@@ -2641,15 +2641,15 @@ static func run() -> int:
 		and mp_s.exec("show running-config").contains("neighbor 10.9.9.9 ebgp-multihop"),
 		"bgp: ebgp-multihop is stored and printed")
 	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n").begins_with("! ")
-		and "LEARN: Routing & gateways" in CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n"),
+		and "LEARN: Routing and gateways" in CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "% Invalid input\n"),
 		"hints: an EOS error gets a ! comment line with the article to read")
 	check(CLI.learner_hint("eos", "ip route 10.0.0.0/24 10.9.9.9", "") == "", "hints: nothing under a command that worked")
 	check(CLI.learner_hint("linux", "ip route add 10.0.0.0/24 via 10.9.9.9", "Error: Nexthop has invalid gateway.\n").begins_with("# "),
 		"hints: a Linux error gets a # comment line")
 	check(CLI.learner_hint("ros", "/ip address add addres=1.2.3.4/24", "syntax error (line 1 column 17)\n").begins_with("# "),
 		"hints: a RouterOS error gets a # comment line")
-	check(CLI.topic_for("/ip address add address=10.0.0.1/24 interface=ether1") == "IP addresses & subnets"
-		and CLI.topic_for("show mac address-table") == "Switches & MAC learning" and CLI.topic_for("wg genkey") == "",
+	check(CLI.topic_for("/ip address add address=10.0.0.1/24 interface=ether1") == "IP addresses and subnets"
+		and CLI.topic_for("show mac address-table") == "Switches and MAC learning" and CLI.topic_for("wg genkey") == "",
 		"hints: the topic map reads the command family across dialects")
 	cs.history.append("show version")
 	check(cs.exec("show history").contains("show version"), "help: show history lists the session's commands")

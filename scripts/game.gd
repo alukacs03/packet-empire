@@ -1266,8 +1266,8 @@ func oncall_tick() -> void:
 	var stint := oncall_stint()
 	if stint > 0 and stint % ONCALL_STINT == 0:
 		who["morale"] = maxi(0, int(who.get("morale", 70)) - 4)
-		log_event("ROTA: %s has been on call for %d cycles without a break. It is starting to tell."
-			% [oncall, stint])
+		log_event("ROTA: %s has been on call for %s without a break. It is starting to tell."
+			% [oncall, Loc.cycles(int(stint))])
 
 func set_oncall(name: String) -> String:
 	## One person carries the phone. It is paid for, and it is why a call-out
@@ -2443,8 +2443,8 @@ func arm_confirm(d: Net.NDevice, cycles := 3) -> String:
 	if confirm_commits.has(d.name):
 		return "there is already a confirmation pending on %s" % d.name
 	confirm_commits[d.name] = {"cfg": device_config(d), "due": cycle + maxi(1, cycles)}
-	log_event("CONFIRMED COMMIT armed on %s: it reverts in %d cycles unless you confirm."
-		% [d.name, maxi(1, cycles)])
+	log_event("CONFIRMED COMMIT armed on %s: it reverts in %s unless you confirm."
+		% [d.name, Loc.cycles(maxi(1, cycles))])
 	return ""
 
 func confirm_commit(d: Net.NDevice) -> String:
@@ -3382,7 +3382,7 @@ const DECISIONS := [
 			{"label": "Buy the pallet", "effect": "optics_yes"},
 			{"label": "Pay list price for known parts", "effect": "optics_no"}]},
 	{"id": "overtime_push", "title": "A long week",
-		"text": "You can hit the delivery date by working the crew hard for a week.",
+		"text": "You can hit the delivery date by working the crew hard for a few cycles.",
 		"facts": ["the date is real", "so is the exhaustion afterwards"],
 		"options": [
 			{"label": "Push for the date", "effect": "overtime_yes"},
@@ -5243,6 +5243,8 @@ func decline_buyout() -> String:
 	log_event("APPROACH: you turned %s down. They are going to compete harder for it this quarter." % who)
 	return ""
 
+const FINALE_ENDING_LABELS := {"sold": "sold", "retired": "retired", "insolvent": "went under"}
+const SCORE_LABELS := {"financial": "Financial", "reliability": "Reliability", "trust": "Trust", "ambition": "Ambition", "discipline": "Discipline", "growth": "Growth"}
 const FINALE_ENDINGS := {
 	"sold": "You sold the company.",
 	"retired": "You reached the top of the trade and walked away from it.",
@@ -5476,7 +5478,7 @@ func compare_to_best(row: Dictionary) -> Array:
 	for k: String in row["categories"]:
 		var delta := int(row["categories"][k]) - int(previous.get("categories", {}).get(k, 0))
 		if delta != 0:
-			out.append("  %-12s %s%d" % [k, "+" if delta > 0 else "", delta])
+			out.append("  %-12s %s%d" % [SCORE_LABELS.get(String(k), String(k)), "+" if delta > 0 else "", delta])
 	return out
 
 func forget_run(at: int) -> void:
@@ -5661,7 +5663,7 @@ func finale_report() -> Array:
 		"cycle %d   ·   score %d" % [int(finale["cycle"]), int(scored["total"])],
 	]
 	for k: String in scored["categories"]:
-		lines.append("  %-12s %d" % [k, int(scored["categories"][k])])
+		lines.append("  %-12s %d" % [SCORE_LABELS.get(String(k), String(k)), int(scored["categories"][k])])
 	lines.append("Customers at the end %d   ·   faults %d   ·   incidents %d   ·   longest clean streak %d cycles   ·   cash $%d" % [
 		int(finale.get("deals", 0)), int(finale.get("faults", 0)), int(finale.get("incidents", 0)),
 		int(finale.get("best_streak", 0)), int(finale.get("money", 0))])

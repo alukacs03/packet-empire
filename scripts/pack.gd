@@ -370,7 +370,7 @@ static func describe(pred: Dictionary) -> String:
 		"money_at_least":
 			return "at least $%d in the bank" % int(pred.get("amount", 0))
 		"survives_link_loss":
-			return "%s still reaches %s with the %s–%s link down" % [pred.get("from", ""),
+			return "%s still reaches %s with the %s-%s link down" % [pred.get("from", ""),
 				pred.get("to", ""), pred.get("a", ""), pred.get("b", "")]
 		"resolves":
 			return "%s resolves %s%s" % [pred.get("from", ""), pred.get("name", ""),

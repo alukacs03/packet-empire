@@ -145,19 +145,19 @@ const LEARN_HINTS := {
 
 ## command family -> field manual article, across dialects
 const LEARN_TOPICS := [
-	[["ip address", "ip addr", "/ip address", "ip -6 addr", "ipv6 address"], "IP addresses & subnets"],
-	[["ip route", "/ip route", "ip -6 route", "ipv6 route", "traceroute", "tracepath", "/tool traceroute"], "Routing & gateways"],
+	[["ip address", "ip addr", "/ip address", "ip -6 addr", "ipv6 address"], "IP addresses and subnets"],
+	[["ip route", "/ip route", "ip -6 route", "ipv6 route", "traceroute", "tracepath", "/tool traceroute"], "Routing and gateways"],
 	[["switchport mode trunk", "switchport trunk", "show interfaces trunk", "tagged="], "Trunks"],
 	[["vlan", "switchport", "/interface bridge vlan", "/interface bridge port", "type vlan", "pvid"], "@vlans"],
 	[["ipv6 router ospf", "ipv6 ospf", "show ipv6 ospf", "version=3"], "OSPFv3 lives on link-locals"],
 	[["vrrp", "/interface vrrp", "keepalived"], "Two masters"],
 	[["spanning-tree", "/interface bridge port monitor", "bpduguard", "portfast"], "Spanning tree"],
 	[["router ospf", "/routing ospf", "ospf"], "OSPF"],
-	[["router bgp", "/routing bgp", "bgp"], "BGP & the internet"],
+	[["router bgp", "/routing bgp", "bgp"], "BGP and the internet"],
 	[["ip nat", "/ip firewall nat", "iptables", "nft", "masquerade"], "NAT"],
 	[["dhcp", "dhclient", "/ip dhcp", "isc-dhcp-server"], "DHCP"],
 	[["arp", "ip neigh", "/ip arp", "neighbor"], "ARP"],
-	[["mac address-table", "/interface bridge host", "bridge fdb"], "Switches & MAC learning"],
+	[["mac address-table", "/interface bridge host", "bridge fdb"], "Switches and MAC learning"],
 ]
 
 static func dialect_of(session) -> String:

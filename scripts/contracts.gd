@@ -856,7 +856,7 @@ static func _campaign() -> Array:
 			"id": "feel_the_heat",
 			"title": "Feeling the heat",
 			"customer": "Your own ops",
-			"hint": "No console for this one. Shop, Facility: buy a CoolRow CRAC and rack it; the HUD's draw and capacity figures must end with capacity on top.",
+			"hint": "No console for this one. Open a rack and install a CoolRow CRAC from a free slot; the HUD's draw and capacity figures must end with capacity on top.",
 			"reward": 2000,
 			"brief": "Now that you own the room (Server room stage), the racks dump heat into it and the bare walls only dissipate 400W. Exceed that and gear starts tripping offline every cycle. Buy a CoolRow CRAC unit ($600: it cools 1500W but draws 100W itself) and keep total cooling capacity above total power draw. The HUD shows ⚡draw / ❄capacity.",
 			"reqs": [
@@ -1135,7 +1135,7 @@ static func _campaign() -> Array:
 			"title": "Always on",
 			"customer": "Fecske Media",
 			"reward": 3400,
-			"brief": "Fecske's site went down last month because it lived on one server, and they are not doing that again. Put two servers behind an Equipoise LB10: give the load balancer an address on their subnet, stand up 10.190.0.11 and 10.190.0.12, then on the balancer's console in config mode ('enable', 'configure terminal'): 'virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12'. A client on the same network must reach 10.190.0.100, and it must keep reaching it with one of the two servers switched off.",
+			"brief": "Fecske's site went down a few cycles ago because it lived on one server, and they are not doing that again. Put two servers behind an Equipoise LB10: give the load balancer an address on their subnet, stand up 10.190.0.11 and 10.190.0.12, then on the balancer's console in config mode ('enable', 'configure terminal'): 'virtual-server 10.190.0.100 members 10.190.0.11,10.190.0.12'. A client on the same network must reach 10.190.0.100, and it must keep reaching it with one of the two servers switched off.",
 			"reqs": [
 				{"d": "A load balancer with a two-member pool", "t": func() -> bool: return _lb_pool() >= 2},
 				{"d": "The virtual address 10.190.0.100 answers", "t": func() -> bool: return _server_pings("10.190.0.100")},
@@ -1285,7 +1285,7 @@ static func _campaign() -> Array:
 			"id": "prove_it",
 			"title": "The exercise",
 			"customer": "Tisza Bank",
-			"hint": "No console for this one. Ops, Drills: book the failover exercise, run it, and read the debrief; the contract wants the run, not the description.",
+			"hint": "No console for this one. Ops, Facility: book the failover test, run it, and read the debrief; the contract wants the run, not the description.",
 			"reward": 4600,
 			"brief": "Tisza Bank has read your last outage report and would like the exercise run rather than described. Book a failover test (Operations, Facility), let it take your upstream out of service on the cycle you chose, and have every customer still served when it comes back. They want the result either way: a test you fail and act on is worth more to them than one you never ran.",
 			"reqs": [
@@ -1300,7 +1300,7 @@ static func _campaign() -> Array:
 			"title": "The big client",
 			"customer": "Omega Holding",
 			"reward": 5000,
-			"brief": "Omega Holding audited you for a month. Their requirements read like everything you've learned: (1) their own VLAN 30 with a server on an access port; (2) a server at 10.30.0.10/24 that reaches the Internet (NAT or announced: your call); (3) a firewall rule explicitly protecting the 10.30.0.0/24 segment; (4) dynamic routing in the core (a live OSPF adjacency); (5) managed infrastructure: at least one switch with an addressed Management port. Deliver all five and they sign the biggest cheque you've seen.",
+			"brief": "Omega Holding audited you for a quarter. Their requirements read like everything you've learned: (1) their own VLAN 30 with a server on an access port; (2) a server at 10.30.0.10/24 that reaches the Internet (NAT or announced: your call); (3) a firewall rule explicitly protecting the 10.30.0.0/24 segment; (4) dynamic routing in the core (a live OSPF adjacency); (5) managed infrastructure: at least one switch with an addressed Management port. Deliver all five and they sign the biggest cheque you've seen.",
 			"reqs": [
 				{"d": "VLAN 30 with a connected access-port server", "t": func() -> bool: return _vlan_with_server(30)},
 				{"d": "10.30.0.10 reaches the Internet (8.8.8.8)", "t": func() -> bool: return _owner("10.30.0.10") != null and Sim.ping(_owner("10.30.0.10"), "8.8.8.8")["ok"]},
