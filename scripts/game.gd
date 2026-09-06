@@ -5777,7 +5777,19 @@ func config_dirty(d: Net.NDevice) -> bool:
 	## running config differs from what a reboot would restore
 	if d.type in ["server", "uplink", "cooling"] or is_ros(d):
 		return false
-	return JSON.stringify(device_config(d)) != JSON.stringify(d.startup)
+	return _json_norm(device_config(d)) != _json_norm(d.startup)
+
+func _json_norm(v: Variant) -> String:
+	## a loaded save holds floats where the live device holds ints (1500.0 vs 1500);
+	## one round trip through JSON puts both sides in the same shape
+	return JSON.stringify(JSON.parse_string(JSON.stringify(v)))
+
+func _int_keys(dict: Dictionary) -> Dictionary:
+	## JSON keys are strings; the sim keys these by integer
+	var out := {}
+	for k in dict:
+		out[int(k)] = dict[k]
+	return out
 
 func iface_speed(i: Net.Iface) -> int:
 	## Mbps; management ports are 100M service ports
@@ -10326,7 +10338,24 @@ func device_config(d: Net.NDevice) -> Dictionary:
 	var cfg := _ser_device(d).duplicate(true)  # deep copy: a snapshot must not alias the live device
 	cfg.erase("startup")
 	cfg.erase("versions")  # history is not configuration; keeping it made every save look dirty
+	_strip_runtime(cfg.get("services", {}))
+	for si in cfg.get("ifaces", []):
+		for k in ["err_since", "dot1x_ok", "violations", "rx_frames", "tx_frames", "rx_errors", "rx_crc", "rx_giants", "collisions", "out_drops"]:
+			si.erase(k)  # counters and learned state: not configuration either
+	cfg.erase("mcast_groups")
+	cfg.erase("logs")
+	cfg.erase("bindings")
 	return cfg
+
+func _strip_runtime(services: Dictionary) -> void:
+	## leases, log buffers and the AAA trail live in services beside the configuration; write memory keeps neither
+	if services.has("dhcp"):
+		for k in ["leases", "since"]:
+			services["dhcp"].erase(k)
+	if services.has("syslog"):
+		services["syslog"].erase("messages")
+	if services.has("aaa"):
+		services["aaa"].erase("log")
 
 func save_blueprint(r: Net.Rack, name: String) -> String:
 	name = name.strip_edges()
@@ -10488,25 +10517,14 @@ func config_diff(old_cfg: Dictionary, new_cfg: Dictionary) -> Array:
 func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	## restore a saved configuration onto a live device (reload)
 	if cfg.is_empty():
-		d.vlans = {1: "default"} if d.type == "switch" else {}
-		d.static_routes = []
-		d.acls = []
-		d.bgp = {} if d.type != "uplink" else d.bgp
-		d.ospf = {}
-		d.services = {}
-		d.resolver = ""
+		# nothing was ever written: the box comes up as a fresh one of its model, every knob at default
+		var fresh := new_device(d.model)
+		fresh.name = d.name
+		if d.type == "uplink":
+			fresh.bgp = d.bgp.duplicate(true)  # the carrier's side is not ours to lose
+		apply_device_config(d, device_config(fresh))
 		for i: Net.Iface in d.ifaces:
-			i.ips = []
-			i.mode = "access" if d.type == "switch" and not i.name.begins_with("Management") else "routed"
-			i.untagged_vlan = 1
-			i.tagged_vlans = []
-			i.nat = ""
-			i.vrrp = {}
-			i.lag = 0
-			i.helper = ""
-			i.admin_down = false
 			link_restore(i)
-		topology_changed.emit()
 		return
 	d.vlans = {}
 	for vid in cfg.get("vlans", {}):
@@ -10520,7 +10538,17 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	d.stateful = cfg.get("stateful", false)
 	d.bgp = cfg.get("bgp", {}).duplicate(true)
 	d.ospf = cfg.get("ospf", {}).duplicate(true)
+	var live_services: Dictionary = d.services
 	d.services = cfg.get("services", {}).duplicate(true)
+	# the runtime state stays with the box across a reload: leases held, logs kept
+	if d.services.has("dhcp") and live_services.has("dhcp"):
+		d.services["dhcp"]["leases"] = live_services["dhcp"].get("leases", {})
+		d.services["dhcp"]["since"] = live_services["dhcp"].get("since", {})
+	if d.services.has("syslog") and live_services.has("syslog"):
+		d.services["syslog"]["messages"] = live_services["syslog"].get("messages", [])
+	if d.services.has("aaa") and live_services.has("aaa"):
+		d.services["aaa"]["log"] = live_services["aaa"].get("log", [])
+	d.mcast_groups = []  # a restarted host has sent no membership report yet
 	d.resolver = cfg.get("resolver", "")
 	d.ip_forwarding = cfg.get("ip_forwarding", d.ip_forwarding)
 	# everything _ser_device writes into startup comes back, or reload lies
@@ -10529,7 +10557,7 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 	d.dai = bool(cfg.get("dai", false))
 	d.stp_mode = String(cfg.get("stp_mode", d.stp_mode))
 	d.stp_priority = int(cfg.get("stp_priority", d.stp_priority))
-	d.mst_instances = cfg.get("mst_instances", {}).duplicate(true)
+	d.mst_instances = _int_keys(cfg.get("mst_instances", {}).duplicate(true))
 	d.igmp_snooping = bool(cfg.get("igmp_snooping", false))
 	d.mlag_peer = cfg.get("mlag_peer", "")
 	d.snmp = String(cfg.get("snmp", ""))
@@ -10580,6 +10608,9 @@ func apply_device_config(d: Net.NDevice, cfg: Dictionary) -> void:
 		target.dot1x = bool(si.get("dot1x", false))
 		target.port_security = si.get("port_security", false)
 		target.secure_mac = si.get("secure_mac", "")
+		target.secure_macs = si.get("secure_macs", [target.secure_mac] if target.secure_mac != "" else []).duplicate()
+		target.dot1x_ok = ""  # authorisation and violations are learned, not configured: a reload forgets them
+		target.violations = 0
 		target.storm_limit = int(si.get("storm_limit", 0))
 		target.pvlan = si.get("pvlan", "")
 		target.dhcp_trusted = bool(si.get("dhcp_trusted", false))
@@ -10606,6 +10637,9 @@ func _ser_device(d: Net.NDevice) -> Dictionary:
 			"wg_key": i.wg_key, "wg_peers": i.wg_peers,
 			"port_security": i.port_security, "secure_mac": i.secure_mac, "vrf": i.vrf, "qos": i.qos,
 			"portfast": i.portfast, "bpduguard": i.bpduguard, "psec_max": i.psec_max, "psec_violation": i.psec_violation,
+			"secure_macs": i.secure_macs, "err_since": i.err_since,
+			"rx_frames": i.rx_frames, "tx_frames": i.tx_frames, "rx_errors": i.rx_errors, "rx_crc": i.rx_crc,
+			"rx_giants": i.rx_giants, "collisions": i.collisions, "out_drops": i.out_drops,
 			"dhcp_trusted": i.dhcp_trusted, "vm": i.vm,
 			"pvlan": i.pvlan, "storm_limit": i.storm_limit, "dot1x": i.dot1x,
 			"dot1x_ok": i.dot1x_ok, "violations": i.violations,
@@ -10839,10 +10873,12 @@ func _apply(data: Dictionary) -> void:
 		d.aaa = sd.get("aaa", {}).duplicate(true)
 		d.stp_mode = String(sd.get("stp_mode", "rstp"))
 		d.stp_priority = int(sd.get("stp_priority", 32768))
-		d.mst_instances = sd.get("mst_instances", {}).duplicate(true)
+		d.mst_instances = _int_keys(sd.get("mst_instances", {}).duplicate(true))
 		d.igmp_snooping = bool(sd.get("igmp_snooping", false))
 		d.mcast_groups = sd.get("mcast_groups", [])
 		d.startup = sd.get("startup", {})
+		if d.startup.has("mst_instances"):
+			d.startup["mst_instances"] = _int_keys(d.startup["mst_instances"])
 		d.versions = sd.get("versions", [])
 		d.acquired_from = sd.get("acquired_from", "")
 		d.installed_cycle = int(sd.get("installed_cycle", 0))
@@ -10894,6 +10930,15 @@ func _apply(data: Dictionary) -> void:
 			i.psec_max = int(si.get("psec_max", 1))
 			i.psec_violation = String(si.get("psec_violation", "shutdown"))
 			i.secure_mac = si.get("secure_mac", "")
+			i.secure_macs = Array(si.get("secure_macs", [i.secure_mac] if i.secure_mac != "" else []))
+			i.err_since = int(si.get("err_since", 0))
+			i.rx_frames = int(si.get("rx_frames", 0))
+			i.tx_frames = int(si.get("tx_frames", 0))
+			i.rx_errors = int(si.get("rx_errors", 0))
+			i.rx_crc = int(si.get("rx_crc", 0))
+			i.rx_giants = int(si.get("rx_giants", 0))
+			i.collisions = int(si.get("collisions", 0))
+			i.out_drops = int(si.get("out_drops", 0))
 			i.tunnel_src = si.get("tunnel_src", "")
 			i.tunnel_dst = si.get("tunnel_dst", "")
 			i.wg_key = si.get("wg_key", "")

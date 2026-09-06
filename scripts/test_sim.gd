@@ -11492,6 +11492,41 @@ static func run() -> int:
 	Sim.flush_learned_state()
 	check(Sim.rib(t12_s).any(func(e): return e["src"] == "O" and String(e["prefix"]) == "10.78.1.0"), "frr: the server learns the far subnet over OSPF")
 	check(t12_l.exec("ip route").contains("10.78.1.0/24 via 10.78.0.1 dev eth0 proto ospf metric 20"), "frr: ip route shows what zebra installed, with its protocol")
+	# --- persistence: what a save, a reload and a rollback keep or forget ---
+	var t20_dv := Game.new_device("sw-8")
+	t20_dv.startup = JSON.parse_string(JSON.stringify(Game.device_config(t20_dv)))
+	check(not Game.config_dirty(t20_dv), "persist: a configuration that went through JSON is not dirty (1500 vs 1500.0)")
+	t20_dv.ifaces[0].err_since = 7
+	t20_dv.ifaces[0].secure_macs = ["AA:00:00:00:00:01", "AA:00:00:00:00:02"]
+	t20_dv.ifaces[0].rx_errors = 9
+	var t20_ser: Dictionary = Game._ser_device(t20_dv)["ifaces"][0]
+	check(int(t20_ser["err_since"]) == 7 and t20_ser["secure_macs"].size() == 2 and int(t20_ser["rx_errors"]) == 9, "persist: the save carries err_since, the sticky list and the counters")
+	var t20_cfg := Game.device_config(t20_dv)
+	check(not t20_cfg["ifaces"][0].has("err_since") and not t20_cfg["ifaces"][0].has("rx_errors"), "persist: the configuration snapshot carries neither")
+	t20_dv.ifaces[0].secure_mac = "AA:00:00:00:00:01"
+	t20_dv.ifaces[0].secure_macs = ["AA:00:00:00:00:01"]
+	t20_dv.ifaces[0].port_security = true
+	t20_cfg = Game.device_config(t20_dv)
+	t20_dv.ifaces[0].secure_macs = []
+	t20_dv.ifaces[0].dot1x_ok = "AA:00:00:00:00:09"
+	t20_dv.ifaces[0].violations = 3
+	t20_dv.mcast_groups = ["239.1.1.1"]
+	t20_cfg["mst_instances"] = {"1": [10, 20]}
+	Game.apply_device_config(t20_dv, t20_cfg)
+	check(t20_dv.ifaces[0].secure_macs == ["AA:00:00:00:00:01"] and t20_dv.ifaces[0].dot1x_ok == "" and t20_dv.ifaces[0].violations == 0 and t20_dv.mcast_groups.is_empty(),
+		"persist: a replayed configuration resets the sticky list and forgets what was learned")
+	check(t20_dv.mst_instances.has(1) and not t20_dv.mst_instances.has("1"), "persist: MST instance ids come back as integers")
+	t20_dv.services["dhcp"] = {"iface": "Ethernet1", "start": "10.0.0.10", "end": "10.0.0.20", "plen": 24, "gw": "", "dns": "", "leases": {"AA:00:00:00:00:05": "10.0.0.10"}, "since": {}, "excluded": [], "running": true}
+	t20_dv.services["syslog"] = {"messages": ["one line"]}
+	var t20_cfg2 := Game.device_config(t20_dv)
+	check(not t20_cfg2["services"]["dhcp"].has("leases") and not t20_cfg2["services"]["syslog"].has("messages"), "persist: leases and log buffers are not configuration")
+	Game.apply_device_config(t20_dv, t20_cfg2)
+	check(t20_dv.services["dhcp"]["leases"].has("AA:00:00:00:00:05") and t20_dv.services["syslog"]["messages"].size() == 1, "persist: a reload keeps the leases held and the logs kept")
+	t20_dv.snmp = "public"
+	t20_dv.ifaces[1].port_security = true
+	t20_dv.ifaces[1].mtu = 9216
+	Game.apply_device_config(t20_dv, {})
+	check(t20_dv.snmp == "" and not t20_dv.ifaces[1].port_security and t20_dv.ifaces[1].mtu == 1500 and not t20_dv.services.has("dhcp"), "persist: a reboot with no startup config is a factory-fresh box")
 	check(t12_l.exec("echo 'vrrp_instance VI_1 { interface eth0 virtual_router_id 51 priority 150 virtual_ipaddress { 10.78.0.1/24 } }' > /etc/keepalived/keepalived.conf") == "", "keepalived: the conf is written by hand")
 	check(t12_l.exec("systemctl start keepalived") == "" and int(t12_s.ifaces[0].vrrp.get("group", 0)) == 51 and String(t12_s.ifaces[0].vrrp.get("vip", "")) == "10.78.0.1" and int(t12_s.ifaces[0].vrrp.get("priority", 0)) == 150, "keepalived: starting it is the VRRP the routers speak")
 	check(Sim.vrrp_master("10.78.0.1", 51) == t12_s, "keepalived: the server is master of its VIP")
