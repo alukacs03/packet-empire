@@ -681,7 +681,12 @@ func _on_off(on: bool) -> String:
 	return Loc.t("settings.on") if on else Loc.t("settings.off")
 
 func _section(text: String) -> Label:
-	return UIW.make_section(text)
+	## the heading is written in English in the code and is the section's id;
+	## what is shown follows the language when the catalogue has it
+	var key := "section." + Loc.slug(text)
+	var lbl := UIW.make_section(Loc.t(key) if Loc.CATALOG.has(key) else text)
+	lbl.set_meta("section_id", text)
+	return lbl
 
 func _show_overlay(o: Control) -> void:
 	Sfx.play("open")
@@ -2183,7 +2188,7 @@ func _build_ops() -> void:
 	ops_overlay = _overlay()
 	var v := _card(ops_overlay, 900)
 	ops_title = _header(v, func() -> void: ops_overlay.visible = false)
-	ops_title.text = "Network operations"
+	ops_title.text = Loc.t("ops.title")
 	var status_line := _section("LIVE ESTATE  /  CURRENT SHIFT")
 	status_line.add_theme_color_override("font_color", UIW.colour("accent"))
 	ops_scope_lbl = status_line
@@ -2191,16 +2196,16 @@ func _build_ops() -> void:
 	var metrics := HBoxContainer.new()
 	metrics.add_theme_constant_override("separation", UIW.space("md"))
 	v.add_child(metrics)
-	metrics.add_child(_ops_metric("DEVICES", "devices", "info"))
-	metrics.add_child(_ops_metric("CABLE PLANT", "links", "accent"))
-	metrics.add_child(_ops_metric("ATTENTION", "alerts", "warning"))
-	metrics.add_child(_ops_metric("LIVE DRAW", "power", "success"))
+	metrics.add_child(_ops_metric(Loc.t("ops.metric.devices"), "devices", "info"))
+	metrics.add_child(_ops_metric(Loc.t("ops.metric.links"), "links", "accent"))
+	metrics.add_child(_ops_metric(Loc.t("ops.metric.alerts"), "alerts", "warning"))
+	metrics.add_child(_ops_metric(Loc.t("ops.metric.power"), "power", "success"))
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", UIW.space("sm"))
 	v.add_child(tabs)
 	for entry in OPS_TABS:
 		var tb := Button.new()
-		tb.text = String(entry[0])
+		tb.text = Loc.t("ops.tab." + String(entry[0]).to_lower())  # the id stays English; the label follows the language
 		tb.toggle_mode = true
 		tb.pressed.connect(func() -> void:
 			ops_tab = String(entry[0])
@@ -2249,7 +2254,7 @@ func _apply_ops_tab() -> void:
 	ops_orphan_sections = []
 	for child in ops_box.get_children():
 		if child is Label and child.has_meta("section"):
-			current = String(child.text)
+			current = String(child.get_meta("section_id", child.text))
 			if current not in all_titles:
 				ops_orphan_sections.append(current)
 		if current != "":

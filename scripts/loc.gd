@@ -45,6 +45,85 @@ const CATALOG := {
 	"settings.sound": {"en": "Sound", "hu": "Hang"},
 	"settings.colourblind": {"en": "Colourblind-friendly status colours",
 		"hu": "Színtévesztő-barát állapotszínek"},
+	"ops.title": {"en": "Network operations", "hu": "Hálózatüzemeltetés"},
+	"ops.metric.devices": {"en": "DEVICES", "hu": "ESZKÖZÖK"},
+	"ops.metric.links": {"en": "CABLE PLANT", "hu": "KÁBELEZÉS"},
+	"ops.metric.alerts": {"en": "ATTENTION", "hu": "FIGYELEM"},
+	"ops.metric.power": {"en": "LIVE DRAW", "hu": "AKTUÁLIS FOGYASZTÁS"},
+	"ops.tab.capacity": {"en": "Capacity", "hu": "Kapacitás"},
+	"ops.tab.traffic": {"en": "Traffic", "hu": "Forgalom"},
+	"ops.tab.hardware": {"en": "Hardware", "hu": "Hardver"},
+	"ops.tab.facility": {"en": "Facility", "hu": "Létesítmény"},
+	"ops.tab.automation": {"en": "Automation", "hu": "Automatizálás"},
+	"ops.tab.records": {"en": "Records", "hu": "Nyilvántartás"},
+	"ops.tab.board": {"en": "Board", "hu": "Igazgatóság"},
+	"section.a_visit_is_booked": {"en": "A VISIT IS BOOKED", "hu": "LÁTOGATÁS FOGLALVA"},
+	"section.active_deals": {"en": "ACTIVE DEALS", "hu": "ÉLŐ SZERZŐDÉSEK"},
+	"section.address_space": {"en": "ADDRESS SPACE", "hu": "CÍMTARTOMÁNY"},
+	"section.airflow": {"en": "AIRFLOW", "hu": "LÉGÁRAMLÁS"},
+	"section.an_approach": {"en": "AN APPROACH", "hu": "EGY MEGKÖZELÍTÉS"},
+	"section.assets_and_spares": {"en": "ASSETS AND SPARES", "hu": "ESZKÖZÖK ÉS TARTALÉKOK"},
+	"section.audit_readiness": {"en": "AUDIT READINESS", "hu": "AUDITKÉSZÜLTSÉG"},
+	"section.bid_desk_incoming_opportunities": {"en": "BID DESK  /  INCOMING OPPORTUNITIES", "hu": "AJÁNLATOK  /  BEÉRKEZŐ LEHETŐSÉGEK"},
+	"section.campaign": {"en": "CAMPAIGN", "hu": "KAMPÁNY"},
+	"section.capacity": {"en": "CAPACITY", "hu": "KAPACITÁS"},
+	"section.career_profile": {"en": "CAREER PROFILE", "hu": "PÁLYAPROFIL"},
+	"section.certificates": {"en": "CERTIFICATES", "hu": "TANÚSÍTVÁNYOK"},
+	"section.change_management": {"en": "CHANGE MANAGEMENT", "hu": "VÁLTOZÁSKEZELÉS"},
+	"section.chapter_index": {"en": "CHAPTER INDEX", "hu": "FEJEZETEK"},
+	"section.client_ask": {"en": "CLIENT ASK", "hu": "ÜGYFÉLKÉRÉS"},
+	"section.customer_window_what_your_network_is_carrying": {"en": "CUSTOMER WINDOW  /  WHAT YOUR NETWORK IS CARRYING", "hu": "ÜGYFÉLABLAK  /  MIT VISZ A HÁLÓZATOD"},
+	"section.decisions": {"en": "DECISIONS", "hu": "DÖNTÉSEK"},
+	"section.defence": {"en": "DEFENCE", "hu": "VÉDELEM"},
+	"section.devices": {"en": "DEVICES", "hu": "ESZKÖZÖK"},
+	"section.documentation": {"en": "DOCUMENTATION", "hu": "DOKUMENTÁCIÓ"},
+	"section.energy_and_the_books": {"en": "ENERGY AND THE BOOKS", "hu": "ENERGIA ÉS A KÖNYVELÉS"},
+	"section.event_log": {"en": "EVENT LOG", "hu": "ESEMÉNYNAPLÓ"},
+	"section.facility_schedule": {"en": "FACILITY SCHEDULE", "hu": "LÉTESÍTMÉNYI ÜTEMTERV"},
+	"section.failover_test": {"en": "FAILOVER TEST", "hu": "ÁTÁLLÁSI TESZT"},
+	"section.field_manual_reference": {"en": "FIELD MANUAL  /  REFERENCE", "hu": "KÉZIKÖNYV  /  REFERENCIA"},
+	"section.fire_smoke_and_water": {"en": "FIRE, SMOKE AND WATER", "hu": "TŰZ, FÜST ÉS VÍZ"},
+	"section.history": {"en": "HISTORY", "hu": "ELŐZMÉNYEK"},
+	"section.how_the_place_is_trending": {"en": "HOW THE PLACE IS TRENDING", "hu": "MERRE TART A HELY"},
+	"section.how_this_run_ended": {"en": "HOW THIS RUN ENDED", "hu": "HOGY VÉGZŐDÖTT EZ A JÁTÉK"},
+	"section.incident_timeline": {"en": "INCIDENT TIMELINE", "hu": "INCIDENS IDŐVONAL"},
+	"section.incidents_awaiting_a_post_mortem": {"en": "INCIDENTS AWAITING A POST-MORTEM", "hu": "KIÉRTÉKELÉSRE VÁRÓ INCIDENSEK"},
+	"section.job_complete_proof_of_work": {"en": "JOB COMPLETE  /  PROOF OF WORK", "hu": "MUNKA KÉSZ  /  A MUNKA BIZONYÍTÉKA"},
+	"section.live_estate_current_shift": {"en": "LIVE ESTATE  /  CURRENT SHIFT", "hu": "ÉLŐ ÁLLOMÁNY  /  AKTUÁLIS MŰSZAK"},
+	"section.live_solution_snapshot": {"en": "LIVE SOLUTION SNAPSHOT", "hu": "ÉLŐ MEGOLDÁS PILLANATKÉPE"},
+	"section.marketing_and_cover": {"en": "MARKETING AND COVER", "hu": "MARKETING ÉS BIZTOSÍTÁS"},
+	"section.monitors": {"en": "MONITORS", "hu": "FIGYELŐK"},
+	"section.nobody_claims_these": {"en": "NOBODY CLAIMS THESE", "hu": "EZEKET SENKI SEM VÁLLALJA"},
+	"section.opening_arc_network_online_handover_ready": {"en": "OPENING ARC  /  NETWORK ONLINE  /  HANDOVER READY", "hu": "NYITÁNY  /  HÁLÓZAT ÉL  /  ÁTADÁSRA KÉSZ"},
+	"section.pipeline": {"en": "PIPELINE", "hu": "ÉRDEKLŐDŐK"},
+	"section.playbooks": {"en": "PLAYBOOKS", "hu": "FORGATÓKÖNYVEK"},
+	"section.port_inspector_read_only_logical_state": {"en": "PORT INSPECTOR  /  READ-ONLY LOGICAL STATE", "hu": "PORTVIZSGÁLÓ  /  CSAK OLVASHATÓ LOGIKAI ÁLLAPOT"},
+	"section.power": {"en": "POWER", "hu": "TÁP"},
+	"section.quarterly_reports": {"en": "QUARTERLY REPORTS", "hu": "NEGYEDÉVES JELENTÉSEK"},
+	"section.receivables": {"en": "RECEIVABLES", "hu": "KÖVETELÉSEK"},
+	"section.receiving": {"en": "RECEIVING", "hu": "ÁRUÁTVÉTEL"},
+	"section.renewals_calendar": {"en": "RENEWALS CALENDAR", "hu": "MEGÚJÍTÁSI NAPTÁR"},
+	"section.runbooks_and_automation": {"en": "RUNBOOKS AND AUTOMATION", "hu": "RUNBOOKOK ÉS AUTOMATIZÁLÁS"},
+	"section.runs_before_this_one": {"en": "RUNS BEFORE THIS ONE", "hu": "KORÁBBI JÁTÉKOK"},
+	"section.sites": {"en": "SITES", "hu": "TELEPHELYEK"},
+	"section.somebody_else_s_outage": {"en": "SOMEBODY ELSE'S OUTAGE", "hu": "VALAKI MÁS KIESÉSE"},
+	"section.staff": {"en": "STAFF", "hu": "SZEMÉLYZET"},
+	"section.standing_duties": {"en": "STANDING DUTIES", "hu": "ÁLLANDÓ FELADATOK"},
+	"section.status_page": {"en": "STATUS PAGE", "hu": "ÁLLAPOTOLDAL"},
+	"section.the_competition": {"en": "THE COMPETITION", "hu": "A VERSENYTÁRSAK"},
+	"section.the_parts_drawer": {"en": "THE PARTS DRAWER", "hu": "AZ ALKATRÉSZFIÓK"},
+	"section.this_quarter_s_targets": {"en": "THIS QUARTER'S TARGETS", "hu": "E NEGYEDÉV CÉLJAI"},
+	"section.tickets": {"en": "TICKETS", "hu": "HIBAJEGYEK"},
+	"section.top_talkers": {"en": "TOP TALKERS", "hu": "LEGNAGYOBB FORGALMÚAK"},
+	"section.transit_and_peering": {"en": "TRANSIT AND PEERING", "hu": "TRANZIT ÉS PEERING"},
+	"section.unreachable": {"en": "UNREACHABLE", "hu": "ELÉRHETETLEN"},
+	"section.vendor_support": {"en": "VENDOR SUPPORT", "hu": "GYÁRTÓI TÁMOGATÁS"},
+	"section.wan_circuits": {"en": "WAN CIRCUITS", "hu": "WAN ÁRAMKÖRÖK"},
+	"section.what_kind_of_company_this_is": {"en": "WHAT KIND OF COMPANY THIS IS", "hu": "MILYEN CÉG EZ"},
+	"section.what_you_wrote_about_these": {"en": "WHAT YOU WROTE ABOUT THESE", "hu": "AMIT EZEKRŐL ÍRTÁL"},
+	"section.who_is_on_the_floor": {"en": "WHO IS ON THE FLOOR", "hu": "KI VAN A PADLÓN"},
+	"section.practice": {"en": "PRACTICE", "hu": "GYAKORLÁS"},
+	"section.share_and_export": {"en": "SHARE AND EXPORT", "hu": "MEGOSZTÁS ÉS EXPORT"},
 	"company.title": {"en": "Customers and company", "hu": "Ügyfelek és cég"},
 	"company.tab.jobs": {"en": "Jobs", "hu": "Munkák"},
 	"company.tab.business": {"en": "Business", "hu": "Üzlet"},
@@ -294,6 +373,19 @@ static func t(id: String, args := {}) -> String:
 	return text
 
 static var _plural_rx: RegEx = null
+
+static func slug(text: String) -> String:
+	## "FIRE, SMOKE AND WATER" -> "fire_smoke_and_water": a catalogue key from a heading
+	var out := ""
+	var last_us := true
+	for ch in text.to_lower():
+		if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9"):
+			out += ch
+			last_us = false
+		elif not last_us:
+			out += "_"
+			last_us = true
+	return out.trim_suffix("_")
 
 static func tidy_plurals(text: String) -> String:
 	## "1 cycle(s)" -> "1 cycle", "3 cycle(s)" -> "3 cycles": the "(s)" spelling is
