@@ -112,7 +112,7 @@ static func _build_services() -> void:
 static func _build_two_rooms() -> void:
 	## two floors, one address, and a customer who only cares whether it is
 	## still answering when a building goes dark
-	scenario = "Two rooms: 10.75.0.10 must stay reachable with either building dark."
+	scenario = "Two rooms: 10.75.0.10 must stay reachable from the client in Alpha room with Beta room dark, and with Alpha room's own copy switched off. The room the client stands in cannot judge itself."
 	Game.sites = [{"name": "Alpha room", "grid": [4, 4], "kind": "own", "city": "Budapest"}]
 	var other := Game.add_site("Beta room", Vector2i(4, 4), "leased", "Debrecen")
 	Game.carrier_outage = {}
@@ -277,7 +277,7 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 		for ifc in [l.a, l.b]:
 			used.append(ifc)
 	var port: Net.Iface = used[rng.randi() % used.size()]
-	pool.append(["%s %s was unplugged (disabled)" % [port.dev.name, port.name],
+	pool.append(["L1: %s %s was unplugged (disabled)" % [port.dev.name, port.name],
 		func() -> void:
 			port.enabled = false
 			_undo.append(func() -> void: port.enabled = true)])
@@ -285,7 +285,7 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 		var vict_sw: Net.NDevice = _cast["sw1"]
 		var acc: Net.Iface = _cast["access_a"]
 		var good_vlan: int = int(_cast.get("access_vlan", 1))
-		pool.append(["%s %s was moved to a wrong VLAN" % [vict_sw.name, acc.name],
+		pool.append(["L2: %s %s was moved to a wrong VLAN" % [vict_sw.name, acc.name],
 			func() -> void:
 				Game.add_vlan(vict_sw, 99, "wrong")
 				acc.untagged_vlan = 99
@@ -294,19 +294,19 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 		if _cast.has(role):
 			var gw_srv: Net.NDevice = _cast[role]
 			if not gw_srv.static_routes.is_empty():
-				pool.append(["%s lost a route it needs" % gw_srv.name,
+				pool.append(["L3: %s lost a route it needs" % gw_srv.name,
 					func() -> void:
 						var old: Array = gw_srv.static_routes.duplicate(true)
 						gw_srv.static_routes = []
 						_undo.append(func() -> void: gw_srv.static_routes = old)])
 	if _cast.has("svc"):
 		var svc_dev: Net.NDevice = _cast["svc"]
-		pool.append(["the DHCP scope was bound to an interface that does not exist",
+		pool.append(["SERVICE: %s's DHCP scope was bound to an interface that does not exist" % svc_dev.name,
 			func() -> void:
 				var was: String = String(svc_dev.services["dhcp"]["iface"])
 				svc_dev.services["dhcp"]["iface"] = "eth9"
 				_undo.append(func() -> void: svc_dev.services["dhcp"]["iface"] = was)])
-		pool.append(["the DHCP pool was moved into a subnet the segment cannot use",
+		pool.append(["SERVICE: %s's DHCP pool was moved into a subnet the segment cannot use" % svc_dev.name,
 			func() -> void:
 				var was_start: String = String(svc_dev.services["dhcp"]["start"])
 				var was_end: String = String(svc_dev.services["dhcp"]["end"])
@@ -315,7 +315,7 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 				_undo.append(func() -> void:
 					svc_dev.services["dhcp"]["start"] = was_start
 					svc_dev.services["dhcp"]["end"] = was_end)])
-		pool.append(["the app record was removed from the zone",
+		pool.append(["SERVICE: the app record was removed from %s's zone" % svc_dev.name,
 			func() -> void:
 				var was_records: Dictionary = svc_dev.services["dns"]["records"].duplicate()
 				svc_dev.services["dns"]["records"] = {}
@@ -324,43 +324,43 @@ static func _break(n: int, rng_seed: int, difficulty := 2) -> void:
 	if _cast.has("wan") and _cast.has("b"):
 		var wan_if: Net.Iface = _cast["wan"]
 		var far_copy: Net.NDevice = _cast["b"]
-		pool.append(["the link between the two buildings was left disabled",
+		pool.append(["L1: the link between the two buildings was left disabled on %s" % wan_if.dev.name,
 			func() -> void:
 				wan_if.enabled = false
 				_undo.append(func() -> void: wan_if.enabled = true)])
-		pool.append(["the second copy of the service was readdressed and nobody noticed",
+		pool.append(["L3: the second copy of the service (%s) was readdressed and nobody noticed" % far_copy.name,
 			func() -> void:
 				var old_far: Array = far_copy.ifaces[0].ips.duplicate()
 				far_copy.ifaces[0].ips = ["10.75.9.10/24"]
 				_undo.append(func() -> void: far_copy.ifaces[0].ips = old_far)])
 	if _cast.has("trunk"):
 		var trunk_if: Net.Iface = _cast["trunk"]
-		pool.append(["the inter-switch trunk was pruned to the wrong VLAN list",
+		pool.append(["L2: the inter-switch trunk on %s was pruned to the wrong VLAN list" % trunk_if.dev.name,
 			func() -> void:
 				trunk_if.tagged_vlans = [42]
 				_undo.append(func() -> void: trunk_if.tagged_vlans = [])])
-		pool.append(["one end of the trunk was given a different native VLAN",
+		pool.append(["L2: one end of the trunk (%s) was given a different native VLAN" % trunk_if.dev.name,
 			func() -> void:
 				var was_native: int = trunk_if.untagged_vlan
 				trunk_if.untagged_vlan = 99
 				_undo.append(func() -> void: trunk_if.untagged_vlan = was_native)])
 	if _cast.has("ospf_rtr"):
 		var ospf_dev: Net.NDevice = _cast["ospf_rtr"]
-		pool.append(["%s's OSPF network statement no longer covers the transit link" % ospf_dev.name,
+		pool.append(["L3: %s's OSPF network statement no longer covers the transit link" % ospf_dev.name,
 			func() -> void:
 				var was_nets: Array = ospf_dev.ospf["networks"].duplicate()
 				ospf_dev.ospf["networks"] = ["10.73.2.0/24"]
 				_undo.append(func() -> void: ospf_dev.ospf["networks"] = was_nets)])
 	if _cast.has("fw"):
 		var fw_dev: Net.NDevice = _cast["fw"]
-		pool.append(["a deny was inserted above the permit on %s" % fw_dev.name,
+		pool.append(["POLICY: a deny was inserted above the permit on %s" % fw_dev.name,
 			func() -> void:
 				var was_acls: Array = fw_dev.acls.duplicate(true)
 				fw_dev.acls.insert(0, {"action": "deny", "src": "10.73.1.0", "splen": 24, "dst": "0.0.0.0", "dplen": 0})
 				_undo.append(func() -> void: fw_dev.acls = was_acls)])
 	if _cast.has("a"):
 		var ip_srv: Net.NDevice = _cast["a"]
-		pool.append(["%s was readdressed into the wrong subnet" % ip_srv.name,
+		pool.append(["L3: %s was readdressed into the wrong subnet" % ip_srv.name,
 			func() -> void:
 				var old_ips: Array = ip_srv.ifaces[0].ips.duplicate()
 				ip_srv.ifaces[0].ips = ["10.77.1.10/24"]
@@ -436,7 +436,9 @@ static func finish(success: bool) -> Array:
 	## restore the real world; returns the fault list for the debrief
 	if _snap == "":
 		return []  # no drill running: nothing to restore
-	var revealed := faults.duplicate()
+	var revealed: Array = []
+	for k in faults.size():  # a numbered ladder, layer first, so the debrief reads as troubleshooting
+		revealed.append("%d. %s" % [k + 1, faults[k]])
 	Game.drill_active = false
 	Game.restore(_snap)
 	if success:

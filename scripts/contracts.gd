@@ -155,7 +155,7 @@ const DIALECT_HINTS := {
 	},
 	"hide_the_internals": {
 		"device_type": "router",
-		"intro": "Withdraw the private prefix from BGP, then translate instead: on Cisco-style gear mark the inside and outside interfaces, write a standard list of who may be translated, and tie the list to the outside interface with overload. RouterOS masquerades everything leaving the outside interface.",
+		"intro": "Withdraw the private prefix from BGP, then translate instead: on EOS gear (OpenRack, Arivista, Junivista) mark the inside and outside interfaces, write a standard list of who may be translated, and tie the list to the outside interface with overload. RouterOS masquerades everything leaving the outside interface.",
 		"after": "Substitute your real subnet and port names. The server keeps its private address and still reaches 8.8.8.8.",
 		"ros": [
 			"/ip firewall address-list remove [find address=10.3.0.0/24]",
@@ -616,12 +616,21 @@ static func _command_block(label: String, commands: Array[String]) -> String:
 		lines.append("  " + command)
 	return "\n".join(lines)
 
+static func needs_model(contract: Dictionary) -> String:
+	## the model a job cannot be done without, from its hint table, or ""
+	var cfg: Dictionary = DIALECT_HINTS.get(String(contract.get("id", "")), {})
+	return String(cfg.get("model", ""))
+
 static func hint_for(contract: Dictionary) -> String:
 	var id := String(contract.get("id", ""))
 	if not DIALECT_HINTS.has(id):
 		return String(contract.get("hint", ""))
 	var cfg: Dictionary = DIALECT_HINTS[id]
 	var dialects := dialects_for(String(cfg["device_type"]))
+	if cfg.has("model"):
+		# a job that needs a particular box is hinted in that box's dialect
+		var need_os := String(Game.MODELS.get(String(cfg["model"]), {}).get("os", "eos"))
+		dialects = [need_os] as Array[String]
 	var blocks: Array[String] = []
 	if "ros" in dialects:
 		blocks.append(_command_block("PacketTik RouterOS", hint_commands(id, "ros")))
@@ -693,7 +702,7 @@ static func _campaign() -> Array:
 			"title": "Two tenants, one switch",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 800,
-			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. Cisco-style gear: 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1' → 'switchport access vlan 10'. PacketTik (RouterOS 7): '/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether1' and '/interface bridge port set [find interface=ether1] pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
+			"brief": "Your two servers now belong to different customers who must NOT see each other: but they share the switch. That's what VLANs are for. EOS gear (OpenRack, Arivista, Junivista): 'enable', 'configure terminal', 'vlan 10', then per port 'interface Ethernet1', then 'switchport access vlan 10'. PacketTik (RouterOS 7): '/interface bridge vlan add bridge=bridge1 vlan-ids=10 untagged=ether1' and '/interface bridge port set [find interface=ether1] pvid=10'. Put 10.0.0.1's port in VLAN 10 and 10.0.0.2's in VLAN 20: the ping that worked before must now FAIL: separate VLANs are separate networks.",
 			"reqs": [
 				{"d": "A switch has VLANs 10 and 20", "t": func() -> bool: return _switch_with_vlans([10, 20]) != null},
 				{"d": "Access ports assigned to both VLAN 10 and 20", "t": func() -> bool: return _access_port_in(10) and _access_port_in(20)},
@@ -705,7 +714,7 @@ static func _campaign() -> Array:
 			"title": "Growing pains",
 			"customer": "Alfa Ltd & Beta Kft",
 			"reward": 1000,
-			"brief": "Alfa and Beta grew: you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (Cisco-style: 'switchport mode trunk'; PacketTik: '/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether5', which lists the port as tagged for that VLAN): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
+			"brief": "Alfa and Beta grew: you need a second switch, and their VLANs must span both. Connect the two switches with a cable and make BOTH ends trunk ports (EOS: 'switchport mode trunk'; PacketTik: '/interface bridge vlan add bridge=bridge1 vlan-ids=10 tagged=ether5', which lists the port as tagged for that VLAN): a trunk carries multiple VLANs with tags. Then put a new Alfa server (10.0.0.3/24, VLAN 10 access port) on the SECOND switch: it must reach Alfa's 10.0.0.1 across the trunk, while Beta's 10.0.0.2 stays walled off.",
 			"reqs": [
 				{"d": "Two switches joined by a trunk (both ends)", "t": func() -> bool: return _trunk_between_switches(10)},
 				{"d": "10.0.0.3 reaches 10.0.0.1 across switches", "t": func() -> bool: return _ping("10.0.0.3", "10.0.0.1", true)},
@@ -730,7 +739,7 @@ static func _campaign() -> Array:
 			"title": "Connect two offices",
 			"customer": "Gamma Corp",
 			"reward": 1200,
-			"brief": "Gamma runs two offices on different networks: 192.168.1.0/24 and 192.168.2.0/24. Different subnets can only talk through a router. Set up a server in each network (192.168.1.10/24 and 192.168.2.10/24) and install a router with one leg in each subnet. On a PacketTik R4 (RouterOS style): '/ip address add address=192.168.1.1/24 interface=ether1' and the same for ether2 with 192.168.2.1/24. (On Junivista gear it's Cisco-style: 'enable', 'conf t', 'interface Ethernet1', 'ip address ...'.) Then give each server its default gateway: 'ip route add default via 192.168.1.1'. Both servers must reach each other; try 'traceroute' to see the router hop.",
+			"brief": "Gamma runs two offices on different networks: 192.168.1.0/24 and 192.168.2.0/24. Different subnets can only talk through a router. Set up a server in each network (192.168.1.10/24 and 192.168.2.10/24) and install a router with one leg in each subnet. On a PacketTik R4 (RouterOS style): '/ip address add address=192.168.1.1/24 interface=ether1' and the same for ether2 with 192.168.2.1/24. (On Junivista gear it's EOS: 'enable', 'conf t', 'interface Ethernet1', 'ip address ...'.) Then give each server its default gateway: 'ip route add default via 192.168.1.1'. Both servers must reach each other; try 'traceroute' to see the router hop.",
 			"reqs": [
 				{"d": "Servers own 192.168.1.10 and 192.168.2.10", "t": func() -> bool: return _owner("192.168.1.10") != null and _owner("192.168.2.10") != null},
 				{"d": "A router owns 192.168.1.1 and 192.168.2.1", "t": func() -> bool: return _router_owns(["192.168.1.1", "192.168.2.1"])},
@@ -779,7 +788,7 @@ static func _campaign() -> Array:
 			"title": "Join the Internet",
 			"customer": "Zeta Hosting",
 			"reward": 3000,
-			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4 (RouterOS 7): '/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets'. Junivista (Cisco-style): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/ip firewall address-list add list=bgp-nets address=<your-server-subnet>/24' (the address list named in output.network is what gets announced; Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp session print' or 'show ip bgp summary'.",
+			"brief": "Zeta wants their servers on the actual Internet. Buy an ISP Handoff ($200 + $30/cycle transit!) and cable its port to a router. The handoff speaks BGP as AS 64500 from 100.64.0.1/30: put 100.64.0.2/30 on your router's leg, then start BGP. PacketTik R4 (RouterOS 7): '/routing bgp connection add name=isp remote.address=100.64.0.1 remote.as=64500 as=65001 local.role=ebgp output.network=bgp-nets'. EOS (OpenRack, Arivista, Junivista): 'router bgp 65001', 'neighbor 100.64.0.1 remote-as 64500'. The session gives you a default route: but the Internet can't answer until you ANNOUNCE your prefix: '/ip firewall address-list add list=bgp-nets address=<your-server-subnet>/24' (the address list named in output.network is what gets announced; Junivista: 'network <p>/24'). Prove it: a server (default gateway = your router) must ping 8.8.8.8. Check with '/routing bgp session print' or 'show ip bgp summary'.",
 			"reqs": [
 				{"d": "ISP handoff cabled to a router", "t": func() -> bool: return _uplink_cabled()},
 				{"d": "eBGP session Established", "t": func() -> bool: return _bgp_up() != null},
@@ -791,7 +800,7 @@ static func _campaign() -> Array:
 			"title": "Hide the internals",
 			"customer": "Zeta Hosting (again)",
 			"reward": 2200,
-			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. Junivista (EOS-style): an access list that names who may be translated ('ip access-list NAT-ACL', '10 permit ip <server-subnet>/24 any'), then on the uplink interface 'ip nat source dynamic access-list NAT-ACL overload'; the interface it is written on is the outside, there is no inside mark. Check with 'show ip nat translation'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
+			"brief": "Zeta's auditors noticed you ANNOUNCED their private 10.x prefix to the ISP: real upstreams filter RFC1918, and it leaks your addressing plan. Do it properly with NAT: stop announcing the private prefix ('no network <p>/24' under router bgp), then masquerade instead. EOS (OpenRack, Arivista, Junivista): an access list that names who may be translated ('ip access-list NAT-ACL', '10 permit ip <server-subnet>/24 any'), then on the uplink interface 'ip nat source dynamic access-list NAT-ACL overload'; the interface it is written on is the outside, there is no inside mark. Check with 'show ip nat translation'. PacketTik: '/ip firewall nat add chain=srcnat action=masquerade out-interface=ether1'. The router rewrites private sources to its own public address and untranslates the replies. A private server must still ping 8.8.8.8: with NO announcement covering it.",
 			"reqs": [
 				{"d": "A NAT outside interface on a router", "t": func() -> bool: return _nat_router() != null},
 				{"d": "A private (10.x) server reaches 8.8.8.8", "t": func() -> bool: return _private_pings_inet() != null},
@@ -827,7 +836,7 @@ static func _campaign() -> Array:
 			"title": "No single point of failure",
 			"customer": "Omega Holding (pre-audit)",
 			"reward": 3200,
-			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: in config mode, 'interface EthernetN' → 'vrrp 1 ipv4 10.40.0.1' (set 'vrrp 1 priority-level 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
+			"brief": "Before the big contract, Omega's auditors ask an uncomfortable question: what happens when your gateway router dies? Answer: VRRP. Put TWO routers on one subnet (e.g. 10.40.0.2/24 and 10.40.0.3/24) and give both the same virtual gateway: in config mode, 'interface EthernetN', then 'vrrp 1 ipv4 10.40.0.1' (set 'vrrp 1 priority-level 120' on the one you prefer as master); on PacketTik: '/interface vrrp add interface=etherN vrid=1 priority=120' then '/ip address add address=10.40.0.1/32 interface=vrrp1'. A server at 10.40.0.10/24 uses the VIRTUAL address as its default gateway: 'show vrrp' shows Master/Backup, and if the master dies, the backup answers the same IP.",
 			"reqs": [
 				{"d": "Two routers share VRRP group 1 on one virtual IP", "t": func() -> bool: return _vrrp_pair()},
 				{"d": "A server uses the virtual IP as its gateway", "t": func() -> bool: return _server_gw_is_vip()},

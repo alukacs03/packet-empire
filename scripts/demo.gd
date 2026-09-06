@@ -14,7 +14,7 @@ const BEYOND := [
 	"IPv6, OSPF, VRRP, MLAG, WireGuard and 802.1X",
 	"Customers who negotiate, rivals who undercut you, and companies you can buy",
 	"Power, cooling, staff, insurance and a quarterly profit and loss",
-	"Two more floors to grow into, and other cities to reach with WAN circuits",
+	"A server room, a datacenter floor and a campus hall to grow into, and other cities to reach with WAN circuits",
 	"A second building that is a different place: its own diary, its own fire protection, its own dock",
 	"Nights somebody has to cover, a phone that rings at three, and the shift note the next crew reads",
 	"A failover test you book, that takes your upstream away on purpose to find out whether any of it works",

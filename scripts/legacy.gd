@@ -65,9 +65,11 @@ static func harvest(why: String) -> void:
 			"data": {"name": String(them["name"]), "friendly": friendly}})
 	# Losing badly still leaves something: somebody thought you did right by
 	# them under the circumstances.
+	var went_well := why == "sold" or why == "retired" or Game.reputation >= 70
 	offered.append({"id": "lesson", "kind": "lesson", "label": "What the last one taught you",
-		"detail": "Nothing material. A contact who vouches for you, and a shorter way to the same mistake.",
-		"data": {"reputation": 3}})
+		"detail": ("Nothing material. You know where the time goes now, and a contact who saw you run it well." if went_well
+			else "Nothing material. A contact who vouches for you, and a shorter way to the same mistake."),
+		"data": {"reputation": 5 if went_well else 3}})
 	selected = []
 	save_file()
 

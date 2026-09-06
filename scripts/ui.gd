@@ -6307,6 +6307,9 @@ func _refresh_contracts() -> void:
 		cv.add_theme_constant_override("separation", 8)
 		card.add_child(cv)
 		cv.add_child(_label("%s: %s      reward $%d" % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
+		var need_model := Contracts.needs_model(c)
+		if need_model != "" and Game.MODELS.has(need_model):
+			cv.add_child(_label("Needs: %s  ($%d)" % [Game.MODELS[need_model]["label"], int(Game.MODELS[need_model]["price"])], 13, Color(0.85, 0.8, 0.6)))
 		var brief := _label(c["brief"], 14, Color(0.75, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
