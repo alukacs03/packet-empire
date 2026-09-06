@@ -170,8 +170,11 @@ func _build_menu() -> void:
 	menu_box.add_child(quit_b)
 	# keyboard: the first button holds focus, Up and Down walk the list
 	var first_focus := menu_box.get_children().filter(func(c): return c is Button)
-	if not first_focus.is_empty() and is_inside_tree():
-		(first_focus[0] as Control).call_deferred("grab_focus")
+	if not first_focus.is_empty():
+		var first_btn: Control = first_focus[0]
+		(func() -> void:
+			if is_instance_valid(first_btn) and first_btn.is_inside_tree() and first_btn.is_visible_in_tree():
+				first_btn.grab_focus()).call_deferred()
 
 func _most_recent_slot() -> int:
 	## the slot the player was last in, so Continue means what it says

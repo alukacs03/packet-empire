@@ -34,6 +34,9 @@ static func _delegation_for(zones: Dictionary, name: String) -> String:
 
 const STD_MTU := 1500
 static var last_mtu_drop := ""  # why the last oversized frame did not arrive
+const VXLAN_OVERHEAD := 50  # outer Ethernet, IP, UDP and VXLAN headers
+const GRE_OVERHEAD := 24  # outer IP and GRE
+const WG_OVERHEAD := 60  # outer IP, UDP and the WireGuard transport header
 static var _dns_results: Array = []
 static var _dns_id := 0
 static var _dhcp_offer := {}
@@ -85,8 +88,8 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 				result = {"ok": false, "from": r["from"], "detail": "ttl-exceeded"}
 				break
 			if r["type"] == "unreachable":
-				# a router said why, the way real ones do: net, host or admin
-				result = {"ok": false, "from": r["from"], "detail": "unreachable-%s" % r.get("code", "net")}
+				# a router said why, the way real ones do: net, host, admin, or frag with the MTU
+				result = {"ok": false, "from": r["from"], "detail": "unreachable-%s" % r.get("code", "net"), "mtu": int(r.get("mtu", 0))}
 				break
 	result["rtt"] = rtt_ms
 	_echo_results = outer_results
@@ -1648,6 +1651,13 @@ static func _wg_tx(w: Net.Iface, frame: Dictionary) -> void:
 	if not wg_handshake(w, peer):
 		return
 	var remote := wg_remote(w, peer)
+	var wg_inner := frame_size(frame)
+	if wg_inner > 0 and String(peer.get("endpoint", "")) != "":
+		var endpoint_ip := String(peer["endpoint"]).split(":")[0]
+		var wg_probe := ping(w.dev, endpoint_ip, 64, "", wg_inner + WG_OVERHEAD - 28)
+		if not wg_probe["ok"] and (String(wg_probe.get("detail", "")).begins_with("dropped") or String(wg_probe.get("detail", "")) == "unreachable-frag"):
+			Game.device_log(w.dev, "WireGuard: a %d byte frame plus %d bytes of encapsulation exceeds the underlay MTU" % [wg_inner, WG_OVERHEAD])
+			return
 	# the far side must also allow the source, or it drops what we send
 	if wg_peer_for(remote, String(pl.get("src_ip", ""))).is_empty():
 		Game.device_log(remote.dev, "wireguard dropped traffic from %s: not in allowed IPs"
@@ -1692,8 +1702,12 @@ static func _tunnel_tx(t: Net.Iface, frame: Dictionary) -> void:
 	var peer := tunnel_peer(t)
 	if peer == null:
 		return
-	if not ping(t.dev, t.tunnel_dst)["ok"]:
-		return  # the path is down, and so is the tunnel
+	var inner_size := frame_size(frame)
+	var probe := ping(t.dev, t.tunnel_dst, 64, "", maxi(64, inner_size + GRE_OVERHEAD - 28) if inner_size > 0 else 64)
+	if not probe["ok"]:
+		if inner_size > 0 and (String(probe.get("detail", "")).begins_with("dropped") or String(probe.get("detail", "")) == "unreachable-frag"):
+			Game.device_log(t.dev, "GRE: a %d byte frame plus %d bytes of encapsulation exceeds the underlay MTU" % [inner_size, GRE_OVERHEAD])
+		return  # the path is down, or the encapsulated frame does not fit it, and so is the tunnel
 	t.tx_frames += 1
 	peer.rx_frames += 1
 	var inner := frame.duplicate(true)
@@ -2075,7 +2089,7 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 						iface.vrf)
 				"reply", "ttl-exceeded", "unreachable":
 					_echo_results.append({"type": l4["type"], "id": l4["id"], "from": p["src_ip"],
-						"ttl": int(p.get("ttl", 64)), "code": l4.get("code", "")})
+						"ttl": int(p.get("ttl", 64)), "code": l4.get("code", ""), "mtu": int(l4.get("mtu", 0))})
 		elif l4["proto"] == "dns":
 			var svc_dns: Dictionary = dev.services.get("dns", {})
 			var recs: Dictionary = svc_dns.get("records", {})
@@ -2194,6 +2208,18 @@ static func _host_rx(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary) -> v
 		dev.talkers[talk_key] = int(dev.talkers.get(talk_key, 0)) + 1
 		var fwd := p.duplicate(true)
 		fwd["ttl"] -= 1
+		# path MTU discovery: a packet that will not fit the egress (or the far
+		# end of that wire) comes back as ICMP fragmentation needed, with the MTU
+		var fsize := frame_size({"pl": fwd})
+		var path_mtu := out.mtu
+		var out_link := Game.link_at(out)
+		if out_link != null:
+			path_mtu = mini(path_mtu, out_link.other(out).mtu)
+		if fsize > 0 and path_mtu > 0 and fsize > path_mtu:
+			out.out_drops += 1
+			Game.device_log(dev, "MTU: %d byte packet for %s needs fragmentation, egress %s MTU %d; ICMP frag-needed sent" % [fsize, fwd["dst_ip"], out.name, path_mtu])
+			_icmp_unreachable(dev, p, "frag", iface.vrf, path_mtu)
+			return
 		var new_src := nat_translate_src(dev, iface, out, String(fwd["src_ip"]))
 		if new_src != "":
 			# source NAT: hide the private source behind our outside address
@@ -2299,7 +2325,9 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary, outbound
 						var code := String(l4.get("code", "net"))
 						var about := String(l4.get("orig_dst", p["dst_ip"]))
 						desc = "%s %s > %s: ICMP %s, length 92" % ["IP6" if v6 else "IP", p["src_ip"], p["dst_ip"],
-							("host %s unreachable - admin prohibited filter" % about) if code == "admin" else ("%s %s unreachable" % [code, about])]
+							("host %s unreachable - admin prohibited filter" % about) if code == "admin"
+							else (("%s unreachable - need to frag (mtu %d)" % [about, int(l4.get("mtu", 0))]) if code == "frag"
+							else ("%s %s unreachable" % [code, about]))]
 				"dns":
 					desc = "IP %s.%d > %s.53: %d+ %s? %s. (%d)" % [p["src_ip"], 30000 + int(l4.get("id", 0)) % 30000, p["dst_ip"],
 						int(l4.get("id", 0)) % 65536, "AAAA" if bool(l4.get("v6", false)) else "A", l4.get("q", ""), 30]
@@ -2383,14 +2411,17 @@ static func _vrrp_owns(dev: Net.NDevice, iface: Net.Iface, ip: String) -> bool:
 		return false
 	return vrrp_master(ip, int(iface.vrrp.get("group", -1))) == dev
 
-static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf: String) -> void:
+static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf: String, mtu := 0) -> void:
 	## Destination Unreachable back to the sender. Never about another ICMP
 	## error (RFC 1122), or two routers could bounce complaints forever.
+	## code "frag" is type 3 code 4, fragmentation needed, and carries the MTU.
 	var l4: Dictionary = p.get("l4", {})
 	if l4.get("proto", "") == "icmp" and l4.get("type", "") in ["ttl-exceeded", "unreachable"]:
 		return
-	_send_ip(dev, p["src_ip"], 64, {"proto": "icmp", "type": "unreachable", "code": code,
-		"id": l4.get("id", 0), "orig_dst": p["dst_ip"]}, vrf)
+	var msg := {"proto": "icmp", "type": "unreachable", "code": code, "id": l4.get("id", 0), "orig_dst": p["dst_ip"]}
+	if mtu > 0:
+		msg["mtu"] = mtu
+	_send_ip(dev, p["src_ip"], 64, msg, vrf)
 
 static func nat_rules(dev: Net.NDevice) -> Array:
 	return dev.services.get("nat", {}).get("rules", []).filter(func(r): return String(r.get("disabled", "no")) != "yes")
@@ -2578,6 +2609,9 @@ static func _vxlan_tx(dev: Net.NDevice, in_if: Net.Iface, vlan: int, frame: Dict
 	var payload := {"proto": "vxlan", "vni": vni, "frame": frame.duplicate(true),
 		"id": int(frame.get("pl", {}).get("l4", {}).get("id", 0)) if frame.get("pl") is Dictionary
 			else 0}
+	var inner_size := frame_size(frame)
+	if inner_size > 0:
+		payload["size"] = inner_size + VXLAN_OVERHEAD - 28  # the underlay port sees the whole encapsulated packet
 	var dst_mac := String(frame["dst"])
 	var known_remote: String = String(dev.remote_macs.get(vlan, {}).get(dst_mac, ""))
 	var targets: Array = []
@@ -2589,7 +2623,10 @@ static func _vxlan_tx(dev: Net.NDevice, in_if: Net.Iface, vlan: int, frame: Dict
 	for peer: String in targets:
 		if peer == String(dev.vtep["src"]):
 			continue
+		var drop_before := last_mtu_drop
 		_send_ip(dev, peer, 64, payload)
+		if last_mtu_drop != drop_before and inner_size > 0:
+			Game.device_log(dev, "VXLAN: a %d byte frame plus %d bytes of encapsulation exceeds the underlay MTU towards %s" % [inner_size, VXLAN_OVERHEAD, peer])
 
 static func _vxlan_rx(dev: Net.NDevice, from_ip: String, l4: Dictionary) -> void:
 	if dev.vtep.is_empty():

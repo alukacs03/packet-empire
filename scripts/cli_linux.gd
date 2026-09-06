@@ -1409,6 +1409,11 @@ func _ping(args: Array, force6: bool) -> String:
 		Sim.src_override = ""
 		var detail := String(r.get("detail", ""))
 		var frag_line := ""
+		if not bool(r["ok"]) and detail == "unreachable-frag" and not df:
+			# no DF: the kernel fragments to the MTU the router named, and the
+			# fragments go through; only the accounting changes
+			r = Sim.ping(dev, ip, 64, "", 64, run_id, seq + 1)
+			detail = String(r.get("detail", ""))
 		if not bool(r["ok"]) and detail.begins_with("dropped:"):
 			# "dropped: N bytes will not fit the M byte MTU on DEV PORT": who
 			# dropped it decides what, if anything, comes back
@@ -1455,7 +1460,7 @@ func _ping(args: Array, force6: bool) -> String:
 		elif detail == "ttl-exceeded":
 			out += "From %s icmp_seq=%d Time to live exceeded\n" % [r["from"], seq + 1]
 		elif detail.begins_with("unreachable-"):
-			out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, CLI.unreachable_text(detail)]
+			out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, CLI.unreachable_text(detail, int(r.get("mtu", 0)))]
 		else:
 			errors -= 1  # a plain timeout prints nothing per probe
 	var lost := count - received

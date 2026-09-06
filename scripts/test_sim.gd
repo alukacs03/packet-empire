@@ -2403,6 +2403,35 @@ static func run() -> int:
 		"firewall: show firewall connections lists the tracked flows with their port")
 	check(CLI.new_session(ct_ros).exec("/ip firewall connection print").contains("10.3.0.5"),
 		"ros: /ip firewall connection print lists the tracked flows")
+	# --- path MTU discovery is a real ICMP, with the MTU in it ---
+	var pm_r := Game.new_device("rtr-edge")
+	var pm_a := Game.new_device("srv-1")
+	var pm_b := Game.new_device("srv-1")
+	var pm_rack := Game.add_rack(Vector2i(9, 6))
+	pm_rack.slots[0] = pm_r
+	pm_rack.slots[1] = pm_a
+	pm_rack.slots[2] = pm_b
+	Game.connect_ifaces(pm_r.ifaces[0], pm_a.ifaces[0])
+	Game.connect_ifaces(pm_r.ifaces[1], pm_b.ifaces[0])
+	Game.add_ip(pm_r.ifaces[0], "10.7.0.1/24")
+	Game.add_ip(pm_r.ifaces[1], "10.8.0.1/24")
+	Game.add_ip(pm_a.ifaces[0], "10.7.0.10/24")
+	Game.add_ip(pm_b.ifaces[0], "10.8.0.10/24")
+	Game.add_static_route(pm_a, "0.0.0.0", 0, "10.7.0.1")
+	Game.add_static_route(pm_b, "0.0.0.0", 0, "10.8.0.1")
+	pm_r.ifaces[1].mtu = 1400
+	pm_b.ifaces[0].mtu = 1400
+	Game.topology_changed.emit()
+	var pm_res := Sim.ping(pm_a, "10.8.0.10", 64, "", 1450)
+	check(not pm_res["ok"] and String(pm_res["detail"]) == "unreachable-frag" and int(pm_res.get("mtu", 0)) == 1400 and String(pm_res["from"]) == "10.7.0.1",
+		"pmtu: the router answers a packet that will not fit with ICMP frag-needed carrying the egress MTU")
+	check(Sim.ping(pm_a, "10.8.0.10", 64, "", 1300)["ok"], "pmtu: a packet that fits goes through")
+	var pm_s := CLI.new_session(pm_a)
+	var pm_do := pm_s.exec("ping -M do -s 1450 -c 1 10.8.0.10")
+	check(pm_do.contains("From 10.7.0.1 icmp_seq=1 Frag needed and DF set (mtu = 1400)"), "pmtu: ping -M do prints the router's ICMP with the MTU")
+	check(pm_s.exec("ping -s 1450 -c 1 10.8.0.10").contains("1 received"), "pmtu: without DF the kernel fragments and the ping succeeds")
+	check(pm_r.logs.any(func(l): return "frag-needed" in String(l)), "pmtu: the router logs what it sent back")
+	check(Sim.VXLAN_OVERHEAD == 50 and Sim.GRE_OVERHEAD == 24 and Sim.WG_OVERHEAD == 60, "overlay: encapsulation overheads are the real ones")
 	# --- duplicate addresses are logged on both boxes ---
 	var dup_a := Game.new_device("srv-1")
 	var dup_b := Game.new_device("srv-1")

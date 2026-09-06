@@ -115,11 +115,12 @@ static func dev_suffix(dev: Net.NDevice, via: String) -> String:
 	var egress := Sim._connected_iface(dev, via)
 	return (" dev %s" % egress.name) if egress != null else ""
 
-static func unreachable_text(detail: String) -> String:
+static func unreachable_text(detail: String, mtu := 0) -> String:
 	## the words a Linux ping prints for each ICMP unreachable code
 	match detail.trim_prefix("unreachable-"):
 		"host": return "Destination Host Unreachable"
 		"admin": return "Packet filtered"
+		"frag": return "Frag needed and DF set (mtu = %d)" % mtu
 	return "Destination Net Unreachable"
 
 ## Learner hints: one shared table keyed by dialect and the first words of the
@@ -324,7 +325,7 @@ static func fmt_ping_eos(dev: Net.NDevice, target: String, count: int, payload: 
 				out += "From %s icmp_seq=%d Time to live exceeded\n" % [r["from"], seq + 1]
 			elif detail.begins_with("unreachable-"):
 				errors += 1
-				out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, unreachable_text(detail)]
+				out += "From %s icmp_seq=%d %s\n" % [r["from"], seq + 1, unreachable_text(detail, int(r.get("mtu", 0)))]
 			elif detail.begins_with("host unreachable"):
 				errors += 1
 				out += "From %s icmp_seq=%d Destination Host Unreachable\n" % [first_ip_of(dev), seq + 1]
