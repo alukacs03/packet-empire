@@ -2432,6 +2432,58 @@ static func run() -> int:
 	check(pm_s.exec("ping -s 1450 -c 1 10.8.0.10").contains("1 received"), "pmtu: without DF the kernel fragments and the ping succeeds")
 	check(pm_r.logs.any(func(l): return "frag-needed" in String(l)), "pmtu: the router logs what it sent back")
 	check(Sim.VXLAN_OVERHEAD == 50 and Sim.GRE_OVERHEAD == 24 and Sim.WG_OVERHEAD == 60, "overlay: encapsulation overheads are the real ones")
+	# --- spanning tree off: a loop storms ---
+	var t6_st_a := Game.new_device("sw-8")
+	var st_b := Game.new_device("sw-8")
+	var st_h1 := Game.new_device("srv-1")
+	var st_h2 := Game.new_device("srv-1")
+	var t6_st_rack := Game.add_rack(Vector2i(9, 7))
+	t6_st_rack.slots[0] = t6_st_a
+	t6_st_rack.slots[1] = st_b
+	t6_st_rack.slots[2] = st_h1
+	t6_st_rack.slots[3] = st_h2
+	Game.connect_ifaces(t6_st_a.ifaces[0], st_b.ifaces[0])
+	Game.connect_ifaces(t6_st_a.ifaces[1], st_b.ifaces[1])
+	Game.connect_ifaces(st_h1.ifaces[0], t6_st_a.ifaces[2])
+	Game.connect_ifaces(st_h2.ifaces[0], st_b.ifaces[2])
+	Game.add_ip(st_h1.ifaces[0], "10.66.0.1/24")
+	Game.add_ip(st_h2.ifaces[0], "10.66.0.2/24")
+	Game.topology_changed.emit()
+	check(Sim.ping(st_h1, "10.66.0.2")["ok"], "storm: with spanning tree on, the second cable is blocked and the ping works")
+	var st_cli := CLI.new_session(t6_st_a)
+	st_cli.exec("en")
+	st_cli.exec("conf t")
+	check(st_cli.exec("spanning-tree mode none") == "" and t6_st_a.stp_mode == "none", "storm: spanning-tree mode none is accepted as none, not rstp")
+	CLI.new_session(st_b).exec("en")
+	st_b.stp_mode = "none"
+	Sim.flush_learned_state()
+	Game.topology_changed.emit()
+	var st_res := Sim.ping(st_h1, "10.66.0.2")
+	check(not st_res["ok"] and String(st_res["detail"]) == "broadcast storm", "storm: with spanning tree off the loop storms and nothing gets through")
+	check(t6_st_a.logs.any(func(l): return "STORM" in String(l)) or st_b.logs.any(func(l): return "STORM" in String(l)), "storm: the switch logs the storm")
+	Game.disconnect_iface(t6_st_a.ifaces[1])
+	Sim.flush_learned_state()
+	Game.topology_changed.emit()
+	check(Sim.ping(st_h1, "10.66.0.2")["ok"], "storm: pulling the second cable ends it")
+	# --- link-local addresses are real ---
+	var ll_r := Game.new_device("rtr-edge")
+	var ll_h := Game.new_device("srv-1")
+	t6_st_rack.slots[4] = ll_r
+	t6_st_rack.slots[5] = ll_h
+	Game.connect_ifaces(ll_r.ifaces[0], ll_h.ifaces[0])
+	Game.add_ip(ll_r.ifaces[0], "2001:db8:77::1/64")
+	Game.add_ip(ll_h.ifaces[0], "2001:db8:77::10/64")
+	Game.topology_changed.emit()
+	var ll_addr := Sim.link_local(ll_r.ifaces[0])
+	check(ll_addr.begins_with("fe80::") and Sim._iface_owns_ip(ll_r.ifaces[0], ll_addr), "ll: every interface owns its fe80 EUI-64 address")
+	var ll_s := CLI.new_session(ll_h)
+	check(ll_s.exec("ping -c 1 %s%%eth0" % ll_addr).contains("1 received"), "ll: a link-local target is reachable with its scope")
+	check(ll_s.exec("ip -6 route add default via %s dev eth0" % ll_addr) == "" and ll_s.exec("ip -6 route add 2001:db8:99::/64 via %s" % ll_addr).contains("invalid gateway"),
+		"ll: a link-local gateway is taken with its interface and refused without")
+	Game.add_ip(ll_r.ifaces[1], "2001:db8:99::1/64")
+	Game.connect_ifaces(ll_r.ifaces[1], Game.new_device("srv-1").ifaces[0])
+	Game.topology_changed.emit()
+	check(Sim.ping(ll_h, "2001:db8:99::1")["ok"], "ll: the default via a link-local next hop forwards")
 	# --- duplicate addresses are logged on both boxes ---
 	var dup_a := Game.new_device("srv-1")
 	var dup_b := Game.new_device("srv-1")

@@ -1288,6 +1288,22 @@ func _ip_route(rest: Array, family: int) -> String:
 		if not gw.is_valid_ip_address():
 			return "Error: any valid address is expected rather than \"%s\".\n" % gw
 		var egress := _on_link(gw)
+		if egress == null and gw.to_lower().begins_with("fe80"):
+			# a link-local gateway is only meaningful with the interface it is on
+			if not kv.has("dev"):
+				return "Error: Nexthop has invalid gateway.\n"
+			egress = _iface(String(kv["dev"]))
+			if egress == null:
+				return "Cannot find device \"%s\"\n" % kv["dev"]
+			var ll_parts := pfx.split("/")
+			for r in dev.static_routes:
+				if String(r["prefix"]) == ll_parts[0] and int(r["plen"]) == int(ll_parts[1]) and String(r.get("vrf", "")) == "":
+					if verb == "add":
+						return "RTNETLINK answers: File exists\n"
+					Game.remove_static_route(dev, ll_parts[0], int(ll_parts[1]))
+			dev.static_routes.append({"prefix": ll_parts[0], "plen": int(ll_parts[1]), "via": gw, "ad": 1, "dev": egress.name})
+			Game.topology_changed.emit()
+			return ""
 		if egress == null:
 			return "Error: Nexthop has invalid gateway.\n"
 		if kv.has("dev") and String(kv["dev"]) != egress.name:
@@ -1386,6 +1402,12 @@ func _ping(args: Array, force6: bool) -> String:
 		k += 1
 	if target == "":
 		return "ping: usage error: Destination address required\n"
+	var ll_if := ""
+	if "%" in target and target.to_lower().begins_with("fe80"):
+		ll_if = target.split("%")[1]  # fe80::1%eth0: the scope is the interface
+		target = target.split("%")[0]
+		if _iface(ll_if) == null:
+			return "ping: %s: No such device\n" % ll_if
 	var ip := Sim.resolve(dev, target, true, v6)
 	if ip == "" and (target.is_valid_ip_address()):
 		ip = target
@@ -1405,8 +1427,10 @@ func _ping(args: Array, force6: bool) -> String:
 	var run_id := Sim.next_echo_id()
 	for seq in count:
 		Sim.src_override = src_from
+		Sim.ll_scope = ll_if
 		var r := Sim.ping(dev, ip, 64, "", reply_bytes, run_id, seq + 1)
 		Sim.src_override = ""
+		Sim.ll_scope = ""
 		var detail := String(r.get("detail", ""))
 		var frag_line := ""
 		if not bool(r["ok"]) and detail == "unreachable-frag" and not df:

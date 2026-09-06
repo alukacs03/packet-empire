@@ -14,6 +14,8 @@ const MCAST_PREFIX := "01:00:5e"
 const MAX_DEPTH := 400  # flood guard for misconfigurations STP cannot see
 
 static var _depth := 0
+static var storm_seen := false  # a flood ran into the depth guard on a switch with no spanning tree
+static var _storm_logged := {}  # switch name -> cycle it was last logged
 static var _echo_id := 0
 static var _echo_results: Array = []
 static var rtt_ms := 0.0  # accumulated latency of the operation in flight
@@ -71,6 +73,7 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 	var my_id := _echo_id
 	if _depth == 0:
 		last_mtu_drop = ""
+		storm_seen = false
 	var err := _send_ip(dev, dst_ip, ttl,
 		{"proto": "icmp", "type": "echo", "id": my_id, "size": size, "seq": seq}, vrf)
 	var result := {"ok": false, "from": "", "detail":
@@ -91,6 +94,8 @@ static func ping(dev: Net.NDevice, dst_ip: String, ttl := 64, vrf := "", size :=
 				# a router said why, the way real ones do: net, host, admin, or frag with the MTU
 				result = {"ok": false, "from": r["from"], "detail": "unreachable-%s" % r.get("code", "net"), "mtu": int(r.get("mtu", 0))}
 				break
+	if storm_seen and _depth == 0:
+		result = {"ok": false, "from": "", "detail": "broadcast storm"}  # nothing crosses a storming segment
 	result["rtt"] = rtt_ms
 	_echo_results = outer_results
 	if _depth > 0:
@@ -1029,8 +1034,8 @@ static func _stp_tree(instance: int) -> Dictionary:
 	var blocked := {}
 	var switches: Array = []
 	for d in Game.all_devices():
-		if d.type == "switch" and d.status == "active":
-			switches.append(d)
+		if d.type == "switch" and d.status == "active" and d.stp_mode != "none":
+			switches.append(d)  # a switch with spanning tree off sends no BPDUs: it is not in the tree
 	if switches.is_empty():
 		return blocked
 	switches.sort_custom(func(x, y): return stp_id(x) < stp_id(y))
@@ -1040,7 +1045,7 @@ static func _stp_tree(instance: int) -> Dictionary:
 	for l in Game.links:
 		for port: Net.Iface in [l.a, l.b]:
 			var far: Net.Iface = l.other(port)
-			if port.bpduguard and port.enabled and far.dev.type == "switch" and far.enabled \
+			if port.bpduguard and port.enabled and far.dev.type == "switch" and far.dev.stp_mode != "none" and far.enabled \
 					and far.dev.status == "active" and port.dev.status == "active":
 				port.err_disabled = true
 				port.enabled = false
@@ -1048,7 +1053,7 @@ static func _stp_tree(instance: int) -> Dictionary:
 				Game.log_event("BPDU GUARD: %s %s heard a switch (%s) and shut itself." % [port.dev.name, port.name, far.dev.name])
 	var sw_links: Array = []
 	for l in Game.links:
-		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
+		if l.a.dev.type == "switch" and l.b.dev.type == "switch" and l.a.enabled and l.b.enabled and l.a.dev.stp_mode != "none" and l.b.dev.stp_mode != "none" and not l.a.name.begins_with("Management") and not l.b.name.begins_with("Management") and l.a.dev.status == "active" and l.b.dev.status == "active":
 			if l.a.lag > 0 and l.b.lag > 0 and not lag_compatible(l.a, l.b):
 				continue  # suspended members carry nothing, not even BPDUs
 			sw_links.append(l)
@@ -1176,6 +1181,16 @@ static func _send_ip(dev: Net.NDevice, dst_ip: String, ttl: int, l4: Dictionary,
 	if dev.status != "active":
 		return "device is offline"
 	var rt := _route_lookup(dev, dst_ip, "%s|%s|%s" % [dst_ip, str(l4.get("id", 0)), dev.name], vrf)
+	if rt.is_empty() and Net.is_v6(dst_ip) and dst_ip.to_lower().begins_with("fe80"):
+		# link-local: on the wire the scope names, else the first live port
+		var scoped: Net.Iface = Game._find_iface(dev, ll_scope) if ll_scope != "" else null
+		if scoped == null:
+			for cand: Net.Iface in dev.ifaces:
+				if iface_up(cand) and not cand.name.begins_with("Management") and cand.name != "lo":
+					scoped = cand
+					break
+		if scoped != null:
+			rt = {"iface": scoped, "next_hop": dst_ip, "plen": 64}
 	if rt.is_empty():
 		return "no route to host"
 	if rt.get("next_hop", "") == "null0":
@@ -1275,13 +1290,13 @@ static func slaac(host: Net.NDevice, iface: Net.Iface) -> Dictionary:
 				var full := "%s/64" % addr
 				if full not in iface.ips:
 					iface.ips.append(full)
-				var via: String = parts[0]
+				var via: String = link_local(ri)  # a real RA names the router by its link-local
 				var already := false
 				for r in host.static_routes:
 					if String(r["prefix"]) == "::" and int(r["plen"]) == 0:
 						already = true
 				if not already:
-					host.static_routes.append({"prefix": "::", "plen": 0, "via": via})
+					host.static_routes.append({"prefix": "::", "plen": 0, "via": via, "dev": iface.name})
 				Game.topology_changed.emit()
 				return {"ok": true, "address": full, "router": router.name, "why": ""}
 	return {"ok": false, "address": "", "router": "",
@@ -1416,6 +1431,10 @@ static func _route_entries_build(dev: Net.NDevice, vrf := "") -> Array:
 					"plen": int(r["plen"]), "cost": 1, "vrf": vrf})
 				continue
 			var via_if := _connected_iface(dev, String(r["via"]), vrf)
+			if via_if == null and String(r["via"]).to_lower().begins_with("fe80") and String(r.get("dev", "")) != "":
+				via_if = Game._find_iface(dev, String(r["dev"]))  # a link-local next hop lives on the interface it was given with
+				if via_if != null and (not iface_up(via_if) or via_if.vrf != vrf):
+					via_if = null
 			if via_if:
 				out.append({"src": code, "ad": ad, "iface": via_if, "next_hop": r["via"], "prefix": r["prefix"],
 					"plen": int(r["plen"]), "cost": int(r.get("cost", 1)), "pref": int(r.get("pref", 100)),
@@ -1490,6 +1509,7 @@ static func _learn_neighbour(dev: Net.NDevice, key: String, mac: String) -> void
 	_arp_pending.erase("%s|%s" % [dev.name, key])
 
 static var src_override := ""  # ping -I <address>: honoured for one probe when the host owns it
+static var ll_scope := ""  # the %eth0 of a link-local target, for one probe
 
 static func _src_on(iface: Net.Iface, next_hop: String, v6 := false) -> String:
 	## the source address: the one on the egress port whose subnet holds the
@@ -1511,11 +1531,14 @@ static func _first_ip(iface: Net.Iface, v6 := false) -> String:
 static func _has_ip(dev: Net.NDevice, ip: String, vrf := "*") -> bool:
 	## "*" means any table (the loopback shortcut in ping); a packet that arrived
 	## on a VRF interface is only "ours" if the address lives in that VRF
+	var ll := Net.is_v6(ip) and ip.to_lower().begins_with("fe80")
 	for i: Net.Iface in dev.ifaces:
 		if i.enabled and (vrf == "*" or i.vrf == vrf):
 			for cidr: String in i.ips:
 				if Net.addr_eq(cidr.split("/")[0], ip):
 					return true
+			if ll and Net.addr_eq(link_local(i), ip):
+				return true  # the interface's own link-local
 	return false
 
 # ---------- wire / receive ----------
@@ -1533,6 +1556,14 @@ static func _tx(iface: Net.Iface, frame: Dictionary) -> void:
 				and not lag_compatible(iface, Game.link_at(iface).other(iface)):
 			return  # every member is suspended: the bundle never came up
 	if _depth > MAX_DEPTH:
+		if iface.dev.type == "switch" and iface.dev.stp_mode == "none":
+			# no spanning tree, a loop, and a frame that never stops: the storm
+			# every switching course warns about; nothing gets through it
+			storm_seen = true
+			if int(_storm_logged.get(iface.dev.name, -1)) != Game.cycle:
+				_storm_logged[iface.dev.name] = Game.cycle
+				Game.device_log(iface.dev, "STORM: broadcast storm on %s, spanning tree is off and the topology has a loop" % iface.name)
+				Game.log_event("BROADCAST STORM: %s is flooding the same frame round a loop. Pull a cable or turn spanning tree back on." % iface.dev.name)
 		return
 	if not iface.enabled or iface.dev.status != "active":
 		return
@@ -2583,6 +2614,10 @@ static func bond_members(iface: Net.Iface) -> Array:
 			out.append(i)
 	return out
 
+static func link_local(iface: Net.Iface) -> String:
+	## fe80::<EUI-64>: every interface has one whether or not anybody typed it
+	return Net.v6_compress("fe80::%s" % Net.eui64(iface.mac))
+
 static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 	# a bond is one interface as far as addressing is concerned, so any leg
 	# answers for an address configured on any other leg
@@ -2590,6 +2625,8 @@ static func _iface_owns_ip(iface: Net.Iface, ip: String) -> bool:
 		for cidr: String in member.ips:
 			if Net.addr_eq(cidr.split("/")[0], ip):
 				return true
+	if Net.is_v6(ip) and ip.to_lower().begins_with("fe80") and Net.addr_eq(link_local(iface), ip):
+		return true  # the link-local, scoped to this interface
 	return false
 
 

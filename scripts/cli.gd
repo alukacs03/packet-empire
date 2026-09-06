@@ -3398,6 +3398,13 @@ class EOS extends Session:
 		if r.size() == 3 and String(r[2]).is_valid_int():
 			ad = clampi(int(r[2]), 1, 255)
 			r = [r[0], r[1]]
+		if r.size() == 3 and Net.valid_cidr(r[0]) and String(r[2]).to_lower().begins_with("fe80") and _find_iface(String(r[1])) != null:
+			# ipv6 route <prefix> <interface> <link-local next hop>: the interface is not optional
+			var ll_pfx := String(r[0]).split("/")
+			Game.remove_static_route(dev, ll_pfx[0], int(ll_pfx[1]))
+			dev.static_routes.append({"prefix": ll_pfx[0], "plen": int(ll_pfx[1]), "via": String(r[2]), "ad": ad, "dev": _find_iface(String(r[1])).name, "vrf": vrf})
+			Game.topology_changed.emit()
+			return ""
 		if r.size() == 2 and Net.valid_cidr(r[0]):
 			var parts := String(r[0]).split("/")
 			var nh := String(r[1])
@@ -3697,7 +3704,7 @@ class EOS extends Session:
 			return "% Invalid input\n"
 		var want: String = String(r[0]).to_lower() if r.size() > 0 else ""
 		# EOS keywords first; the older spellings still land where they meant
-		var map := {"mstp": "mst", "rstp": "rstp", "rapid-pvst": "rstp", "none": "rstp", "stp": "stp", "mst": "mst"}
+		var map := {"mstp": "mst", "rstp": "rstp", "rapid-pvst": "rstp", "none": "none", "stp": "stp", "mst": "mst"}
 		if not map.has(want):
 			return "% Incomplete command\n" if want == "" else "% Invalid input\n"
 		dev.stp_mode = map[want]
