@@ -9182,6 +9182,26 @@ func sla_tick() -> void:
 	last_pl = {}
 	last_business = {"revenue": 0, "invoiced": 0, "collected": 0,
 		"power": 0, "transit": 0}
+	_tick_subsystems()
+	earned = _tick_fixed_costs(earned)
+	customer_outage_now = _tick_contract_sla(customer_outage_now)
+	earned = _tick_transit_ports(earned)
+	_tick_heat()
+	earned = _tick_rivals_and_overheads(earned)
+	earned = _tick_staff(earned)
+	var link_load := {}
+	var deal_links := {}
+	customer_outage_now = _tick_deal_health(link_load, deal_links, customer_outage_now)
+	var protected := _qos_protect(link_load, deal_links)
+	_renewals_tick()
+	earned = _tick_deal_billing(link_load, deal_links, protected, earned, customer_outage_now)
+	_tick_offers()
+	earned = _tick_transit_bill(earned)
+	_tick_settle_money(earned)
+	_tick_history()
+	_tick_quarter()
+
+func _tick_subsystems() -> void:
 	cert_tick()  # after the reset, so its line shows up in this cycle's P&L
 	Sim.dhcp_tick()
 	_maybe_start_guided_outage()
@@ -9226,6 +9246,8 @@ func sla_tick() -> void:
 	housekeeping_tick()
 	Skills.recognition_tick()
 	upstream_tick()
+
+func _tick_fixed_costs(earned: int) -> int:
 	var incidents := _security_sweep()
 	if incidents != 0:
 		last_pl["security incidents"] = -incidents
@@ -9257,6 +9279,9 @@ func sla_tick() -> void:
 	if accountant:
 		last_pl["accountant"] = -ACCOUNTANT_FEE
 		earned -= ACCOUNTANT_FEE
+	return earned
+
+func _tick_contract_sla(customer_outage_now: bool) -> bool:
 	for c in Contracts.all():
 		if c["id"] not in contracts_done:
 			continue
@@ -9281,6 +9306,9 @@ func sla_tick() -> void:
 			var fee: int = contract_fee(c)
 			raise_invoice({"customer": String(c["customer"]), "id": "contract:%s" % c["id"],
 				"ctype": "startup" if String(c["customer"]) == "Internal ops" else "enterprise"}, fee)
+	return customer_outage_now
+
+func _tick_transit_ports(earned: int) -> int:
 	for d in all_devices():  # transit invoices: the carrier bills a port, your own routers do not
 		for nb in d.bgp.get("neighbors", []):
 			if Sim.bgp_established(d, nb):
@@ -9291,6 +9319,9 @@ func sla_tick() -> void:
 				last_pl["transit ports"] = int(last_pl.get("transit ports", 0)) - TRANSIT_FEE
 				last_business["transit"] = int(last_business.get("transit", 0)) + TRANSIT_FEE
 				earned -= TRANSIT_FEE
+	return earned
+
+func _tick_heat() -> void:
 	for hot_site in site_count():
 		if not overheating(hot_site):
 			continue
@@ -9313,6 +9344,8 @@ func sla_tick() -> void:
 					d.status = "offline"
 					topology_changed.emit()
 					break
+
+func _tick_rivals_and_overheads(earned: int) -> int:
 	Rivals.tick()
 	withdraw_dead_offers()
 	if not buyout_offer.is_empty():
@@ -9341,6 +9374,9 @@ func sla_tick() -> void:
 	_run_monitors()
 	clock_tick()
 	check_achievements()
+	return earned
+
+func _tick_staff(earned: int) -> int:
 	if not staff.is_empty():
 		var wages := Staff.payroll()
 		last_pl["salaries"] = -wages
@@ -9364,9 +9400,9 @@ func sla_tick() -> void:
 	if stage >= 2 and randf() < fault_chance():
 		_field_fault()
 		_fault_watch = cycle
-	var link_load := {}
-	var deal_links := {}
-	var delivered_this_cycle := false
+	return earned
+
+func _tick_deal_health(link_load: Dictionary, deal_links: Dictionary, customer_outage_now: bool) -> bool:
 	for deal in deals:
 		var was_healthy := bool(deal.get("healthy", false))
 		deal["healthy"] = Market.check(deal["kind"], deal["params"])
@@ -9437,8 +9473,10 @@ func sla_tick() -> void:
 			Skills.observe("resilient_design")
 	_guided_outage_check_recovery()
 	last_link_load = link_load
-	var protected := _qos_protect(link_load, deal_links)
-	_renewals_tick()
+	return customer_outage_now
+
+func _tick_deal_billing(link_load: Dictionary, deal_links: Dictionary, protected: Dictionary, earned: int, customer_outage_now: bool) -> int:
+	var delivered_this_cycle := false
 	for deal in deals.duplicate():
 		# a declared maintenance window excuses planned downtime: the cycle
 		# only counts against uptime if the service was actually delivered
@@ -9536,6 +9574,9 @@ func sla_tick() -> void:
 		peak_tick(deal_peak)  # the night they warned you about, judged on live delivery
 	FirstCustomer.tick()
 	_update_reliability_streak(customer_outage_now)
+	return earned
+
+func _tick_offers() -> void:
 	for offer in offers.duplicate():
 		if not (offer is Dictionary) or not offer.has("ttl"):
 			offers.erase(offer)  # defensive: drop malformed offers
@@ -9547,6 +9588,8 @@ func sla_tick() -> void:
 	var offer_chance := 0.7 + 0.06 * float(marketing) / float(MARKETING_STEP)
 	if not FirstCustomer.protected_time() and offers.size() < offer_cap and contracts_done.size() >= 2 and randf() < offer_chance:
 		offers.append(Market.gen_offer())  # customers show up once you have a track record
+
+func _tick_transit_bill(earned: int) -> int:
 	# transit is billed on the 95th percentile of what you burst to, so the
 	# sample has to be taken after this cycle's link loads are known
 	sample_transit()
@@ -9559,6 +9602,9 @@ func sla_tick() -> void:
 		last_pl["exchange port"] = int(last_pl.get("exchange port", 0)) - IXP_PORT_FEE
 		last_business["transit"] = int(last_business.get("transit", 0)) + IXP_PORT_FEE
 		earned -= IXP_PORT_FEE
+	return earned
+
+func _tick_settle_money(earned: int) -> void:
 	earned += collect_invoices()
 	last_cycle_delta = earned
 	# "earned" is what customers paid, gross; "net" is what was left after the
@@ -9569,6 +9615,8 @@ func sla_tick() -> void:
 		money += earned
 		money_changed.emit()
 	maybe_end_run()  # after this cycle's income and bills: the bank reads the balance, not last cycle's
+
+func _tick_history() -> void:
 	var up_deals := 0
 	var billed_deals := 0
 	for deal in deals:
@@ -9590,6 +9638,8 @@ func sla_tick() -> void:
 	stats["deal_cycles"] = int(stats.get("deal_cycles", 0)) + int(history[history.size() - 1].get("deals", 0))
 	quarter_profit += last_cycle_delta
 	quarter_depreciation += depreciation_this_cycle()
+
+func _tick_quarter() -> void:
 	maybe_upsell()
 	maybe_dispute()
 	maybe_announce_peak()
