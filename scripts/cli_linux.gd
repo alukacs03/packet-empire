@@ -128,6 +128,8 @@ func _iptables(a: Array) -> String:
 			for x in argv.slice(1):
 				if not String(x).begins_with("-"):
 					only = String(x)
+			if only != "" and only not in chains:
+				return "iptables: No chain/target/match by that name.\n"
 			for cname in chains:
 				if only != "" and cname != only:
 					continue
@@ -180,6 +182,10 @@ func _iptables(a: Array) -> String:
 				return ""
 			var rule := {}
 			var j := 2
+			var at := 0  # -I CHAIN N inserts at position N, counted from 1
+			if cmd == "-I" and argv.size() > 2 and String(argv[2]).is_valid_int():
+				at = clampi(int(argv[2]) - 1, 0, ch["rules"].size())
+				j = 3
 			while j < argv.size():
 				var opt := String(argv[j])
 				var val := String(argv[j + 1]) if j + 1 < argv.size() else ""
@@ -216,7 +222,7 @@ func _iptables(a: Array) -> String:
 						return ""
 				return "iptables: Bad rule (does a matching rule exist in that chain?).\n"
 			if cmd == "-I":
-				ch["rules"].insert(0, rule)
+				ch["rules"].insert(at, rule)
 			else:
 				ch["rules"].append(rule)
 			_fw_apply()
@@ -413,12 +419,24 @@ func _nft_ruleset(only := "") -> String:
 
 func _split_chain(line: String) -> Array:
 	## "a && b; c" -> ["a", "&&", "b", ";", "c"]; quotes and the tcpdump filter are left alone
-	if line.begins_with("tcpdump") or "\"" in line or "'" in line:
+	if line.begins_with("tcpdump"):
 		return [line]
 	var parts: Array = []
 	var cur := ""
 	var i := 0
+	var quote := ""
 	while i < line.length():
+		if quote != "":
+			if line[i] == quote:
+				quote = ""
+			cur += line[i]
+			i += 1
+			continue
+		if line[i] == "\"" or line[i] == "'":
+			quote = line[i]
+			cur += line[i]
+			i += 1
+			continue
 		if line.substr(i, 2) == "&&":
 			parts.append(cur.strip_edges())
 			parts.append("&&")
@@ -907,7 +925,11 @@ func _iface(name: String) -> Net.Iface:
 	return null
 
 func _up(i: Net.Iface) -> bool:
-	return i.enabled and Game.link_at(i) != null
+	return Sim.iface_up(i)  # a sub-interface follows its parent; a bond member is up on its own wire
+
+func _link_name(i: Net.Iface) -> String:
+	## iproute2 prints a VLAN device with its link: eth0.10@eth0
+	return i.name + ("@" + i.parent if i.parent != "" else "")
 
 func _fe80(i: Net.Iface) -> String:
 	return Net.v6_compress("fe80::%s" % Net.eui64(i.mac))
@@ -949,6 +971,7 @@ func _ip_cmd(args: Array) -> String:
 	var family := 0
 	var brief := false
 	var stats := false
+	var details := false
 	while not args.is_empty() and String(args[0]).begins_with("-"):
 		match String(args[0]):
 			"-4":
@@ -959,7 +982,9 @@ func _ip_cmd(args: Array) -> String:
 				brief = true
 			"-s", "-stats", "-statistics":
 				stats = true
-			"-c", "-color", "-n", "-numeric", "-d", "-details":
+			"-d", "-details":
+				details = true
+			"-c", "-color", "-n", "-numeric":
 				pass
 			_:
 				return "Option \"%s\" is unknown, try \"ip -help\".\n" % args[0]
@@ -973,7 +998,7 @@ func _ip_cmd(args: Array) -> String:
 			return "Object \"%s\" is unknown, try \"ip help\".\n" % obj
 		return _ip_addr(rest, family, brief)
 	if obj.begins_with("l"):
-		return _ip_link(rest, brief, stats)
+		return _ip_link(rest, brief, stats, details)
 	if obj.begins_with("n"):
 		return _ip_neigh(rest, family)
 	if obj.begins_with("r"):
@@ -992,8 +1017,9 @@ func _addr_block(i: Net.Iface, n: int, family: int, link_only: bool) -> String:
 				if family != 6 and not Net.is_v6(cidr):
 					wout += "    inet %s scope global %s\n       valid_lft forever preferred_lft forever\n" % [cidr, i.name]
 		return wout
-	var out := "%d: %s: <%s> mtu %d qdisc fq_codel state %s%s group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [
-		n, i.name, _link_flags(i), i.mtu, "UP" if _up(i) else "DOWN", " mode DEFAULT" if link_only else "", i.mac.to_lower()]
+	var out := "%d: %s: <%s> mtu %d qdisc %s%s state %s%s group default qlen 1000\n    link/ether %s brd ff:ff:ff:ff:ff:ff\n" % [
+		n, _link_name(i), _link_flags(i), i.mtu, "noqueue" if i.parent != "" or i.name.begins_with("wg") else "fq_codel",
+		" master bond%d" % (i.lag - 1) if i.lag > 0 else "", "UP" if _up(i) else "DOWN", " mode DEFAULT" if link_only else "", i.mac.to_lower()]
 	if link_only:
 		return out
 	for cidr in i.ips:
@@ -1090,17 +1116,17 @@ func _ip_addr(rest: Array, family: int, brief: bool) -> String:
 		return ""
 	return "Command \"%s\" is unknown, try \"ip address help\".\n" % verb
 
-func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
+func _ip_link(rest: Array, brief: bool, stats: bool, details := false) -> String:
 	var kv := _kv(rest)
 	var words: Array = kv["_"]
 	var verb := String(words[0]) if not words.is_empty() else "show"
 	if verb in ["show", "list", "ls", "s", "sh", "l"]:
 		var only := String(kv.get("dev", words[1] if words.size() > 1 else ""))
 		if brief:
-			var out := "%-16s %-14s %-18s <LOOPBACK,UP,LOWER_UP>\n" % ["lo", "UNKNOWN", "00:00:00:00:00:00"]
+			var out := ("%-16s %-14s %-18s <LOOPBACK,UP,LOWER_UP>\n" % ["lo", "UNKNOWN", "00:00:00:00:00:00"]) if only == "" or only == "lo" else ""
 			for i: Net.Iface in dev.ifaces:
 				if only == "" or i.name == only:
-					out += "%-16s %-14s %-18s <%s>\n" % [i.name, "UP" if _up(i) else "DOWN", i.mac.to_lower(), _link_flags(i)]
+					out += "%-16s %-14s %-18s <%s>\n" % [_link_name(i), "UP" if _up(i) else "DOWN", i.mac.to_lower(), _link_flags(i)]
 			return out
 		var out := _lo_block(0, true) if only == "" else ""
 		if stats and only == "":
@@ -1113,7 +1139,7 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 		for i: Net.Iface in dev.ifaces:
 			if only == "" or i.name == only:
 				out += _addr_block(i, n, 0, true)
-				if i.parent != "" and i.dot1q > 0:
+				if details and i.parent != "" and i.dot1q > 0:
 					out += "    vlan protocol 802.1Q id %d <REORDER_HDR> \n" % i.dot1q
 				if stats:
 					out += "    RX:  bytes packets errors dropped  missed   mcast\n    %10d %7d %6d %7d %7d %7d\n    TX:  bytes packets errors dropped carrier collsns\n    %10d %7d %6d %7d %7d %7d\n" % [
@@ -1189,10 +1215,23 @@ func _ip_link(rest: Array, brief: bool, stats: bool) -> String:
 		return "RTNETLINK answers: Operation not supported\n"
 	if verb in ["del", "delete"]:
 		var name := String(kv.get("dev", words[1] if words.size() > 1 else ""))
+		if name.begins_with("bond") and name.trim_prefix("bond").is_valid_int():
+			var gid := int(name.trim_prefix("bond")) + 1
+			var had := String(dev.services.get("bond_pending", "")) == name
+			for i2: Net.Iface in dev.ifaces:
+				if i2.lag == gid:
+					i2.lag = 0
+					had = true
+			if not had:
+				return "Cannot find device \"%s\"\n" % name
+			if String(dev.services.get("bond_pending", "")) == name:
+				dev.services.erase("bond_pending")
+			Game.topology_changed.emit()
+			return ""
 		var ifc := _iface(name)
 		if ifc == null:
 			return "Cannot find device \"%s\"\n" % name
-		if not name.begins_with("wg"):
+		if not name.begins_with("wg") and ifc.parent == "":
 			return "RTNETLINK answers: Operation not supported\n"
 		dev.ifaces.erase(ifc)
 		Game.topology_changed.emit()
@@ -1203,17 +1242,17 @@ func _enslave(ifc: Net.Iface, master: String) -> String:
 	## ip link set eth1 master bond0: the bond is whatever ports share it
 	if ifc.enabled and not ifc.admin_down:
 		return "Error: Device can not be enslaved while up.\n"
-	var gid := 1
+	if not (master.begins_with("bond") and master.trim_prefix("bond").is_valid_int()):
+		return "Cannot find device \"%s\"\n" % master
+	var gid := int(master.trim_prefix("bond")) + 1
 	var first: Net.Iface = null
 	for i2: Net.Iface in dev.ifaces:
-		if i2.lag > 0 and i2 != ifc:
-			gid = i2.lag
+		if i2.lag == gid and i2 != ifc:
 			first = i2
-	if first == null:
-		for i2: Net.Iface in dev.ifaces:
-			gid = maxi(gid, i2.lag + 1)
+	if first == null and String(dev.services.get("bond_pending", "")) != master:
+		return "Cannot find device \"%s\"\n" % master
 	ifc.lag = gid
-	ifc.lag_mode = String(dev.services.get("bond_mode", "on"))
+	ifc.lag_mode = first.lag_mode if first != null else String(dev.services.get("bond_mode", "on"))
 	if first != null:
 		ifc.mac = first.mac  # a bond presents one address
 	dev.services.erase("bond_pending")
@@ -1298,7 +1337,7 @@ func _ip_route_show(family: int) -> String:
 			if Net.is_v6(cidr) != v6:
 				continue
 			var netw := Net.network_of(cidr)
-			var down := " linkdown" if Game.link_at(i) == null and not i.name.begins_with("wg") else ""
+			var down := " linkdown" if not Sim.iface_up(i) else ""
 			if v6:
 				rows.append([String(netw["prefix"]), "%s/%d dev %s proto kernel metric 256 pref medium%s\n" % [netw["prefix"], int(netw["plen"]), i.name, down]])
 			else:
@@ -1428,11 +1467,12 @@ func _ip_route(rest: Array, family: int) -> String:
 	return "Command \"%s\" is unknown, try \"ip route help\".\n" % verb
 
 func _link_flags(i: Net.Iface) -> String:
+	var slave := ",SLAVE" if i.lag > 0 else ""
 	if not i.enabled:
-		return "BROADCAST,MULTICAST"
-	if Game.link_at(i) == null:
-		return "NO-CARRIER,BROADCAST,MULTICAST,UP"
-	return "BROADCAST,MULTICAST,UP,LOWER_UP"
+		return "BROADCAST,MULTICAST" + slave
+	if not Sim.iface_up(i) or (i.lag == 0 and i.parent == "" and not i.name.begins_with("wg") and Game.link_at(i) == null):
+		return "NO-CARRIER,BROADCAST,MULTICAST%s,UP" % slave
+	return "BROADCAST,MULTICAST%s,UP,LOWER_UP" % slave
 
 func _bcast(cidr: String) -> String:
 	var parts := cidr.split("/")
@@ -1988,7 +2028,25 @@ func _ss(args: Array) -> String:
 	var want_tcp := "t" in flags or not ("u" in flags)
 	var want_udp := "u" in flags or not ("t" in flags)
 	var netid := want_tcp and want_udp
+	var letters := ""
+	for a in args:
+		if String(a).begins_with("-") and not String(a).begins_with("--"):
+			letters += String(a).trim_prefix("-")
+	var listeners := "l" in letters or "a" in letters
 	var out := ("%-6s " % "Netid" if netid else "") + "%-7s %-7s %-7s %26s %21s %s\n" % ["State", "Recv-Q", "Send-Q", "Local Address:Port", "Peer Address:Port", "Process"]
+	if "l" not in letters and want_tcp:
+		# the tracked tcp connections: what plain ss -t lists on a real host
+		for key in dev.flows:
+			var f: Variant = dev.flows[key]
+			var meta: Dictionary = f if f is Dictionary else {}
+			if String(meta.get("proto", "")) != "tcp":
+				continue
+			var parts := String(key).split("|")
+			if parts.size() < 3:
+				continue
+			out += ("%-6s " % "tcp" if netid else "") + "%-7s %-7d %-7d %26s %21s\n" % ["ESTAB", 0, 0, parts[1], "%s:%d" % [parts[2], int(meta.get("port", 0))]]
+	if not listeners:
+		return out
 	var pid := 600
 	for s in _services():
 		pid += 37
@@ -2177,7 +2235,9 @@ func _dhclient(args: Array) -> String:
 			if cidr in ifc.ips:
 				Game.remove_ip(ifc, cidr)
 			if String(lease.get("gw", "")) != "":
-				Game.remove_static_route(dev, "0.0.0.0", 0)
+				for r in dev.static_routes.duplicate():
+					if r["prefix"] == "0.0.0.0" and int(r["plen"]) == 0 and String(r.get("via", "")) == String(lease["gw"]):
+						dev.static_routes.erase(r)
 			dev.services.erase("dhcp_lease")
 			return head + ("DHCPRELEASE of %s on %s to %s port 67 (xid=0x%08x)\n" % [cidr.split("/")[0], ifn, lease.get("server", ""), (Game.cycle * 2654435761 + ifc.mac.hash()) % 0xFFFFFFFF] if verbose else "")
 		return head
