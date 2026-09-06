@@ -1775,6 +1775,21 @@ static func run() -> int:
 	v1.exec("vrrp 1 preempt")
 	v1.exec("end")
 	check(Sim.vrrp_master("10.40.0.1", 1) == vr1, "vrrp: turning preempt back on hands the address back")
+	# split brain: an island per switch, and each island elects its own master
+	var vsw2 := Game.new_device("sw-8")
+	Game.add_rack(Vector2i(9, 14)).slots[0] = vsw2
+	Game.disconnect_iface(vr2.ifaces[0])
+	Game.connect_ifaces(vr2.ifaces[0], vsw2.ifaces[0])
+	check(Sim.segment_ifaces(vcl.ifaces[0]).has(vr1.ifaces[0]) and not Sim.segment_ifaces(vcl.ifaces[0]).has(vr2.ifaces[0]),
+		"l2: the passive segment walk stops at the cut")
+	check(Sim.vrrp_master("10.40.0.1", 1, vr1.ifaces[0]) == vr1 and Sim.vrrp_master("10.40.0.1", 1, vr2.ifaces[0]) == vr2,
+		"vrrp: two islands, two masters: each router hears only its own segment")
+	check(v2.exec("show vrrp").contains("State master"), "vrrp: the cut-off backup reports master, as a real one would")
+	check(Sim.ping(vcl, "10.40.0.1")["ok"], "vrrp: the client on the master's island still pings the VIP")
+	Game.connect_ifaces(vsw2.ifaces[1], vsw.ifaces[3])
+	check(Sim.segment_ifaces(vcl.ifaces[0]).has(vr2.ifaces[0]), "l2: the walk crosses both switches once they are cabled")
+	check(Sim.vrrp_master("10.40.0.1", 1, vr2.ifaces[0]) == vr1 and v2.exec("show vrrp").contains("State backup"),
+		"vrrp: joined back, one master again")
 
 	# --- field faults, redundant-gw offers, reverse DNS ---
 	# marketplace checks first: a field fault may reboot gear and wipe its config

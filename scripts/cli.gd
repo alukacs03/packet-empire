@@ -2466,7 +2466,7 @@ class EOS extends Session:
 				continue
 			if out == "":
 				out += "VRF: default\n"
-			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]))
+			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]), i)  # what this router hears, not the truth
 			var master_ip := "0.0.0.0"
 			if master != null:
 				for mi: Net.Iface in master.ifaces:
@@ -2484,7 +2484,7 @@ class EOS extends Session:
 		for i: Net.Iface in dev.ifaces:
 			if i.vrrp.is_empty():
 				continue
-			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]))
+			var master := Sim.vrrp_master(i.vrrp["vip"], int(i.vrrp["group"]), i)
 			out += "%-26s %-5d %-9d %-7s %s\n" % [i.name, int(i.vrrp["group"]), int(i.vrrp.get("priority", 100)),
 				"master" if master == dev else "backup", i.vrrp["vip"]]
 		return out

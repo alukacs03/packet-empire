@@ -969,6 +969,7 @@ static func static_port(dev: Net.NDevice, vlan: int, mac: String) -> Net.Iface:
 	return null
 
 static func flush_learned_state() -> void:
+	_seg_cache.clear()
 	_ospf_cache.clear()
 	_rib_cache.clear()
 	_bgp_cache.clear()
@@ -998,6 +999,7 @@ static func arp_iface(dev: Net.NDevice, ip: String) -> Net.Iface:
 static func topology_change() -> void:
 	_ospf_cache.clear()
 	_rib_cache.clear()
+	_seg_cache.clear()
 	_bgp_cache.clear()
 	## a link came or went: spanning tree tells every bridge to forget what it
 	## learned, exactly so that a moved host is found again by flooding
@@ -1021,6 +1023,7 @@ static func forget_ip(ip: String) -> void:
 static func prune_learned_state() -> void:
 	_ospf_cache.clear()  # an adjacency is a fact about cables and configuration, both of which just moved
 	_rib_cache.clear()
+	_seg_cache.clear()
 	_bgp_cache.clear()
 	## A configuration changed somewhere. Real gear does not forget the whole
 	## world for that: it drops only what can no longer be true, and the rest
@@ -2476,13 +2479,67 @@ static func _cap(dev: Net.NDevice, iface: Net.Iface, frame: Dictionary, outbound
 	if dev.capture.size() > 50:
 		dev.capture.pop_front()
 
-static func vrrp_master(vip: String, group: int) -> Net.NDevice:
-	## alive router with the highest priority (tie: highest real IP) wins
+static var _seg_cache := {}  # Iface -> the ports a broadcast from it lands on
+
+static func segment_ifaces(start: Net.Iface) -> Array:
+	## every port a broadcast leaving start would land on, walking cables and
+	## switches without transmitting a thing: safe inside a receive path,
+	## which _same_segment is not.
+	## ponytail: VLANs by untagged VLAN and trunk membership; bonds and MLAG walk as plain ports
+	if _seg_cache.has(start):
+		return _seg_cache[start]
+	var out: Array = []
+	var seen := {start: true}
+	var queue: Array = [[start, 0]]  # [port, tag on the wire; 0 = untagged]
+	while not queue.is_empty():
+		var cur: Array = queue.pop_front()
+		var port: Net.Iface = cur[0]
+		var tag: int = cur[1]
+		if not leg_usable(port):
+			continue
+		var l := Game.link_at(port)
+		var far: Net.Iface = l.b if l.a == port else l.a
+		if seen.has(far) or not far.enabled or far.dev.status != "active":
+			continue
+		seen[far] = true
+		if far.dev.type != "switch" or far.mode == "routed":
+			if tag == 0:
+				out.append(far)
+			else:
+				for sub: Net.Iface in far.dev.ifaces:
+					if sub.parent == far.name and sub.dot1q == tag:
+						out.append(sub)  # the tagged frame lands on the subinterface
+			continue
+		# into the switch: a tagged frame needs a trunk that carries it, an untagged one takes the port's VLAN
+		if tag != 0 and (far.mode != "trunk" or (not far.tagged_vlans.is_empty() and tag not in far.tagged_vlans)):
+			continue
+		var vid := tag if tag != 0 else far.untagged_vlan
+		if stp_blocked_for(far, vid):
+			continue
+		for o: Net.Iface in far.dev.ifaces:
+			if o == far or seen.has(o) or o.mode == "routed" or o.parent != "" or stp_blocked_for(o, vid):
+				continue
+			if o.mode == "trunk":
+				if o.untagged_vlan == vid:
+					queue.append([o, 0])
+				elif o.tagged_vlans.is_empty() or vid in o.tagged_vlans:
+					queue.append([o, vid])
+			elif o.untagged_vlan == vid:
+				queue.append([o, 0])
+	_seg_cache[start] = out
+	return out
+
+static func vrrp_master(vip: String, group: int, seen_from: Net.Iface = null) -> Net.NDevice:
+	## alive router with the highest priority (tie: highest real IP) wins.
+	## seen_from narrows the election to the routers whose advertisements
+	## reach that port: cut the segment in two and each half elects its own
+	## master, which is the split brain a real VRRP pair suffers.
 	var best: Net.NDevice = null
 	var best_prio := -1
 	var best_ip := -1
 	var best_preempt := true
 	var alive := {}
+	var domain: Array = [] if seen_from == null else segment_ifaces(seen_from) + [seen_from]
 	for d in Game.all_devices():
 		if not d.ip_forwarding or d.status != "active":
 			continue
@@ -2491,6 +2548,8 @@ static func vrrp_master(vip: String, group: int) -> Net.NDevice:
 				continue  # a router whose cable was pulled stops advertising; the backup takes over
 			if i.vrrp.get("vip", "") != vip or int(i.vrrp.get("group", -1)) != group:
 				continue
+			if seen_from != null and i not in domain:
+				continue  # its advertisements never reach this port
 			alive[d] = true
 			var prio: int = int(i.vrrp.get("priority", 100))
 			var ipn := Net.ip_to_int(_first_ip(i))
@@ -2535,12 +2594,12 @@ static func frame_is_v6_key(s: String) -> bool:
 static func _vrrp_mac_ours(dev: Net.NDevice, iface: Net.Iface, mac: String) -> bool:
 	if iface.vrrp.is_empty() or mac != vrrp_mac(int(iface.vrrp.get("group", -1))):
 		return false
-	return vrrp_master(String(iface.vrrp.get("vip", "")), int(iface.vrrp.get("group", -1))) == dev
+	return vrrp_master(String(iface.vrrp.get("vip", "")), int(iface.vrrp.get("group", -1)), iface) == dev
 
 static func _vrrp_owns(dev: Net.NDevice, iface: Net.Iface, ip: String) -> bool:
 	if iface.vrrp.is_empty() or iface.vrrp.get("vip", "") != ip:
 		return false
-	return vrrp_master(ip, int(iface.vrrp.get("group", -1))) == dev
+	return vrrp_master(ip, int(iface.vrrp.get("group", -1)), iface) == dev
 
 static func _icmp_unreachable(dev: Net.NDevice, p: Dictionary, code: String, vrf: String, mtu := 0) -> void:
 	## Destination Unreachable back to the sender. Never about another ICMP

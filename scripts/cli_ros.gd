@@ -1320,7 +1320,7 @@ func _run(path: String, args: Array, p: Dictionary) -> Variant:
 				var vip := String(i.vrrp.get("vip", ""))
 				var flag := " "
 				if vip != "":
-					flag = "M" if Sim.vrrp_master(vip, int(i.vrrp["group"])) == dev else "B"
+					flag = "M" if Sim.vrrp_master(vip, int(i.vrrp["group"]), i) == dev else "B"
 				out += "%d R%s vrrp%-3d %-10s %-5d %-9d 1s\n" % [n, flag, int(i.vrrp["group"]), i.name,
 					int(i.vrrp["group"]), int(i.vrrp.get("priority", 100))]
 				n += 1
