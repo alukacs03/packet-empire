@@ -168,6 +168,10 @@ func _build_menu() -> void:
 	var quit_b := _menu_button(Loc.t("title.quit"), "", false)
 	quit_b.pressed.connect(func() -> void: get_tree().quit())
 	menu_box.add_child(quit_b)
+	# keyboard: the first button holds focus, Up and Down walk the list
+	var first_focus := menu_box.get_children().filter(func(c): return c is Button)
+	if not first_focus.is_empty() and is_inside_tree():
+		(first_focus[0] as Control).call_deferred("grab_focus")
 
 func _most_recent_slot() -> int:
 	## the slot the player was last in, so Continue means what it says
@@ -217,19 +221,19 @@ func show_error(msg: String) -> void:
 
 func show_intro() -> void:
 	_clear_pane()
-	pane_title.text = "What this is"
+	pane_title.text = Loc.t("title.intro.title")
 	for para in [
-		"You run a small network business. It starts with one rack in somebody else's building and a customer who wants two offices joined up.",
-		"Everything under the hood is real: MAC learning, VLANs, spanning tree, routing, DHCP, BGP. The switches take Arista-style commands, the cheap gear takes RouterOS. Nothing is faked, so when a ping fails there is a reason and you can find it.",
-		"The demo covers the opening arc, which is about half an hour. It ends at the point where the business game opens up.",
+		Loc.t("title.intro.p1"),
+		Loc.t("title.intro.p2"),
+		Loc.t("title.intro.p3"),
 	]:
 		panel_box.add_child(_para(para))
 	var tips := VBoxContainer.new()
 	tips.add_theme_constant_override("separation", 4)
 	panel_box.add_child(tips)
-	tips.add_child(_lbl("Worth knowing", 14, ACCENT))
-	for tip in ["F1 opens help at any time.", "Escape steps back out of anything.",
-			"The field manual (LEARN) explains every concept the game uses.",
+	tips.add_child(_lbl(Loc.t("title.intro.tips"), 14, ACCENT))
+	for tip in [Loc.t("title.intro.tip1"), Loc.t("title.intro.tip2"),
+			Loc.t("title.intro.tip3"),
 			"Nothing you do to a device is permanent until you save its configuration."]:
 		tips.add_child(_lbl("  •  " + tip, 13, MUTED))
 
@@ -241,10 +245,10 @@ func _para(text: String) -> Control:
 
 func show_new_game(is_demo: bool) -> void:
 	_clear_pane()
-	pane_title.text = "Play the demo" if is_demo else "New game"
-	panel_box.add_child(_lbl("Company name", 13, MUTED))
+	pane_title.text = Loc.t("title.new.demo_title") if is_demo else Loc.t("title.new.title")
+	panel_box.add_child(_lbl(Loc.t("title.new.company"), 13, MUTED))
 	var name_in := LineEdit.new()
-	name_in.placeholder_text = "Your company (blank picks one for you)"
+	name_in.placeholder_text = Loc.t("title.new.company_hint")
 	panel_box.add_child(name_in)
 
 	var diff := 1
@@ -252,9 +256,9 @@ func show_new_game(is_demo: bool) -> void:
 	diff_row.add_theme_constant_override("separation", 6)
 	panel_box.add_child(diff_row)
 	if is_demo:
-		panel_box.add_child(_para("The demo runs on the standard difficulty so the pacing matches the walkthrough."))
+		panel_box.add_child(_para(Loc.t("title.new.demo_note")))
 	else:
-		diff_row.add_child(_lbl("Difficulty", 13, MUTED))
+		diff_row.add_child(_lbl(Loc.t("title.new.difficulty"), 13, MUTED))
 		var group := ButtonGroup.new()
 		for i in Game.DIFFICULTIES.size():
 			var d: Dictionary = Game.DIFFICULTIES[i]
@@ -269,7 +273,7 @@ func show_new_game(is_demo: bool) -> void:
 			diff_row.add_child(b)
 
 	if not is_demo and not Legacy.epitaph.is_empty():
-		panel_box.add_child(_lbl("The last company", 13, MUTED))
+		panel_box.add_child(_lbl(Loc.t("title.new.last"), 13, MUTED))
 		panel_box.add_child(_para("%s ran for %d cycles, earned $%d, and %s. You may take two things with you."
 			% [Legacy.epitaph.get("company", "It"), int(Legacy.epitaph.get("cycles", 0)),
 				int(Legacy.epitaph.get("earned", 0)), Legacy.epitaph.get("why", "ended")]))
@@ -290,14 +294,14 @@ func show_new_game(is_demo: bool) -> void:
 			panel_box.add_child(lb)
 
 	var go := Button.new()
-	go.text = "Start" if not is_demo else "Start the demo"
+	go.text = Loc.t("title.new.start") if not is_demo else Loc.t("title.new.start_demo")
 	go.custom_minimum_size = Vector2(0, 40)
 	UIW.style_button(go, "primary")
 	go.pressed.connect(func() -> void:
 		var slot := _free_slot()
 		start_requested.emit(slot, name_in.text.strip_edges() if name_in.text.strip_edges() != "" else _generated_company(), 1 if is_demo else diff, is_demo))
 	panel_box.add_child(go)
-	panel_box.add_child(_para("A new game takes the first free slot. If all three are full it overwrites the oldest, so rename or clear a slot first if you care about it."))
+	panel_box.add_child(_para(Loc.t("title.new.slot_note")))
 
 func _free_slot() -> int:
 	var oldest := 0
@@ -361,6 +365,23 @@ func show_settings() -> void:
 		Prefs.learner_hints = on
 		Prefs.apply())
 	panel_box.add_child(hints)
+	for slider_spec in [["settings.volume", func() -> int: return Prefs.volume, func(v: int) -> void: Prefs.volume = v],
+			["settings.music", func() -> int: return Prefs.music_volume, func(v: int) -> void: Prefs.music_volume = v]]:
+		var srow := HBoxContainer.new()
+		srow.add_theme_constant_override("separation", 6)
+		panel_box.add_child(srow)
+		srow.add_child(_lbl(Loc.t(String(slider_spec[0])), 13, MUTED))
+		var sl := HSlider.new()
+		sl.min_value = 0
+		sl.max_value = 100
+		sl.step = 5
+		sl.value = int((slider_spec[1] as Callable).call())
+		sl.custom_minimum_size = Vector2(180, 0)
+		sl.value_changed.connect(func(v: float) -> void:
+			(slider_spec[2] as Callable).call(int(v))
+			Prefs.apply()
+			Sfx.play("click"))
+		srow.add_child(sl)
 	# label and buttons on one line: the pane is short and the scale row was
 	# being pushed off the bottom of it
 	var lang_row := HBoxContainer.new()
@@ -399,10 +420,10 @@ func show_settings() -> void:
 
 func show_slots() -> void:
 	_clear_pane()
-	pane_title.text = "Save slots"
+	pane_title.text = Loc.t("title.slots.title")
 	for i in Game.SLOTS + 1:
 		panel_box.add_child(_slot_row(i))
-	panel_box.add_child(_para("The autosave is written every few cycles while you play. It is never used for a new game."))
+	panel_box.add_child(_para(Loc.t("title.slots.auto")))
 
 func _slot_row(i: int) -> Control:
 	var info := Game.slot_info(i)
@@ -411,18 +432,18 @@ func _slot_row(i: int) -> Control:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	pc.add_child(v)
-	var head := "Autosave" if i >= Game.SLOTS else "Slot %d" % (i + 1)
+	var head := Loc.t("title.slots.autosave") if i >= Game.SLOTS else Loc.t("title.slots.slot", {"n": i + 1})
 	if info.get("broken", false):
 		v.add_child(_lbl("%s: damaged (kept on disk, delete it to reuse the slot)" % head, 14, Color(0.9, 0.5, 0.45)))
 		var del_broken := Button.new()
-		del_broken.text = "Delete"
+		del_broken.text = Loc.t("title.slots.delete")
 		del_broken.pressed.connect(func() -> void:
 			Game.delete_slot(i)
 			show_slots())
 		v.add_child(del_broken)
 		return pc
 	if info.get("empty", true):
-		v.add_child(_lbl("%s: empty" % head, 14, MUTED))
+		v.add_child(_lbl("%s: %s" % [head, Loc.t("title.slots.empty")], 14, MUTED))
 		return pc
 	v.add_child(_lbl("%s: %s" % [head, info["company"]], 15))
 	var stage_name: String = Game.STAGES[mini(int(info["stage"]), Game.STAGES.size() - 1)]["name"]
@@ -435,18 +456,18 @@ func _slot_row(i: int) -> Control:
 	row.add_theme_constant_override("separation", 6)
 	v.add_child(row)
 	var load_b := Button.new()
-	load_b.text = "Load"
+	load_b.text = Loc.t("title.slots.load")
 	load_b.pressed.connect(func() -> void: continue_requested.emit(i))
 	row.add_child(load_b)
 	var del_b := Button.new()
-	del_b.text = "Delete"
+	del_b.text = Loc.t("title.slots.delete")
 	del_b.add_theme_color_override("font_color", Color(0.9, 0.5, 0.45))
 	del_b.pressed.connect(func() -> void:
 		if del_b.text == "Delete":
-			del_b.text = "Delete? (click again)"  # one click arms it, a second within two seconds does it
+			del_b.text = Loc.t("title.slots.delete_confirm")  # one click arms it, a second within two seconds does it
 			get_tree().create_timer(2.0).timeout.connect(func() -> void:
 				if is_instance_valid(del_b):
-					del_b.text = "Delete")
+					del_b.text = Loc.t("title.slots.delete"))
 			return
 		Game.delete_slot(i)
 		_build_menu()
@@ -460,3 +481,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		show_intro()
 		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and event.keycode >= KEY_1 and event.keycode <= KEY_9:
+		# the buttons are numbered on screen: the digit presses that one
+		var n: int = int(event.keycode) - int(KEY_1)
+		var buttons := menu_box.get_children().filter(func(c): return c is Button)
+		if n < buttons.size():
+			(buttons[n] as Button).grab_focus()
+			(buttons[n] as Button).pressed.emit()
+			get_viewport().set_input_as_handled()

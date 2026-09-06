@@ -66,6 +66,7 @@ var help_overlay: Control
 var pedia_overlay: Control
 var pedia_body: RichTextLabel
 var pedia_topic_buttons: Array = []
+var pedia_search: LineEdit
 var menu_overlay: Control
 var map_overlay: Control
 var welcome_overlay: Control
@@ -519,7 +520,7 @@ func _refresh_money() -> void:
 				down = 1  # the teaching outage is a real customer off the air
 			if not Game.hazards.is_empty():
 				var h: Dictionary = Game.hazards[0]
-				objective_lbl.text = "HAZARD  ·  %s in %s" % [Game.HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
+				objective_lbl.text = "HAZARD  ·  %s in %s  (click: Facility)" % [Game.HAZARD_KINDS[h["kind"]]["label"], h["rack"]]
 			else:
 				objective_lbl.text = "OUTAGE  ·  %d customer%s off the air" % [down, "" if down == 1 else "s"]
 		else:
@@ -1031,6 +1032,13 @@ func _build_toolbar() -> void:
 	objective_lbl.tooltip_text = "Click to show the brief"
 	objective_lbl.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			if not Game.hazards.is_empty():
+				ops_tab = "Facility"  # a live hazard: the place to act is the facility tab
+				if not ops_overlay.visible:
+					toggle_ops()
+				else:
+					_refresh_ops()
+				return
 			tutorial_hidden = false
 			_refresh_tutorial())
 	objective_lbl.custom_minimum_size = Vector2(260, 0)
@@ -2018,6 +2026,14 @@ func _build_pedia() -> void:
 	topic_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	topic_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	topic_scroll.add_theme_constant_override("scrollbar_v_separation", UIW.space("sm"))
+	pedia_search = _mono_edit(280)
+	pedia_search.placeholder_text = "filter the chapters"
+	pedia_search.text_changed.connect(func(needle: String) -> void:
+		var n := needle.strip_edges().to_lower()
+		for bi in pedia_topic_buttons.size():
+			var btn: Button = pedia_topic_buttons[bi]
+			btn.visible = n == "" or n in String(Pedia.topics()[bi][0]).to_lower() or n in String(Pedia.topics()[bi][1]).to_lower())
+	nav.add_child(pedia_search)
 	nav.add_child(topic_scroll)
 	var topic_gutter := MarginContainer.new()
 	topic_gutter.add_theme_constant_override("margin_right", UIW.space("sm"))
@@ -2832,6 +2848,18 @@ func _refresh_ops() -> void:
 		ops_box.add_child(_label("  LIVE: %s in %s, severity %d%s" % [
 			Game.HAZARD_KINDS[haz_i["kind"]]["label"], haz_i["rack"], int(haz_i["severity"]),
 			"" if bool(haz_i["detected"]) else ", undetected"], 12, Prefs.bad_colour()))
+		var what_stops := "Fitted suppression discharges on its own; a crew on shift has a chance each cycle to deal with it by hand." if String(haz_i["kind"]) in ["smoke", "fire"] \
+			else "Fitted drainage takes the water away; a crew on shift has a chance each cycle to deal with it by hand."
+		ops_box.add_child(_wrap("      %s Fitting protection during the event does not help this one." % what_stops, 12, MUTED, 600))
+		if not Staff.anyone_on_shift() and not Game.staff.is_empty():
+			var haz_call := Button.new()
+			haz_call.text = "Get somebody in ($%d)" % Game.CALLOUT_FEE
+			haz_call.tooltip_text = "The call-out: somebody comes in now and the crew can act on it this cycle"
+			haz_call.pressed.connect(func() -> void:
+				var err := Game.call_someone_out()
+				hud_toast(err if err != "" else "Somebody is on their way in.", err == "")
+				_refresh_ops())
+			ops_box.add_child(haz_call)
 	ops_box.add_child(_section("FAILOVER TEST"))
 	if Game.dr_running():
 		ops_box.add_child(_wrap("  Running: %s is out of service on purpose until cycle %d. %s"
@@ -6120,6 +6148,23 @@ func _open_settings_card() -> void:
 			Prefs.apply()
 			_rebuild_localised())
 		v.add_child(cbtn)
+	for slider_spec in [["settings.volume", func() -> int: return Prefs.volume, func(val: int) -> void: Prefs.volume = val],
+			["settings.music", func() -> int: return Prefs.music_volume, func(val: int) -> void: Prefs.music_volume = val]]:
+		var srow := HBoxContainer.new()
+		srow.add_theme_constant_override("separation", 6)
+		v.add_child(srow)
+		srow.add_child(_label(Loc.t(String(slider_spec[0])), 13, MUTED))
+		var sl := HSlider.new()
+		sl.min_value = 0
+		sl.max_value = 100
+		sl.step = 5
+		sl.value = int((slider_spec[1] as Callable).call())
+		sl.custom_minimum_size = Vector2(180, 0)
+		sl.value_changed.connect(func(val: float) -> void:
+			(slider_spec[2] as Callable).call(int(val))
+			Prefs.apply()
+			Sfx.play("click"))
+		srow.add_child(sl)
 	var lang_row := HBoxContainer.new()
 	lang_row.add_theme_constant_override("separation", 6)
 	v.add_child(lang_row)

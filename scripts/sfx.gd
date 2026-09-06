@@ -14,6 +14,16 @@ static var _bank := {}
 static var _players: Array = []
 static var _node: Node = null
 static var muted := false
+static var music_trim_db := 0.0  # the music slider, applied under the mood's own level
+
+static func apply_volumes(master: int, music: int) -> void:
+	## 0-100 sliders onto decibels: 100 is unity, 0 is silence, the curve is
+	## the one an operator's ear expects rather than a straight line
+	var master_db := linear_to_db(clampf(float(master) / 100.0, 0.0, 1.0)) if master > 0 else -80.0
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index("Master"), master_db)
+	music_trim_db = (linear_to_db(clampf(float(music) / 100.0, 0.0, 1.0)) if music > 0 else -80.0)
+	if _score != null and _score.playing and score_mood != "":
+		_score.volume_db = float(MOODS[score_mood]["db"]) + score_boost_db + music_trim_db
 static var last_cue := ""  # what actually reached a speaker; "" while muted
 static var _ambient: AudioStreamPlayer = null
 static var _score: AudioStreamPlayer = null
@@ -126,7 +136,7 @@ static func ambient_tick(load: float, heat: float) -> void:
 		_ambient.play()
 	var mix := ambient_mix(load, heat)
 	_ambient.pitch_scale = float(mix[0])
-	_ambient.volume_db = float(mix[1])
+	_ambient.volume_db = float(mix[1]) + music_trim_db
 
 static func play_at(cue: String, parent: Node2D, at: Vector2) -> void:
 	## the same cue, but from the cabinet it belongs to, so the player looks
@@ -218,7 +228,7 @@ static func score_tick(state: Dictionary) -> void:
 		return
 	score_mood = mood
 	_score.stream = _bank.get("score_%s" % mood)
-	_score.volume_db = float(MOODS[mood]["db"]) + score_boost_db
+	_score.volume_db = float(MOODS[mood]["db"]) + score_boost_db + music_trim_db
 	if _score.stream != null:
 		_score.play()
 

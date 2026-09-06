@@ -13,6 +13,8 @@ var sound := true
 var reduced_motion := false
 var show_everything := false
 var learner_hints := true  # a comment line under a console error, and the LEARN chip
+var volume := 80  # 0-100, the master bus
+var music_volume := 60  # 0-100, the ambient hum and the score, under the master
 var language := "en"  # ui language; saves stay language-neutral
 
 func _ready() -> void:
@@ -34,6 +36,8 @@ func load_prefs() -> void:
 	reduced_motion = bool(data.get("reduced_motion", false))
 	show_everything = bool(data.get("show_everything", false))
 	learner_hints = bool(data.get("learner_hints", true))
+	volume = clampi(int(data.get("volume", 80)), 0, 100)
+	music_volume = clampi(int(data.get("music_volume", 60)), 0, 100)
 	language = String(data.get("language", "en"))
 	if language not in Loc.languages():
 		language = "en"
@@ -41,13 +45,15 @@ func load_prefs() -> void:
 func save_prefs() -> void:
 	Game.write_text_atomic(PATH, JSON.stringify({"ui_scale": ui_scale, "fullscreen": fullscreen,
 		"colourblind": colourblind, "sound": sound, "reduced_motion": reduced_motion,
-		"show_everything": show_everything, "learner_hints": learner_hints, "language": language}))
+		"show_everything": show_everything, "learner_hints": learner_hints, "language": language,
+		"volume": volume, "music_volume": music_volume}))
 
 func apply() -> void:
 	if DisplayServer.get_name() != "headless":
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen
 			else DisplayServer.WINDOW_MODE_WINDOWED)
 	Sfx.muted = not sound
+	Sfx.apply_volumes(volume, music_volume)
 	Loc.language = language
 	save_prefs()
 	changed.emit()
