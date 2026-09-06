@@ -657,7 +657,7 @@ static func needs_model(contract: Dictionary) -> String:
 static func hint_for(contract: Dictionary) -> String:
 	var id := String(contract.get("id", ""))
 	if not DIALECT_HINTS.has(id):
-		return String(contract.get("hint", ""))
+		return Loc.t(String(contract.get("hint", "")))
 	var cfg: Dictionary = DIALECT_HINTS[id]
 	var dialects := dialects_for(String(cfg["device_type"]))
 	if cfg.has("model"):
@@ -671,7 +671,7 @@ static func hint_for(contract: Dictionary) -> String:
 		blocks.append(_command_block("OpenRack / Arivista / Junivista EOS", hint_commands(id, "eos")))
 	if cfg.has("linux"):
 		blocks = [_command_block("Linux servers", hint_commands(id, "linux"))]
-	return "%s\n\n%s\n\n%s" % [String(cfg["intro"]), "\n\n".join(blocks), String(cfg["after"])]
+	return "%s\n\n%s\n\n%s" % [Loc.t(String(cfg["intro"])), "\n\n".join(blocks), Loc.t(String(cfg["after"]))]
 
 static func rank_locked(c: Dictionary) -> bool:
 	## some jobs only come to somebody with a title: the board's way of
@@ -1243,7 +1243,7 @@ static func _campaign() -> Array:
 			"title": "At the exchange",
 			"customer": "Panonia Data (consulting)",
 			"reward": 5800,
-			"hint": "Business tab, Peering: buy a port at the exchange ($%d plus $%d a cycle), then add peering sessions one at a time. Each one takes a share of your traffic off transit, and the transit bill on the 95th percentile falls with it." % [Game.IXP_SETUP, Game.IXP_PORT_FEE],
+			"hint": Loc.t("Business tab, Peering: buy a port at the exchange ($%d plus $%d a cycle), then add peering sessions one at a time. Each one takes a share of your traffic off transit, and the transit bill on the 95th percentile falls with it.") % [Game.IXP_SETUP, Game.IXP_PORT_FEE],
 			"brief": "Transit is billed on your 95th percentile, and most of what you send is going to networks that would happily take it for free. An internet exchange is a switch in a building where those networks meet. Get a port there, peer with enough of them that at least a third of your traffic bypasses transit, and read what the transit invoice does the next quarter.",
 			"reqs": [
 				{"d": "A port at the exchange", "t": func() -> bool: return bool(Game.ixp.get("joined", false))},

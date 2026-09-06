@@ -495,7 +495,7 @@ func _refresh_money() -> void:
 		var next_c := ""
 		for c in Contracts.all():
 			if c["id"] not in Game.contracts_done:
-				next_c = c["title"]
+				next_c = Loc.t(String(c["title"]))
 				break
 		if next_c != "":
 			objective_lbl.text = ("%s  ·  NEXT  %s" % [Demo.progress_text(), next_c]) if Demo.active() \
@@ -3723,7 +3723,7 @@ func _build_menu() -> void:
 	scen_btn.pressed.connect(func() -> void:
 		var opts: Array = []
 		for sc: Dictionary in Scenarios.all():
-			opts.append("%s: %s" % [sc["name"], sc["blurb"]])
+			opts.append("%s: %s" % [Loc.t(String(sc["name"])), Loc.t(String(sc["blurb"]))])
 		_menu(scen_btn, opts, func(id: int) -> void:
 			menu_overlay.visible = false
 			if Game.drill_active:
@@ -3946,8 +3946,8 @@ func _show_scenario_banner() -> void:
 	if sc.is_empty():
 		scenario_panel.visible = false
 		return
-	scenario_box.add_child(_label(Loc.t("body.scenario") % sc["name"], 16, Color(0.7, 0.9, 1.0)))
-	var blurb := _label(sc["blurb"], 13, Color(0.78, 0.82, 0.88))
+	scenario_box.add_child(_label(Loc.t("body.scenario") % Loc.t(String(sc["name"])), 16, Color(0.7, 0.9, 1.0)))
+	var blurb := _label(Loc.t(String(sc["blurb"])), 13, Color(0.78, 0.82, 0.88))
 	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	blurb.custom_minimum_size = Vector2(520, 0)
 	scenario_box.add_child(blurb)
@@ -3960,14 +3960,14 @@ func _show_scenario_banner() -> void:
 		sc_hint_btn.text = Loc.t("btn.show_approach")
 		sc_hint_btn.pressed.connect(func() -> void:
 			Challenge.note_hint()
-			sc_hint.text = String(sc["hint"])
+			sc_hint.text = Loc.t(String(sc["hint"]))
 			sc_hint.visible = true
 			sc_hint_btn.visible = false)
 		scenario_box.add_child(sc_hint_btn)
 		scenario_box.add_child(sc_hint)
 	for g in sc["goals"]:
 		var ok: bool = g["t"].call()
-		scenario_box.add_child(_label("   %s  %s" % ["●" if ok else "○", g["d"]], 13,
+		scenario_box.add_child(_label("   %s  %s" % ["●" if ok else "○", Loc.t(String(g["d"]))], 13,
 			Prefs.ok_colour() if ok else Color(0.7, 0.7, 0.75)))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
@@ -3977,7 +3977,7 @@ func _show_scenario_banner() -> void:
 	_accent(check_btn)
 	check_btn.pressed.connect(func() -> void:
 		if Scenarios.solved():
-			var nm: String = Scenarios.active["name"]
+			var nm: String = Loc.t(String(Scenarios.active["name"]))
 			Scenarios.finish(true)
 			get_parent().rebuild_racks()
 			scenario_panel.visible = false
@@ -4412,10 +4412,10 @@ func _refresh_tutorial() -> void:
 		tutorial_panel.visible = true
 		for c2 in tutorial_box.get_children():
 			c2.queue_free()
-		tutorial_box.add_child(_tutorial_head(String(job["title"]).to_upper()))
+		tutorial_box.add_child(_tutorial_head(Loc.t(String(job["title"])).to_upper()))
 		for rq in job["reqs"]:
 			var rq_ok: bool = rq["t"].call()
-			var rl := _label("%s  %s" % ["●" if rq_ok else "○", rq["d"]], 13,
+			var rl := _label("%s  %s" % ["●" if rq_ok else "○", Loc.t(String(rq["d"]))], 13,
 				Color(0.5, 0.9, 0.6) if rq_ok else Color(0.68, 0.72, 0.8))
 			rl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			rl.custom_minimum_size = Vector2(290, 0)
@@ -5355,12 +5355,12 @@ func _build_market_tab() -> void:
 		lv.add_theme_constant_override("separation", 6)
 		card.add_child(lv)
 		lv.add_child(_label("%s   ·   %s   ·   %s   ·   %s" % [lead["customer"],
-			Market.TYPES.get(String(lead.get("ctype", "enterprise")), {}).get("label", "customer"),
+			Loc.t(String(Market.TYPES.get(String(lead.get("ctype", "enterprise")), {}).get("label", "customer"))),
 			Market.label_for(lead["kind"]),
 			"a lead" if lead["stage"] == "lead" else "out to tender"], 16, Color.WHITE))
 		if String(lead["stage"]) == "lead":
 			lv.add_child(_wrap(Loc.t("market.word_is")
-				% lead["heard"], 13, Color(0.75, 0.8, 0.85)))
+				% Loc.t(String(lead["heard"])), 13, Color(0.75, 0.8, 0.85)))
 			lv.add_child(_label(Loc.t("market.expires") % int(lead["ttl"]), 12, MUTED))
 			var qbtn := Button.new()
 			qbtn.text = Loc.t("btn.go_see_them") % Market.LEAD_QUALIFY_COST
@@ -5813,11 +5813,11 @@ func _build_jobs_tab() -> void:
 		customer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		offer_head.add_child(customer)
 		offer_head.add_child(UIW.make_chip("%s  /  %s" % [Market.label_for(offer["kind"]),
-			ct2.get("label", "")], "info"))
+			Loc.t(String(ct2.get("label", "")))], "info"))
 		offer_head.add_child(UIW.make_chip("%d CYCLES LEFT" % int(offer["ttl"]),
 			"warning" if int(offer["ttl"]) <= 2 else "accent"))
 		if ct2.has("note"):
-			cv.add_child(_wrap(Loc.t("body.market_intel") % [ct2["note"], offer["hint"]],
+			cv.add_child(_wrap(Loc.t("body.market_intel") % [Loc.t(String(ct2["note"])), Loc.t(String(offer["hint"]))],
 				13, UIW.colour("muted"), 620))
 
 		var ask := UIW.style_panel(PanelContainer.new(), "console", "md")
@@ -6274,7 +6274,7 @@ func _build_contract_debrief(debrief: Dictionary) -> void:
 	var eyebrow := _section("JOB COMPLETE  /  PROOF OF WORK")
 	eyebrow.add_theme_color_override("font_color", UIW.colour("warm"))
 	title_box.add_child(eyebrow)
-	title_box.add_child(_label("%s  /  %s" % [debrief.get("title", "Contract"),
+	title_box.add_child(_label("%s  /  %s" % [Loc.t(String(debrief.get("title", "Contract"))),
 		debrief.get("customer", "customer")], 19, UIW.colour("text_strong")))
 	head.add_child(UIW.make_chip("+$%d PAID" % int(debrief.get("reward", 0)), "success"))
 	var proof := UIW.style_panel(PanelContainer.new(), "console", "md")
@@ -6352,22 +6352,22 @@ func _refresh_contracts() -> void:
 		if done:
 			if Contracts.retired(c["id"]):
 				contracts_box.add_child(_chip_row("RETIRED", Color(0.55, 0.6, 0.7),
-					"%s: %s   superseded by a later job" % [c["title"], c["customer"]],
+					"%s: %s   superseded by a later job" % [Loc.t(String(c["title"])), c["customer"]],
 					14, Color(0.55, 0.6, 0.7)))
 				continue
 			var healthy: bool = Game.sla_status.get(c["id"], true)
 			var mrr: int = Game.contract_fee(c)
 			if healthy:
 				contracts_box.add_child(_chip_row("DONE", Color(0.4, 0.85, 0.5),
-					"%s: %s   service fee +$%d / cycle" % [c["title"], c["customer"], mrr],
+					"%s: %s   service fee +$%d / cycle" % [Loc.t(String(c["title"])), c["customer"], mrr],
 					14, Color(0.55, 0.8, 0.6)))
 			else:
 				contracts_box.add_child(_chip_row("BREACH", Color(0.95, 0.45, 0.35),
-					"%s: %s   SLA BREACH: service down, not paying!" % [c["title"], c["customer"]],
+					"%s: %s   SLA BREACH: service down, not paying!" % [Loc.t(String(c["title"])), c["customer"]],
 					14, Color(0.95, 0.55, 0.4)))
 				for rq in c["reqs"]:
 					var rq_ok: bool = rq["t"].call()
-					contracts_box.add_child(_label("      %s  %s" % ["●" if rq_ok else "○", rq["d"]],
+					contracts_box.add_child(_label("      %s  %s" % ["●" if rq_ok else "○", Loc.t(String(rq["d"]))],
 						12, Color(0.5, 0.8, 0.55) if rq_ok else Color(0.95, 0.6, 0.45)))
 			continue
 		if active_shown >= 3:
@@ -6378,7 +6378,7 @@ func _refresh_contracts() -> void:
 			if rank_shown > 3:
 				continue  # a few rank chips say what is coming; they do not use up the job window
 			contracts_box.add_child(_chip_row("RANK", Color(0.75, 0.65, 0.4),
-				"%s: %s   comes to a %s; you are a %s" % [c["title"], c["customer"], String(c["rank"]), Game.rank()],
+				"%s: %s   comes to a %s; you are a %s" % [Loc.t(String(c["title"])), c["customer"], String(c["rank"]), Game.rank()],
 				14, Color(0.75, 0.7, 0.55)))
 			continue
 		active_shown += 1
@@ -6389,17 +6389,17 @@ func _refresh_contracts() -> void:
 		var cv := VBoxContainer.new()
 		cv.add_theme_constant_override("separation", 8)
 		card.add_child(cv)
-		cv.add_child(_label(Loc.t("body.job_reward") % [c["title"], c["customer"], c["reward"]], 17, Color.WHITE))
+		cv.add_child(_label(Loc.t("body.job_reward") % [Loc.t(String(c["title"])), c["customer"], c["reward"]], 17, Color.WHITE))
 		var need_model := Contracts.needs_model(c)
 		if need_model != "" and Game.MODELS.has(need_model):
 			cv.add_child(_label(Loc.t("demo.needs") % [Game.MODELS[need_model]["label"], int(Game.MODELS[need_model]["price"])], 13, Color(0.85, 0.8, 0.6)))
-		var brief := _label(c["brief"], 14, Color(0.75, 0.8, 0.88))
+		var brief := _label(Loc.t(String(c["brief"])), 14, Color(0.75, 0.8, 0.88))
 		brief.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		brief.custom_minimum_size = Vector2(560, 0)
 		cv.add_child(brief)
 		for r in c["reqs"]:
 			var ok: bool = r["t"].call()
-			cv.add_child(_label(("●  " if ok else "○  ") + r["d"], 14,
+			cv.add_child(_label(("●  " if ok else "○  ") + Loc.t(String(r["d"])), 14,
 				UIW.colour("success") if ok else Color(0.65, 0.6, 0.55)))
 		var contract_hint := Contracts.hint_for(c)
 		if contract_hint != "":
@@ -6429,7 +6429,7 @@ func _refresh_contracts() -> void:
 			if not r["t"].call():
 				all_met = false
 				if first_unmet == "":
-					first_unmet = String(r["d"])
+					first_unmet = Loc.t(String(r["d"]))
 		btn.text = Loc.t("btn.collect") % int(c["reward"]) if all_met else Loc.t("btn.check_requirements")
 		_accent(btn)
 		btn.pressed.connect(func() -> void:
@@ -6437,7 +6437,7 @@ func _refresh_contracts() -> void:
 				var why := ""
 				for r in c["reqs"]:
 					if not r["t"].call():
-						why = String(r["d"])
+						why = Loc.t(String(r["d"]))
 						break
 				hud_toast(Loc.t("toast.not_yet") % why if why != "" else "Not yet.", false)
 			_refresh_contracts()

@@ -29,8 +29,8 @@ static func render(ui) -> void:
 	if phase == "planning":
 		for key: String in FirstCustomer.PLANS:
 			var plan: Dictionary = FirstCustomer.PLANS[key]
-			paragraph(box, String(plan["detail"]))
-			var b := WorkspaceShell.button("%s · %d Mbps" % [plan["name"], plan["demand"][1]], func() -> void:
+			paragraph(box, Loc.t(String(plan["detail"])))
+			var b := WorkspaceShell.button("%s · %d Mbps" % [Loc.t(String(plan["name"])), plan["demand"][1]], func() -> void:
 				var err := FirstCustomer.choose(key)
 				if err != "": ui.hud_toast(err)
 				ui._refresh_tutorial(), key == "stagger")
@@ -41,7 +41,7 @@ static func render(ui) -> void:
 		var left := int(arc["starts"]) - Game.cycle
 		paragraph(box, Loc.t("brief.starts_in") % left if left > 0 else Loc.t("brief.live_wave") % mini(3, Game.cycle - int(arc["starts"]) + 1), "warm")
 		box.add_child(DemandChart.new().setup(plan["demand"], int(f["headroom"]), Game.cycle - int(arc["starts"])))
-		paragraph(box, Loc.t("brief.your_plan") % plan["name"])
+		paragraph(box, Loc.t("brief.your_plan") % Loc.t(String(plan["name"])))
 		paragraph(box, Loc.t("brief.move_traffic"), "muted")
 	elif phase == "debrief":
 		var successes := int(arc["successes"])
@@ -49,7 +49,7 @@ static func render(ui) -> void:
 		paragraph(box, Loc.t("brief.all_night") if successes == 3 else Loc.t("brief.got_through"))
 		for sample: Dictionary in arc["samples"]:
 			paragraph(box, Loc.t("brief.cycle_reason") % [sample["cycle"], sample["reason"]], "success" if sample["served"] else "warning")
-		paragraph(box, Loc.t("brief.chose_bonus") % [FirstCustomer.PLANS[String(arc["plan"])]["name"], arc["bonus"]])
+		paragraph(box, Loc.t("brief.chose_bonus") % [Loc.t(String(FirstCustomer.PLANS[String(arc["plan"])]["name"])), arc["bonus"]])
 		var before: Dictionary = arc.get("before", {})
 		if int(f["headroom"]) > int(before.get("headroom", 0)):
 			paragraph(box, Loc.t("brief.headroom_added") % (int(f["headroom"]) - int(before.get("headroom", 0))), "accent")
